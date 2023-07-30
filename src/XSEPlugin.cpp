@@ -5,6 +5,10 @@
 #include "State.h"
 
 #include "Features/ExtendedMaterials.h"
+
+#include "API/CSAPI.h"
+#include "API/CSInterface.h"
+
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
@@ -67,6 +71,16 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface*, 
 	return true;
 }
 
+#include "API/CSInterface.h"
+
+void TestFunc()
+{
+	if (ImGui::TreeNodeEx("Test API", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Text("Hello World!");
+		ImGui::TreePop();
+	}
+}
+
 void MessageHandler(SKSE::MessagingInterface::Message* message)
 {
 	switch (message->type) {
@@ -99,6 +113,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				State::GetSingleton()->Load();
 
 				shaderCache.ValidateDiskCache();
+
+				CSInterface::GetSingleton()->AddMenu("TEST", TestFunc);
 			}
 
 			break;
@@ -129,6 +145,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	}
 }
 
+
+
+
 bool Load()
 {
 	auto messaging = SKSE::GetMessagingInterface();
@@ -139,4 +158,10 @@ bool Load()
 	InitializeLog(state->GetLogLevel());
 
 	return true;
+}
+
+// API function
+extern "C" __declspec(dllexport) CSAPI* GetCSInterface()
+{
+    return CSInterface::GetSingleton();
 }

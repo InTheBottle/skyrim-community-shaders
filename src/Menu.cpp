@@ -7,9 +7,9 @@
 #include "State.h"
 
 #include "Feature.h"
-#include "Features/ExtendedMaterials.h"
 #include "Features/ScreenSpaceShadows.h"
-#include "Features/WaterBlending.h"
+
+#include "API/CSInterface.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_FONTSCALE "Font Scale"
@@ -472,23 +472,41 @@ void Menu::DrawSettings()
 			static size_t selectedFeature = SIZE_T_MAX;
 			auto& featureList = Feature::GetFeatureList();
 
+			std::lock_guard<std::shared_mutex> lk(CSInterface::GetSingleton()->mutex);
+
 			ImGui::TableNextColumn();
 			if (ImGui::BeginListBox("##FeatureList", { -FLT_MIN, -FLT_MIN })) {
-				for (size_t i = 0; i < featureList.size(); i++)
-					if (featureList[i]->loaded)
+				uint32_t maxIndex = 0;
+				for (size_t i = 0; i < featureList.size(); i++) {
+					if (featureList[i]->loaded) {
+						maxIndex++;
 						if (ImGui::Selectable(featureList[i]->GetName().c_str(), selectedFeature == i))
 							selectedFeature = i;
+					}
+				}
+
+				for (size_t i = 0; i < CSInterface::GetSingleton()->menus.size(); i++) {
+					if (ImGui::Selectable(CSInterface::GetSingleton()->menus[i].Name.c_str(), selectedFeature == i + featureList.size()))
+						selectedFeature = i + featureList.size();
+				}
 				ImGui::EndListBox();
 			}
 
 			ImGui::TableNextColumn();
 			if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
 				bool shownFeature = false;
-				for (size_t i = 0; i < featureList.size(); i++)
+				for (size_t i = 0; i < featureList.size(); i++) {
 					if (i == selectedFeature) {
 						shownFeature = true;
 						featureList[i]->DrawSettings();
 					}
+				}
+				for (size_t i = 0; i < CSInterface::GetSingleton()->menus.size(); i++) {
+					if (i + featureList.size() == selectedFeature) {
+						shownFeature = true;
+						CSInterface::GetSingleton()->menus[i].Function();
+					}
+				}
 				if (!shownFeature)
 					ImGui::TextDisabled("Please select a feature on the left.");
 			}
