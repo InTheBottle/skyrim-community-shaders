@@ -35,11 +35,14 @@ public:
 
 	struct alignas(16) PerPass
 	{
+		float Time;
+		uint Raining;
 		float Wetness;
 		float PuddleWetness;
 		DirectX::XMFLOAT3X4 DirectionalAmbientWS;
 		Settings settings;
-		float pad[3];
+
+		float pad[4 - (sizeof(Settings) / 4 + 16) % 4];
 	};
 
 	Settings settings;
