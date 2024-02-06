@@ -2,6 +2,8 @@
 
 struct PerPassWetnessEffects
 {
+	float Time;
+	uint Raining;
 	float Wetness;
 	float PuddleWetness;
 	row_major float3x4 DirectionalAmbientWS;
@@ -34,6 +36,78 @@ float2 EnvBRDFApprox(float3 F0, float Roughness, float NoV)
 	float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
 	float2 AB = float2(-1.04, 1.04) * a004 + r.zw;
 	return AB;
+}
+
+uint3 pcg3d(uint3 v)
+{
+	v = v * 1664525u + 1013904223u;
+
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+
+	v ^= v >> 16u;
+
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+
+	return v;
+}
+
+uint iqint3(uint2 x)
+{
+	uint2 q = 1103515245U * ((x >> 1U) ^ (x.yx));
+	uint n = 1103515245U * ((q.x) ^ (q.y >> 3U));
+
+	return n;
+}
+
+float RainFade(float normalised_t)
+{
+	const float rain_stay = .5;
+
+	if (normalised_t < rain_stay)
+		return 1.0;
+
+	float val = lerp(1.0, 0.0, (normalised_t - rain_stay) / (1.0 - rain_stay));
+	return val * val;
+}
+
+float GetRainDrops(float3 pos, float t)
+{
+	const float gridsize = 3;
+	const float radius_min = 0.3;
+	const float radius_max = 0.5;
+	const float lifetime = 2.0;
+	const float density = 0.1;
+
+	float2 grid_uv = pos / gridsize;
+	int2 grid = grid_uv;
+	grid_uv -= grid;
+
+	float wetness = 0;
+
+	for (int i = -1; i <= 1; i++)
+		for (int j = -1; j <= 1; j++) {
+			int2 grid_curr = grid + int2(i, j);
+			float t_offset = float(iqint3(grid_curr)) / 4294967295.0;
+
+			float residual = t / lifetime + t_offset + pos.z * 0.001;
+			uint timestep = residual;
+			residual = residual - timestep;
+
+			uint3 hash = pcg3d(uint3(grid_curr, timestep));
+			float3 float_hash = float3(hash) / 4294967295.0;
+			if (float_hash.z < density) {
+				float2 to_centre = int2(i, j) + float_hash.xy - grid_uv;
+				float drop_radius = lerp(radius_min, radius_max, saturate(float(iqint3(hash.yz)) / 4294967295.0));
+				if (dot(to_centre, to_centre) < drop_radius * drop_radius)
+					wetness = max(wetness, RainFade(residual));
+			}
+		}
+
+	return wetness;
 }
 
 // https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt

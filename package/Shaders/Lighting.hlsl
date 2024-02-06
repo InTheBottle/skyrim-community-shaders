@@ -1617,6 +1617,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	rainWetness = perPassWetnessEffects[0].SkinWetness * perPassWetnessEffects[0].Wetness * 0.8f;
 #		endif
 
+	if (perPassWetnessEffects[0].Raining && (rainWetness < 0.99))
+		rainWetness = max(rainWetness, GetRainDrops(input.WorldPosition + CameraPosAdjust[0], perPassWetnessEffects[0].Time));
 	wetness = max(shoreFactor * perPassWetnessEffects[0].MaxShoreWetness, rainWetness);
 	wetness *= nearFactor;
 

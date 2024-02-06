@@ -195,6 +195,8 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 				if (auto sky = RE::Sky::GetSingleton()) {
 					if (sky->mode.get() == RE::Sky::Mode::kFull) {
 						if (auto currentWeather = sky->currentWeather) {
+							data.Raining = currentWeather->precipitationData && currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
+
 							currentWeatherID = currentWeather->GetFormID();
 							if (auto calendar = RE::Calendar::GetSingleton()) {
 								float currentWeatherWetnessDepth = wetnessDepth;
@@ -251,6 +253,11 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			auto& state = RE::BSShaderManager::State::GetSingleton();
 			RE::NiTransform& dalcTransform = state.directionalAmbientTransform;
 			Util::StoreTransform3x4NoScale(data.DirectionalAmbientWS, dalcTransform);
+
+			static size_t rainTimer = 0;                                                                                                      // size_t for precision
+			rainTimer += (size_t)(RE::BSTimer::GetSingleton()->realTimeDelta * RE::BSTimer::GetSingleton()->QGlobalTimeMultiplier() * 1000);  // not the right time to use but whatever
+			rainTimer = rainTimer % 0xffffffffu;
+			data.Time = rainTimer / 1000.f;
 
 			data.settings = settings;
 			// Disable Shore Wetness if Wetness Effects are Disabled
