@@ -1609,13 +1609,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	minWetnessAngle = saturate(max(minWetnessValue, worldSpaceNormal.z));
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
-	if (perPassWetnessEffects[0].Raining)
+	if (perPassWetnessEffects[0].Raining && dot(input.WorldPosition, input.WorldPosition) < 1e6)
 		raindropInfo = GetRainDrops(input.WorldPosition + CameraPosAdjust[0], perPassWetnessEffects[0].Time);
-	float3 rippleNormal = raindropInfo.xyz;
-	float raindropWetness = raindropInfo.w * perPassWetnessEffects[0].MaxRainWetness;
 
 	float rainWetness = perPassWetnessEffects[0].Wetness * minWetnessAngle * perPassWetnessEffects[0].MaxRainWetness;
-	rainWetness = max(rainWetness, raindropInfo.w);
+	rainWetness = max(rainWetness, raindropInfo.w * perPassWetnessEffects[0].MaxRainWetness);
 
 	float puddleWetness = perPassWetnessEffects[0].PuddleWetness * minWetnessAngle;
 #		if defined(SKIN)
@@ -1658,8 +1656,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	wetnessNormal = normalize(lerp(wetnessNormal, float3(0, 0, 1), saturate(flatnessAmount)));
 
-	rippleNormal = normalize(lerp(float3(0, 0, 1), rippleNormal, saturate(flatnessAmount)));
-	wetnessNormal = normalize(float3(wetnessNormal.xy + rippleNormal.xy, wetnessNormal.z));
+	float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, clamp(flatnessAmount, .2, 1)));
+	wetnessNormal = normalize(wetnessNormal + float3(rippleNormal.xy, 0));
 
 	float waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular;
 
