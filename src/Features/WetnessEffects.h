@@ -34,6 +34,22 @@ public:
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.825f;
 		float WeatherTransitionSpeed = 3.0f;
+
+		// Raindrop fx settings
+		uint EnableSplashes = true;
+		uint EnableRipples = true;
+		uint EnableChaoticRipples = true;
+		float RaindropGridSize = 3;
+		float RaindropInterval = 1.0;
+		float RaindropChance = 0.3;
+		float SplashesMinRadius = 0.3;
+		float SplashesMaxRadius = 0.7;
+		float RippleStrength = 1.;
+		float RippleRadius = 1.;
+		float RippleBreadth = .5;
+		float RippleLifetime = .1;
+		float ChaoticRippleScale = 1.;
+		float ChaoticRippleSpeed = 20.;
 	};
 
 	struct alignas(16) PerPass
