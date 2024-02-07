@@ -51,6 +51,60 @@ void WetnessEffects::DrawSettings()
 	ImGui::Spacing();
 	ImGui::Spacing();
 
+	if (ImGui::TreeNodeEx("Raindrop Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox("Enable Splashes", (bool*)&settings.EnableSplashes);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Enables small splashes of wetness at the start of the rain.");
+		ImGui::Checkbox("Enable Ripples", (bool*)&settings.EnableRipples);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Enables circular ripples on puddles, and to a less extent other wet surfaces");
+		ImGui::Checkbox("Enable Chaotic Ripples", (bool*)&settings.EnableChaoticRipples);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Enables an additional layer of disturbance to wet surfaces.");
+
+		if (ImGui::TreeNodeEx("Raindrops", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::BulletText(
+				"At every interval, a raindrop is placed within each grid cell.\n"
+				"Only a set portion of raindrops will actually trigger splashes and ripples.\n"
+				"Chaotic ripples are not affected by raindrop settings.");
+
+			ImGui::SliderFloat("Grid Size", &settings.RaindropGridSize, 1.f, 10.f, "%.1f game unit(s)");
+			ImGui::SliderFloat("Interval", &settings.RaindropInterval, 0.0f, 2.f, "%.1f sec");
+			ImGui::SliderFloat("Chance", &settings.RaindropChance, 0.0f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("Portion of raindrops that will actually cause splashes and ripples.");
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("Splashes")) {
+			ImGui::BulletText("The biggest possible radius of splashes (at 1.0) is the grid size.");
+			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("Ripples")) {
+			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 4.f, "%.1f");
+			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("The biggest possible radius of ripples (at 1.0) is the grid size.");
+			ImGui::SliderFloat("Breadth", &settings.RippleBreadth, 0.f, 1.f, "%.2f");
+			ImGui::SliderFloat("Lifetime", &settings.RippleLifetime, 0.f, settings.RaindropInterval, "%.2f sec", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("Chaotic Ripples")) {
+			ImGui::SliderFloat("Scale", &settings.ChaoticRippleScale, 0.1f, 5.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat("Speed", &settings.ChaoticRippleSpeed, 0.f, 50.f, "%.1f");
+			ImGui::TreePop();
+		}
+
+		ImGui::TreePop();
+	}
+
+	ImGui::Spacing();
+	ImGui::Spacing();
+
 	if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat("Weather transition speed", &settings.WeatherTransitionSpeed, 0.5f, 5.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -231,14 +285,19 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			RE::NiTransform& dalcTransform = state.directionalAmbientTransform;
 			Util::StoreTransform3x4NoScale(data.DirectionalAmbientWS, dalcTransform);
 
-			static size_t rainTimer = 0;                                                                                                      // size_t for precision
-			rainTimer += (size_t)(RE::BSTimer::GetSingleton()->realTimeDelta * RE::BSTimer::GetSingleton()->QGlobalTimeMultiplier() * 1000);  // not the right time to use but whatever
+			static size_t rainTimer = 0;  // size_t for precision
+			rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);
 			rainTimer = rainTimer % 0xffffffffu;
 			data.Time = rainTimer / 1000.f;
 
 			data.settings = settings;
 			// Disable Shore Wetness if Wetness Effects are Disabled
 			data.settings.MaxShoreWetness = settings.EnableWetnessEffects ? settings.MaxShoreWetness : 0.0f;
+			// calculating some parameters on cpu
+			data.settings.RaindropGridSize = 1.f / settings.RaindropGridSize;
+			data.settings.RaindropInterval = 1.f / settings.RaindropInterval;
+			data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
+			data.settings.ChaoticRippleScale = 1.f / settings.ChaoticRippleScale;
 
 			D3D11_MAPPED_SUBRESOURCE mapped;
 			DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
