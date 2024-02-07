@@ -61,6 +61,33 @@ uint iqint3(uint2 x)
 	return n;
 }
 
+float SmoothstepDeriv(float x)
+{
+	return 6.0 * x * (1. - x);
+}
+
+// https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt
+
+float hash11(float p)
+{
+	return frac(sin(p) * 1e4);
+}
+
+float noise(float3 pos)
+{
+	const float3 step = float3(110.0, 241.0, 171.0);
+	float3 i = floor(pos);
+	float3 f = frac(pos);
+	float n = dot(i, step);
+
+	float3 u = f * f * (3.0 - 2.0 * f);
+	return lerp(lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 0.0))), hash11(n + dot(step, float3(1.0, 0.0, 0.0))), u.x),
+					lerp(hash11(n + dot(step, float3(0.0, 1.0, 0.0))), hash11(n + dot(step, float3(1.0, 1.0, 0.0))), u.x), u.y),
+		lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 1.0))), hash11(n + dot(step, float3(1.0, 0.0, 1.0))), u.x),
+			lerp(hash11(n + dot(step, float3(0.0, 1.0, 1.0))), hash11(n + dot(step, float3(1.0, 1.0, 1.0))), u.x), u.y),
+		u.z);
+}
+
 float RainFade(float normalised_t)
 {
 	const float rain_stay = .5;
@@ -72,11 +99,6 @@ float RainFade(float normalised_t)
 	return val * val;
 }
 
-float SmoothstepDeriv(float x)
-{
-	return 6.0 * x * (1. - x);
-}
-
 // xyz - ripple normal, w - splotches
 float4 GetRainDrops(float3 pos, float t)
 {
@@ -86,7 +108,7 @@ float4 GetRainDrops(float3 pos, float t)
 	const float lifetime = 1.0;
 	const float density = 0.5;
 
-	const float ripple_h = .5;
+	const float ripple_h = 1.;
 	const float ripple_width = .5;
 	const float ripple_r = 1.;
 	const float ripple_lifetime = .1;
@@ -126,19 +148,24 @@ float4 GetRainDrops(float3 pos, float t)
 
 					float band_lerp = (sqrt(dist_sqr) - ripple_inner_radius) / ripple_width;
 					if (band_lerp > 0. && band_lerp < 1.) {
-						band_lerp = sqrt(band_lerp);
-
-						float deriv = (band_lerp < .5 ? SmoothstepDeriv(band_lerp * 2.) : -SmoothstepDeriv(2. - band_lerp * 2.)) * ripple_h;
+						float deriv = (band_lerp < .5 ? SmoothstepDeriv(band_lerp * 2.) : -SmoothstepDeriv(2. - band_lerp * 2.)) *
+						              lerp(ripple_h, 0, ripple_t * ripple_t);
 
 						float3 grad = float3(normalize(to_centre), -deriv);
 						float3 bitangent = float3(-grad.y, grad.x, 0);
 						float3 normal = normalize(cross(grad, bitangent));
 
-						ripple_normal = normalize(float3(ripple_normal.xy + normal.xy, ripple_normal.z));
+						ripple_normal = normalize(ripple_normal + float3(normal.xy, 0));
 					}
 				}
 			}
 		}
+
+	float3 turbulenceNormal = noise(float3(pos.xy, t * 20));
+	turbulenceNormal.z = turbulenceNormal.z * .5 + 5;
+	turbulenceNormal = normalize(lerp(turbulenceNormal, float3(0, 0, 1), 0.2));
+	ripple_normal = normalize(ripple_normal + float3(turbulenceNormal.xy, 0));
+
 	return float4(ripple_normal, wetness);
 }
 
