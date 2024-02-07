@@ -74,18 +74,30 @@ float RainFade(float normalised_t)
 	return val * val;
 }
 
-float GetRainDrops(float3 pos, float t)
+float SmoothstepDeriv(float x)
+{
+	return 6.0 * x * (1. - x);
+}
+
+// xyz - ripple normal, w - splotches
+float4 GetRainDrops(float3 pos, float t)
 {
 	const float gridsize = 3;
 	const float radius_min = 0.3;
-	const float radius_max = 0.5;
-	const float lifetime = 2.0;
-	const float density = 0.1;
+	const float radius_max = 0.7;
+	const float lifetime = 1.0;
+	const float density = 0.5;
+
+	const float ripple_h = .5;
+	const float ripple_width = .5;
+	const float ripple_r = 1.;
+	const float ripple_lifetime = .1;
 
 	float2 grid_uv = pos / gridsize;
 	int2 grid = grid_uv;
 	grid_uv -= grid;
 
+	float3 ripple_normal = float3(0, 0, 1);
 	float wetness = 0;
 
 	for (int i = -1; i <= 1; i++)
@@ -101,13 +113,35 @@ float GetRainDrops(float3 pos, float t)
 			float3 float_hash = float3(hash) / 4294967295.0;
 			if (float_hash.z < density) {
 				float2 to_centre = int2(i, j) + float_hash.xy - grid_uv;
+				float dist_sqr = dot(to_centre, to_centre);
+
+				// splotches
 				float drop_radius = lerp(radius_min, radius_max, saturate(float(iqint3(hash.yz)) / 4294967295.0));
-				if (dot(to_centre, to_centre) < drop_radius * drop_radius)
+				if (dist_sqr < drop_radius * drop_radius)
 					wetness = max(wetness, RainFade(residual));
+
+				// normal
+				float ripple_t = residual / ripple_lifetime;
+				if (ripple_t < 1.) {
+					float ripple_radius = lerp(0., ripple_r, ripple_t);
+					float ripple_inner_radius = ripple_radius - ripple_width;
+
+					float band_lerp = (sqrt(dist_sqr) - ripple_inner_radius) / ripple_width;
+					if (band_lerp > 0. && band_lerp < 1.) {
+						band_lerp = sqrt(band_lerp);
+
+						float deriv = (band_lerp < .5 ? SmoothstepDeriv(band_lerp * 2.) : -SmoothstepDeriv(2. - band_lerp * 2.)) * ripple_h;
+
+						float3 grad = float3(normalize(to_centre), -deriv);
+						float3 bitangent = float3(-grad.y, grad.x, 0);
+						float3 normal = normalize(cross(grad, bitangent));
+
+						ripple_normal = normalize(float3(ripple_normal.xy + normal.xy, ripple_normal.z));
+					}
+				}
 			}
 		}
-
-	return wetness;
+	return float4(ripple_normal, wetness);
 }
 
 // https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt
