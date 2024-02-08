@@ -41,7 +41,7 @@ public:
 		float RaindropChance = 0.3;
 		float SplashesMinRadius = 0.3;
 		float SplashesMaxRadius = 0.7;
-		float RippleStrength = 1.;
+		float RippleStrength = .5;
 		float RippleRadius = 1.;
 		float RippleBreadth = .5;
 		float RippleLifetime = .1;

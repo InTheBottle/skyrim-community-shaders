@@ -84,7 +84,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		if (ImGui::TreeNodeEx("Ripples")) {
-			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 4.f, "%.1f");
+			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("The biggest possible radius of ripples (at 1.0) is the grid size.");
@@ -285,9 +285,9 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			RE::NiTransform& dalcTransform = state.directionalAmbientTransform;
 			Util::StoreTransform3x4NoScale(data.DirectionalAmbientWS, dalcTransform);
 
-			static size_t rainTimer = 0;  // size_t for precision
-			rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);
-			rainTimer = rainTimer % 0xffffffffu;
+			static size_t rainTimer = 0;                                       // size_t for precision
+			if (!RE::UI::GetSingleton()->GameIsPaused())                       // from lightlimitfix
+				rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 			data.Time = rainTimer / 1000.f;
 
 			data.settings = settings;
