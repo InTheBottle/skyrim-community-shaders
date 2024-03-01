@@ -20,7 +20,7 @@ float PrepassScreenSpaceShadows(float3 positionWS, uint eyeIndex = 0)
 #else
 	if (EnableSSS && !FrameParams.z) {
 		float2 texCoord = ViewToUV(WorldToView(positionWS, true, eyeIndex), true, eyeIndex);
-		float2 coords = SSGetDynamicResolutionAdjustedScreenPosition(texCoord) / 2;
+		float2 coords = SSGetDynamicResolutionAdjustedScreenPosition(texCoord);
 		float shadow = TexOcclusionSampler.SampleLevel(LinearSampler, coords, 0);
 		return shadow;
 	}

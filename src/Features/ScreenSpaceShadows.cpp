@@ -3,6 +3,11 @@
 #include "State.h"
 #include "Util.h"
 
+#pragma warning(push)
+#pragma warning(disable: 4838 4244)
+#include "ScreenSpaceShadows/bend_sss_cpu.h"
+#pragma warning(pop)
+
 using RE::RENDER_TARGETS;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -153,14 +158,6 @@ void ScreenSpaceShadows::ClearShaderCache()
 		raymarchProgram->Release();
 		raymarchProgram = nullptr;
 	}
-	if (horizontalBlurProgram) {
-		horizontalBlurProgram->Release();
-		horizontalBlurProgram = nullptr;
-	}
-	if (verticalBlurProgram) {
-		verticalBlurProgram->Release();
-		verticalBlurProgram = nullptr;
-	}
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
@@ -170,24 +167,6 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
 		raymarchProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
 	}
 	return raymarchProgram;
-}
-
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderHorizontalBlur()
-{
-	if (!horizontalBlurProgram) {
-		logger::debug("Compiling horizontalBlurProgram");
-		horizontalBlurProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\FilterCS.hlsl", { { "HORIZONTAL", "" } }, "cs_5_0");
-	}
-	return horizontalBlurProgram;
-}
-
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderVerticalBlur()
-{
-	if (!verticalBlurProgram) {
-		verticalBlurProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\FilterCS.hlsl", { { "VERTICAL", "" } }, "cs_5_0");
-		logger::debug("Compiling verticalBlurProgram");
-	}
-	return verticalBlurProgram;
 }
 
 void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
@@ -206,51 +185,6 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 
 	if (dirLight && skyLight) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-		if (!screenSpaceShadowsTexture) {
-			{
-				logger::debug("Creating screenSpaceShadowsTexture");
-
-				auto device = renderer->GetRuntimeData().forwarder;
-
-				D3D11_SAMPLER_DESC samplerDesc = {};
-				samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-				samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.MaxAnisotropy = 1;
-				samplerDesc.MinLOD = 0;
-				samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-				DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &computeSampler));
-			}
-
-			{
-				auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
-
-				D3D11_TEXTURE2D_DESC texDesc{};
-				shadowMask.texture->GetDesc(&texDesc);
-				texDesc.Format = DXGI_FORMAT_R16_FLOAT;
-				texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
-				screenSpaceShadowsTexture = new Texture2D(texDesc);
-
-				texDesc.Width /= 2;
-				texDesc.Height /= 2;
-				screenSpaceShadowsTextureTemp = new Texture2D(texDesc);
-
-				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-				shadowMask.SRV->GetDesc(&srvDesc);
-				srvDesc.Format = texDesc.Format;
-				screenSpaceShadowsTexture->CreateSRV(srvDesc);
-				screenSpaceShadowsTextureTemp->CreateSRV(srvDesc);
-
-				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-				uavDesc.Format = texDesc.Format;
-				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-				uavDesc.Texture2D.MipSlice = 0;
-				screenSpaceShadowsTexture->CreateUAV(uavDesc);
-				screenSpaceShadowsTextureTemp->CreateUAV(uavDesc);
-			}
-		}
 
 		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
@@ -284,104 +218,63 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 			{
 				auto viewport = RE::BSGraphics::State::GetSingleton();
 
-				float resolutionX = screenSpaceShadowsTexture->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-				float resolutionY = screenSpaceShadowsTexture->desc.Height * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+				auto& directionNi = dirLight->GetWorldDirection();
+				float3 light = { directionNi.x, directionNi.y, directionNi.z };
+				light.Normalize();
+				float4 lightProjection = float4(light.x, light.y, light.z, 0.0f);
+				lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);	
+				float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w};
+				
+				int viewportSize[2] = { (int)screenSpaceShadowsTexture->desc.Width, (int)screenSpaceShadowsTexture->desc.Height };
+			
+				int minRenderBounds[2] = { 0, 0 };
+				int maxRenderBounds[2] = { 
+					(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale), 
+					(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
+				};
 
-				{
-					RaymarchCB data{};
-
-					data.BufferDim.x = (float)screenSpaceShadowsTexture->desc.Width;
-					data.BufferDim.y = (float)screenSpaceShadowsTexture->desc.Height;
-
-					data.RcpBufferDim.x = 1.0f / data.BufferDim.x;
-					data.RcpBufferDim.y = 1.0f / data.BufferDim.y;
-					if (REL::Module::IsVR())
-						data.ProjMatrix = shadowState->GetVRRuntimeData().cameraData.getEye().projMat;
-					else
-						data.ProjMatrix = shadowState->GetRuntimeData().cameraData.getEye().projMat;
-
-					data.InvProjMatrix = XMMatrixInverse(nullptr, data.ProjMatrix);
-
-					data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-					data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-					data.DynamicRes.z = 1.0f / data.DynamicRes.x;
-					data.DynamicRes.w = 1.0f / data.DynamicRes.y;
-
-					auto& direction = dirLight->GetWorldDirection();
-					DirectX::XMFLOAT3 position{};
-					position.x = -direction.x;
-					position.y = -direction.y;
-					position.z = -direction.z;
-					auto viewMatrix = shadowState->GetRuntimeData().cameraData.getEye().viewMat;
-					if (REL::Module::IsVR())
-						viewMatrix = shadowState->GetVRRuntimeData().cameraData.getEye().viewMat;
-
-					auto invDirLightDirectionWS = XMLoadFloat3(&position);
-					data.InvDirLightDirectionVS = XMVector3TransformCoord(invDirLightDirectionWS, viewMatrix);
-
-					data.ShadowDistance = 10000.0f;
-
-					data.Settings = settings;
-
-					raymarchCB->Update(data);
-				}
-
-				ID3D11Buffer* buffer[1] = { raymarchCB->CB() };
-				context->CSSetConstantBuffers(0, 1, buffer);
-
-				context->CSSetSamplers(0, 1, &computeSampler);
-
+				auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
+				
 				auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-				ID3D11ShaderResourceView* view = depth.depthSRV;
-				context->CSSetShaderResources(0, 1, &view);
+				context->CSSetShaderResources(0, 1, &depth.depthSRV);
 
 				ID3D11UnorderedAccessView* uav = screenSpaceShadowsTexture->uav.get();
 				context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
-				auto shader = GetComputeShader();
-				context->CSSetShader(shader, nullptr, 0);
+				context->CSSetSamplers(0, 1, &pointBorderSampler);
 
-				context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
+				context->CSSetShader(GetComputeShader(), nullptr, 0);
 
-				// Filter
+				for (int i = 0; i < dispatchList.DispatchCount; i++)
 				{
-					uav = nullptr;
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-					view = nullptr;
-					context->CSSetShaderResources(1, 1, &view);
 
-					view = screenSpaceShadowsTexture->srv.get();
+					auto dispatchData = dispatchList.Dispatch[i];
+					
+					RaymarchCB data{};
+					data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
+					data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
+					data.LightCoordinate[2] = dispatchList.LightCoordinate_Shader[2];
+					data.LightCoordinate[3] = dispatchList.LightCoordinate_Shader[3];
 
-					context->CSSetShaderResources(1, 1, &view);
+					data.WaveOffset[0] = dispatchData.WaveOffset_Shader[0];
+					data.WaveOffset[1] = dispatchData.WaveOffset_Shader[1];
 
-					uav = screenSpaceShadowsTextureTemp->uav.get();
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+					auto cameraData = Util::GetCameraData();
+					data.FarDepthValue = cameraData.x;
+					data.NearDepthValue = cameraData.y;
 
-					shader = GetComputeShaderHorizontalBlur();
-					context->CSSetShader(shader, nullptr, 0);
+					data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
+					data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
+			
+					ID3D11Buffer* buffer = nullptr;
+					context->CSSetConstantBuffers(0, 1, &buffer);
 
-					context->Dispatch((uint32_t)std::ceil(resolutionX / 64.0f), (uint32_t)std::ceil(resolutionY / 64.0f), 1);
-				}
+					raymarchCB->Update(data);
+					
+					buffer = raymarchCB->CB();
+					context->CSSetConstantBuffers(0, 1, &buffer);
 
-				{
-					uav = nullptr;
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-					view = nullptr;
-					context->CSSetShaderResources(1, 1, &view);
-
-					view = screenSpaceShadowsTextureTemp->srv.get();
-
-					context->CSSetShaderResources(1, 1, &view);
-
-					uav = screenSpaceShadowsTexture->uav.get();
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-					shader = GetComputeShaderVerticalBlur();
-					context->CSSetShader(shader, nullptr, 0);
-
-					context->Dispatch((uint32_t)std::ceil(resolutionX / 64.0f), (uint32_t)std::ceil(resolutionY / 64.0f), 1);
+					context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 				}
 			}
 
@@ -429,7 +322,7 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 	buffers[0] = perPass->CB();
 	context->PSSetConstantBuffers(5, ARRAYSIZE(buffers), buffers);
 
-	context->PSSetSamplers(14, 1, &computeSampler);
+	context->PSSetSamplers(14, 1, &pointBorderSampler);
 }
 
 void ScreenSpaceShadows::Draw(const RE::BSShader* shader, const uint32_t descriptor)
@@ -469,6 +362,49 @@ void ScreenSpaceShadows::SetupResources()
 {
 	perPass = new ConstantBuffer(ConstantBufferDesc<PerPass>());
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>());
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	{
+		logger::debug("Creating screenSpaceShadowsTexture");
+
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		samplerDesc.BorderColor[0] = 0.0f;
+		samplerDesc.BorderColor[1] = 0.0f;
+		samplerDesc.BorderColor[2] = 0.0f;
+		samplerDesc.BorderColor[3] = 0.0f;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
+	}
+
+	{
+		auto main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		main.texture->GetDesc(&texDesc);
+		texDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
+		screenSpaceShadowsTexture = new Texture2D(texDesc);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		main.SRV->GetDesc(&srvDesc);
+		srvDesc.Format = texDesc.Format;
+		screenSpaceShadowsTexture->CreateSRV(srvDesc);
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		uavDesc.Format = texDesc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		uavDesc.Texture2D.MipSlice = 0;
+		screenSpaceShadowsTexture->CreateUAV(uavDesc);
+	}
 }
 
 void ScreenSpaceShadows::Reset()
