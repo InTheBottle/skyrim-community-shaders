@@ -296,6 +296,7 @@ void State::Save(bool a_test)
 
 void State::PostPostLoad()
 {
+	Bindings::Hooks::Install();
 	upscalerLoaded = GetModuleHandle(L"Data\\SKSE\\Plugins\\SkyrimUpscaler.dll");
 	if (upscalerLoaded)
 		logger::info("Skyrim Upscaler detected");
