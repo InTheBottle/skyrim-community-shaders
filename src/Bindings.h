@@ -29,6 +29,7 @@ public:
 		{
 			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
 			{
+				// Here is where the first opaque objects start rendering
 				GetSingleton()->StartDeferred();
 				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 			}
@@ -39,6 +40,7 @@ public:
 		{
 			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
 			{
+				// Here is where the the game starts rendering geometry with alpha (sky, decals)
 				GetSingleton()->EndDeferred();
 				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderSky
 			}

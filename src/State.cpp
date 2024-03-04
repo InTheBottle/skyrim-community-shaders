@@ -176,7 +176,7 @@ void State::Setup()
 	for (auto* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			feature->SetupResources();
-	//Bindings::GetSingleton()->SetupResources();
+	Bindings::GetSingleton()->SetupResources();
 }
 
 void State::Load(bool a_test)
