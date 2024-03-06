@@ -20,11 +20,11 @@ public:
 	struct Settings
 	{
 		uint EnableCharacterLighting = false;
-		uint UseLinear = false;
-		float BlurRadius = 1.0f;
-		float DepthFalloff = 0.0f;
+		uint UseLinear = true;
+		float BlurRadius = 3.0f;
+		float DepthFalloff = 0.5f;
 		float BacklightingAmount = 0.0f;
-		float3 Strength = { 1.0f, 0.66f, 0.0f };
+		float3 Strength = { 0.48f, 0.41f, 0.28f };
 		float3 Falloff = { 1.0f, 0.37f, 0.3f };
 	};
 
@@ -63,7 +63,6 @@ public:
 	ID3D11SamplerState* linearSampler = nullptr;
 	ID3D11SamplerState* pointSampler = nullptr;
 
-	uint skinMode = false;
 	uint normalsMode = 0;
 
 	float4 kernel[33];
@@ -103,12 +102,13 @@ public:
 
 	struct Hooks
 	{
-		struct BSShaderAccumulator_FinishAccumulating_Standard_PreResolveDepth_QPassesWithinRange_WaterStencil
+		struct Main_RenderWorld_Start
 		{
-			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges)
+			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
 			{
+				// Here is where the first opaque objects start rendering
+				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 				GetSingleton()->DrawSSSWrapper();
-				func(This, StartRange, EndRanges);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -135,7 +135,7 @@ public:
 
 		static void Install()
 		{
-			stl::write_thunk_call<BSShaderAccumulator_FinishAccumulating_Standard_PreResolveDepth_QPassesWithinRange_WaterStencil>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x3C5, 0x3B4));
+			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderFirstPersonView_Start>(REL::RelocationID(99943, 106588).address() + REL::Relocate(0x70, 0x66));
 			stl::write_thunk_call<Main_RenderFirstPersonView_End>(REL::RelocationID(99943, 106588).address() + REL::Relocate(0x49C, 0x47E));
 			logger::info("[SSS] Installed hooks");
