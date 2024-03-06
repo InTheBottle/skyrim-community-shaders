@@ -158,6 +158,12 @@ public:
 	static inline bool IsValidLight(RE::BSLight* a_light);
 	static inline bool IsGlobalLight(RE::BSLight* a_light);
 
+	std::string GetStrippedTexture(std::string a_textureName);
+
+	bool ScanNewProperty(RE::BSEffectShaderProperty* a_shaderProperty, RE::BSEffectShaderMaterial* a_material, ParticleLights::Config*& o_config, ParticleLights::GradientConfig*& o_gradientConfig);
+
+	bool GetParticleLightConfig(RE::BSEffectShaderProperty* a_shaderProperty, RE::BSEffectShaderMaterial* a_material, ParticleLights::Config*& o_config, ParticleLights::GradientConfig*& o_gradientConfig);
+
 	struct Settings
 	{
 		bool EnableContactShadows = false;

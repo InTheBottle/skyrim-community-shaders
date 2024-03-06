@@ -452,6 +452,108 @@ struct VertexPosition
 	std::uint8_t data[3];
 };
 
+std::string LightLimitFix::GetStrippedTexture(std::string a_textureName)
+{
+	if (a_textureName.size() < 1)
+		return "";
+
+	auto lastSeparatorPos = a_textureName.find_last_of("\\/");
+	if (lastSeparatorPos == std::string::npos)
+		return "";
+
+	a_textureName = a_textureName.substr(lastSeparatorPos + 1);
+
+	if (a_textureName.size() < 4)
+		return "";
+
+	a_textureName.erase(a_textureName.length() - 4);  // Remove ".dds"
+
+#pragma warning(push)
+#pragma warning(disable: 4244)
+	std::transform(a_textureName.begin(), a_textureName.end(), a_textureName.begin(), ::tolower);
+#pragma warning(pop)
+
+	return a_textureName;
+}
+
+bool LightLimitFix::ScanNewProperty(RE::BSEffectShaderProperty* a_shaderProperty, RE::BSEffectShaderMaterial* a_material, ParticleLights::Config*& o_config, ParticleLights::GradientConfig*& o_gradientConfig)
+{
+	std::string textureName = GetStrippedTexture(a_material->sourceTexturePath.c_str());
+	std::string gradientTextureName = "";
+
+	if (textureName.empty())
+		return false;
+
+	auto& configs = ParticleLights::GetSingleton()->particleLightConfigs;
+	auto it = configs.find(textureName);
+
+	if (it == configs.end())
+		return false;
+
+	o_config = &it->second;
+
+	if (!a_material->greyscaleTexturePath.empty()) {
+		gradientTextureName = GetStrippedTexture(a_material->greyscaleTexturePath.c_str());
+
+		if (gradientTextureName.empty())
+			return false;
+
+		auto& gradientConfigs = ParticleLights::GetSingleton()->particleLightGradientConfigs;
+		auto itGradient = gradientConfigs.find(gradientTextureName);
+		if (itGradient == gradientConfigs.end())
+			return false;
+
+		o_gradientConfig = &itGradient->second;
+
+		if (auto configExtraData = RE::NiStringsExtraData::Create("LLF_CONFIGS", { textureName, gradientTextureName }))
+			a_shaderProperty->InsertExtraData(configExtraData);
+
+		return true;
+	}
+
+	if (auto configExtraData = RE::NiStringsExtraData::Create("LLF_CONFIGS", { textureName }))
+		a_shaderProperty->InsertExtraData(configExtraData);
+	
+	return true;
+}
+
+bool LightLimitFix::GetParticleLightConfig(RE::BSEffectShaderProperty* a_shaderProperty, RE::BSEffectShaderMaterial* a_material, ParticleLights::Config*& o_config, ParticleLights::GradientConfig*& o_gradientConfig)
+{
+	// Existing scanned property
+	if (RE::NiStringsExtraData* extraData = (RE::NiStringsExtraData*)a_shaderProperty->GetExtraData("LLF_CONFIGS"))
+	{
+		if (extraData->size == 0)
+			return false; // Not a particle light but previously scanned
+		
+		std::string textureName = extraData->value[0];
+		
+		auto& configs = ParticleLights::GetSingleton()->particleLightConfigs;
+		auto it = configs.find(textureName);
+
+		o_config = &it->second;
+		o_gradientConfig = nullptr;
+
+		if (extraData->size > 1) {
+			std::string gradientTextureName = extraData->value[1];
+			auto& gradientConfigs = ParticleLights::GetSingleton()->particleLightGradientConfigs;
+			auto itGradient = gradientConfigs.find(gradientTextureName);
+			o_gradientConfig = &itGradient->second;
+		}
+
+		return true;
+	}
+
+	// Scan new particle
+	if (ScanNewProperty(a_shaderProperty, a_material, o_config, o_gradientConfig))
+		return true; // Valid particle light
+
+	// Not a particle light, make config with nullptr
+	if (auto configExtraData = RE::NiStringsExtraData::Create("LLF_CONFIGS", {}))
+		a_shaderProperty->InsertExtraData(configExtraData);
+
+	return false;
+}
+
 bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 {
 	// see https://www.nexusmods.com/skyrimspecialedition/articles/1391
@@ -459,63 +561,12 @@ bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 		if (auto shaderProperty = netimmerse_cast<RE::BSEffectShaderProperty*>(a_pass->shaderProperty)) {
 			if (!shaderProperty->lightData) {
 				if (auto material = shaderProperty->GetMaterial()) {
-					if (!material->sourceTexturePath.empty()) {
-						std::string textureName = material->sourceTexturePath.c_str();
+					ParticleLights::Config* config = nullptr;
+					ParticleLights::GradientConfig* gradientConfig = nullptr;
 
-						{
-							if (textureName.size() < 1)
-								return false;
+					if (GetParticleLightConfig(shaderProperty, material, config, gradientConfig)) {
 
-							auto lastSeparatorPos = textureName.find_last_of("\\/");
-							if (lastSeparatorPos == std::string::npos)
-								return false;
-
-							textureName = textureName.substr(lastSeparatorPos + 1);
-							if (textureName.size() < 4)
-								return false;
-
-							textureName.erase(textureName.length() - 4);  // Remove ".dds"
-#pragma warning(push)
-#pragma warning(disable: 4244)
-							std::transform(textureName.begin(), textureName.end(), textureName.begin(), ::tolower);
-#pragma warning(pop)
-						}
-
-						auto& configs = ParticleLights::GetSingleton()->particleLightConfigs;
-						auto it = configs.find(textureName);
-						if (it == configs.end())
-							return false;
-
-						ParticleLights::Config* config = &it->second;
-						ParticleLights::GradientConfig* gradientConfig = nullptr;
-						if (!material->greyscaleTexturePath.empty()) {
-							textureName = material->greyscaleTexturePath.c_str();
-							{
-								if (textureName.size() < 1)
-									return false;
-
-								auto lastSeparatorPos = textureName.find_last_of("\\/");
-								if (lastSeparatorPos == std::string::npos)
-									return false;
-
-								textureName = textureName.substr(lastSeparatorPos + 1);
-								if (textureName.size() < 4)
-									return false;
-
-								textureName.erase(textureName.length() - 4);  // Remove ".dds"
-#pragma warning(push)
-#pragma warning(disable: 4244)
-								std::transform(textureName.begin(), textureName.end(), textureName.begin(), ::tolower);
-#pragma warning(pop)
-							}
-
-							auto& gradientConfigs = ParticleLights::GetSingleton()->particleLightGradientConfigs;
-							auto itGradient = gradientConfigs.find(textureName);
-							if (itGradient == gradientConfigs.end())
-								return false;
-							gradientConfig = &itGradient->second;
-						}
-
+						// Valid particle light, protect geometry from being destroyed
 						a_pass->geometry->IncRefCount();
 						if (const auto particleSystem = netimmerse_cast<RE::NiParticleSystem*>(a_pass->geometry)) {
 							if (auto particleData = particleSystem->GetParticleRuntimeData().particleData.get()) {
@@ -537,33 +588,63 @@ bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 
 						float radius = 0;
 
+						// Bilboard lights
 						if (auto rendererData = a_pass->geometry->GetGeometryRuntimeData().rendererData) {
 							if (auto triShape = a_pass->geometry->AsTriShape()) {
-								uint32_t vertexSize = rendererData->vertexDesc.GetSize();
-								if (rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_COLORS)) {
-									uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_COLOR);
-									RE::NiColorA vertexColor{};
-									for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
-										if (VertexColor* vertex = reinterpret_cast<VertexColor*>(&rendererData->rawVertexData[vertexSize * v + offset])) {
-											RE::NiColorA niColor{ (float)vertex->data[0] / 255.0f, (float)vertex->data[1] / 255.0f, (float)vertex->data[2] / 255.0f, (float)vertex->data[3] / 255.0f };
-											if (niColor.alpha > vertexColor.alpha)
-												vertexColor = niColor;
+								// Existing scanned billboard
+								if (RE::NiFloatsExtraData* extraData = (RE::NiFloatsExtraData*)shaderProperty->GetExtraData("LLF_BILLBOARD")) {
+									radius = extraData->value[0];
+									if (extraData->size > 1) {
+										color.red *= extraData->value[1];
+										color.green *= extraData->value[2];
+										color.blue *= extraData->value[3];
+										if (extraData->size > 4) {
+											color.alpha *= extraData->value[4];
 										}
 									}
-									color.red *= vertexColor.red;
-									color.green *= vertexColor.green;
-									color.blue *= vertexColor.blue;
-									if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kVertexAlpha)) {
-										color.alpha *= vertexColor.alpha;
-									}
-								}
+								} else {
+									uint32_t vertexSize = rendererData->vertexDesc.GetSize();
 
-								uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_POSITION);
-								for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
-									if (VertexPosition* vertex = reinterpret_cast<VertexPosition*>(&rendererData->rawVertexData[vertexSize * v + offset])) {
-										RE::NiPoint3 position{ (float)vertex->data[0] / 255.0f, (float)vertex->data[1] / 255.0f, (float)vertex->data[2] / 255.0f };
-										radius = std::max(radius, position.Length());
+									// Scan positions to get the radius
+									uint32_t positionOffset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_POSITION);
+									for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
+										if (VertexPosition* vertex = reinterpret_cast<VertexPosition*>(&rendererData->rawVertexData[vertexSize * v + positionOffset])) {
+											RE::NiPoint3 position{ (float)vertex->data[0] / 255.0f, (float)vertex->data[1] / 255.0f, (float)vertex->data[2] / 255.0f };
+											radius = std::max(radius, position.Length() * 0.5f);
+										}
 									}
+
+									std::vector<float> packedData = { radius };
+
+									// Vertex colours are optional
+									if (rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_COLORS)) {
+										uint32_t colorOffset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_COLOR);
+										RE::NiColorA vertexColor{};
+										for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
+											if (VertexColor* vertex = reinterpret_cast<VertexColor*>(&rendererData->rawVertexData[vertexSize * v + colorOffset])) {
+												RE::NiColorA niColor{ (float)vertex->data[0] / 255.0f, (float)vertex->data[1] / 255.0f, (float)vertex->data[2] / 255.0f, (float)vertex->data[3] / 255.0f };
+												if (niColor.alpha > vertexColor.alpha)
+													vertexColor = niColor;
+											}
+										}
+
+										color.red *= vertexColor.red;
+										color.green *= vertexColor.green;
+										color.blue *= vertexColor.blue;
+	
+										packedData.push_back(vertexColor.red);
+										packedData.push_back(vertexColor.green);
+										packedData.push_back(vertexColor.blue);
+
+										// Vertex alpha is optional
+										if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kVertexAlpha)) {
+											color.alpha *= vertexColor.alpha;
+											packedData.push_back(vertexColor.alpha);
+										}
+									}
+
+									if (auto newExtraData = RE::NiFloatsExtraData::Create("LLF_BILLBOARD", packedData))
+										shaderProperty->InsertExtraData(newExtraData);
 								}
 							}
 						}
@@ -888,7 +969,7 @@ void LightLimitFix::UpdateLights()
 
 				light.color *= particleLight.second.color.alpha;
 
-				light.radius = particleLight.second.radius * 70.0f * 0.5f;
+				light.radius = particleLight.second.radius * 70.0f;
 
 				auto position = particleLight.first->world.translate;
 
