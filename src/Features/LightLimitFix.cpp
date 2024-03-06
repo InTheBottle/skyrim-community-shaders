@@ -543,7 +543,7 @@ bool LightLimitFix::GetParticleLightConfig(RE::BSEffectShaderProperty* a_shaderP
 		return true;
 	}
 
-	// Scan new particle
+	// Scan new property
 	if (ScanNewProperty(a_shaderProperty, a_material, o_config, o_gradientConfig))
 		return true; // Valid particle light
 
