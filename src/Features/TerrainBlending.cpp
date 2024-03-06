@@ -165,7 +165,7 @@ void TerrainBlending::TerrainShaderHacks()
 		GET_INSTANCE_MEMBER(alphaBlendModeExtra, state)
 		GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
 
-		// Enable alpha testing
+		// Enable alpha blending
 		context->OMSetBlendState(blendStates->a[1][alphaBlendAlphaToCoverage][alphaBlendWriteMode][alphaBlendModeExtra], nullptr, 0xFFFFFFFF);
 		
 		// Enable rendering for depth below the surface
@@ -197,7 +197,7 @@ void TerrainBlending::ResetTerrainDepth()
 
 	auto dsv = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].views[0];
 	context->OMSetRenderTargets(0, NULL, dsv);
-	context->PSSetShader(NULL, NULL, NULL);;
+	context->VSSetShader(GetTerrainVertexShader(), NULL, NULL);
 }
 
 void TerrainBlending::BlendPrepassDepths()
