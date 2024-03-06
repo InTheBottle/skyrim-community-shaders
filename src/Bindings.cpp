@@ -90,6 +90,27 @@ void Bindings::SetupResources()
 		main.UAV->GetDesc(&uavDesc);
 		DX::ThrowIfFailed(device->CreateUnorderedAccessView(indirect.texture, &uavDesc, &indirect.UAV));
 	}
+
+
+	//{
+	//	static DepthStates* depthStates = (DepthStates*)REL::RelocationID(524747, 411362).address();
+	//	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
+
+	//	auto mainBlendState = blendStates->a[0][0][0][1]; // alphaBlendMode, alphaToCoverage, alphaBlendWriteMode, alphaBlendModeExtra
+	//	D3D11_BLEND_DESC blendDesc;
+	//	mainBlendState->GetDesc(&blendDesc);
+
+	//	for (int i = 3; i < 8; i++)
+	//	{
+	//		blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
+	//	}
+
+	//	ID3D11BlendState* newBlendState;
+	//	DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &newBlendState));
+
+	//	mainBlendState->Release();
+	//	blendStates->a[0][0][0][1] = newBlendState;
+	//}
 }
 
 void Bindings::Reset()

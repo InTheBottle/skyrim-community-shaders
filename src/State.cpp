@@ -13,6 +13,8 @@
 
 void State::Draw()
 {
+	TerrainBlending::GetSingleton()->TerrainShaderHacks();
+
 	auto& shaderCache = SIE::ShaderCache::Instance();
 	if (shaderCache.IsEnabled() && currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
@@ -385,7 +387,7 @@ bool State::IsDeveloperMode()
 void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 {
 	a_properties->supportUnorderedAccess = true;
-	logger::error("Adding UAV access to {}", magic_enum::enum_name(a_target));
+	logger::info("Adding UAV access to {}", magic_enum::enum_name(a_target));
 }
 
 void State::SetupResources()
