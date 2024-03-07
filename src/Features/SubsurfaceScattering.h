@@ -21,8 +21,8 @@ public:
 	{
 		uint EnableCharacterLighting = false;
 		uint UseLinear = true;
-		float BlurRadius = 3.0f;
-		float DepthFalloff = 0.5f;
+		float BlurRadius = 1.0f;
+		float DepthFalloff = 0.0f;
 		float BacklightingAmount = 0.0f;
 		float3 Strength = { 0.48f, 0.41f, 0.28f };
 		float3 Falloff = { 1.0f, 0.37f, 0.3f };

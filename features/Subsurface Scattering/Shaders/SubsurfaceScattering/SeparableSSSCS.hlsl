@@ -36,7 +36,7 @@ float GetScreenDepth(float depth)
 	float2 texCoord = (DTid.xy + 0.5) * RcpBufferDim;
 #if defined(HORIZONTAL)
 	float4 normals = NormalTexture[DTid.xy];
-	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(0.0, 1.0), normals);
+	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(1.0, 0.0), normals);
 	SSSRW[DTid.xy] = color;
 #else
 	float4 normals = NormalTexture[DTid.xy];

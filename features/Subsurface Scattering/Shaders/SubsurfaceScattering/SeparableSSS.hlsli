@@ -149,9 +149,7 @@ float4 SSSSBlurCS(
 	float scale = distanceToProjectionWindow / depthM;
 
 	// Calculate the final step to fetch the surrounding pixels:
-	float2 finalStep = scale * BufferDim;
-	finalStep *= sssAmount;
-	finalStep *= (1.0 / 3.0);
+	float2 finalStep = scale * BufferDim * dir;
 	finalStep *= BlurRadius;
 
 	[flatten] if (firstPerson)
@@ -184,7 +182,7 @@ float4 SSSSBlurCS(
 		depth = GetScreenDepth(depth);
 
 		// If the difference in depth is huge, we lerp color back to "colorM":
-		float s = min(saturate((1.0 - DepthFalloff) * distanceToProjectionWindow * abs(depthM - depth)), 1.0 - Backlighting);  // Backlighting;
+		float s = min(saturate((1.0 - DepthFalloff) * (1.0 / 3.0) * distanceToProjectionWindow * abs(depthM - depth)), 1.0 - Backlighting);  // Backlighting;
 		color = lerp(color, colorM.rgb, s);
 
 		// Accumulate:

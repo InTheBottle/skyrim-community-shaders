@@ -10,9 +10,11 @@
 #	define SKIN
 #endif
 
-#if defined(SKIN) && defined(SSS)
+#if defined(SKIN) && defined(SSS) && defined(SOFT_LIGHTING)
 #	undef SOFT_LIGHTING
+#	define LOAD_SOFT_LIGHTING
 #endif
+
 
 #if defined(SKINNED) || defined(ENVMAP) || defined(EYE) || defined(MULTI_LAYER_PARALLAX)
 #	define DRAW_IN_WORLDSPACE
@@ -485,6 +487,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ClipDistance.x = r0.z;
 	vsout.CullDistance.x = r0.y;
 #	endif  // VR
+
 	return vsout;
 }
 #endif  // VSHADER
@@ -1051,25 +1054,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
 
 #	if defined(TERRAIN_BLENDING)
-	float depthSampled = GetDepth(screenUV, eyeIndex);
+	float depthSampled = GetTerrainOffsetDepth(screenUV, eyeIndex);
 	float depthComp = input.Position.z - depthSampled;
 
 	float depthSampledLinear = GetScreenDepth(depthSampled);
 	float depthPixelLinear = GetScreenDepth(input.Position.z);
 
-	float2 screenUVmod = GetDynamicResolutionAdjustedScreenPosition(screenUV);
+	//float2 screenUVmod = GetDynamicResolutionAdjustedScreenPosition(screenUV);
 
-	float blendingMask = 0;
+	float blendFactorTerrain = (depthSampledLinear - depthPixelLinear) / 10.0;
+	
+// #		if defined(COMPLEX_PARALLAX_MATERIALS)
+// 	if (perPassParallax[0].EnableTerrainParallax)
+// 		blendFactorTerrain = depthComp <= 0.0 ? 1.0 : 1.0 - ((depthSampledLinear - depthPixelLinear) / lerp(10.0, 2.0, blendingMask));
+// #		endif
 
-	float blendFactorTerrain = depthComp <= 0.0 ? 1.0 : 1.0 - ((depthPixelLinear - depthSampledLinear) / lerp(5.0, 1.0, blendingMask));
-
-#		if defined(COMPLEX_PARALLAX_MATERIALS)
-	if (perPassParallax[0].EnableTerrainParallax)
-		blendFactorTerrain = depthComp <= 0.0 ? 1.0 : 1.0 - ((depthPixelLinear - depthSampledLinear) / lerp(10.0, 2.0, blendingMask));
-#		endif
-
-	clip(blendFactorTerrain);
-	blendFactorTerrain = saturate(blendFactorTerrain);
+ 	clip(blendFactorTerrain);
 #	endif
 
 #	if defined(CPM_AVAILABLE)
@@ -1082,7 +1082,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float2 uv = input.TexCoord0.xy;
 
 #	if defined(TERRAIN_BLENDING)
-	uv = ShiftTerrain(blendFactorTerrain, uv, worldSpaceViewDirection, tbn);
+	//uv = ShiftTerrain(blendFactorTerrain, uv, worldSpaceViewDirection, tbn);
 #	endif
 
 	float2 uvOriginal = uv;
@@ -1377,7 +1377,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float4 backLightColor = TexBackLightSampler.Sample(SampBackLightSampler, uv);
 #	endif  // BACK_LIGHTING
 
-#	if defined(RIM_LIGHTING) || defined(SOFT_LIGHTING)
+#	if defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING)
 	float4 rimSoftLightColor = TexRimSoftLightWorldMapOverlaySampler.Sample(SampRimSoftLightWorldMapOverlaySampler, uv);
 #	endif  // RIM_LIGHTING || SOFT_LIGHTING
 
@@ -2111,37 +2111,37 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	if defined(TERRAIN_BLENDING)
 // Pixel Depth Offset
-#		if defined(COMPLEX_PARALLAX_MATERIALS)
-	if (perPassParallax[0].EnableTerrainParallax) {
-		float height = 0;
-		if (input.LandBlendWeights1.x > 0)
-			height += pixelOffset[0] * input.LandBlendWeights1.x;
-		if (input.LandBlendWeights1.y > 0)
-			height += pixelOffset[1] * input.LandBlendWeights1.y;
-		if (input.LandBlendWeights1.z > 0)
-			height += pixelOffset[2] * input.LandBlendWeights1.z;
-		if (input.LandBlendWeights1.w > 0)
-			height += pixelOffset[3] * input.LandBlendWeights1.w;
-		if (input.LandBlendWeights2.x > 0)
-			height += pixelOffset[4] * input.LandBlendWeights2.x;
-		if (input.LandBlendWeights2.y > 0)
-			height += pixelOffset[5] * input.LandBlendWeights2.y;
+// #		if defined(COMPLEX_PARALLAX_MATERIALS)
+// 	if (perPassParallax[0].EnableTerrainParallax) {
+// 		float height = 0;
+// 		if (input.LandBlendWeights1.x > 0)
+// 			height += pixelOffset[0] * input.LandBlendWeights1.x;
+// 		if (input.LandBlendWeights1.y > 0)
+// 			height += pixelOffset[1] * input.LandBlendWeights1.y;
+// 		if (input.LandBlendWeights1.z > 0)
+// 			height += pixelOffset[2] * input.LandBlendWeights1.z;
+// 		if (input.LandBlendWeights1.w > 0)
+// 			height += pixelOffset[3] * input.LandBlendWeights1.w;
+// 		if (input.LandBlendWeights2.x > 0)
+// 			height += pixelOffset[4] * input.LandBlendWeights2.x;
+// 		if (input.LandBlendWeights2.y > 0)
+// 			height += pixelOffset[5] * input.LandBlendWeights2.y;
 
-		float pixelDepthOffset = depthPixelLinear;
+// 		float pixelDepthOffset = depthPixelLinear;
 
-		if (depthComp > 0) {
-			pixelDepthOffset -= (height * 2 - 1) * lerp(5.0, 1.0, blendingMask);
-			pixelDepthOffset -= 1;
-		}
+// 		if (depthComp > 0) {
+// 			pixelDepthOffset -= (height * 2 - 1) * lerp(5.0, 1.0, blendingMask);
+// 			pixelDepthOffset -= 1;
+// 		}
 
-		blendFactorTerrain = 1.0 - (pixelDepthOffset - depthSampledLinear) / lerp(5.0, 1.0, blendingMask);
+// 		blendFactorTerrain = 1.0 - (pixelDepthOffset - depthSampledLinear) / lerp(5.0, 1.0, blendingMask);
 
-		clip(blendFactorTerrain);
-		blendFactorTerrain = saturate(blendFactorTerrain);
-	}
-#		endif
+// 		clip(blendFactorTerrain);
+// 		blendFactorTerrain = saturate(blendFactorTerrain);
+// 	}
+// #		endif
 
-	psout.Albedo.w = blendFactorTerrain;
+	psout.Albedo.w = saturate(blendFactorTerrain);
 
 #		if defined(SNOW)
 	psout.SnowParameters.w = blendFactorTerrain;
@@ -2159,10 +2159,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif  // OUTLINE
 
 #	if defined(SSS)
-#		if defined(SKIN)
+#		if defined(SKIN) && defined(LOAD_SOFT_LIGHTING)
 	psout.ScreenSpaceNormals.z = 1;
-#		elif defined(HAIR)
-	psout.ScreenSpaceNormals.z = 1 - psout.Albedo.w;  // Exclude hair where possible
 #		endif
 #	endif
 
