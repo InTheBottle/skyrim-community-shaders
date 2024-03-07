@@ -59,7 +59,6 @@ void TerrainBlending::PostPostLoad()
 
 void TerrainBlending::SetupGeometry(RE::BSRenderPass*)
 {
-=======
 	//if (!enableBlending) {
 	//	Bindings::GetSingleton()->SetOverwriteTerrainMode(false);
 	//	Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(Bindings::TerrainMaskMode::kNone);
