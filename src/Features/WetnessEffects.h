@@ -39,17 +39,18 @@ public:
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
 		uint EnableChaoticRipples = true;
-		float RaindropGridSize = 3;
-		float RaindropInterval = 1.0;
-		float RaindropChance = 0.3;
-		float SplashesMinRadius = 0.3;
-		float SplashesMaxRadius = 0.7;
-		float RippleStrength = .5;
-		float RippleRadius = 1.;
-		float RippleBreadth = .5;
-		float RippleLifetime = .1;
-		float ChaoticRippleScale = 1.;
-		float ChaoticRippleSpeed = 20.;
+		float RaindropGridSize = 3.f;
+		float RaindropInterval = 1.f;
+		float RaindropChance = .3f;
+		float SplashesMinRadius = .3f;
+		float SplashesMaxRadius = .7f;
+		float RippleStrength = .5f;
+		float RippleRadius = 1.f;
+		float RippleBreadth = .5f;
+		float RippleLifetime = .1f;
+		float ChaoticRippleStrength = .1f;
+		float ChaoticRippleScale = 1.f;
+		float ChaoticRippleSpeed = 20.f;
 	};
 
 	struct alignas(16) PerPass

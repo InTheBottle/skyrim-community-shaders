@@ -34,6 +34,7 @@ struct PerPassWetnessEffects
 	float RippleRadius;
 	float RippleBreadth;
 	float RippleLifetimeRcp;
+	float ChaoticRippleStrength;
 	float ChaoticRippleScaleRcp;
 	float ChaoticRippleSpeed;
 };
@@ -51,6 +52,28 @@ float2 EnvBRDFApprox(float3 F0, float Roughness, float NoV)
 	float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
 	float2 AB = float2(-1.04, 1.04) * a004 + r.zw;
 	return AB;
+}
+
+// https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt
+
+float hash11(float p)
+{
+	return frac(sin(p) * 1e4);
+}
+
+float noise(float3 pos)
+{
+	const float3 step = float3(110.0, 241.0, 171.0);
+	float3 i = floor(pos);
+	float3 f = frac(pos);
+	float n = dot(i, step);
+
+	float3 u = f * f * (3.0 - 2.0 * f);
+	return lerp(lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 0.0))), hash11(n + dot(step, float3(1.0, 0.0, 0.0))), u.x),
+					lerp(hash11(n + dot(step, float3(0.0, 1.0, 0.0))), hash11(n + dot(step, float3(1.0, 1.0, 0.0))), u.x), u.y),
+		lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 1.0))), hash11(n + dot(step, float3(1.0, 0.0, 1.0))), u.x),
+			lerp(hash11(n + dot(step, float3(0.0, 1.0, 1.0))), hash11(n + dot(step, float3(1.0, 1.0, 1.0))), u.x), u.y),
+		u.z);
 }
 
 // https://www.pcg-random.org/
@@ -91,28 +114,6 @@ float SmoothstepDeriv(float x)
 	return 6.0 * x * (1. - x);
 }
 
-// https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt
-
-float hash11(float p)
-{
-	return frac(sin(p) * 1e4);
-}
-
-float noise(float3 pos)
-{
-	const float3 step = float3(110.0, 241.0, 171.0);
-	float3 i = floor(pos);
-	float3 f = frac(pos);
-	float n = dot(i, step);
-
-	float3 u = f * f * (3.0 - 2.0 * f);
-	return lerp(lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 0.0))), hash11(n + dot(step, float3(1.0, 0.0, 0.0))), u.x),
-					lerp(hash11(n + dot(step, float3(0.0, 1.0, 0.0))), hash11(n + dot(step, float3(1.0, 1.0, 0.0))), u.x), u.y),
-		lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 1.0))), hash11(n + dot(step, float3(1.0, 0.0, 1.0))), u.x),
-			lerp(hash11(n + dot(step, float3(0.0, 1.0, 1.0))), hash11(n + dot(step, float3(1.0, 1.0, 1.0))), u.x), u.y),
-		u.z);
-}
-
 float RainFade(float normalised_t)
 {
 	const float rain_stay = .5;
@@ -122,6 +123,26 @@ float RainFade(float normalised_t)
 
 	float val = lerp(1.0, 0.0, (normalised_t - rain_stay) / (1.0 - rain_stay));
 	return val * val;
+}
+
+// https://blog.selfshadow.com/publications/blending-in-detail/
+// geometric normal s, a base normal t and a secondary (or detail) normal u
+float3 ReorientNormal(float3 u, float3 t, float3 s)
+{
+	// Build the shortest-arc quaternion
+	float4 q = float4(cross(s, t), dot(s, t) + 1) / sqrt(2 * (dot(s, t) + 1));
+
+	// Rotate the normal
+	return u * (q.w * q.w - dot(q.xyz, q.xyz)) + 2 * q.xyz * dot(q.xyz, u) + 2 * q.w * cross(q.xyz, u);
+}
+
+// for when s = (0,0,1)
+float3 ReorientNormal(float3 n1, float3 n2)
+{
+	n1 += float3(0, 0, 1);
+	n2 *= float3(-1, -1, 1);
+
+	return n1 * dot(n1, n2) / n1.z - n2;
 }
 
 // xyz - ripple normal, w - splotches
@@ -177,7 +198,7 @@ float4 GetRainDrops(float3 pos, float t)
 								float3 bitangent = float3(-grad.y, grad.x, 0);
 								float3 normal = normalize(cross(grad, bitangent));
 
-								ripple_normal = normalize(ripple_normal + float3(normal.xy, 0));
+								ripple_normal = ReorientNormal(normal, ripple_normal);
 							}
 						}
 					}
@@ -188,32 +209,10 @@ float4 GetRainDrops(float3 pos, float t)
 		float3 turbulenceNormal = noise(float3(pos.xy * perPassWetnessEffects[0].ChaoticRippleScaleRcp, t * perPassWetnessEffects[0].ChaoticRippleSpeed));
 		turbulenceNormal.z = turbulenceNormal.z * .5 + 5;
 		turbulenceNormal = normalize(turbulenceNormal);
-		ripple_normal = normalize(ripple_normal + float3(turbulenceNormal.xy * 0.2, 0));
+		ripple_normal = normalize(ripple_normal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength, 0));
 	}
 
 	return float4(ripple_normal, wetness);
-}
-
-// https://github.com/BelmuTM/Noble/blob/master/LICENSE.txt
-
-float hash11(float p)
-{
-	return frac(sin(p) * 1e4);
-}
-
-float noise(float3 pos)
-{
-	const float3 step = float3(110.0, 241.0, 171.0);
-	float3 i = floor(pos);
-	float3 f = frac(pos);
-	float n = dot(i, step);
-
-	float3 u = f * f * (3.0 - 2.0 * f);
-	return lerp(lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 0.0))), hash11(n + dot(step, float3(1.0, 0.0, 0.0))), u.x),
-					lerp(hash11(n + dot(step, float3(0.0, 1.0, 0.0))), hash11(n + dot(step, float3(1.0, 1.0, 0.0))), u.x), u.y),
-		lerp(lerp(hash11(n + dot(step, float3(0.0, 0.0, 1.0))), hash11(n + dot(step, float3(1.0, 0.0, 1.0))), u.x),
-			lerp(hash11(n + dot(step, float3(0.0, 1.0, 1.0))), hash11(n + dot(step, float3(1.0, 1.0, 1.0))), u.x), u.y),
-		u.z);
 }
 
 float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 V, float roughness)

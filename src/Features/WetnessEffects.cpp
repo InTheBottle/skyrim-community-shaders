@@ -67,7 +67,7 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Enables an additional layer of disturbance to wet surfaces.");
 
-		if (ImGui::TreeNodeEx("Raindrops", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::TreeNodeEx("Raindrops")) {
 			ImGui::BulletText(
 				"At every interval, a raindrop is placed within each grid cell.\n"
 				"Only a set portion of raindrops will actually trigger splashes and ripples.\n"
@@ -99,6 +99,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		if (ImGui::TreeNodeEx("Chaotic Ripples")) {
+			ImGui::SliderFloat("Strength", &settings.ChaoticRippleStrength, 0.f, .5f, "%.2f");
 			ImGui::SliderFloat("Scale", &settings.ChaoticRippleScale, 0.1f, 5.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat("Speed", &settings.ChaoticRippleSpeed, 0.f, 50.f, "%.1f");
 			ImGui::TreePop();
