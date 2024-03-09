@@ -38,6 +38,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MinRainWetness,
 	SkinWetness,
 	WeatherTransitionSpeed,
+	EnableRaindropFx,
 	EnableSplashes,
 	EnableRipples,
 	EnableChaoticRipples,
