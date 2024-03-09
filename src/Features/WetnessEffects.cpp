@@ -46,6 +46,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RaindropGridSize,
 	RaindropInterval,
 	RaindropChance,
+	SplashesStrength,
 	SplashesMinRadius,
 	SplashesMaxRadius,
 	RippleStrength,
@@ -105,9 +106,13 @@ void WetnessEffects::DrawSettings()
 		}
 
 		if (ImGui::TreeNodeEx("Splashes")) {
-			ImGui::BulletText("The biggest possible radius of splashes (at 1.0) is the grid size.");
+			ImGui::SliderFloat("Strength", &settings.SplashesStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("As portion grid size.");
 			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("As portion grid size.");
 			ImGui::TreePop();
 		}
 
