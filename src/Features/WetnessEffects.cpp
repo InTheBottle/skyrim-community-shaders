@@ -32,7 +32,23 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PuddleMinWetness,
 	MinRainWetness,
 	SkinWetness,
-	WeatherTransitionSpeed)
+	WeatherTransitionSpeed,
+	EnableSplashes,
+	EnableRipples,
+	EnableChaoticRipples,
+	RaindropFxRange,
+	RaindropGridSize,
+	RaindropInterval,
+	RaindropChance,
+	SplashesMinRadius,
+	SplashesMaxRadius,
+	RippleStrength,
+	RippleRadius,
+	RippleBreadth,
+	RippleLifetime,
+	ChaoticRippleStrength,
+	ChaoticRippleScale,
+	ChaoticRippleSpeed)
 
 void WetnessEffects::DrawSettings()
 {
@@ -52,15 +68,21 @@ void WetnessEffects::DrawSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx("Raindrop Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox("Enable Raindrop Effects", (bool*)&settings.EnableRaindropFx);
+
+		ImGui::BeginDisabled(!settings.EnableRaindropFx);
+
 		ImGui::Checkbox("Enable Splashes", (bool*)&settings.EnableSplashes);
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Enables small splashes of wetness at the start of the rain.");
+			ImGui::Text("Enables small splashes of wetness on dry surfaces.");
 		ImGui::Checkbox("Enable Ripples", (bool*)&settings.EnableRipples);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Enables circular ripples on puddles, and to a less extent other wet surfaces");
 		ImGui::Checkbox("Enable Chaotic Ripples", (bool*)&settings.EnableChaoticRipples);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Enables an additional layer of disturbance to wet surfaces.");
+
+		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, 1e2f, 2e3f, "%.0f game unit(s)");
 
 		if (ImGui::TreeNodeEx("Raindrops")) {
 			ImGui::BulletText(
@@ -99,6 +121,8 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Speed", &settings.ChaoticRippleSpeed, 0.f, 50.f, "%.1f");
 			ImGui::TreePop();
 		}
+
+		ImGui::EndDisabled();
 
 		ImGui::TreePop();
 	}
@@ -286,6 +310,8 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			RE::NiTransform& dalcTransform = state.directionalAmbientTransform;
 			Util::StoreTransform3x4NoScale(data.DirectionalAmbientWS, dalcTransform);
 
+			data.PrecipProj = precipProj;
+
 			static size_t rainTimer = 0;                                       // size_t for precision
 			if (!RE::UI::GetSingleton()->GameIsPaused())                       // from lightlimitfix
 				rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
@@ -309,26 +335,45 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 		ID3D11ShaderResourceView* views[1]{};
 		views[0] = perPass->srv.get();
 		context->PSSetShaderResources(22, ARRAYSIZE(views), views);
+
+		views[0] = precipOcclusionTex->srv.get();
+		context->PSSetShaderResources(31, ARRAYSIZE(views), views);
 	}
 }
 
 void WetnessEffects::SetupResources()
 {
-	D3D11_BUFFER_DESC sbDesc{};
-	sbDesc.Usage = D3D11_USAGE_DYNAMIC;
-	sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-	sbDesc.StructureByteStride = sizeof(PerPass);
-	sbDesc.ByteWidth = sizeof(PerPass);
-	perPass = std::make_unique<Buffer>(sbDesc);
+	{
+		D3D11_BUFFER_DESC sbDesc{};
+		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		sbDesc.StructureByteStride = sizeof(PerPass);
+		sbDesc.ByteWidth = sizeof(PerPass);
+		perPass = std::make_unique<Buffer>(sbDesc);
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-	srvDesc.Buffer.FirstElement = 0;
-	srvDesc.Buffer.NumElements = 1;
-	perPass->CreateSRV(srvDesc);
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = 1;
+		perPass->CreateSRV(srvDesc);
+	}
+
+	{
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+		auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+		D3D11_TEXTURE2D_DESC texDesc{};
+		precipation.texture->GetDesc(&texDesc);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		precipation.depthSRV->GetDesc(&srvDesc);
+
+		precipOcclusionTex = std::make_unique<Texture2D>(texDesc);
+		precipOcclusionTex->CreateSRV(srvDesc);
+	}
 }
 
 void WetnessEffects::Reset()

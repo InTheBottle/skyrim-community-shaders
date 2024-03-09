@@ -33,9 +33,11 @@ public:
 		float WeatherTransitionSpeed = 3.0f;
 
 		// Raindrop fx settings
+		uint EnableRaindropFx = true;
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
 		uint EnableChaoticRipples = true;
+		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.f;
 		float RaindropChance = .3f;
@@ -57,6 +59,7 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		DirectX::XMFLOAT3X4 DirectionalAmbientWS;
+		RE::DirectX::XMFLOAT4X4 PrecipProj;
 		Settings settings;
 
 		float pad[4 - (sizeof(Settings) / 4 + 16) % 4];
@@ -66,12 +69,15 @@ public:
 
 	std::unique_ptr<Buffer> perPass = nullptr;
 
+	std::unique_ptr<Texture2D> precipOcclusionTex = nullptr;
+
 	bool requiresUpdate = true;
 	float wetnessDepth = 0.0f;
 	float puddleDepth = 0.0f;
 	float lastGameTimeValue = 0.0f;
 	uint32_t currentWeatherID = 0;
 	uint32_t lastWeatherID = 0;
+	RE::DirectX::XMFLOAT4X4 precipProj;
 
 	virtual void SetupResources();
 	virtual void Reset();
@@ -86,4 +92,32 @@ public:
 	virtual void RestoreDefaultSettings();
 	float CalculateWeatherTransitionPercentage(float skyCurrentWeatherPct, float beginFade, bool fadeIn);
 	void CalculateWetness(RE::TESWeather* weather, RE::Sky* sky, float seconds, float& wetness, float& puddleWetness);
+
+	virtual void PostPostLoad() override { Hooks::Install(); }
+
+	struct Hooks
+	{
+		struct BSParticleShader_SetupGeometry
+		{
+			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+			{
+				func(This, Pass, RenderFlags);
+
+				auto particleShaderProperty = (RE::BSParticleShaderProperty*)Pass->shaderProperty;
+				auto cube = (RE::BSParticleShaderCubeEmitter*)particleShaderProperty->particleEmitter;
+				GetSingleton()->precipProj = cube->occlusionProjection;
+
+				auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+				auto context = renderer->GetRuntimeData().context;
+				auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+				context->CopyResource(GetSingleton()->precipOcclusionTex->resource.get(), precipation.texture);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		static void Install()
+		{
+			stl::write_vfunc<0x6, BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
+		}
+	};
 };
