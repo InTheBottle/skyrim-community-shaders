@@ -1627,7 +1627,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	float rainWetness = perPassWetnessEffects[0].Wetness * minWetnessAngle * perPassWetnessEffects[0].MaxRainWetness;
-	rainWetness = max(rainWetness, raindropInfo.w * perPassWetnessEffects[0].MaxRainWetness);
+	rainWetness = max(rainWetness, raindropInfo.w);
 
 	float puddleWetness = perPassWetnessEffects[0].PuddleWetness * minWetnessAngle;
 #		if defined(SKIN)

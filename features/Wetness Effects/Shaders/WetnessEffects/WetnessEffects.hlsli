@@ -29,6 +29,7 @@ struct PerPassWetnessEffects
 	float RaindropGridSizeRcp;
 	float RaindropIntervalRcp;
 	float RaindropChance;
+	float SplashesStrength;
 	float SplashesMinRadius;
 	float SplashesMaxRadius;
 	float RippleStrength;
@@ -214,6 +215,8 @@ float4 GetRainDrops(float3 worldPos, float t)
 		turbulenceNormal = normalize(turbulenceNormal);
 		ripple_normal = normalize(ripple_normal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength, 0));
 	}
+
+	wetness *= perPassWetnessEffects[0].SplashesStrength;
 
 	return float4(ripple_normal, wetness);
 }

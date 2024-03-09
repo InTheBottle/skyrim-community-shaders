@@ -41,6 +41,7 @@ public:
 		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.f;
 		float RaindropChance = .3f;
+		float SplashesStrength = 1.2f;
 		float SplashesMinRadius = .3f;
 		float SplashesMaxRadius = .7f;
 		float RippleStrength = .5f;
