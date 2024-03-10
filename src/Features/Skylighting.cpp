@@ -38,12 +38,32 @@ void Skylighting::SetupResources()
 		auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 		D3D11_TEXTURE2D_DESC texDesc{};
 		precipation.texture->GetDesc(&texDesc);
+		texDesc.MipLevels = 1;
+		texDesc.ArraySize = 1;
+		texDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.Usage = D3D11_USAGE_DEFAULT;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		texDesc.CPUAccessFlags = 0;
+		texDesc.MiscFlags = 0;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		precipation.depthSRV->GetDesc(&srvDesc);
+		srvDesc.Format = texDesc.Format;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		uavDesc.Format = texDesc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		uavDesc.Texture2D.MipSlice = 0;
 
 		precipOcclusionTex = std::make_unique<Texture2D>(texDesc);
 		precipOcclusionTex->CreateSRV(srvDesc);
+		precipOcclusionTex->CreateUAV(uavDesc);
+
+		precipOcclusionTempTex = std::make_unique<Texture2D>(texDesc);
+		precipOcclusionTempTex->CreateSRV(srvDesc);
+		precipOcclusionTempTex->CreateUAV(uavDesc);
 	}
 }
 
@@ -97,6 +117,115 @@ ID3D11ComputeShader* Skylighting::GetComputeShaderVerticalBlur()
 		verticalSSBlur = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Skylighting\\Blur.hlsl", {}, "cs_5_0");
 	}
 	return verticalSSBlur;
+}
+
+void Skylighting::Blur()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	{
+		auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+		{
+			ID3D11ShaderResourceView* view = precipation.depthSRV;
+			context->CSSetShaderResources(0, 1, &view);
+
+			ID3D11UnorderedAccessView* uav = precipOcclusionTempTex->uav.get();
+			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+			UINT numGroupsX = (UINT)ceilf((float)precipOcclusionTex->desc.Width / 256.0f);
+
+			auto shader = GetComputeShaderHorizontalBlur();
+			context->CSSetShader(shader, nullptr, 0);
+
+			context->Dispatch(numGroupsX, precipOcclusionTex->desc.Height, 1);
+		}
+
+		// Unbind the input texture from the CS for good housekeeping.
+		ID3D11ShaderResourceView* nullSRV[1] = { 0 };
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->PSSetShaderResources(70, 1, nullSRV);
+
+		// Unbind output from compute shader (we are going to use this output as an input in the next pass,
+		// and a resource cannot be both an output and input at the same time.
+		ID3D11UnorderedAccessView* nullUAV[1] = { 0 };
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, 0);
+	
+		{
+			ID3D11ShaderResourceView* view = precipOcclusionTempTex->srv.get();
+			context->CSSetShaderResources(0, 1, &view);
+
+			ID3D11UnorderedAccessView* uav = precipOcclusionTex->uav.get();
+			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+			auto shader = GetComputeShaderVerticalBlur();
+			context->CSSetShader(shader, nullptr, 0);
+
+			UINT numGroupsY = (UINT)ceilf((float)precipOcclusionTex->desc.Height / 256.0f);
+
+			context->Dispatch(precipOcclusionTex->desc.Width, numGroupsY, 1);
+		}
+
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, 0);
+
+		// Disable compute shader.
+		context->CSSetShader(0, 0, 0);
+	}
+
+
+	for (int i = 0; i < 10; i++) {
+		{
+			{
+				{
+					ID3D11ShaderResourceView* view = precipOcclusionTex->srv.get();
+					context->CSSetShaderResources(0, 1, &view);
+
+					ID3D11UnorderedAccessView* uav = precipOcclusionTempTex->uav.get();
+					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+					UINT numGroupsX = (UINT)ceilf((float)precipOcclusionTex->desc.Width / 256.0f);
+
+					auto shader = GetComputeShaderHorizontalBlur();
+					context->CSSetShader(shader, nullptr, 0);
+
+					context->Dispatch(numGroupsX, precipOcclusionTex->desc.Height, 1);
+				}
+
+				// Unbind the input texture from the CS for good housekeeping.
+				ID3D11ShaderResourceView* nullSRV[1] = { 0 };
+				context->CSSetShaderResources(0, 1, nullSRV);
+				context->PSSetShaderResources(70, 1, nullSRV);
+
+				// Unbind output from compute shader (we are going to use this output as an input in the next pass,
+				// and a resource cannot be both an output and input at the same time.
+				ID3D11UnorderedAccessView* nullUAV[1] = { 0 };
+				context->CSSetUnorderedAccessViews(0, 1, nullUAV, 0);
+
+				{
+					ID3D11ShaderResourceView* view = precipOcclusionTempTex->srv.get();
+					context->CSSetShaderResources(0, 1, &view);
+
+					ID3D11UnorderedAccessView* uav = precipOcclusionTex->uav.get();
+					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+					auto shader = GetComputeShaderVerticalBlur();
+					context->CSSetShader(shader, nullptr, 0);
+
+					UINT numGroupsY = (UINT)ceilf((float)precipOcclusionTex->desc.Height / 256.0f);
+
+					context->Dispatch(precipOcclusionTex->desc.Width, numGroupsY, 1);
+				}
+
+				context->CSSetShaderResources(0, 1, nullSRV);
+				context->CSSetUnorderedAccessViews(0, 1, nullUAV, 0);
+
+				// Disable compute shader.
+				context->CSSetShader(0, 0, 0);
+			}
+		}
+	}
 }
 
 void Skylighting::BlurAndBind()

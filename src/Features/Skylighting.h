@@ -18,6 +18,8 @@ public:
 	}
 
 	std::unique_ptr<Texture2D> precipOcclusionTex = nullptr;
+	std::unique_ptr<Texture2D> precipOcclusionTempTex = nullptr;
+
 	RE::DirectX::XMFLOAT4X4 precipProj;
 
 	struct alignas(16) PerPass
@@ -54,6 +56,8 @@ public:
 	ID3D11ComputeShader* GetComputeShaderHorizontalBlur();
 	ID3D11ComputeShader* GetComputeShaderVerticalBlur();
 
+	void Blur();
+
 	virtual void PostPostLoad() override { Hooks::Install(); }
 
 	void BlurAndBind();
@@ -80,10 +84,53 @@ public:
 				auto cube = (RE::BSParticleShaderCubeEmitter*)particleShaderProperty->particleEmitter;
 				GetSingleton()->precipProj = cube->occlusionProjection;
 
-				auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-				auto context = renderer->GetRuntimeData().context;
-				auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-				context->CopyResource(GetSingleton()->precipOcclusionTex->resource.get(), precipation.texture);
+				auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+
+				ID3D11ShaderResourceView* srvs[8];
+				context->PSGetShaderResources(0, 8, srvs);
+
+				ID3D11ShaderResourceView* srvsCS[8];
+				context->CSGetShaderResources(0, 8, srvsCS);
+
+				ID3D11UnorderedAccessView* uavsCS[8];
+				context->CSGetUnorderedAccessViews(0, 8, uavsCS);
+
+				ID3D11UnorderedAccessView* nullUavs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+				context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
+
+				ID3D11ShaderResourceView* nullSrvs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+				context->PSSetShaderResources(0, 8, nullSrvs);
+				context->CSSetShaderResources(0, 8, nullSrvs);
+
+				ID3D11RenderTargetView* views[8];
+				ID3D11DepthStencilView* dsv;
+				context->OMGetRenderTargets(8, views, &dsv);
+
+				ID3D11RenderTargetView* nullViews[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+				ID3D11DepthStencilView* nullDsv = nullptr;
+				context->OMSetRenderTargets(8, nullViews, nullDsv);
+
+				GetSingleton()->Blur();
+
+				context->PSSetShaderResources(0, 8, srvs);
+				context->CSSetShaderResources(0, 8, srvsCS);
+				context->CSSetUnorderedAccessViews(0, 8, uavsCS, nullptr);
+				context->OMSetRenderTargets(8, views, dsv);
+
+				for (int i = 0; i < 8; i++) {
+					if (srvs[i])
+						srvs[i]->Release();
+					if (srvsCS[i])
+						srvsCS[i]->Release();
+				}
+
+				for (int i = 0; i < 8; i++) {
+					if (views[i])
+						views[i]->Release();
+				}
+
+				if (dsv)
+					dsv->Release();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -111,8 +158,8 @@ public:
 		{
 			static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS_DEPTHSTENCIL a_target, RE::BSGraphics::DepthStencilTargetProperties* a_properties)
 			{
-				a_properties->height = 4096;
-				a_properties->width = 4096;
+				a_properties->height = 1024;
+				a_properties->width = 1024;
 
 				func(This, a_target, a_properties);
 			}

@@ -1866,7 +1866,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float2 precipOcclusionUv = precipOcclusionTexCoord.xy * 0.5 + 0.5;
 
 	float range = 1.0 / perFrameSkylighting[0].Params.x;
-	precipOcclusionUv += worldSpaceNormal.xy * range * 2;
+	//precipOcclusionUv += worldSpaceNormal.xy * float2(1, -1) * range * 10;
+
 
 	if (precipOcclusionUv.x != saturate(precipOcclusionUv.x) || precipOcclusionUv.y != saturate(precipOcclusionUv.y))
 	{
@@ -1878,7 +1879,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		else
 			occlusion = precipOcclusionTexCoord.z - precipOcclusionZ;
 	}
-	occlusion = pow(saturate(1.0 - occlusion), 5.0) * 2;
+	occlusion *= 5;
+	occlusion = saturate(1.0 - occlusion);
+//	occlusion *= occlusion;
 	directionalAmbientColor *= saturate(occlusion);
 #endif
 
