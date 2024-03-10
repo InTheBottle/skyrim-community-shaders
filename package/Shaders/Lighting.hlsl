@@ -1023,6 +1023,11 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		endif
 #	endif
 
+
+#	if defined(SKYLIGHTING)
+#		include "Skylighting/Skylighting.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -1849,6 +1854,33 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	if (perPassCloudShadow[0].EnableCloudShadows)
 		directionalAmbientColor *= lerp(1.0, cloudShadowMult, perPassCloudShadow[0].AbsorptionAmbient);
 #	endif
+#	if defined(SKYLIGHTING)
+	float occlusion = 1.0;
+
+	float4 precipPositionCS = float4(2 * float2(DynamicResolutionParams2.x * screenUV.x, -screenUV.y * DynamicResolutionParams2.y + 1) - 1, input.Position.z, 1);
+	float4 precipPositionMS = mul(CameraViewProjInverse[0], precipPositionCS);
+	precipPositionMS.xyz = precipPositionMS.xyz / precipPositionMS.w;
+
+	float4 precipOcclusionTexCoord = mul(perFrameSkylighting[0].PrecipProj, float4(precipPositionMS.xyz, 1));
+	precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
+	float2 precipOcclusionUv = precipOcclusionTexCoord.xy * 0.5 + 0.5;
+
+	float range = 1.0 / perFrameSkylighting[0].Params.x;
+	precipOcclusionUv += worldSpaceNormal.xy * range * 2;
+
+	if (precipOcclusionUv.x != saturate(precipOcclusionUv.x) || precipOcclusionUv.y != saturate(precipOcclusionUv.y))
+	{
+		occlusion = 0;
+	} else {
+		float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampColorSampler, precipOcclusionUv, 0).x;
+		if (precipOcclusionZ >= 1)
+			occlusion = 0;
+		else
+			occlusion = precipOcclusionTexCoord.z - precipOcclusionZ;
+	}
+	occlusion = pow(saturate(1.0 - occlusion), 5.0) * 2;
+	directionalAmbientColor *= saturate(occlusion);
+#endif
 
 	diffuseColor = directionalAmbientColor + emitColor.xyz + diffuseColor;
 
@@ -2169,6 +2201,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #	endif
 
+#	if defined(SKYLIGHTING)
+	//psout.Albedo.xyz = directionalAmbientColor;
+#	endif
 	return psout;
 }
 #endif  // PSHADER

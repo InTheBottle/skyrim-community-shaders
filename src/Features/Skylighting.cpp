@@ -8,6 +8,8 @@
 void Skylighting::DrawSettings()
 {
 	
+	ImGui::SliderFloat("Distance Mult", &distanceMult, 1.0f, 100.0f);
+	ImGui::SliderFloat("Far Mult", &farMult, 1.0f, 100.0f);
 }
 
 void Skylighting::SetupResources()
@@ -105,6 +107,7 @@ void Skylighting::BlurAndBind()
 	 {
 		PerPass data{};
 		data.PrecipProj = precipProj;
+		data.Params = { 250 * distanceMult, 0, 0, 0 };
 
 		D3D11_MAPPED_SUBRESOURCE mapped;
 		DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));

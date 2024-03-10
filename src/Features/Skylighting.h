@@ -23,7 +23,11 @@ public:
 	struct alignas(16) PerPass
 	{
 		RE::DirectX::XMFLOAT4X4 PrecipProj;
+		float4 Params;
 	};
+
+	float distanceMult = 10.0;
+	float farMult = 1.0;
 
 	std::unique_ptr<Buffer> perPass = nullptr;
 
@@ -84,11 +88,44 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct Precipitation_UpdateCamera_SetViewFrustum
+		{
+			static void thunk(RE::NiCamera* a1, RE::NiFrustum& frustum)
+			{
+				float distanceMult = GetSingleton()->distanceMult;
+				float farMult = GetSingleton()->farMult;
+
+				RE::NiFrustum newFrustum;
+				newFrustum.fLeft = -250 * distanceMult;
+				newFrustum.fRight = 250 * distanceMult;
+				newFrustum.fTop = 250 * distanceMult;
+				newFrustum.fBottom = -250 * distanceMult;
+				newFrustum.fFar = 2000 * farMult;
+				frustum = newFrustum;
+				func(a1, frustum);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct CreateRenderTarget_Occlusion
+		{
+			static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS_DEPTHSTENCIL a_target, RE::BSGraphics::DepthStencilTargetProperties* a_properties)
+			{
+				a_properties->height = 4096;
+				a_properties->width = 4096;
+
+				func(This, a_target, a_properties);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
-			stl::write_vfunc<0x6, BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
-		
+			stl::write_thunk_call<Precipitation_UpdateCamera_SetViewFrustum>(REL::RelocationID(25643, 25643).address() + REL::Relocate(0x5D9, 0x5D9));
+			stl::write_vfunc<0x6, BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);	
+			stl::write_thunk_call<CreateRenderTarget_Occlusion>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x3F3, 0x548));
+
 			logger::info("[SSS] Installed hooks");
 		}
 	};
