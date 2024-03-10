@@ -94,25 +94,13 @@ public:
 	float CalculateWeatherTransitionPercentage(float skyCurrentWeatherPct, float beginFade, bool fadeIn);
 	void CalculateWetness(RE::TESWeather* weather, RE::Sky* sky, float seconds, float& wetness, float& puddleWetness);
 
-	virtual void PostPostLoad() override { Hooks::Install(); }
+	virtual inline void PostPostLoad() override { Hooks::Install(); }
 
 	struct Hooks
 	{
 		struct BSParticleShader_SetupGeometry
 		{
-			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
-			{
-				func(This, Pass, RenderFlags);
-
-				auto particleShaderProperty = (RE::BSParticleShaderProperty*)Pass->shaderProperty;
-				auto cube = (RE::BSParticleShaderCubeEmitter*)particleShaderProperty->particleEmitter;
-				GetSingleton()->precipProj = cube->occlusionProjection;
-
-				auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-				auto context = renderer->GetRuntimeData().context;
-				auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-				context->CopyResource(GetSingleton()->precipOcclusionTex->resource.get(), precipation.texture);
-			}
+			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 

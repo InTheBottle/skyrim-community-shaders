@@ -1,6 +1,6 @@
 #include "WetnessEffects.h"
 
-#include <Util.h>
+#include "Util.h"
 
 const float MIN_START_PERCENTAGE = 0.05f;
 const float DEFAULT_TRANSITION_PERCENTAGE = 1.0f;
@@ -403,4 +403,21 @@ void WetnessEffects::Save(json& o_json)
 void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
+}
+
+void WetnessEffects::Hooks::BSParticleShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+{
+	func(This, Pass, RenderFlags);
+
+	if (auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(Pass->shaderProperty))
+		if (auto cube = skyrim_cast<RE::BSParticleShaderCubeEmitter*>(particleShaderProperty->particleEmitter))
+			GetSingleton()->precipProj = cube->occlusionProjection;
+
+	static Util::FrameChecker frameChecker;
+	if (frameChecker.isNewFrame()) {
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		auto context = renderer->GetRuntimeData().context;
+		auto precipation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+		context->CopyResource(GetSingleton()->precipOcclusionTex->resource.get(), precipation.texture);
+	}
 }
