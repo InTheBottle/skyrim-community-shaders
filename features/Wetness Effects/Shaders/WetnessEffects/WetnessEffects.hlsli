@@ -273,6 +273,6 @@ float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 V, float roughness)
 
 float3 GetWetnessSpecular(float3 N, float3 L, float3 V, float3 lightColor, float roughness)
 {
-	lightColor *= 0.01;
+	lightColor *= 0.1;
 	return LightingFuncGGX_OPT3(N, V, L, roughness, 1.0 - roughness) * lightColor;
 }
