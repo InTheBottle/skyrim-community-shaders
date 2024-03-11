@@ -19,6 +19,11 @@ const float MAX_PUDDLE_WETNESS = 1.0f;
 const float MAX_WETNESS = 1.0f;
 const float SECONDS_IN_A_DAY = 86400;
 const float MAX_TIME_DELTA = SECONDS_IN_A_DAY - 30;
+const float MIN_WEATHER_TRANSITION_SPEED = 0.0f;
+const float MAX_WEATHER_TRANSITION_SPEED = 500.0f;
+const float AVERAGE_RAIN_VOLUME = 4000.0f;
+const float MIN_RAINDROP_CHANCE_MULTIPLIER = 0.1f;
+const float MAX_RAINDROP_CHANCE_MULTIPLIER = 2.0f;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::Settings,
@@ -27,6 +32,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxPuddleWetness,
 	MaxShoreWetness,
 	ShoreRange,
+	MaxPointLightSpecular,
+	MaxDALCSpecular,
+	MaxAmbientSpecular,
 	PuddleRadius,
 	PuddleMaxAngle,
 	PuddleMinWetness,
@@ -104,10 +112,10 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Strength", &settings.SplashesStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::TreePop();
 		}
 
@@ -115,7 +123,7 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("The biggest possible radius of ripples (at 1.0) is the grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Breadth", &settings.RippleBreadth, 0.f, 1.f, "%.2f");
 			ImGui::SliderFloat("Lifetime", &settings.RippleLifetime, 0.f, settings.RaindropInterval, "%.2f sec", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::TreePop();
@@ -154,6 +162,24 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"How wet character skin and hair get during rain. ");
+		}
+
+		ImGui::SliderFloat("Max Point Light Specular", &settings.MaxPointLightSpecular, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"How much point lights (like torches) impact wetness. ");
+		}
+
+		ImGui::SliderFloat("Max Directional Specular", &settings.MaxDALCSpecular, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"How much directional light (like sunlight) impacts wetness. ");
+		}
+
+		ImGui::SliderFloat("Max Ambient Specular", &settings.MaxAmbientSpecular, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"How much ambient light (like reflections) impacts wetness. ");
 		}
 
 		ImGui::SliderInt("Shore Range", (int*)&settings.ShoreRange, 1, 64);
@@ -203,7 +229,7 @@ float WetnessEffects::CalculateWeatherTransitionPercentage(float skyCurrentWeath
 	// Correct if beginFade is zero or negative
 	beginFade = beginFade > 0 ? beginFade : beginFade + TRANSITION_DENOMINATOR;
 	// Wait to start transition until precipitation begins/ends
-	float startPercentage = (TRANSITION_DENOMINATOR - beginFade) * (1.0f / TRANSITION_DENOMINATOR);
+	float startPercentage = 1 - ((TRANSITION_DENOMINATOR - beginFade) * (1.0f / TRANSITION_DENOMINATOR));
 
 	if (fadeIn) {
 		float currentPercentage = (skyCurrentWeatherPct - startPercentage) / (1 - startPercentage);
@@ -252,13 +278,19 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			currentWeatherID = 0;
 			uint32_t previousLastWeatherID = lastWeatherID;
 			lastWeatherID = 0;
+			float currentWeatherRaining = 0.0f;
+			float lastWeatherRaining = 0.0f;
+			float weatherTransitionPercentage = 0.0f;
 
 			if (settings.EnableWetnessEffects) {
 				if (auto sky = RE::Sky::GetSingleton()) {
 					if (sky->mode.get() == RE::Sky::Mode::kFull) {
 						if (auto currentWeather = sky->currentWeather) {
-							data.Raining = currentWeather->precipitationData && currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
-
+							if (currentWeather->precipitationData && currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+								float rainDensity = currentWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)].f;
+								float rainGravity = currentWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)].f;
+								currentWeatherRaining = std::clamp(((rainDensity * rainGravity) / AVERAGE_RAIN_VOLUME), MIN_RAINDROP_CHANCE_MULTIPLIER, MAX_RAINDROP_CHANCE_MULTIPLIER);
+							}
 							currentWeatherID = currentWeather->GetFormID();
 							if (auto calendar = RE::Calendar::GetSingleton()) {
 								float currentWeatherWetnessDepth = wetnessDepth;
@@ -279,10 +311,10 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 								}
 
 								if (seconds > 0 || (seconds < 0 && (wetnessDepth > 0 || puddleDepth > 0))) {
-									float weatherTransitionPercentage = DEFAULT_TRANSITION_PERCENTAGE;
+									weatherTransitionPercentage = DEFAULT_TRANSITION_PERCENTAGE;
 									float lastWeatherWetnessDepth = wetnessDepth;
 									float lastWeatherPuddleDepth = puddleDepth;
-									seconds *= settings.WeatherTransitionSpeed;
+									seconds *= std::clamp(settings.WeatherTransitionSpeed, MIN_WEATHER_TRANSITION_SPEED, MAX_WEATHER_TRANSITION_SPEED);
 									CalculateWetness(currentWeather, sky, seconds, currentWeatherWetnessDepth, currentWeatherPuddleDepth);
 									// If there is a lastWeather, figure out what type it is and set the wetness
 									if (auto lastWeather = sky->lastWeather) {
@@ -290,6 +322,9 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 										CalculateWetness(lastWeather, sky, seconds, lastWeatherWetnessDepth, lastWeatherPuddleDepth);
 										// If it was raining, wait to transition until precipitation ends, otherwise use the current weather's fade in
 										if (lastWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+											float rainDensity = lastWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)].f;
+											float rainGravity = lastWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)].f;
+											lastWeatherRaining = std::clamp(((rainDensity * rainGravity) / AVERAGE_RAIN_VOLUME), MIN_RAINDROP_CHANCE_MULTIPLIER, MAX_RAINDROP_CHANCE_MULTIPLIER);
 											weatherTransitionPercentage = CalculateWeatherTransitionPercentage(sky->currentWeatherPct, lastWeather->data.precipitationEndFadeOut, false);
 										} else {
 											weatherTransitionPercentage = CalculateWeatherTransitionPercentage(sky->currentWeatherPct, currentWeather->data.precipitationBeginFadeIn, true);
@@ -306,6 +341,7 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 								// Calculate the wetness value from the water depth
 								data.Wetness = std::min(wetnessDepth, MAX_WETNESS);
 								data.PuddleWetness = std::min(puddleDepth, MAX_PUDDLE_WETNESS);
+								data.Raining = std::lerp(lastWeatherRaining, currentWeatherRaining, weatherTransitionPercentage);
 							}
 						}
 					}
@@ -327,9 +363,11 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			// Disable Shore Wetness if Wetness Effects are Disabled
 			data.settings.MaxShoreWetness = settings.EnableWetnessEffects ? settings.MaxShoreWetness : 0.0f;
 			// calculating some parameters on cpu
+			data.settings.RaindropChance *= data.Raining;
 			data.settings.RaindropGridSize = 1.f / settings.RaindropGridSize;
 			data.settings.RaindropInterval = 1.f / settings.RaindropInterval;
 			data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
+			data.settings.ChaoticRippleStrength *= std::clamp(data.Raining, 0.f, 1.f);
 			data.settings.ChaoticRippleScale = 1.f / settings.ChaoticRippleScale;
 
 			D3D11_MAPPED_SUBRESOURCE mapped;

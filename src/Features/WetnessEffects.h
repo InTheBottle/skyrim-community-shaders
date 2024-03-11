@@ -25,6 +25,9 @@ public:
 		float MaxPuddleWetness = 2.667f;
 		float MaxShoreWetness = 0.5f;
 		uint ShoreRange = 32;
+		float MaxPointLightSpecular = 0.4f;
+		float MaxDALCSpecular = 0.01f;
+		float MaxAmbientSpecular = 1.0f;
 		float PuddleRadius = 1.0f;
 		float PuddleMaxAngle = 0.95f;
 		float PuddleMinWetness = 0.85f;
@@ -38,13 +41,13 @@ public:
 		uint EnableRipples = true;
 		uint EnableChaoticRipples = true;
 		float RaindropFxRange = 1000.f;
-		float RaindropGridSize = 3.f;
-		float RaindropInterval = 1.f;
+		float RaindropGridSize = 4.f;
+		float RaindropInterval = .5f;
 		float RaindropChance = .3f;
 		float SplashesStrength = 1.2f;
 		float SplashesMinRadius = .3f;
-		float SplashesMaxRadius = .7f;
-		float RippleStrength = .5f;
+		float SplashesMaxRadius = .5f;
+		float RippleStrength = 1.f;
 		float RippleRadius = 1.f;
 		float RippleBreadth = .5f;
 		float RippleLifetime = .1f;
@@ -56,7 +59,7 @@ public:
 	struct alignas(16) PerPass
 	{
 		float Time;
-		uint Raining;
+		float Raining;
 		float Wetness;
 		float PuddleWetness;
 		DirectX::XMFLOAT3X4 DirectionalAmbientWS;

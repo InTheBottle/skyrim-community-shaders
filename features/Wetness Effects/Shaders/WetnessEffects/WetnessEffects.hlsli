@@ -3,7 +3,7 @@
 struct PerPassWetnessEffects
 {
 	float Time;
-	uint Raining;
+	float Raining;
 	float Wetness;
 	float PuddleWetness;
 	row_major float3x4 DirectionalAmbientWS;
@@ -14,6 +14,9 @@ struct PerPassWetnessEffects
 	float MaxPuddleWetness;
 	float MaxShoreWetness;
 	uint ShoreRange;
+	float MaxPointLightSpecular;
+	float MaxDALCSpecular;
+	float MaxAmbientSpecular;
 	float PuddleRadius;
 	float PuddleMaxAngle;
 	float PuddleMinWetness;
@@ -151,15 +154,15 @@ float3 ReorientNormal(float3 n1, float3 n2)
 // xyz - ripple normal, w - splotches
 float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 {
-	const float uintToFloat = rcp(4294967295.0);
+	const static float uintToFloat = rcp(4294967295.0);
 	const float rippleBreadthRcp = rcp(perPassWetnessEffects[0].RippleBreadth);
 
-	float2 grid_uv = worldPos.xy * perPassWetnessEffects[0].RaindropGridSizeRcp;
-	grid_uv += normal.xy * 0.5;
-	int2 grid = grid_uv;
-	grid_uv -= grid;
+	float2 gridUV = worldPos.xy * perPassWetnessEffects[0].RaindropGridSizeRcp;
+	gridUV += normal.xy * 0.5;
+	int2 grid = floor(gridUV);
+	gridUV -= grid;
 
-	float3 ripple_normal = float3(0, 0, 1);
+	float3 rippleNormal = float3(0, 0, 1);
 	float wetness = 0;
 
 	if (perPassWetnessEffects[0].EnableSplashes || perPassWetnessEffects[0].EnableRipples)
@@ -175,35 +178,35 @@ float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 				uint3 hash = pcg3d(uint3(gridCurr, timestep));
 				float3 floatHash = float3(hash) * uintToFloat;
 
-				if (floatHash.z < perPassWetnessEffects[0].RaindropChance) {
-					float2 to_centre = int2(i, j) + floatHash.xy - grid_uv;
-					float dist_sqr = dot(to_centre, to_centre);
+				if (floatHash.z < (perPassWetnessEffects[0].RaindropChance)) {
+					float2 vec2Centre = int2(i, j) + floatHash.xy - gridUV;
+					float distSqr = dot(vec2Centre, vec2Centre);
 
 					// splashes
 					if (perPassWetnessEffects[0].EnableSplashes) {
 						float drop_radius = lerp(perPassWetnessEffects[0].SplashesMinRadius, perPassWetnessEffects[0].SplashesMaxRadius,
-							saturate(float(iqint3(hash.yz)) * uintToFloat));
-						if (dist_sqr < drop_radius * drop_radius)
+							float(iqint3(hash.yz)) * uintToFloat);
+						if (distSqr < drop_radius * drop_radius)
 							wetness = max(wetness, RainFade(residual));
 					}
 
 					// ripples
 					if (perPassWetnessEffects[0].EnableRipples) {
-						float ripple_t = residual * perPassWetnessEffects[0].RippleLifetimeRcp;
-						if (ripple_t < 1.) {
-							float ripple_r = lerp(0., perPassWetnessEffects[0].RippleRadius, ripple_t);
+						float rippleT = residual * perPassWetnessEffects[0].RippleLifetimeRcp;
+						if (rippleT < 1.) {
+							float ripple_r = lerp(0., perPassWetnessEffects[0].RippleRadius, rippleT);
 							float ripple_inner_radius = ripple_r - perPassWetnessEffects[0].RippleBreadth;
 
-							float band_lerp = (sqrt(dist_sqr) - ripple_inner_radius) * rippleBreadthRcp;
+							float band_lerp = (sqrt(distSqr) - ripple_inner_radius) * rippleBreadthRcp;
 							if (band_lerp > 0. && band_lerp < 1.) {
 								float deriv = (band_lerp < .5 ? SmoothstepDeriv(band_lerp * 2.) : -SmoothstepDeriv(2. - band_lerp * 2.)) *
-								              lerp(perPassWetnessEffects[0].RippleStrength, 0, ripple_t * ripple_t);
+								              lerp(perPassWetnessEffects[0].RippleStrength, 0, rippleT * rippleT);
 
-								float3 grad = float3(normalize(to_centre), -deriv);
+								float3 grad = float3(normalize(vec2Centre), -deriv);
 								float3 bitangent = float3(-grad.y, grad.x, 0);
 								float3 normal = normalize(cross(grad, bitangent));
 
-								ripple_normal = ReorientNormal(normal, ripple_normal);
+								rippleNormal = ReorientNormal(normal, rippleNormal);
 							}
 						}
 					}
@@ -214,13 +217,14 @@ float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 		float3 turbulenceNormal = noise(float3(worldPos.xy * perPassWetnessEffects[0].ChaoticRippleScaleRcp, t * perPassWetnessEffects[0].ChaoticRippleSpeed));
 		turbulenceNormal.z = turbulenceNormal.z * .5 + 5;
 		turbulenceNormal = normalize(turbulenceNormal);
-		ripple_normal = normalize(ripple_normal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength, 0));
+		rippleNormal = normalize(rippleNormal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength, 0));
 	}
 
 	wetness *= perPassWetnessEffects[0].SplashesStrength;
 
-	return float4(ripple_normal, wetness);
+	return float4(rippleNormal, wetness);
 }
+
 
 float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 VN, float3 V, float roughness)
 {
