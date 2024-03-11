@@ -172,7 +172,7 @@ float4 SSSSBlurCS(
 		depth = GetScreenDepth(depth);
 
 		// If the difference in depth is huge, we lerp color back to "colorM":
-		float s = saturate(profile.y * (1.0 / 3.0) * distanceToProjectionWindow * abs(depthM - depth));
+		float s = saturate(profile.y * distanceToProjectionWindow * abs(depthM - depth));
 		color = lerp(color, colorM.rgb, s);
 
 		// Accumulate:
