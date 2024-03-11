@@ -1623,7 +1623,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampShadowMaskSampler, precipOcclusionUv, 0).x;
 
 		if (precipOcclusionTexCoord.z < precipOcclusionZ + 1e-2)
-			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[0]).xyz, perPassWetnessEffects[0].Time);
+			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[0]).xyz, perPassWetnessEffects[0].Time, worldSpaceNormal);
 	}
 
 	float rainWetness = perPassWetnessEffects[0].Wetness * minWetnessAngle * perPassWetnessEffects[0].MaxRainWetness;
