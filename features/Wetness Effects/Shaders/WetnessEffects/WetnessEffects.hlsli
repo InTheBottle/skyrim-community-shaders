@@ -152,12 +152,13 @@ float3 ReorientNormal(float3 n1, float3 n2)
 }
 
 // xyz - ripple normal, w - splotches
-float4 GetRainDrops(float3 worldPos, float t)
+float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 {
 	const float uintToFloat = rcp(4294967295.0);
 	const float rippleBreadthRcp = rcp(perPassWetnessEffects[0].RippleBreadth);
 
 	float2 grid_uv = worldPos.xy * perPassWetnessEffects[0].RaindropGridSizeRcp;
+	grid_uv += normal.xy * 0.5;
 	int2 grid = grid_uv;
 	grid_uv -= grid;
 
