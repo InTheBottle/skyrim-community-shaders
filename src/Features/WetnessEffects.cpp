@@ -21,6 +21,9 @@ const float SECONDS_IN_A_DAY = 86400;
 const float MAX_TIME_DELTA = SECONDS_IN_A_DAY - 30;
 const float MIN_WEATHER_TRANSITION_SPEED = 0.0f;
 const float MAX_WEATHER_TRANSITION_SPEED = 500.0f;
+const float AVERAGE_RAIN_VOLUME = 4000.0f;
+const float MIN_RAINDROP_CHANCE_MULTIPLIER = 0.1f;
+const float MAX_RAINDROP_CHANCE_MULTIPLIER = 2.0f;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::Settings,
@@ -226,7 +229,7 @@ float WetnessEffects::CalculateWeatherTransitionPercentage(float skyCurrentWeath
 	// Correct if beginFade is zero or negative
 	beginFade = beginFade > 0 ? beginFade : beginFade + TRANSITION_DENOMINATOR;
 	// Wait to start transition until precipitation begins/ends
-	float startPercentage = (TRANSITION_DENOMINATOR - beginFade) * (1.0f / TRANSITION_DENOMINATOR);
+	float startPercentage = 1 - ((TRANSITION_DENOMINATOR - beginFade) * (1.0f / TRANSITION_DENOMINATOR));
 
 	if (fadeIn) {
 		float currentPercentage = (skyCurrentWeatherPct - startPercentage) / (1 - startPercentage);
@@ -275,13 +278,19 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			currentWeatherID = 0;
 			uint32_t previousLastWeatherID = lastWeatherID;
 			lastWeatherID = 0;
+			float currentWeatherRaining = 0.0f;
+			float lastWeatherRaining = 0.0f;
+			float weatherTransitionPercentage = 0.0f;
 
 			if (settings.EnableWetnessEffects) {
 				if (auto sky = RE::Sky::GetSingleton()) {
 					if (sky->mode.get() == RE::Sky::Mode::kFull) {
 						if (auto currentWeather = sky->currentWeather) {
-							data.Raining = currentWeather->precipitationData && currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
-
+							if (currentWeather->precipitationData && currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+								float rainDensity = currentWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)].f;
+								float rainGravity = currentWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)].f;
+								currentWeatherRaining = std::clamp(((rainDensity * rainGravity) / AVERAGE_RAIN_VOLUME), MIN_RAINDROP_CHANCE_MULTIPLIER, MAX_RAINDROP_CHANCE_MULTIPLIER);
+							}
 							currentWeatherID = currentWeather->GetFormID();
 							if (auto calendar = RE::Calendar::GetSingleton()) {
 								float currentWeatherWetnessDepth = wetnessDepth;
@@ -302,7 +311,7 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 								}
 
 								if (seconds > 0 || (seconds < 0 && (wetnessDepth > 0 || puddleDepth > 0))) {
-									float weatherTransitionPercentage = DEFAULT_TRANSITION_PERCENTAGE;
+									weatherTransitionPercentage = DEFAULT_TRANSITION_PERCENTAGE;
 									float lastWeatherWetnessDepth = wetnessDepth;
 									float lastWeatherPuddleDepth = puddleDepth;
 									seconds *= std::clamp(settings.WeatherTransitionSpeed, MIN_WEATHER_TRANSITION_SPEED, MAX_WEATHER_TRANSITION_SPEED);
@@ -313,6 +322,9 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 										CalculateWetness(lastWeather, sky, seconds, lastWeatherWetnessDepth, lastWeatherPuddleDepth);
 										// If it was raining, wait to transition until precipitation ends, otherwise use the current weather's fade in
 										if (lastWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+											float rainDensity = lastWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)].f;
+											float rainGravity = lastWeather->precipitationData->data[static_cast<int>(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)].f;
+											lastWeatherRaining = std::clamp(((rainDensity * rainGravity) / AVERAGE_RAIN_VOLUME), MIN_RAINDROP_CHANCE_MULTIPLIER, MAX_RAINDROP_CHANCE_MULTIPLIER);
 											weatherTransitionPercentage = CalculateWeatherTransitionPercentage(sky->currentWeatherPct, lastWeather->data.precipitationEndFadeOut, false);
 										} else {
 											weatherTransitionPercentage = CalculateWeatherTransitionPercentage(sky->currentWeatherPct, currentWeather->data.precipitationBeginFadeIn, true);
@@ -329,6 +341,7 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 								// Calculate the wetness value from the water depth
 								data.Wetness = std::min(wetnessDepth, MAX_WETNESS);
 								data.PuddleWetness = std::min(puddleDepth, MAX_PUDDLE_WETNESS);
+								data.Raining = std::lerp(lastWeatherRaining, currentWeatherRaining, weatherTransitionPercentage);
 							}
 						}
 					}
