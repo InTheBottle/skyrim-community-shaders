@@ -1638,7 +1638,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 
 	wetness = max(shoreFactor * perPassWetnessEffects[0].MaxShoreWetness, rainWetness);
-	wetness *= nearFactor;
 
 	float3 wetnessNormal = worldSpaceNormal;
 
@@ -1655,6 +1654,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 			puddle *= max(1.0 - maxOcclusion, lerp(1.0, shadowColor.x, upAngle * 0.2));
 		}
 	}
+
+	puddle *= nearFactor;
 
 	float3 wetnessSpecular = 0.0;
 
