@@ -41,13 +41,13 @@ public:
 		uint EnableRipples = true;
 		uint EnableChaoticRipples = true;
 		float RaindropFxRange = 1000.f;
-		float RaindropGridSize = 3.f;
-		float RaindropInterval = 1.f;
+		float RaindropGridSize = 4.f;
+		float RaindropInterval = .5f;
 		float RaindropChance = .3f;
 		float SplashesStrength = 1.2f;
 		float SplashesMinRadius = .3f;
-		float SplashesMaxRadius = .7f;
-		float RippleStrength = .5f;
+		float SplashesMaxRadius = .5f;
+		float RippleStrength = 1.f;
 		float RippleRadius = 1.f;
 		float RippleBreadth = .5f;
 		float RippleLifetime = .1f;

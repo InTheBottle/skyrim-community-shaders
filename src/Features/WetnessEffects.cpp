@@ -109,10 +109,10 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Strength", &settings.SplashesStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::TreePop();
 		}
 
@@ -120,7 +120,7 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 2.f, "%.2f");
 			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("The biggest possible radius of ripples (at 1.0) is the grid size.");
+				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Breadth", &settings.RippleBreadth, 0.f, 1.f, "%.2f");
 			ImGui::SliderFloat("Lifetime", &settings.RippleLifetime, 0.f, settings.RaindropInterval, "%.2f sec", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::TreePop();
