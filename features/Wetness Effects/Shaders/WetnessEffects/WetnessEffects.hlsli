@@ -47,7 +47,7 @@ Texture2D<float> TexPrecipOcclusion : register(t31);
 #define LinearSampler SampShadowMaskSampler
 
 // https://www.unrealengine.com/en-US/blog/physically-based-shading-on-mobile
-float2 EnvBRDFApprox(float3 F0, float Roughness, float NoV)
+float2 EnvBRDFApproxWater(float3 F0, float Roughness, float NoV)
 {
 	const float4 c0 = { -1, -0.0275, -0.572, 0.022 };
 	const float4 c1 = { 1, 0.0425, 1.04, -0.04 };
@@ -222,42 +222,23 @@ float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 	return float4(ripple_normal, wetness);
 }
 
-float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 V, float roughness)
+float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 VN, float3 V, float roughness)
 {
+	float3 R = reflect(-V, N);
+	float NoV = saturate(dot(N, V));
+
 #if defined(DYNAMIC_CUBEMAPS)
-	float3 R = reflect(-V, N);
-	float NoV = saturate(dot(N, V));
-
 	float level = roughness * 9.0;
-
-	float3 specularIrradiance = specularTexture.SampleLevel(SampColorSampler, R, level);
-
-#	if defined(DYNAMIC_CUBEMAPS) && !defined(VR)
-	// float4 ssrBlurred = ssrTexture.SampleLevel(SampColorSampler, uv, 0);
-	// float4 ssrRaw = ssrRawTexture.SampleLevel(SampColorSampler, uv, 0);
-	// float4 ssrTexture = lerp(ssrRaw, ssrBlurred, sqrt(roughness));
-	// specularIrradiance = sRGB2Lin(lerp(specularIrradiance, ssrTexture.rgb, ssrTexture.a));
-	specularIrradiance = sRGB2Lin(specularIrradiance);
-#	else
-	specularIrradiance = sRGB2Lin(specularIrradiance);
-#	endif
-
+	float3 specularIrradiance = sRGB2Lin(specularTexture.SampleLevel(SampColorSampler, R, level));
 #else
-	float3 R = reflect(-V, N);
-	float NoV = saturate(dot(N, V));
-
 	float3 specularIrradiance = sRGB2Lin(mul(perPassWetnessEffects[0].DirectionalAmbientWS, float4(R, 1.0))) * noise(R * lerp(10.0, 1.0, roughness * roughness));
 #endif
-
-	// Split-sum approximation factors for Cook-Torrance specular BRDF.
-#if defined(DYNAMIC_CUBEMAPS)
-	float2 specularBRDF = specularBRDF_LUT.Sample(LinearSampler, float2(NoV, roughness));
-#else
-	float2 specularBRDF = EnvBRDFApprox(0.02, roughness, NoV);
-#endif
+	
+	float2 specularBRDF = EnvBRDFApproxWater(0.02, roughness, NoV);
 
 	// Horizon specular occlusion
-	float horizon = min(1.0 + dot(R, N), 1.0);
+	// https://marmosetco.tumblr.com/post/81245981087
+	float horizon = min(1.0 + dot(R, VN), 1.0);
 	specularIrradiance *= horizon * horizon;
 
 	// Roughness dependent fresnel
