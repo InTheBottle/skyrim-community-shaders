@@ -363,9 +363,11 @@ void WetnessEffects::Draw(const RE::BSShader* shader, const uint32_t)
 			// Disable Shore Wetness if Wetness Effects are Disabled
 			data.settings.MaxShoreWetness = settings.EnableWetnessEffects ? settings.MaxShoreWetness : 0.0f;
 			// calculating some parameters on cpu
+			data.settings.RaindropChance *= data.Raining;
 			data.settings.RaindropGridSize = 1.f / settings.RaindropGridSize;
 			data.settings.RaindropInterval = 1.f / settings.RaindropInterval;
 			data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
+			data.settings.ChaoticRippleStrength *= std::clamp(data.Raining, 0.f, 1.f);
 			data.settings.ChaoticRippleScale = 1.f / settings.ChaoticRippleScale;
 
 			D3D11_MAPPED_SUBRESOURCE mapped;

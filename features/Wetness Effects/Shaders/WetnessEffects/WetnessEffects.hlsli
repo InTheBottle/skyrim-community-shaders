@@ -178,7 +178,7 @@ float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 				uint3 hash = pcg3d(uint3(gridCurr, timestep));
 				float3 floatHash = float3(hash) * uintToFloat;
 
-				if (floatHash.z < (perPassWetnessEffects[0].RaindropChance * perPassWetnessEffects[0].Raining)) {
+				if (floatHash.z < (perPassWetnessEffects[0].RaindropChance)) {
 					float2 vec2Centre = int2(i, j) + floatHash.xy - gridUV;
 					float distSqr = dot(vec2Centre, vec2Centre);
 
@@ -217,7 +217,7 @@ float4 GetRainDrops(float3 worldPos, float t, float3 normal)
 		float3 turbulenceNormal = noise(float3(worldPos.xy * perPassWetnessEffects[0].ChaoticRippleScaleRcp, t * perPassWetnessEffects[0].ChaoticRippleSpeed));
 		turbulenceNormal.z = turbulenceNormal.z * .5 + 5;
 		turbulenceNormal = normalize(turbulenceNormal);
-		rippleNormal = normalize(rippleNormal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength * saturate(perPassWetnessEffects[0].Raining), 0));
+		rippleNormal = normalize(rippleNormal + float3(turbulenceNormal.xy * perPassWetnessEffects[0].ChaoticRippleStrength, 0));
 	}
 
 	wetness *= perPassWetnessEffects[0].SplashesStrength;
