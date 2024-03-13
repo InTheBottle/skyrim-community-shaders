@@ -16,6 +16,64 @@ void State::Draw()
 	auto& shaderCache = SIE::ShaderCache::Instance();
 	if (shaderCache.IsEnabled() && currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
+		if (type == RE::BSShader::Type::Utility)
+		{
+			if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap)) {
+				{
+					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+					auto context = renderer->GetRuntimeData().context;
+
+					{
+						{
+							ID3D11ShaderResourceView* views[3];
+							views[0] = nullptr;
+							views[1] = nullptr;
+							views[2] = nullptr;
+							context->PSSetShaderResources(100, 3, views);
+						}
+
+						auto uav = shadowData->uav.get();
+						context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+						ID3D11Buffer* buffers[3];
+						context->PSGetConstantBuffers(0, 3, buffers);
+						context->CSSetConstantBuffers(0, 3, buffers);
+
+						context->CSSetShader(copyShadowDataCS, nullptr, 0);
+
+						context->Dispatch(1, 1, 1);
+
+						uav = nullptr;
+						context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+						buffers[0] = nullptr;
+						buffers[1] = nullptr;
+						buffers[2] = nullptr;
+
+						context->CSSetConstantBuffers(0, 3, buffers);
+
+						for (int i = 0; i < 3; i++) {
+							if (buffers[i])
+								buffers[i]->Release();
+						}
+
+						{
+							auto shadowMaps = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kSHADOWMAPS];
+							auto focusShadowMaps = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kFOCUS_NEO];
+
+							ID3D11ShaderResourceView* views[3];
+							views[0] = shadowData->srv.get();
+							views[1] = shadowMaps.depthSRV;
+							views[2] = focusShadowMaps.depthSRV;
+							context->PSSetShaderResources(100, 3, views);					
+						}
+					}
+				}
+			} else if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapClamped)) {
+			} else if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapPb)) {
+			} else {
+			}
+		}
 		if (type > 0 && type < RE::BSShader::Type::Total) {
 			if (enabledClasses[type - 1]) {
 				ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
@@ -390,6 +448,37 @@ void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::B
 void State::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	{
+		D3D11_BUFFER_DESC sbDesc{};
+		sbDesc.Usage = D3D11_USAGE_DEFAULT;
+		sbDesc.CPUAccessFlags = 0;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.Flags = 0;
+
+		std::uint32_t numElements = 1;
+
+		sbDesc.StructureByteStride = sizeof(ShadowData);
+		sbDesc.ByteWidth = sizeof(ShadowData) * numElements;
+		shadowData = eastl::make_unique<Buffer>(sbDesc);
+		srvDesc.Buffer.NumElements = numElements;
+		shadowData->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		shadowData->CreateUAV(uavDesc);
+
+		copyShadowDataCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\CopyShadowDataCS.hlsl", {}, "cs_5_0");
+	}
 
 	D3D11_BUFFER_DESC sbDesc{};
 	sbDesc.Usage = D3D11_USAGE_DYNAMIC;

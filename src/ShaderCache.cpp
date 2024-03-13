@@ -475,6 +475,177 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
+		static void GetUtilityShaderDefines(uint32_t descriptor, D3D_SHADER_MACRO* defines)
+		{
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::Vc)) {
+				defines[0] = { "VC", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::Texture)) {
+				defines[0] = { "TEXTURE", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::Skinned)) {
+				defines[0] = { "SKINNED", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::Normals)) {
+				defines[0] = { "NORMALS", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::AlphaTest)) {
+				defines[0] = { "ALPHA_TEST", nullptr };
+				++defines;
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::LodLandscape)) {
+				if (descriptor &
+					(static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmask) |
+						static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot))) {
+					defines[0] = { "FOCUS_SHADOW", nullptr };
+				} else {
+					defines[0] = { "LOD_LANDSCAPE", nullptr };
+				}
+				++defines;
+			}
+
+			if ((descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormal)) &&
+				!(descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormalClear))) {
+				defines[0] = { "RENDER_NORMAL", nullptr };
+				++defines;
+			} else if (!(descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormal)) &&
+					   (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormalClear))) {
+				defines[0] = { "RENDER_NORMAL_CLEAR", nullptr };
+				++defines;
+			} else if ((descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormal)) &&
+					   (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormalClear))) {
+				defines[0] = { "STENCIL_ABOVE_WATER", nullptr };
+				++defines;
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormalFalloff)) {
+				defines[0] = { "RENDER_NORMAL_FALLOFF", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderNormalClamp)) {
+				defines[0] = { "RENDER_NORMAL_CLAMP", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderDepth)) {
+				defines[0] = { "RENDER_DEPTH", nullptr };
+				++defines;
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::OpaqueEffect)) {
+				defines[0] = { "OPAQUE_EFFECT", nullptr };
+				++defines;
+				if (!(descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmap)) &&
+					(descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::AdditionalAlphaMask))) {
+					defines[0] = { "ADDITIONAL_ALPHA_MASK", nullptr };
+					++defines;
+				}
+				if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::GrayscaleToAlpha)) {
+					defines[0] = { "GRAYSCALE_TO_ALPHA", nullptr };
+					++defines;
+				}
+			} else {
+				if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmap)) {
+					defines[0] = { "RENDER_SHADOWMAP", nullptr };
+					++defines;
+					if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmapPb)) {
+						defines[0] = { "RENDER_SHADOWMAP_PB", nullptr };
+						++defines;
+					}
+				} else if (descriptor &
+						   static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::AdditionalAlphaMask)) {
+					defines[0] = { "ADDITIONAL_ALPHA_MASK", nullptr };
+					++defines;
+				}
+				if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmapClamped)) {
+					defines[0] = { "RENDER_SHADOWMAP_CLAMPED", nullptr };
+					++defines;
+				}
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::GrayscaleMask)) {
+				defines[0] = { "GRAYSCALE_MASK", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
+				defines[0] = { "RENDER_SHADOWMASK", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot)) {
+				defines[0] = { "RENDER_SHADOWMASKSPOT", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskPb)) {
+				defines[0] = { "RENDER_SHADOWMASKPB", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskDpb)) {
+				defines[0] = { "RENDER_SHADOWMASKDPB", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderBaseTexture)) {
+				defines[0] = { "RENDER_BASE_TEXTURE", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::TreeAnim)) {
+				defines[0] = { "TREE_ANIM", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::LodObject)) {
+				defines[0] = { "LOD_OBJECT", nullptr };
+				++defines;
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::LocalMapFogOfWar)) {
+				defines[0] = { "LOCALMAP_FOGOFWAR", nullptr };
+				++defines;
+			}
+
+			if (descriptor & (static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmask) |
+								 static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskDpb) |
+								 static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskPb) |
+								 static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot))) {
+				static constexpr std::array<const char*, 5> shadowFilters = { { "0", "1", "2",
+					"3", "4" } };
+				const size_t shadowFilterIndex = std::clamp((descriptor >> 17) & 0b111, 0u, 4u);
+				defines[0] = { "SHADOWFILTER", shadowFilters[shadowFilterIndex] };
+				++defines;
+			} else if ((!(descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::OpaqueEffect)) &&
+						   (descriptor &
+							   static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderShadowmap))) ||
+					   (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::RenderDepth))) {
+				if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::DepthWriteDecals)) {
+					defines[0] = { "DEPTH_WRITE_DECALS", nullptr };
+					++defines;
+				}
+			} else {
+				if (descriptor & (static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::DepthWriteDecals) |
+									 static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::DebugColor))) {
+					defines[0] = { "DEBUG_COLOR", nullptr };
+					++defines;
+				}
+				if (descriptor & static_cast<uint32_t>(ShaderCache::UtilityShaderFlags::DebugShadowSplit)) {
+					defines[0] = { "DEBUG_SHADOWSPLIT", nullptr };
+					++defines;
+				}
+			}
+
+			defines[0] = { "SHADOWSPLITCOUNT", "3" };
+			++defines;
+
+			if ((descriptor & 0x14000) != 0x14000 &&
+				((descriptor & 0x20004000) == 0x4000 || (descriptor & 0x1E02000) == 0x2000) &&
+				!(descriptor & 0x80) && (descriptor & 0x14000) != 0x10000) {
+				defines[0] = { "NO_PIXEL_SHADER", nullptr };
+				++defines;
+			}
+
+			defines[0] = { nullptr, nullptr };
+		}
+
 		static void GetShaderDefines(RE::BSShader::Type type, uint32_t descriptor,
 			D3D_SHADER_MACRO* defines)
 		{
@@ -501,6 +672,9 @@ namespace SIE
 				GetParticleShaderDefines(descriptor, defines);
 				break;
 			case RE::BSShader::Type::Effect:
+				GetEffectShaderDefines(descriptor, defines);
+				break;
+			case RE::BSShader::Type::Utility:
 				GetEffectShaderDefines(descriptor, defines);
 				break;
 			}

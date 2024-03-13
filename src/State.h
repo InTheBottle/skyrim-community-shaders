@@ -29,6 +29,18 @@ public:
 
 	bool upscalerLoaded = false;
 
+	struct alignas(16) ShadowData
+	{
+		DirectX::XMFLOAT3X4 FocusShadowMapProj[4];
+		DirectX::XMFLOAT3X4 ShadowMapProj[4];
+		float4 StartSplitDistances;
+		float4 EndSplitDistances;
+		float4 FocusShadowFadeParam;
+	};
+
+	eastl::unique_ptr<Buffer> shadowData = nullptr;
+	ID3D11ComputeShader* copyShadowDataCS = nullptr;
+
 	float timer = 0;
 
 	void Draw();
