@@ -3,6 +3,7 @@
 #include <d3d11.h>
 
 #include "Buffer.h"
+#include "Util.h"
 #include <shared_mutex>
 
 #include "Feature.h"
@@ -28,13 +29,20 @@ public:
 
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
 
-	struct LightData
+	struct PositionOpt
+	{
+		float3 data;
+		float pad0;
+	};
+
+	struct alignas(16) LightData
 	{
 		float3 color;
 		float radius;
-		float3 positionWS[2];
-		float3 positionVS[2];
+		PositionOpt positionWS[2];
+		PositionOpt positionVS[2];
 		uint firstPersonShadow;
+		float pad0[3];
 	};
 
 	struct ClusterAABB
@@ -43,18 +51,25 @@ public:
 		float4 maxPoint;
 	};
 
-	struct LightGrid
+	struct alignas(16) LightGrid
 	{
 		uint offset;
 		uint lightCount;
+		float pad0[2];
 	};
 
-	struct alignas(16) PerFrameLightCulling
+	struct alignas(16) LightBuildingCB
 	{
 		float4x4 InvProjMatrix[2];
 		float LightsNear;
 		float LightsFar;
-		uint pad[2];
+		float pad[2];
+	};
+
+	struct alignas(16) LightCullingCB
+	{
+		uint LightCount;
+		float pad[3];
 	};
 
 	struct PerPass
@@ -65,17 +80,14 @@ public:
 		uint LightsVisualisationMode;
 		float LightsNear;
 		float LightsFar;
-		float4 CameraData;
-		float2 BufferDim;
 		uint FrameCount;
 	};
 
-	struct StrictLightData
+	struct alignas(16) StrictLightData
 	{
+		LightData StrictLights[15];
 		uint NumLights;
-		float3 PointLightPosition[15];
-		float PointLightRadius[15];
-		float3 PointLightColor[15];
+		float pad0[3];
 	};
 
 	StrictLightData strictLightDataTemp;
@@ -91,12 +103,14 @@ public:
 	std::unique_ptr<Buffer> strictLightData = nullptr;
 
 	bool rendered = false;
+	bool boundViews = false;
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
 
-	ConstantBuffer* perFrameLightCulling = nullptr;
+	ConstantBuffer* lightBuildingCB = nullptr;
+	ConstantBuffer* lightCullingCB = nullptr;
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
@@ -106,22 +120,28 @@ public:
 
 	std::uint32_t lightCount = 0;
 
-	Texture2D* screenSpaceShadowsTexture = nullptr;
-
 	struct ParticleLightInfo
 	{
 		RE::NiColorA color;
+		float radius;
 		ParticleLights::Config& config;
 	};
 
 	eastl::hash_map<RE::BSGeometry*, ParticleLightInfo> queuedParticleLights;
 	eastl::hash_map<RE::BSGeometry*, ParticleLightInfo> particleLights;
 
+	RE::NiPoint3 eyePositionCached[2]{};
+	Matrix viewMatrixCached[2]{};
+
+	PerPass perPassData{};
+
 	virtual void SetupResources();
 	virtual void Reset();
 
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
+
+	virtual void RestoreDefaultSettings();
 
 	virtual void DrawSettings();
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
@@ -130,8 +150,8 @@ public:
 	virtual void DataLoaded() override;
 
 	float CalculateLightDistance(float3 a_lightPosition, float a_radius);
-	bool AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light, ParticleLights::Config* a_config = nullptr, RE::BSGeometry* a_geometry = nullptr, double timer = 0.0f);
-	void SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3& a_initialPosition);
+	void AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light, ParticleLights::Config* a_config = nullptr, RE::BSGeometry* a_geometry = nullptr, double timer = 0.0f);
+	void SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached = true);
 	void UpdateLights();
 	void Bind();
 
@@ -148,9 +168,7 @@ public:
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
-		float ParticleLightsBrightness = 1.0f;
 		float ParticleLightsSaturation = 1.0f;
-		float ParticleLightsRadiusBillboards = 1.0f;
 		bool EnableParticleLightsOptimization = true;
 		uint ParticleLightsOptimisationClusterRadius = 32;
 	};
@@ -160,6 +178,9 @@ public:
 
 	Settings settings;
 
+	using ConfigPair = std::pair<ParticleLights::Config*, ParticleLights::GradientConfig*>;
+	std::optional<ConfigPair> GetParticleLightConfigs(RE::BSRenderPass* a_pass);
+	bool AddParticleLight(RE::BSRenderPass* a_pass, ConfigPair a_config);
 	bool CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t a_technique);
 
 	void BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pass);
@@ -176,7 +197,7 @@ public:
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;
-	uint32_t particleLightsDetectionHits = 0;
+	std::uint32_t particleLightsDetectionHits = 0;
 
 	float CalculateLuminance(CachedParticleLight& light, RE::NiPoint3& point);
 	void AddParticleLightLuminance(RE::NiPoint3& targetPosition, int& numHits, float& lightLevel);
@@ -187,7 +208,7 @@ public:
 		{
 			static bool thunk(RE::BSShaderProperty* a_property, RE::BSLight* a_light)
 			{
-				return func(a_property, a_light) && (!netimmerse_cast<RE::BSLightingShaderProperty*>(a_property) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
+				return func(a_property, a_light) && ((REL::Module::IsVR() && !netimmerse_cast<RE::BSLightingShaderProperty*>(a_property)) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -196,7 +217,7 @@ public:
 		{
 			static bool thunk(RE::BSShaderProperty* a_property, RE::BSLight* a_light)
 			{
-				return func(a_property, a_light) && (!netimmerse_cast<RE::BSLightingShaderProperty*>(a_property) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
+				return func(a_property, a_light) && ((REL::Module::IsVR() && !netimmerse_cast<RE::BSLightingShaderProperty*>(a_property)) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -205,7 +226,7 @@ public:
 		{
 			static bool thunk(RE::BSShaderProperty* a_property, RE::BSLight* a_light)
 			{
-				return func(a_property, a_light) && (!netimmerse_cast<RE::BSLightingShaderProperty*>(a_property) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
+				return func(a_property, a_light) && ((REL::Module::IsVR() && !netimmerse_cast<RE::BSLightingShaderProperty*>(a_property)) || (a_light->portalStrict || !a_light->portalGraph || skyrim_cast<RE::BSShadowLight*>(a_light)));
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -214,7 +235,7 @@ public:
 		{
 			static void thunk(RE::BSRenderPass* Pass, uint32_t Technique, bool AlphaTest, uint32_t RenderFlags)
 			{
-				if (!GetSingleton()->CheckParticleLights(Pass, Technique))
+				if (GetSingleton()->CheckParticleLights(Pass, Technique))
 					func(Pass, Technique, AlphaTest, RenderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -224,7 +245,7 @@ public:
 		{
 			static void thunk(RE::BSRenderPass* Pass, uint32_t Technique, bool AlphaTest, uint32_t RenderFlags)
 			{
-				if (!GetSingleton()->CheckParticleLights(Pass, Technique))
+				if (GetSingleton()->CheckParticleLights(Pass, Technique))
 					func(Pass, Technique, AlphaTest, RenderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -234,7 +255,7 @@ public:
 		{
 			static void thunk(RE::BSRenderPass* Pass, uint32_t Technique, bool AlphaTest, uint32_t RenderFlags)
 			{
-				if (!GetSingleton()->CheckParticleLights(Pass, Technique))
+				if (GetSingleton()->CheckParticleLights(Pass, Technique))
 					func(Pass, Technique, AlphaTest, RenderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -323,8 +344,8 @@ struct fmt::formatter<LightLimitFix::LightData>
 			reinterpret_cast<uintptr_t>(&l),
 			(Vector3)l.color,
 			l.radius,
-			(Vector3)l.positionWS[0], (Vector3)l.positionWS[1],
-			(Vector3)l.positionVS[0], (Vector3)l.positionVS[1],
+			(Vector3)l.positionWS[0].data, (Vector3)l.positionWS[1].data,
+			(Vector3)l.positionVS[0].data, (Vector3)l.positionVS[1].data,
 			l.firstPersonShadow);
 	}
 };

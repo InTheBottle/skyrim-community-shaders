@@ -121,6 +121,9 @@ struct PS_OUTPUT
 	float4 Color : SV_Target0;
 	float2 MotionVectors : SV_Target1;
 	float4 Normal : SV_Target2;
+#if defined(CLOUD_SHADOWS) && defined(CLOUDS)
+	float4 CloudShadows : SV_Target3;
+#endif
 };
 
 #ifdef PSHADER
@@ -204,6 +207,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.MotionVectors = screenMotionVector;
 	psout.Normal = float4(0.5, 0.5, 0, 0);
+
+#	if defined(CLOUD_SHADOWS) && defined(CLOUDS)
+	psout.CloudShadows = psout.Color;
+#	endif
 
 	return psout;
 }

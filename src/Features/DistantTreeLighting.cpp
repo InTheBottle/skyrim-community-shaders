@@ -13,15 +13,11 @@ void DistantTreeLighting::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("Complex Tree LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable Complex Tree LOD", (bool*)&settings.EnableComplexTreeLOD);
-		if (ImGui::IsItemHovered()) {
-			ImGui::BeginTooltip();
-			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Enables advanced lighting simulation on tree LOD. "
 				"Requires DynDOLOD. "
 				"See https://dyndolod.info/ for more information. ");
-			ImGui::PopTextWrapPos();
-			ImGui::EndTooltip();
 		}
 
 		ImGui::Spacing();
@@ -31,12 +27,8 @@ void DistantTreeLighting::DrawSettings()
 
 	if (ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable Directional Light Fix", (bool*)&settings.EnableDirLightFix);
-		if (ImGui::IsItemHovered()) {
-			ImGui::BeginTooltip();
-			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Fix for trees not being affected by sunlight scale.");
-			ImGui::PopTextWrapPos();
-			ImGui::EndTooltip();
 		}
 
 		ImGui::Spacing();
@@ -46,16 +38,12 @@ void DistantTreeLighting::DrawSettings()
 
 	if (ImGui::TreeNodeEx("Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat("SSS Amount", &settings.SubsurfaceScatteringAmount, 0.0f, 1.0f);
-		if (ImGui::IsItemHovered()) {
-			ImGui::BeginTooltip();
-			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Subsurface Scattering (SSS) amount. "
 				"Soft lighting controls how evenly lit an object is. "
 				"Back lighting illuminates the back face of an object. "
 				"Combined to model the transport of light through the surface. ");
-			ImGui::PopTextWrapPos();
-			ImGui::EndTooltip();
 		}
 
 		ImGui::Spacing();
@@ -132,11 +120,6 @@ void DistantTreeLighting::ModifyDistantTree(const RE::BSShader*, const uint32_t 
 		buffers[1] = perPass->CB();
 		context->VSSetConstantBuffers(2, ARRAYSIZE(buffers), buffers);
 		context->PSSetConstantBuffers(2, ARRAYSIZE(buffers), buffers);
-
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		ID3D11ShaderResourceView* views[1]{};
-		views[0] = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK].SRV;
-		context->PSSetShaderResources(17, ARRAYSIZE(views), views);
 	}
 }
 
@@ -160,6 +143,11 @@ void DistantTreeLighting::Load(json& o_json)
 void DistantTreeLighting::Save(json& o_json)
 {
 	o_json[GetName()] = settings;
+}
+
+void DistantTreeLighting::RestoreDefaultSettings()
+{
+	settings = {};
 }
 
 void DistantTreeLighting::SetupResources()

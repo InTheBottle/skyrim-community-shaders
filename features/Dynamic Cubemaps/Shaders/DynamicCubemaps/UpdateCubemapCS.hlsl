@@ -1,8 +1,12 @@
 #include "../Common/VR.hlsl"
 RWTexture2DArray<float4> DynamicCubemap : register(u0);
+RWTexture2DArray<float4> DynamicCubemapRaw : register(u1);
+RWTexture2DArray<float4> DynamicCubemapPosition : register(u2);
 
 Texture2D<float> DepthTexture : register(t0);
 Texture2D<float4> ColorTexture : register(t1);
+
+SamplerState LinearSampler : register(s0);
 
 // Calculate normalized sampling direction vector based on current fragment coordinates.
 // This is essentially "inverse-sampling": we reconstruct what the sampling vector would be if we wanted it to "hit"
@@ -95,6 +99,7 @@ cbuffer UpdateData : register(b1)
 {
 	float4 CameraData;
 	uint Reset;
+	float3 CameraPreviousPosAdjust2;
 }
 
 float3 WorldToView(float3 x, bool is_position = true, uint a_eyeIndex = 0)
@@ -126,28 +131,80 @@ float2 GetDynamicResolutionAdjustedScreenPosition(float2 screenPosition)
 bool IsSaturated(float value) { return value == saturate(value); }
 bool IsSaturated(float2 value) { return IsSaturated(value.x) && IsSaturated(value.y); }
 
+float3 sRGB2Lin(float3 color)
+{
+	return color > 0.04045 ? pow(color / 1.055 + 0.055 / 1.055, 2.4) : color / 12.92;
+}
+
+// Inverse project UV + raw depth into world space.
+float3 InverseProjectUVZ(float2 uv, float z)
+{
+	uv.y = 1 - uv.y;
+	float4 cp = float4(float3(uv, z) * 2 - 1, 1);
+	float4 vp = mul(CameraViewProjInverse[0], cp);
+	return float3(vp.xy, vp.z) / vp.w;
+}
+
+float smoothbumpstep(float edge0, float edge1, float x)
+{
+	x = 1.0 - abs(saturate((x - edge0) / (edge1 - edge0)) - 0.5) * 2.0;
+	return x * x * (3.0 - x - x);
+}
+
 [numthreads(32, 32, 1)] void main(uint3 ThreadID
 								  : SV_DispatchThreadID) {
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
 	float3 viewDirection = WorldToView(captureDirection, false);
 	float2 uv = ViewToUV(viewDirection, false);
 
-	if (Reset)
+	if (Reset) {
 		DynamicCubemap[ThreadID] = 0.0;
+		DynamicCubemapRaw[ThreadID] = 0.0;
+		DynamicCubemapPosition[ThreadID] = 0.0;
+		return;
+	}
 
 	if (IsSaturated(uv) && viewDirection.z < 0.0) {  // Check that the view direction exists in screenspace and that it is in front of the camera
 		uv = GetDynamicResolutionAdjustedScreenPosition(uv);
 		uv = ConvertToStereoUV(uv, 0);
 
-		float2 textureDims;
-		DepthTexture.GetDimensions(textureDims.x, textureDims.y);
+		float depth = DepthTexture.SampleLevel(LinearSampler, uv, 0);
+		float linearDepth = GetScreenDepth(depth);
 
-		float depth = DepthTexture[round(uv * textureDims)];
-		depth = GetScreenDepth(depth);
+		if (linearDepth > 16.5) {  // Ignore objects which are too close
+			float3 color = ColorTexture.SampleLevel(LinearSampler, uv, 0);
+			float4 output = float4(sRGB2Lin(color), 1.0);
+			float lerpFactor = 0.5;
 
-		if (depth > 16.5) {  // First person
-			float3 color = ColorTexture[round(uv * textureDims)];
-			DynamicCubemap[ThreadID] = float4(pow(color, 2.2), 1.0);
+			float4 position = float4(InverseProjectUVZ(uv, depth) * 0.001, 1.0);
+
+			float distance = length(position.xyz);
+
+			position.w = smoothstep(1.0, 4096.0 * 0.001, distance);  // Objects which are far away from the perspective of the camera do not fade out
+
+			if (linearDepth > (4096.0 * 5.0))
+				position.w = 0;
+
+			DynamicCubemapPosition[ThreadID] = lerp(DynamicCubemapPosition[ThreadID], position, lerpFactor);
+
+			DynamicCubemapRaw[ThreadID] = max(0, lerp(DynamicCubemapRaw[ThreadID], output, lerpFactor));
+
+			output *= sqrt(saturate(0.5 * length(position.xyz)));
+
+			DynamicCubemap[ThreadID] = max(0, lerp(DynamicCubemap[ThreadID], output, lerpFactor));
+
+			return;
 		}
 	}
+
+	float4 position = DynamicCubemapPosition[ThreadID];
+	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
+	DynamicCubemapPosition[ThreadID] = position;
+
+	float4 color = DynamicCubemapRaw[ThreadID];
+
+	float distanceFactor = sqrt(smoothbumpstep(0.0, 1.0, length(position.xyz)));
+	color *= max(0.001, max(distanceFactor, position.w));
+
+	DynamicCubemap[ThreadID] = max(0, color);
 }

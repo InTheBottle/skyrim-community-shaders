@@ -77,6 +77,20 @@ private:
 	D3D11_BUFFER_DESC desc;
 };
 
+template <typename T>
+D3D11_BUFFER_DESC StructuredBufferDesc(UINT a_count = 1)
+{
+	D3D11_BUFFER_DESC desc{};
+	ZeroMemory(&desc, sizeof(desc));
+	desc.Usage = D3D11_USAGE_DYNAMIC;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	desc.StructureByteStride = sizeof(T);
+	desc.ByteWidth = sizeof(T) * a_count;
+	return desc;
+}
+
 class StructuredBuffer
 {
 public:
@@ -168,14 +182,14 @@ public:
 	winrt::com_ptr<ID3D11UnorderedAccessView> uav;
 };
 
-class Texture2D
+class Texture1D
 {
 public:
-	Texture2D(D3D11_TEXTURE2D_DESC const& a_desc)
+	Texture1D(D3D11_TEXTURE1D_DESC const& a_desc)
 	{
 		desc = a_desc;
 		auto device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
-		DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, resource.put()));
+		DX::ThrowIfFailed(device->CreateTexture1D(&desc, nullptr, resource.put()));
 	}
 
 	void CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC const& a_desc)
@@ -189,10 +203,57 @@ public:
 		DX::ThrowIfFailed(device->CreateUnorderedAccessView(resource.get(), &a_desc, uav.put()));
 	}
 
+	void CreateRTV(D3D11_RENDER_TARGET_VIEW_DESC const& a_desc)
+	{
+		ID3D11Device* device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
+		DX::ThrowIfFailed(device->CreateRenderTargetView(resource.get(), &a_desc, rtv.put()));
+	}
+
+	D3D11_TEXTURE1D_DESC desc;
+	winrt::com_ptr<ID3D11Texture1D> resource;
+	winrt::com_ptr<ID3D11ShaderResourceView> srv;
+	winrt::com_ptr<ID3D11UnorderedAccessView> uav;
+	winrt::com_ptr<ID3D11RenderTargetView> rtv;
+};
+
+class Texture2D
+{
+public:
+	Texture2D(D3D11_TEXTURE2D_DESC const& a_desc)
+	{
+		desc = a_desc;
+		auto device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
+		DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, resource.put()));
+	}
+
+	Texture2D(ID3D11Texture2D* a_resource)
+	{
+		a_resource->GetDesc(&desc);
+		resource.attach(a_resource);
+	}
+
+	void CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC const& a_desc)
+	{
+		ID3D11Device* device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
+		DX::ThrowIfFailed(device->CreateShaderResourceView(resource.get(), &a_desc, srv.put()));
+	}
+	void CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC const& a_desc)
+	{
+		ID3D11Device* device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(resource.get(), &a_desc, uav.put()));
+	}
+
+	void CreateRTV(D3D11_RENDER_TARGET_VIEW_DESC const& a_desc)
+	{
+		ID3D11Device* device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
+		DX::ThrowIfFailed(device->CreateRenderTargetView(resource.get(), &a_desc, rtv.put()));
+	}
+
 	D3D11_TEXTURE2D_DESC desc;
 	winrt::com_ptr<ID3D11Texture2D> resource;
 	winrt::com_ptr<ID3D11ShaderResourceView> srv;
 	winrt::com_ptr<ID3D11UnorderedAccessView> uav;
+	winrt::com_ptr<ID3D11RenderTargetView> rtv;
 };
 
 class Texture3D

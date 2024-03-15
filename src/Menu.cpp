@@ -64,6 +64,7 @@ void SetupImGuiStyle()
 }
 
 bool IsEnabled = false;
+ImVec4 TextColor = ImVec4{ 1.0f, 1.0f, 1.0f, 1.0f };
 
 Menu::~Menu()
 {
@@ -139,6 +140,7 @@ void Menu::DrawSettings()
 	ImGui::SetNextWindowSize({ 1000, 1000 }, ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowPos({ 0, 0 }, ImGuiCond_FirstUseEver);
 	if (ImGui::Begin(std::format("Skyrim Community Shaders {}", Plugin::VERSION.string(".")).c_str(), &IsEnabled)) {
+		ImGui::PushStyleColor(ImGuiCol_Text, TextColor);
 		auto& shaderCache = SIE::ShaderCache::Instance();
 
 		if (ImGui::BeginTable("##LeButtons", 4, ImGuiTableFlags_SizingStretchSame)) {
@@ -162,31 +164,23 @@ void Menu::DrawSettings()
 					}
 				}
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"The Shader Cache is the collection of compiled shaders which replace the vanilla shaders at runtime. "
 					"Clearing the shader cache will mean that shaders are recompiled only when the game re-encounters them. "
 					"This is only needed for hot-loading shaders for development purposes. ");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Clear Disk Cache", { -1, 0 })) {
 				shaderCache.DeleteDiskCache();
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"The Disk Cache is a collection of compiled shaders on disk, which are automatically created when shaders are added to the Shader Cache. "
 					"If you do not have a Disk Cache, or it is outdated or invalid, you will see \"Compiling Shaders\" in the upper-left corner. "
 					"After this has completed you will no longer see this message apart from when loading from the Disk Cache. "
 					"Only delete the Disk Cache manually if you are encountering issues. ");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 
 			if (shaderCache.GetFailedTasks()) {
@@ -195,16 +189,12 @@ void Menu::DrawSettings()
 				if (ImGui::Button("Toggle Error Message", { -1, 0 })) {
 					shaderCache.ToggleErrorMessages();
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text(
 						"Hide or show the shader failure message. "
 						"Your installation is broken and will likely see errors in game. "
 						"Please double check you have updated all features and that your load order is correct. "
 						"See CommunityShaders.log for details and check the NexusMods page or Discord server. ");
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
 				}
 			}
 			ImGui::EndTable();
@@ -219,12 +209,8 @@ void Menu::DrawSettings()
 				if (ImGui::Checkbox("Enable Shaders", &useCustomShaders)) {
 					shaderCache.SetEnabled(useCustomShaders);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Disabling this effectively disables all features.");
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
 				}
 
 				bool useDiskCache = shaderCache.IsDiskCache();
@@ -232,12 +218,8 @@ void Menu::DrawSettings()
 				if (ImGui::Checkbox("Enable Disk Cache", &useDiskCache)) {
 					shaderCache.SetDiskCache(useDiskCache);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Disabling this stops shaders from being loaded from disk, as well as stops shaders from being saved to it.");
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
 				}
 
 				bool useAsync = shaderCache.IsAsync();
@@ -245,12 +227,8 @@ void Menu::DrawSettings()
 				if (ImGui::Checkbox("Enable Async", &useAsync)) {
 					shaderCache.SetAsync(useAsync);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Skips a shader being replaced if it hasn't been compiled yet. Also makes compilation blazingly fast!");
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
 				}
 
 				ImGui::EndTable();
@@ -319,12 +297,8 @@ void Menu::DrawSettings()
 			if (ImGui::Checkbox("Dump Shaders", &useDump)) {
 				shaderCache.SetDump(useDump);
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Dump shaders at startup. This should be used only when reversing shaders. Normal users don't need this.");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 			spdlog::level::level_enum logLevel = State::GetSingleton()->GetLogLevel();
 			const char* items[] = {
@@ -341,46 +315,30 @@ void Menu::DrawSettings()
 				ImGui::SameLine();
 				State::GetSingleton()->SetLogLevel(static_cast<spdlog::level::level_enum>(item_current));
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Log level. Trace is most verbose. Default is info.");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 
 			auto& shaderDefines = State::GetSingleton()->shaderDefinesString;
 			if (ImGui::InputText("Shader Defines", &shaderDefines)) {
 				State::GetSingleton()->SetDefines(shaderDefines);
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Defines for Shader Compiler. Semicolon \";\" separated. Clear with space. Rebuild shaders after making change. Compute Shaders require a restart to recompile.");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 			ImGui::Spacing();
 			ImGui::SliderInt("Compiler Threads", &shaderCache.compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Number of threads to use to compile shaders. "
 					"The more threads the faster compilation will finish but may make the system unresponsive. ");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 			ImGui::SliderInt("Background Compiler Threads", &shaderCache.backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Number of threads to use to compile shaders while playing game. "
 					"This is activated if the startup compilation is skipped. "
 					"The more threads the faster compilation will finish but may make the system unresponsive. ");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 
 			if (ImGui::SliderInt("Test Interval", (int*)&testInterval, 0, 10)) {
@@ -396,16 +354,12 @@ void Menu::DrawSettings()
 					logger::info("Setting new interval {}.", testInterval);
 				}
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::BeginTooltip();
-				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Sets number of seconds before toggling between default USER and TEST config. "
 					"0 disables. Non-zero will enable testing mode. "
 					"Enabling will save current settings as TEST config. "
 					"This has no impact if no settings are changed. ");
-				ImGui::PopTextWrapPos();
-				ImGui::EndTooltip();
 			}
 			if (ImGui::Button("Dump Ini Settings", { -1, 0 })) {
 				Util::DumpSettingsOptions();
@@ -415,17 +369,22 @@ void Menu::DrawSettings()
 				if (ImGui::Button(blockingButtonString.c_str(), { -1, 0 })) {
 					shaderCache.DisableShaderBlocking();
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text(
 						"Stop blocking Community Shaders shader. "
 						"Blocking is helpful when debugging shader errors in game to determine which shader has issues. "
 						"Blocking is enabled if in developer mode and pressing PAGEUP and PAGEDOWN. "
 						"Specific shader will be printed to logfile. ");
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
 				}
+			}
+			if (ImGui::TreeNodeEx("Addresses")) {
+				auto Renderer = RE::BSGraphics::Renderer::GetSingleton();
+				auto BSShaderAccumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
+				auto RendererShadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+				ADDRESS_NODE(Renderer)
+				ADDRESS_NODE(BSShaderAccumulator)
+				ADDRESS_NODE(RendererShadowState)
+				ImGui::TreePop();
 			}
 			if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::Text(std::format("Shader Compiler : {}", shaderCache.GetShaderStatsString()).c_str());
@@ -469,25 +428,40 @@ void Menu::DrawSettings()
 							selectedFeature = i;
 						ImGui::SameLine();
 						ImGui::TextDisabled(fmt::format("({})", featureList[i]->version).c_str());
+					} else if (!featureList[i]->version.empty()) {
+						ImGui::TextDisabled(fmt::format("{} ({})", featureList[i]->GetName(), featureList[i]->version).c_str());
+						if (auto _tt = Util::HoverTooltipWrapper()) {
+							ImGui::Text(featureList[i]->failedLoadedMessage.c_str());
+						}
 					}
 				ImGui::EndListBox();
 			}
 
 			ImGui::TableNextColumn();
+
+			bool shownFeature = selectedFeature < featureList.size();
+			if (shownFeature) {
+				if (ImGui::Button("Restore Defaults", { -1, 0 })) {
+					featureList[selectedFeature]->RestoreDefaultSettings();
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text(
+						"Restores the feature's settings back to their default values. "
+						"You will still need to Save Settings to make these changes permanent. ");
+				}
+			}
+
 			if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
-				bool shownFeature = false;
-				for (size_t i = 0; i < featureList.size(); i++)
-					if (i == selectedFeature) {
-						shownFeature = true;
-						featureList[i]->DrawSettings();
-					}
-				if (!shownFeature)
+				if (shownFeature)
+					featureList[selectedFeature]->DrawSettings();
+				else
 					ImGui::TextDisabled("Please select a feature on the left.");
 			}
 			ImGui::EndChild();
 
 			ImGui::EndTable();
 		}
+		ImGui::PopStyleColor(1);
 	}
 
 	ImGui::End();
@@ -542,17 +516,22 @@ void Menu::DrawOverlay()
 		}
 
 		ImGui::End();
-	} else if (failed && !hide) {
-		ImGui::SetNextWindowBgAlpha(1);
-		ImGui::SetNextWindowPos(ImVec2(10, 10));
-		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::End();
-			return;
-		}
+	} else if (failed) {
+		TextColor = ImVec4{ 1.0f, 0.0f, 0.0f, 1.0f };
+		if (!hide) {
+			ImGui::SetNextWindowBgAlpha(1);
+			ImGui::SetNextWindowPos(ImVec2(10, 10));
+			if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+				ImGui::End();
+				return;
+			}
 
-		ImGui::Text("ERROR: %d shaders failed to compile. Check installation and CommunityShaders.log", failed, totalShaders);
-		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 0, 0, 255));
-		ImGui::End();
+			ImGui::TextColored(TextColor, "ERROR: %d shaders failed to compile. Check installation and CommunityShaders.log", failed, totalShaders);
+			ImGui::End();
+		}
+	} else {
+		// Done compiling with no failures
+		TextColor = ImVec4{ 1.0f, 1.0f, 1.0f, 1.0f };
 	}
 
 	if (IsEnabled) {
@@ -936,7 +915,7 @@ void Menu::addToEventQueue(KeyEvent e)
 	_keyEventQueue.emplace_back(e);
 }
 
-void Menu::OnFocusLost()  //todo implement wndproc hook to catch WM_KILLFOCUS
+void Menu::OnFocusLost()
 {
 	std::unique_lock<std::shared_mutex> mutex(_inputEventMutex);
 	_keyEventQueue.clear();

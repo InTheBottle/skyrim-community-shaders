@@ -16,13 +16,22 @@
     "magic-enum",
     "nlohmann-json",
     "pystring",
+    "directxtex",
     {
       "name": "imgui",
       "features": ["dx11-binding", "win32-binding", "docking-experimental"],
       "version>=": "1.88"
     },
     "eastl",
-    "clib-util"
+    "clib-util",
+    "unordered-dense",
+    "efsw"
   ],
-  "builtin-baseline": "e6aabd1415a1fc9f5e76deb3c5a40e27300aef2a"
+  "overrides": [
+    {
+      "name": "bshoshany-thread-pool",
+      "version-string": "3.5.0"
+    }
+  ],
+  "builtin-baseline": "83972272512ce4ede5fc3b2ba98f6468b179f192"
 }

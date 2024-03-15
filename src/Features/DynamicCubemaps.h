@@ -34,12 +34,7 @@ public:
 	ID3D11ComputeShader* specularIrradianceCS = nullptr;
 	ConstantBuffer* spmapCB = nullptr;
 	Texture2D* envTexture = nullptr;
-	winrt::com_ptr<ID3D11UnorderedAccessView> uavArray[9];
-
-	// BRDF 2D LUT
-
-	ID3D11ComputeShader* spBRDFProgram = nullptr;
-	Texture2D* spBRDFLUT = nullptr;
+	ID3D11UnorderedAccessView* uavArray[9];
 
 	// Reflection capture
 
@@ -47,23 +42,47 @@ public:
 	{
 		float4 CameraData;
 		uint Reset;
-		float pad[3];
+		float3 CameraPreviousPosAdjust;
 	};
 
 	ID3D11ComputeShader* updateCubemapCS = nullptr;
 	ConstantBuffer* updateCubemapCB = nullptr;
 
 	ID3D11ComputeShader* inferCubemapCS = nullptr;
+	ID3D11ComputeShader* inferCubemapReflectionsCS = nullptr;
+
 	Texture2D* envCaptureTexture = nullptr;
+	Texture2D* envCaptureRawTexture = nullptr;
+	Texture2D* envCapturePositionTexture = nullptr;
+	Texture2D* envInferredTexture = nullptr;
+
+	ID3D11ShaderResourceView* defaultCubemap = nullptr;
 
 	bool activeReflections = false;
-
 	bool resetCapture = true;
 
-	bool updateCapture = true;
-	bool updateIBL = true;
+	enum class NextTask
+	{
+		kCapture,
+		kInferrence,
+		kIrradiance
+	};
 
-	ID3D11UnorderedAccessView* cubemapUAV;
+	NextTask nextTask = NextTask::kCapture;
+
+	// Editor window
+
+	bool enableCreator = false;
+	float4 cubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
+
+	struct alignas(16) CreatorSettingsCB
+	{
+		uint Enabled;
+		uint pad0[3];
+		float4 CubemapColor;
+	};
+
+	std::unique_ptr<Buffer> perFrameCreator = nullptr;
 
 	void UpdateCubemap();
 
@@ -83,6 +102,8 @@ public:
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
 
+	virtual void RestoreDefaultSettings();
+
 	std::vector<std::string> iniVRCubeMapSettings{
 		{ "bAutoWaterSilhouetteReflections:Water" },  //IniSettings 0x1eaa018
 		{ "bForceHighDetailReflections:Water" },      //IniSettings 0x1eaa030
@@ -100,6 +121,7 @@ public:
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeShaderUpdate();
 	ID3D11ComputeShader* GetComputeShaderInferrence();
+	ID3D11ComputeShader* GetComputeShaderInferrenceReflections();
 	ID3D11ComputeShader* GetComputeShaderSpecularIrradiance();
 
 	void UpdateCubemapCapture();

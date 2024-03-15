@@ -266,13 +266,68 @@ namespace Util
 	}
 	float4 GetCameraData()
 	{
-		auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
-
-		float4 cameraData;
-		cameraData.x = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar;
-		cameraData.y = accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
-		cameraData.z = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar - accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
-		cameraData.w = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar * accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
+		float4 cameraData{};
+		if (auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator()) {
+			if (accumulator->kCamera) {
+				cameraData.x = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar;
+				cameraData.y = accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
+				cameraData.z = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar - accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
+				cameraData.w = accumulator->kCamera->GetRuntimeData2().viewFrustum.fFar * accumulator->kCamera->GetRuntimeData2().viewFrustum.fNear;
+			}
+		}
 		return cameraData;
+	}
+
+	HoverTooltipWrapper::HoverTooltipWrapper()
+	{
+		hovered = ImGui::IsItemHovered();
+		if (hovered) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+		}
+	}
+
+	HoverTooltipWrapper::~HoverTooltipWrapper()
+	{
+		if (hovered) {
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
+		}
+	}
+}
+
+namespace nlohmann
+{
+	void to_json(json& j, const float2& v)
+	{
+		j = json{ v.x, v.y };
+	}
+
+	void from_json(const json& j, float2& v)
+	{
+		std::array<float, 2> temp = j;
+		v = { temp[0], temp[1] };
+	}
+
+	void to_json(json& j, const float3& v)
+	{
+		j = json{ v.x, v.y, v.z };
+	}
+
+	void from_json(const json& j, float3& v)
+	{
+		std::array<float, 3> temp = j;
+		v = { temp[0], temp[1], temp[2] };
+	}
+
+	void to_json(json& j, const float4& v)
+	{
+		j = json{ v.x, v.y, v.z, v.w };
+	}
+
+	void from_json(const json& j, float4& v)
+	{
+		std::array<float, 4> temp = j;
+		v = { temp[0], temp[1], temp[2], temp[3] };
 	}
 }

@@ -1,5 +1,6 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
+#include "Common/LightingData.hlsl"
 #include "Common/MotionBlur.hlsl"
 
 #define GRASS
@@ -355,8 +356,8 @@ float3x3 CalculateTBN(float3 N, float3 p, float2 uv)
 #		include "DynamicCubemaps/DynamicCubemaps.hlsli"
 #	endif
 
-#	if defined(WETNESS_EFFECTS)
-#		include "WetnessEffects/WetnessEffects.hlsli"
+#	if defined(CLOUD_SHADOWS)
+#		include "CloudShadows/CloudShadows.hlsli"
 #	endif
 
 PS_OUTPUT main(PS_INPUT input, bool frontFace
@@ -439,6 +440,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		dirLightColor *= SunlightScale;
 	}
 
+#		if defined(CLOUD_SHADOWS)
+	float3 cloudShadowMult = 1.0;
+	if (perPassCloudShadow[0].EnableCloudShadows && !lightingData[0].Reflections) {
+		cloudShadowMult = getCloudShadowMult(input.WorldPosition.xyz, DirLightDirection.xyz, SampColorSampler);
+		dirLightColor *= cloudShadowMult;
+	}
+#		endif
+
 	dirLightColor *= shadowColor.x;
 
 #		if defined(SCREEN_SPACE_SHADOWS)
@@ -470,23 +479,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	if (complex)
 		lightsSpecularColor += GetLightSpecularInput(DirLightDirection, viewDirection, worldNormal, dirLightColor, Glossiness);
 
-#		if defined(WETNESS_EFFECTS)
-	float waterSpecular = 0.0;
-
-	float3 puddleCoords = ((input.WorldPosition.xyz + CameraPosAdjust[0]) * 0.5 + 0.5) * lerp(0.03, 0.02, perPassWetnessEffects[0].Wetness);
-	float puddle = pow(saturate(FBM(puddleCoords, 3, 1.0) * 0.5 + 0.5), 1) * perPassWetnessEffects[0].Wetness;
-
-	float waterGlossinessSpecular = saturate(worldNormal.z) * max(perPassWetnessEffects[0].Wetness * saturate(worldNormal.z) * 0.5, puddle);
-
-	float waterRoughnessSpecular = 1.0 - waterGlossinessSpecular;
-	waterRoughnessSpecular = lerp(perPassWetnessEffects[0].MinRoughness, 1.0, waterRoughnessSpecular);
-
-	if (waterRoughnessSpecular < 1.0) {
-		waterSpecular += GetWetnessSpecular(worldNormal, DirLightDirection, viewDirection, dirLightColor, waterRoughnessSpecular);
-		waterSpecular += GetWetnessAmbientSpecular(worldNormal, viewDirection, 1.0 - waterGlossinessSpecular, 0.02);
-	}
-#		endif
-
 #		if defined(LIGHT_LIMIT_FIX)
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
@@ -499,7 +491,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		if (lightCount) {
 			uint lightOffset = lightGrid[clusterIndex].offset;
 
-			float screenNoise = InterleavedGradientNoise(screenUV * perPassLLF[0].BufferDim);
+			float screenNoise = InterleavedGradientNoise(screenUV * lightingData[0].BufferDim);
 			float shadowQualityScale = saturate(1.0 - (((float)lightCount * (float)lightCount) / 128.0));
 
 			[loop] for (uint i = 0; i < lightCount; i++)
@@ -539,23 +531,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, float4(worldNormal.xyz, 1));
+#		if defined(CLOUD_SHADOWS)
+	if (perPassCloudShadow[0].EnableCloudShadows && !lightingData[0].Reflections)
+		directionalAmbientColor *= lerp(1.0, cloudShadowMult, perPassCloudShadow[0].AbsorptionAmbient);
+#		endif
 	lightsDiffuseColor += directionalAmbientColor;
 
 	diffuseColor += lightsDiffuseColor;
 
-	float3 color = diffuseColor * baseColor.xyz * input.VertexColor.xyz;
+	float3 color = max(0, diffuseColor * baseColor.xyz * input.VertexColor.xyz);
 
 	if (complex) {
 		specularColor += lightsSpecularColor;
 		specularColor *= specColor.w * SpecularStrength;
 		color.xyz += specularColor;
 	}
-
-#		if defined(WETNESS_EFFECTS)
-	color.xyz = sRGB2Lin(color.xyz);
-	color.xyz += waterSpecular;
-	color.xyz = Lin2sRGB(color.xyz);
-#		endif
 
 #		if defined(LIGHT_LIMIT_FIX)
 	if (perPassLLF[0].EnableLightsVisualisation) {

@@ -45,6 +45,14 @@ namespace stl
 		T::func = trampoline.write_call<5>(a_src, T::thunk);
 	}
 
+	template <class T>
+	void write_thunk_call_6(std::uintptr_t a_src)
+	{
+		SKSE::AllocTrampoline(14);
+		auto& trampoline = SKSE::GetTrampoline();
+		T::func = *(uintptr_t*)trampoline.write_call<6>(a_src, T::thunk);
+	}
+
 	template <class F, size_t index, class T>
 	void write_vfunc()
 	{
@@ -149,6 +157,19 @@ using json = nlohmann::json;
 #include <EASTL/unique_ptr.h>
 #include <EASTL/unordered_map.h>
 #include <EASTL/vector.h>
+
+#include <ankerl/unordered_dense.h>
+template <>
+struct ankerl::unordered_dense::hash<std::string>
+{
+	using is_transparent = void;  // enable heterogeneous overloads
+	using is_avalanching = void;  // mark class as high quality avalanching hash
+
+	[[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t
+	{
+		return ankerl::unordered_dense::hash<std::string_view>{}(str);
+	}
+};
 
 #include "SimpleMath.h"
 
