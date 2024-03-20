@@ -9,6 +9,7 @@
 
 #include "Feature.h"
 #include "State.h"
+#include "Bindings.h"
 
 namespace SIE
 {
@@ -60,8 +61,11 @@ namespace SIE
 
 			int lastIndex = 0;
 
-			if (technique == ShaderCache::LightingShaderTechniques::Outline) {
+			if (technique == ShaderCache::LightingShaderTechniques::Outline)
 				defines[lastIndex++] = { "OUTLINE", nullptr };
+
+			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) != 0) {
+				defines[lastIndex++] = { "DEFERRED", nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {

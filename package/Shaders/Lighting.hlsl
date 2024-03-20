@@ -487,15 +487,27 @@ VS_OUTPUT main(VS_INPUT input)
 
 typedef VS_OUTPUT PS_INPUT;
 
+#	if defined(DEFERRED)
 struct PS_OUTPUT
 {
-	float4 Albedo : SV_Target0;
+	float4 Diffuse : SV_Target0;
+	float4 MotionVectors : SV_Target1;
+	float4 NormalGlossiness : SV_Target2;
+	float4 Specular : SV_Target3;
+	float4 Albedo : SV_Target4;
+	float4 Reflectance : SV_Target5;
+};
+#	else
+struct PS_OUTPUT
+{
+	float4 Diffuse : SV_Target0;
 	float4 MotionVectors : SV_Target1;
 	float4 ScreenSpaceNormals : SV_Target2;
 #if defined(SNOW)
 	float4 SnowParameters : SV_Target3;
 #endif
 };
+#	endif
 
 #ifdef PSHADER
 
@@ -2006,24 +2018,30 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = min(vertexColor.xyz, color.xyz);
 
 #	if defined(CPM_AVAILABLE) && defined(ENVMAP)
-	color.xyz += specularColor * complexSpecular;
-#	else
+	specularColor *= complexSpecular;
+#	endif
+
+#	if !defined(DEFERRED)
 	color.xyz += specularColor;
 #	endif  // defined (CPM_AVAILABLE) && defined(ENVMAP)
 
+	color.xyz = sRGB2Lin(color.xyz);
+
 #	if defined(DYNAMIC_CUBEMAPS)
+	float3 fresnel = 0.0;
 #		if defined(EYE)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, diffuseColor, viewPosition.z) * input.Color.xyz * envMask;
+	fresnel = sqrt(color.xyz) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2, diffuseColor, viewPosition.z) * envMask;
 #		elif defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5 - (saturate(envMask) * 0.5), 2 - saturate(envMask), diffuseColor, viewPosition.z) * (1.0 - ((float)dynamicCubemap * saturate(envMask))) * input.Color.xyz;
-#		elif defined(HAIR)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, diffuseColor, viewPosition.z);
+	fresnel = lerp(sqrt(color.xyz), sqrt(sRGB2Lin(envColor.xyz)), saturate(envMask)) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2 - saturate(envMask), diffuseColor, viewPosition.z) * (1.0 - ((float)dynamicCubemap * saturate(envMask)));
 #		else
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, diffuseColor, viewPosition.z) * input.Color.xyz;
+	fresnel = sqrt(color.xyz) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2, diffuseColor, viewPosition.z);
+#		endif
+#		if defined(WETNESS_EFFECTS)
+	color.xyz += fresnel * (1.0 - wetnessGlossinessSpecular);
+#		else
+	color.xyz += fresnel;
 #		endif
 #	endif
-
-	color.xyz = sRGB2Lin(color.xyz);
 
 #	if defined(WETNESS_EFFECTS)
 	color.xyz += wetnessSpecular * wetnessGlossinessSpecular;
@@ -2053,7 +2071,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 #	if defined(LANDSCAPE) && !defined(LOD_LAND_BLEND)
-	psout.Albedo.w = 0;
+	psout.Diffuse.w = 0;
 #	else
 	float alpha = baseColor.w;
 #		if !defined(ADDITIONAL_ALPHA_MASK)
@@ -2100,23 +2118,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		discard;
 	}
 #		endif      // DO_ALPHA_TEST
-	psout.Albedo.w = alpha;
+	psout.Diffuse.w = alpha;
 
 #	endif
 #	if defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
 	if (perPassLLF[0].EnableLightsVisualisation) {
 		if (perPassLLF[0].LightsVisualisationMode == 0) {
-			psout.Albedo.xyz = TurboColormap(strictLightData[0].NumStrictLights >= 7.0);
+			psout.Diffuse.xyz = TurboColormap(strictLightData[0].NumStrictLights >= 7.0);
 		} else if (perPassLLF[0].LightsVisualisationMode == 1) {
-			psout.Albedo.xyz = TurboColormap((float)strictLightData[0].NumStrictLights / 15.0);
+			psout.Diffuse.xyz = TurboColormap((float)strictLightData[0].NumStrictLights / 15.0);
 		} else {
-			psout.Albedo.xyz = TurboColormap((float)numClusteredLights / 128.0);
+			psout.Diffuse.xyz = TurboColormap((float)numClusteredLights / 128.0);
 		}
 	} else {
-		psout.Albedo.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
+		psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
 	}
 #	else
-	psout.Albedo.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
+	psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
 #	endif  // defined(LIGHT_LIMIT_FIX)
 
 #	if defined(SNOW)
@@ -2125,7 +2143,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	psout.MotionVectors.xy = SSRParams.z > 1e-5 ? float2(1, 0) : screenMotionVector.xy;
 	psout.MotionVectors.zw = float2(0, 1);
-
+	
+#if !defined(DEFERRED)
 	float tmp = -1e-5 + SSRParams.x;
 	float tmp3 = (SSRParams.y - tmp);
 	float tmp2 = (glossiness - tmp);
@@ -2202,15 +2221,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 #	endif
 
-#	if defined(OUTLINE)
-	psout.Albedo = float4(1, 0, 0, 1);
-#	endif  // OUTLINE
-
 #	if defined(SSS) && defined(SKIN)
 	if (perPassSSS[0].ValidMaterial) {
 		float sssAmount = saturate(baseColor.a) * 0.5;
 		psout.ScreenSpaceNormals.z = perPassSSS[0].IsBeastRace ? sssAmount : sssAmount + 0.5;
 	}
+#	endif
+#	else
+
+	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
+	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
+	psout.Albedo = float4(baseColor.xyz, psout.Diffuse.w);
+	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
+	
+	float outGlossiness = saturate(glossiness * SSRParams.w);
+
+	screenSpaceNormal.z = max(0.001, sqrt(8 + -8 * screenSpaceNormal.z));
+	screenSpaceNormal.xy /= screenSpaceNormal.zz;
+
+	psout.NormalGlossiness = float4(screenSpaceNormal.xy + 0.5, outGlossiness, psout.Diffuse.w);
 #	endif
 
 	return psout;
