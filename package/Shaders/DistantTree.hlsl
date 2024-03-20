@@ -65,11 +65,12 @@ typedef VS_OUTPUT PS_INPUT;
 
 struct PS_OUTPUT
 {
-	float4 Albedo : SV_Target0;
+	float4 Diffuse : SV_Target0;
 
 #if !defined(RENDER_DEPTH)
 	float2 MotionVector : SV_Target1;
 	float4 Normal : SV_Target2;
+	float4 Albedo : SV_Target3;
 #endif
 };
 
@@ -136,8 +137,8 @@ PS_OUTPUT main(PS_INPUT input)
 		discard;
 	}
 
-	psout.Albedo.xyz = input.Depth.xxx / input.Depth.yyy;
-	psout.Albedo.w = 0;
+	psout.Diffuse.xyz = input.Depth.xxx / input.Depth.yyy;
+	psout.Diffuse.w = 0;
 #	else
 	float4 baseColor = TexDiffuse.Sample(SampDiffuse, input.TexCoord.xy);
 
@@ -147,7 +148,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 
-	psout.Albedo = float4((input.TexCoord.zzz * DiffuseColor.xyz + AmbientColor.xyz) * baseColor.xyz, 1.0);
+	psout.Diffuse = float4((input.TexCoord.zzz * DiffuseColor.xyz + AmbientColor.xyz) * baseColor.xyz, 1.0);
 
 	float4 screenPosition = mul(ScreenProj, input.WorldPosition);
 	screenPosition.xy = screenPosition.xy / screenPosition.ww;
@@ -158,6 +159,8 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.MotionVector = screenMotionVector;
 
 	psout.Normal = float4(0.5, 0.5, 0, 0);
+
+	psout.Albedo = float4(baseColor.xyz, 1);
 #	endif
 
 	return psout;

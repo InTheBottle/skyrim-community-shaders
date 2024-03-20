@@ -123,17 +123,16 @@ void Bindings::SetupResources()
 		// TEMPORAL_AA_WATER_1
 		// TEMPORAL_AA_WATER_2 
 
-#define SPECULAR RE::RENDER_TARGETS::kRAWINDIRECT
-#define ALBEDO RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
-#define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
+#define ALBEDO RE::RENDER_TARGETS::kINDIRECT
+#define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
+#define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
 
-		// Specular
-		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, texDesc.Format);
 		// Albedo
 		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
+		// Specular
+		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, texDesc.Format);
 		// Reflectance
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
-
 	}
 }
 
@@ -219,13 +218,14 @@ void Bindings::StartDeferred()
 		forwardRenderTargets[i] = state->GetRuntimeData().renderTargets[i];
 	}
 
+
 	RE::RENDER_TARGET targets[6] 
 	{ 
 		RE::RENDER_TARGET::kMAIN,
 		RE::RENDER_TARGET::kMOTION_VECTOR,
 		forwardRenderTargets[2],  // Normal swaps each frame
-		SPECULAR,
 		ALBEDO,
+		SPECULAR,
 		REFLECTANCE,
 	};
 
@@ -233,6 +233,13 @@ void Bindings::StartDeferred()
 	{
 		state->GetRuntimeData().renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
 		state->GetRuntimeData().setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
+	}
+
+	// Improved snow shader
+	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE)
+	{
+		state->GetRuntimeData().renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
+		state->GetRuntimeData().setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
 	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);     // Run OMSetRenderTargets again
@@ -302,6 +309,10 @@ void Bindings::EndDeferred()
 	// Do not render to our targets past this point
 	for (uint i = 0; i < 4; i++) {
 		state->GetRuntimeData().renderTargets[i] = forwardRenderTargets[i];
+	}
+
+	for (uint i = 4; i < 8; i++) {
+		state->GetRuntimeData().renderTargets[i] = RE::RENDER_TARGET::kNONE;
 	}
 
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;

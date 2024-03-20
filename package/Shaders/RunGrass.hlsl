@@ -140,9 +140,10 @@ struct PS_OUTPUT
 #if defined(RENDER_DEPTH)
 	float4 PS : SV_Target0;
 #else
-	float4 Albedo : SV_Target0;
+	float4 Diffuse : SV_Target0;
 	float2 MotionVectors : SV_Target1;
 	float4 Normal : SV_Target2;
+	float4 Albedo : SV_Target3;
 #endif
 };
 
@@ -190,8 +191,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float diffuseFraction = lerp(sunShadowMask, 1, input.AmbientColor.w);
 	float3 diffuseColor = input.DiffuseColor.xyz * baseColor.xyz;
 	float3 ambientColor = input.AmbientColor.xyz * baseColor.xyz;
-	psout.Albedo.xyz = input.TexCoord.zzz * (diffuseColor * diffuseFraction + ambientColor);
-	psout.Albedo.w = 1;
+	psout.Diffuse.xyz = input.TexCoord.zzz * (diffuseColor * diffuseFraction + ambientColor);
+	psout.Diffuse.w = 1;
 
 	float4 screenPosition = mul(ScreenProj, input.WorldPosition);
 	screenPosition.xy = screenPosition.xy / screenPosition.ww;
@@ -207,6 +208,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float normalScale = max(1.0 / 1000.0, sqrt(normal.z * -8 + 8));
 	psout.Normal.xy = float2(0.5, 0.5) + normal.xy / normalScale;
 	psout.Normal.zw = float2(0, 0);
+
+	psout.Albedo = float4(baseColor.xyz, 1);
 #	endif
 
 	return psout;
