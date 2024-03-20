@@ -214,22 +214,20 @@ void Bindings::StartDeferred()
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
+	// Backup original render targets
+	for (uint i = 0; i < 4; i++) {
+		forwardRenderTargets[i] = state->GetRuntimeData().renderTargets[i];
+	}
+
 	RE::RENDER_TARGET targets[6] 
 	{ 
 		RE::RENDER_TARGET::kMAIN,
 		RE::RENDER_TARGET::kMOTION_VECTOR,
-		RE::RENDER_TARGET::kNONE,
+		forwardRenderTargets[2],  // Normal swaps each frame
 		SPECULAR,
 		ALBEDO,
 		REFLECTANCE,
 	};
-
-	// Backup original render targets
-	for (uint i = 0; i < 4; i++) {
-		forwardRenderTargets[i] = state->GetRuntimeData().renderTargets[i];                                            
-	}
-
-	targets[2] = forwardRenderTargets[2]; // Normal swaps each frame
 
 	for (uint i = 0; i < 6; i++)
 	{
