@@ -8,6 +8,7 @@ half2 OctWrap( half2 v )
  
 half2 EncodeNormal( half3 n )
 {
+	n = -n;
 	n /= ( abs( n.x ) + abs( n.y ) + abs( n.z ) );
 	n.xy = n.z >= 0.0 ? n.xy : OctWrap( n.xy );
 	n.xy = n.xy * 0.5 + 0.5;
@@ -21,7 +22,7 @@ half3 DecodeNormal( half2 f )
 	half3 n = half3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
 	half t = saturate( -n.z );
 	n.xy += n.xy >= 0.0 ? -t : t;
-	return normalize( n );
+	return -normalize( n );
 }
 
 half2 EncodeNormalVanilla( half3 n )
