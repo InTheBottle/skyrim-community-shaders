@@ -493,9 +493,12 @@ struct PS_OUTPUT
 	float4 Diffuse : SV_Target0;
 	float4 MotionVectors : SV_Target1;
 	float4 NormalGlossiness : SV_Target2;
-	float4 Specular : SV_Target3;
-	float4 Albedo : SV_Target4;
+	float4 Albedo : SV_Target3;
+	float4 Specular : SV_Target4;
 	float4 Reflectance : SV_Target5;
+#if defined(SNOW)
+	float4 SnowParameters : SV_Target6;
+#endif
 };
 #	else
 struct PS_OUTPUT
@@ -1554,7 +1557,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsSpecularColor = 0.0.xxx;
 
 	float dirLightAngle = dot(modelNormal.xyz, DirLightDirection.xyz);
+
+#	if defined(DEFERRED)
+	float3 dirDiffuseColor = 0.0;
+#	else
 	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle.xxx);
+#	endif
 
 #	if defined(SOFT_LIGHTING)
 	lightsDiffuseColor += nsDirLightColor.xyz * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
@@ -1879,13 +1887,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #	endif
 
+#	if !defined(DEFERRED)
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
-#	if defined(CLOUD_SHADOWS)
+#		if defined(CLOUD_SHADOWS)
 	if (perPassCloudShadow[0].EnableCloudShadows)
 		directionalAmbientColor *= lerp(1.0, cloudShadowMult, perPassCloudShadow[0].AbsorptionAmbient);
+#		endif
+	diffuseColor += directionalAmbientColor;
 #	endif
-
-	diffuseColor = directionalAmbientColor + emitColor.xyz + diffuseColor;
+	
+	diffuseColor += emitColor.xyz;
 
 #	if defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE)
 	float envMaskColor = TexEnvMaskSampler.Sample(SampEnvMaskSampler, uv).x;
@@ -1957,10 +1968,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = diffuseColor * baseColor.xyz;
 
 #	if defined(HAIR)
-	float3 vertexColor = (input.Color.yyy * (TintColor.xyz - 1.0.xxx) + 1.0.xxx) * color.xyz;
+	float3 vertexColor = (input.Color.yyy * (TintColor.xyz - 1.0.xxx) + 1.0.xxx);
 #	else
-	float3 vertexColor = input.Color.xyz * color.xyz;
+	float3 vertexColor = input.Color.xyz;
 #	endif  // defined (HAIR)
+	float3 realVertexColor = vertexColor;
+	vertexColor *= color.xyz;
 
 #	if defined(MULTI_LAYER_PARALLAX)
 	float layerValue = MultiLayerParallaxData.x * TexLayerSampler.Sample(SampLayerSampler, uv).w;
@@ -2231,12 +2244,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
-	psout.Albedo = float4(baseColor.xyz, psout.Diffuse.w);
+	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
 	
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
-	screenSpaceNormal.z = max(0.001, sqrt(8 + -8 * screenSpaceNormal.z));
+	screenSpaceNormal.z = sqrt(8 + -8 * screenSpaceNormal.z);
 	screenSpaceNormal.xy /= screenSpaceNormal.zz;
 
 	psout.NormalGlossiness = float4(screenSpaceNormal.xy + 0.5, outGlossiness, psout.Diffuse.w);

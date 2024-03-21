@@ -148,6 +148,13 @@ struct PS_OUTPUT
 };
 
 #ifdef PSHADER
+
+#include "Common/Color.hlsl"
+#include "Common/FrameBuffer.hlsl"
+#include "Common/LightingData.hlsl"
+#include "Common/MotionBlur.hlsl"
+#include "Common/Permutation.hlsl"
+
 SamplerState SampBaseSampler : register(s0);
 SamplerState SampShadowMaskSampler : register(s1);
 
@@ -158,13 +165,6 @@ cbuffer AlphaTestRefCB : register(b11)
 {
 	float AlphaTestRefRS : packoffset(c0);
 }
-
-cbuffer PerFrame : register(b12)
-{
-	float4 UnknownPerFrame1[12] : packoffset(c0);
-	row_major float4x4 ScreenProj : packoffset(c12);
-	row_major float4x4 PreviousScreenProj : packoffset(c16);
-};
 
 PS_OUTPUT main(PS_INPUT input)
 {
@@ -187,29 +187,17 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	float sunShadowMask = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0)).x;
 
-	// Albedo
-	float diffuseFraction = lerp(sunShadowMask, 1, input.AmbientColor.w);
-	float3 diffuseColor = input.DiffuseColor.xyz * baseColor.xyz;
-	float3 ambientColor = input.AmbientColor.xyz * baseColor.xyz;
-	psout.Diffuse.xyz = input.TexCoord.zzz * (diffuseColor * diffuseFraction + ambientColor);
+	psout.Diffuse.xyz = 0;
 	psout.Diffuse.w = 1;
 
-	float4 screenPosition = mul(ScreenProj, input.WorldPosition);
-	screenPosition.xy = screenPosition.xy / screenPosition.ww;
-	float4 previousScreenPosition = mul(PreviousScreenProj, input.PreviousWorldPosition);
-	previousScreenPosition.xy = previousScreenPosition.xy / previousScreenPosition.ww;
-	float2 screenMotionVector = float2(-0.5, 0.5) * (screenPosition.xy - previousScreenPosition.xy);
+	psout.MotionVectors = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
 
-	psout.MotionVectors = screenMotionVector;
-
-	float3 ddx = ddx_coarse(input.ViewSpacePosition);
-	float3 ddy = ddy_coarse(input.ViewSpacePosition);
-	float3 normal = normalize(cross(ddx, ddy));
+	float3 normal = normalize(WorldToView(float3(0, 0, 1), false, 0));
 	float normalScale = max(1.0 / 1000.0, sqrt(normal.z * -8 + 8));
 	psout.Normal.xy = float2(0.5, 0.5) + normal.xy / normalScale;
 	psout.Normal.zw = float2(0, 0);
 
-	psout.Albedo = float4(baseColor.xyz, 1);
+	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z * 0.5, 1);
 #	endif
 
 	return psout;

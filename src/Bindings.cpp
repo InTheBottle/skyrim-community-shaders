@@ -1,7 +1,6 @@
-
 #include "Bindings.h"
-#include "Util.h"
 #include "State.h"
+#include "Util.h"
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
@@ -121,7 +120,7 @@ void Bindings::SetupResources()
 		// VOLUMETRIC_LIGHTING_QUARTER_RES
 		// VOLUMETRIC_LIGHTING_BLUR_QUARTER_RES
 		// TEMPORAL_AA_WATER_1
-		// TEMPORAL_AA_WATER_2 
+		// TEMPORAL_AA_WATER_2
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
@@ -134,10 +133,60 @@ void Bindings::SetupResources()
 		// Reflectance
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
 	}
+
+	{
+		deferredCB = new ConstantBuffer(ConstantBufferDesc<DeferredCB>());
+	}
 }
 
 void Bindings::Reset()
 {
+}
+
+void Bindings::UpdateConstantBuffer()
+{
+	auto state = State::GetSingleton();
+	auto viewport = RE::BSGraphics::State::GetSingleton();
+
+	DeferredCB data{};
+
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+
+	if (REL::Module::IsVR()) {
+		data.InvViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat.Invert();
+		data.InvViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat.Invert();
+	} else {
+		data.InvViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat.Invert();
+	}
+
+	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
+	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
+
+	data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
+
+	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+	data.DirLightColor *= !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+
+	float3 dirLightDirection{ dirLight->GetWorldDirection().x, dirLight->GetWorldDirection().y, dirLight->GetWorldDirection().z };
+	dirLightDirection.Normalize();
+	data.DirLightDirection = { -dirLightDirection.x, -dirLightDirection.y, -dirLightDirection.z, 1.0f };
+
+	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
+	RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
+	Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
+
+	data.BufferDim.x = state->screenWidth;
+	data.BufferDim.y = state->screenHeight;
+
+	data.RcpBufferDim.x = 1.0f / State::GetSingleton()->screenWidth;
+	data.RcpBufferDim.y = 1.0f / State::GetSingleton()->screenHeight;
+
+	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+	data.FrameCount = viewport->uiFrameCount * (useTAA || state->upscalerLoaded);
+
+	data.CameraData = Util::GetCameraData();
+
+	deferredCB->Update(data);
 }
 
 void Bindings::StartDeferred()
@@ -146,8 +195,7 @@ void Bindings::StartDeferred()
 		return;
 
 	static bool setup = false;
-	if (!setup)
-	{
+	if (!setup) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 		auto device = renderer->GetRuntimeData().forwarder;
 
@@ -218,9 +266,7 @@ void Bindings::StartDeferred()
 		forwardRenderTargets[i] = state->GetRuntimeData().renderTargets[i];
 	}
 
-
-	RE::RENDER_TARGET targets[6] 
-	{ 
+	RE::RENDER_TARGET targets[6]{
 		RE::RENDER_TARGET::kMAIN,
 		RE::RENDER_TARGET::kMOTION_VECTOR,
 		forwardRenderTargets[2],  // Normal swaps each frame
@@ -229,20 +275,18 @@ void Bindings::StartDeferred()
 		REFLECTANCE,
 	};
 
-	for (uint i = 0; i < 6; i++)
-	{
+	for (uint i = 0; i < 6; i++) {
 		state->GetRuntimeData().renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
 		state->GetRuntimeData().setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
 	// Improved snow shader
-	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE)
-	{
+	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE) {
 		state->GetRuntimeData().renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
 		state->GetRuntimeData().setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
-	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);     // Run OMSetRenderTargets again
+	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
 
@@ -262,18 +306,22 @@ void Bindings::DeferredPasses()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
+	UpdateConstantBuffer();
+
 	{
 		auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 		auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 		auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 
-		ID3D11ShaderResourceView* srvs[3]{
+		ID3D11ShaderResourceView* srvs[4]{
 			specular.SRV,
 			albedo.SRV,
-			reflectance.SRV
+			reflectance.SRV,
+			shadowMask.SRV
 		};
 
-		context->CSSetShaderResources(0, 3, srvs);
+		context->CSSetShaderResources(0, 4, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
@@ -281,18 +329,29 @@ void Bindings::DeferredPasses()
 		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
 		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 
+		auto buffer = deferredCB->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+
 		auto shader = GetComputeDeferredComposite();
 		context->CSSetShader(shader, nullptr, 0);
 
 		auto state = State::GetSingleton();
-		context->Dispatch((uint32_t)std::ceil(state->screenWidth / 32.0f), (uint32_t)std::ceil(state->screenHeight / 32.0f), 1);	
+		auto viewport = RE::BSGraphics::State::GetSingleton();
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
 	}
 
-	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 3, views);
+	ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 4, views);
 
 	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
 	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+	ID3D11Buffer* buffer = nullptr;
+	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }
@@ -316,9 +375,9 @@ void Bindings::EndDeferred()
 	}
 
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-	context->OMSetRenderTargets(0, nullptr, nullptr); // Unbind all bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
-	DeferredPasses(); // Perform deferred passes and composite forward buffers
+	DeferredPasses();  // Perform deferred passes and composite forward buffers
 
 	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 

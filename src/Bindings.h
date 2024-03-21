@@ -36,6 +36,23 @@ public:
 	bool inWorld = false;
 	bool deferredPass = false;
 
+	struct alignas(16) DeferredCB
+	{
+		float4 DirLightDirection;
+		float4 DirLightColor;
+		float4 CameraData;
+		float2 BufferDim;
+		float2 RcpBufferDim;
+		DirectX::XMFLOAT4X4 InvViewMatrix[2];
+		DirectX::XMFLOAT3X4 DirectionalAmbient;
+		uint FrameCount;
+		uint pad0[3];
+	};
+
+	ConstantBuffer* deferredCB = nullptr;
+
+	void UpdateConstantBuffer();
+
 	struct Hooks
 	{
 		struct Main_RenderWorld
@@ -60,7 +77,6 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-
 		struct Main_RenderWorld_End
 		{
 			static void thunk(RE::BSShaderAccumulator* This, uint32_t RenderFlags)
@@ -71,7 +87,6 @@ public:
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
-
 
 		static void Install()
 		{

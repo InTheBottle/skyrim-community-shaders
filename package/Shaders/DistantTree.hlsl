@@ -148,7 +148,8 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 
-	psout.Diffuse = float4((input.TexCoord.zzz * DiffuseColor.xyz + AmbientColor.xyz) * baseColor.xyz, 1.0);
+	psout.Diffuse.xyz = 0;
+	psout.Diffuse.w = 1;
 
 	float4 screenPosition = mul(ScreenProj, input.WorldPosition);
 	screenPosition.xy = screenPosition.xy / screenPosition.ww;
@@ -160,7 +161,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Normal = float4(0.5, 0.5, 0, 0);
 
-	psout.Albedo = float4(baseColor.xyz, 1);
+	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z, 1);
 #	endif
 
 	return psout;
