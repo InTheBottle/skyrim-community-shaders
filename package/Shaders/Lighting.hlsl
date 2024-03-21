@@ -3,6 +3,7 @@
 #include "Common/LightingData.hlsl"
 #include "Common/MotionBlur.hlsl"
 #include "Common/Permutation.hlsl"
+#include "Common/GBuffer.hlsl"
 
 #define PI 3.1415927
 
@@ -1887,8 +1888,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #	endif
 
-#	if !defined(DEFERRED)
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
+
+#	if !defined(DEFERRED)
 #		if defined(CLOUD_SHADOWS)
 	if (perPassCloudShadow[0].EnableCloudShadows)
 		directionalAmbientColor *= lerp(1.0, cloudShadowMult, perPassCloudShadow[0].AbsorptionAmbient);
@@ -2249,10 +2251,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
-	screenSpaceNormal.z = sqrt(8 + -8 * screenSpaceNormal.z);
-	screenSpaceNormal.xy /= screenSpaceNormal.zz;
-
-	psout.NormalGlossiness = float4(screenSpaceNormal.xy + 0.5, outGlossiness, psout.Diffuse.w);
+	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
 #	endif
 
 	return psout;

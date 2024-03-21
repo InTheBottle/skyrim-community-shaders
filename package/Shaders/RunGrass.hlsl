@@ -1,3 +1,5 @@
+#include "Common/GBuffer.hlsl"
+
 struct VS_INPUT
 {
 	float4 Position : POSITION0;
@@ -193,8 +195,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.MotionVectors = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
 
 	float3 normal = normalize(WorldToView(float3(0, 0, 1), false, 0));
-	float normalScale = max(1.0 / 1000.0, sqrt(normal.z * -8 + 8));
-	psout.Normal.xy = float2(0.5, 0.5) + normal.xy / normalScale;
+	psout.Normal.xy = EncodeNormal(normal);
 	psout.Normal.zw = float2(0, 0);
 
 	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z * 0.5, 1);

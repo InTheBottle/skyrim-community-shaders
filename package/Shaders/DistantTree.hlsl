@@ -1,3 +1,5 @@
+#include "Common/GBuffer.hlsl"
+
 struct VS_INPUT
 {
 	float3 Position : POSITION0;
@@ -159,7 +161,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.MotionVector = screenMotionVector;
 
-	psout.Normal = float4(0.5, 0.5, 0, 0);
+	psout.Normal.xy = EncodeNormal(float3(0.0, 0.0, -1.0));
+	psout.Normal.zw = 0;
 
 	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z, 1);
 #	endif
