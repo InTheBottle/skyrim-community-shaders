@@ -5,7 +5,7 @@ Texture2D<half3> SpecularTexture 				: register(t0);
 Texture2D<unorm half3> AlbedoTexture 			: register(t1);
 Texture2D<unorm half3> ReflectanceTexture 		: register(t2);
 Texture2D<unorm half3> NormalRoughnessTexture 	: register(t3);
-Texture2D<unorm half4> ShadowMaskTexture 		: register(t4);
+Texture2D<unorm half> ShadowMaskTexture 		: register(t4);
 Texture2D<unorm half> DepthTexture 				: register(t5);
 
 RWTexture2D<half4> MainRW 						: register(u0);
@@ -80,9 +80,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	uint eyeIndex = 0;
 
-	half shadowMask = ShadowMaskTexture[globalId.xy].x;
-
-	half softShadow = 0.0;
+	half shadow = 0.0;
 	half weight = 0.0;
 
 	for(int i = -1; i < 1; i++)
@@ -91,24 +89,13 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 		{
 			half tmpDepth = GetScreenDepth(DepthTexture[uint2(globalId.x + i, globalId.y + k)]);
 			half depthDelta =  1.0 - saturate(abs(depth - tmpDepth) * 0.1);
-			softShadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
+			shadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
 			weight += depthDelta;		
 		}
 	}
 
-	if (weight > 0.0){
-		softShadow /= weight;
-		shadowMask = softShadow;
-	}
-	
-	half3 viewPosition = DepthToView(uv, rawDepth, 0);
-	viewPosition.z = depth;
-	
-	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 5;
-	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
-
-	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);
-	half2 endPosPixel = clamp(endPosUV * BufferDim, 0, BufferDim);
+	if (weight > 0.0)
+		shadow /= weight;
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 
@@ -123,7 +110,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half3 color = diffuseColor + specularColor;
 
-	color += albedo * max(0, NdotL) * DirLightColor.xyz * shadowMask;
+	color += albedo * max(0, NdotL) * DirLightColor.xyz * shadow;
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 	color += albedo * directionalAmbientColor;

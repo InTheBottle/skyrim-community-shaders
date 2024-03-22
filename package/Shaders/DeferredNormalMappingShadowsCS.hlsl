@@ -78,7 +78,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 viewPosition = DepthToView(uv, rawDepth, 0);
 	viewPosition.z = depth;
 	
-	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 5;
+	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 10;
 	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
 
 	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);
@@ -95,11 +95,11 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	
 	if (true)
 	{
-		half step = 1.0 / 5.0;
+		half step = 1.0 / 10.0;
 		half pos = step + step * (InterleavedGradientNoise(globalId.xy) * 2.0 - 1.0);
 		half slope = -NdotL;
 
-		for(int i = 0; i < 5; i++)
+		for(int i = 0; i < 10; i++)
 		{
 			uint2 	tmpCoords 	= lerp(startPosPixel, endPosPixel, pos);
 			half3	tmpNormal 	= DecodeNormal(NormalRoughnessTexture[tmpCoords]);
