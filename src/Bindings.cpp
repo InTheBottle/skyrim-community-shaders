@@ -1,6 +1,7 @@
 #include "Bindings.h"
 #include "State.h"
 #include "Util.h"
+#include <ShaderCache.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
@@ -224,6 +225,11 @@ void Bindings::UpdateConstantBuffer()
 void Bindings::StartDeferred()
 {
 	if (!inWorld)
+		return;
+
+	auto& shaderCache = SIE::ShaderCache::Instance();
+
+	if (!shaderCache.IsEnabled())
 		return;
 
 	static bool setup = false;
@@ -459,6 +465,11 @@ void Bindings::EndDeferred()
 		return;
 
 	inWorld = false;
+
+	auto& shaderCache = SIE::ShaderCache::Instance();
+
+	if (!shaderCache.IsEnabled())
+		return;
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
