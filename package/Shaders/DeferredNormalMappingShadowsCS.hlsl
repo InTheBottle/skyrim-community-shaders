@@ -109,7 +109,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 			half	shadowed = -tmpNdotL;
 			shadowed += NdotL * pos;
 			shadowed += max(0, dot(tmpNormal, viewDirectionVS));
-			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.5);
+			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.1);
 
 			slope += shadowed;
 
