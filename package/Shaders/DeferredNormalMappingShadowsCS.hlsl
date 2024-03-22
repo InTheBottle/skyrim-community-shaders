@@ -78,7 +78,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 viewPosition = DepthToView(uv, rawDepth, 0);
 	viewPosition.z = depth;
 	
-	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 10;
+	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 5;
 	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
 
 	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);
@@ -93,13 +93,13 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	// Only march for: not shadowed, not self-shadowed, march distance greater than 1 pixel
 	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && startPosPixel.x != endPosPixel.x && startPosPixel.y != endPosPixel.y;
 	
-	if (true)
+	if (validMarchPixel)
 	{
-		half step = 1.0 / 10.0;
+		half step = 1.0 / 5.0;
 		half pos = step + step * (InterleavedGradientNoise(globalId.xy) * 2.0 - 1.0);
 		half slope = -NdotL;
 
-		for(int i = 0; i < 10; i++)
+		for(int i = 0; i < 5; i++)
 		{
 			uint2 	tmpCoords 	= lerp(startPosPixel, endPosPixel, pos);
 			half3	tmpNormal 	= DecodeNormal(NormalRoughnessTexture[tmpCoords]);
@@ -109,7 +109,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 			half	shadowed = -tmpNdotL;
 			shadowed += NdotL * pos;
 			shadowed += max(0, dot(tmpNormal, viewDirectionVS));
-			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.1);
+			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.5);
 
 			slope += shadowed;
 
