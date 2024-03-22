@@ -365,7 +365,10 @@ void Bindings::DeferredPasses()
 		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
 		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
-		context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 31.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 31.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
 	ID3D11ShaderResourceView* views[6]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
