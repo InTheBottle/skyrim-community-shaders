@@ -38,12 +38,16 @@ public:
 
 	struct alignas(16) DeferredCB
 	{
-		float4 DirLightDirection;
+		float4 DirLightDirectionVS[2];
 		float4 DirLightColor;
 		float4 CameraData;
 		float2 BufferDim;
 		float2 RcpBufferDim;
+		DirectX::XMFLOAT4X4 ViewMatrix[2];
+		DirectX::XMFLOAT4X4 ProjMatrix[2];
+		DirectX::XMFLOAT4X4 ViewProjMatrix[2];
 		DirectX::XMFLOAT4X4 InvViewMatrix[2];
+		DirectX::XMFLOAT4X4 InvProjMatrix[2];
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		uint FrameCount;
 		uint pad0[3];

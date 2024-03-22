@@ -125,6 +125,7 @@ void Bindings::SetupResources()
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
 #define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
+#define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
 
 		// Albedo
 		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
@@ -132,6 +133,8 @@ void Bindings::SetupResources()
 		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, texDesc.Format);
 		// Reflectance
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
+		// Normal + Roughness
+		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 	}
 
 	{
@@ -153,10 +156,22 @@ void Bindings::UpdateConstantBuffer()
 	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	if (REL::Module::IsVR()) {
+		data.ViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat;
+		data.ViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat;
+		data.ProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat;
+		data.ProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat;
+		data.ViewProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewProjMat;
+		data.ViewProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewProjMat;
 		data.InvViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat.Invert();
 		data.InvViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat.Invert();
+		data.InvProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat.Invert();
+		data.InvProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat.Invert();
 	} else {
+		data.ViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat;
+		data.ProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat;
+		data.ViewProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewProjMat;
 		data.InvViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat.Invert();
+		data.InvProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat.Invert();
 	}
 
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
@@ -167,9 +182,14 @@ void Bindings::UpdateConstantBuffer()
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	data.DirLightColor *= !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
 
-	float3 dirLightDirection{ dirLight->GetWorldDirection().x, dirLight->GetWorldDirection().y, dirLight->GetWorldDirection().z };
-	dirLightDirection.Normalize();
-	data.DirLightDirection = { -dirLightDirection.x, -dirLightDirection.y, -dirLightDirection.z, 1.0f };
+	auto& direction = dirLight->GetWorldDirection();
+	float4 position{ -direction.x, -direction.y, -direction.z, 0.0f };
+
+	data.DirLightDirectionVS[0] = float4::Transform(position, data.ViewMatrix[0]);
+	data.DirLightDirectionVS[0].Normalize();
+
+	data.DirLightDirectionVS[1] = float4::Transform(position, data.ViewMatrix[1]);
+	data.DirLightDirectionVS[1].Normalize();
 
 	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
 	RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
@@ -269,7 +289,7 @@ void Bindings::StartDeferred()
 	RE::RENDER_TARGET targets[6]{
 		RE::RENDER_TARGET::kMAIN,
 		RE::RENDER_TARGET::kMOTION_VECTOR,
-		forwardRenderTargets[2],  // Normal swaps each frame
+		NORMALROUGHNESS,
 		ALBEDO,
 		SPECULAR,
 		REFLECTANCE,
@@ -312,16 +332,20 @@ void Bindings::DeferredPasses()
 		auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 		auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 		auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
+		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
-		ID3D11ShaderResourceView* srvs[4]{
+		ID3D11ShaderResourceView* srvs[6]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
-			shadowMask.SRV
+			normalRoughness.SRV,
+			shadowMask.SRV,
+			depth.depthSRV
 		};
 
-		context->CSSetShaderResources(0, 4, srvs);
+		context->CSSetShaderResources(0, 6, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
@@ -344,8 +368,8 @@ void Bindings::DeferredPasses()
 		context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
 	}
 
-	ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 4, views);
+	ID3D11ShaderResourceView* views[6]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 6, views);
 
 	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
 	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
