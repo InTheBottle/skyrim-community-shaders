@@ -25,6 +25,10 @@ public:
 	void DeferredPasses();
 	void EndDeferred();
 
+	void CheckOpaque();
+
+	uint opaque = 0;
+
 	ID3D11BlendState* deferredBlendStates[4];
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
@@ -97,6 +101,16 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct BSLightingShader_SetupGeometry
+		{
+			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+			{
+				GetSingleton()->CheckOpaque();
+				func(This, Pass, RenderFlags);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841));
@@ -104,6 +118,8 @@ public:
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308));
 
+			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
+	
 			logger::info("[Bindings] Installed hooks");
 		}
 	};

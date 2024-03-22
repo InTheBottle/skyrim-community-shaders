@@ -1,7 +1,7 @@
 
 #include "Common/GBuffer.hlsl"
 
-Texture2D<unorm half2> NormalRoughnessTexture 	: register(t0);
+Texture2D<unorm half4> NormalRoughnessTexture 	: register(t0);
 Texture2D<unorm half> ShadowMaskTexture 		: register(t1);
 Texture2D<unorm half> DepthTexture 				: register(t2);
 
@@ -66,14 +66,22 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim;
 
-	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy]);
+	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy].xy);
+
+	half skinMask = NormalRoughnessTexture[globalId.xy].w;
+	
+	half shadowMask = ShadowMaskTexture[globalId.xy].x;
+
+	if (skinMask != 0)
+	{
+		FilteredShadowRW[globalId.xy] = shadowMask;
+		return;
+	}
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
 	uint eyeIndex = 0;
-
-	half shadowMask = ShadowMaskTexture[globalId.xy].x;
 
 	half3 viewPosition = DepthToView(uv, rawDepth, 0);
 	viewPosition.z = depth;

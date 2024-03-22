@@ -2,9 +2,9 @@
 #include "Common/GBuffer.hlsl"
 
 Texture2D<half3> SpecularTexture 				: register(t0);
-Texture2D<unorm half3> AlbedoTexture 			: register(t1);
+Texture2D<unorm half4> AlbedoTexture 			: register(t1);
 Texture2D<unorm half3> ReflectanceTexture 		: register(t2);
-Texture2D<unorm half3> NormalRoughnessTexture 	: register(t3);
+Texture2D<unorm half4> NormalRoughnessTexture 	: register(t3);
 Texture2D<unorm half> ShadowMaskTexture 		: register(t4);
 Texture2D<unorm half> DepthTexture 				: register(t5);
 
@@ -99,14 +99,14 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 
-	half3 diffuseColor = MainRW[globalId.xy];
+	half4 diffuseColor = MainRW[globalId.xy];
 	half3 specularColor = SpecularTexture[globalId.xy];
 
 	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
 
 	half glossiness = normalGlossiness.z;
 
-	half3 albedo = AlbedoTexture[globalId.xy];
+	half4 albedo = AlbedoTexture[globalId.xy];
 
 	half3 color = diffuseColor + specularColor;
 
@@ -132,7 +132,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	}
 #	endif
 
-	MainRW[globalId.xy] = half4(color, 1.0);
+	MainRW[globalId.xy] = half4(shadow.xxx, 1.0);
 	NormalTAAMaskSpecularMaskRW[globalId.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
 }
 

@@ -14,6 +14,7 @@
 
 void State::Draw()
 {
+	Bindings::GetSingleton()->CheckOpaque();
 	auto& shaderCache = SIE::ShaderCache::Instance();
 	if (shaderCache.IsEnabled() && currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
@@ -572,6 +573,12 @@ void State::UpdateSharedData(const RE::BSShader* a_shader, const uint32_t)
 		}
 
 		lightingData.Timer = timer;
+
+		auto currentOpaque = Bindings::GetSingleton()->opaque;
+		if (currentOpaque != lightingData.Opaque) {
+			lightingData.Opaque = currentOpaque;
+			updateBuffer = true;
+		}
 
 		auto context = renderer->GetRuntimeData().context;
 

@@ -246,6 +246,8 @@ void Bindings::StartDeferred()
 			forwardBlendStates[0]->GetDesc(&blendDesc);
 
 			blendDesc.IndependentBlendEnable = true;
+			blendDesc.RenderTarget[0].BlendEnable = false;
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 			for (uint i = 1; i < 8; i++) {
 				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
 			}
@@ -500,6 +502,14 @@ void Bindings::EndDeferred()
 	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = false;
+}
+
+void Bindings::CheckOpaque()
+{
+	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(alphaBlendMode, state)
+
+	opaque = alphaBlendMode == 0;
 }
 
 void Bindings::ClearShaderCache()
