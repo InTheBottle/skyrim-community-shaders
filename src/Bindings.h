@@ -21,16 +21,21 @@ public:
 	void Reset();
 
 	void StartDeferred();
+	void NormalMappingShadows();
 	void DeferredPasses();
 	void EndDeferred();
 
 	ID3D11BlendState* deferredBlendStates[4];
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
-
+	
+	ID3D11ComputeShader* deferredNormalMappingShadowsCS = nullptr;
 	ID3D11ComputeShader* deferredCompositeCS = nullptr;
 
+	Texture2D* filteredShadowTexture = nullptr;
+
 	void ClearShaderCache();
+	ID3D11ComputeShader* GetComputeDeferredNormalMappingShadows();
 	ID3D11ComputeShader* GetComputeDeferredComposite();
 
 	bool inWorld = false;

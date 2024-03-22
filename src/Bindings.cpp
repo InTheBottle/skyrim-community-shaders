@@ -135,6 +135,18 @@ void Bindings::SetupResources()
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_UNORM);
 		// Normal + Roughness
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+
+
+		{
+			texDesc.Format = DXGI_FORMAT_R16_UNORM;
+			srvDesc.Format = texDesc.Format;
+			rtvDesc.Format = texDesc.Format;
+			uavDesc.Format = texDesc.Format;
+
+			filteredShadowTexture = new Texture2D(texDesc);
+			filteredShadowTexture->CreateSRV(srvDesc);
+			filteredShadowTexture->CreateUAV(uavDesc);
+		}
 	}
 
 	{
@@ -321,6 +333,60 @@ void Bindings::StartDeferred()
 	deferredPass = true;
 }
 
+void Bindings::NormalMappingShadows()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	{
+		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+		ID3D11ShaderResourceView* srvs[3]{
+			normalRoughness.SRV,
+			shadowMask.SRV,
+			depth.depthSRV
+		};
+
+		context->CSSetShaderResources(0, 3, srvs);
+
+		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
+		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
+
+		ID3D11UnorderedAccessView* uavs[1]{ filteredShadowTexture->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		auto buffer = deferredCB->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+
+		auto shader = GetComputeDeferredNormalMappingShadows();
+		context->CSSetShader(shader, nullptr, 0);
+
+		auto state = State::GetSingleton();
+		auto viewport = RE::BSGraphics::State::GetSingleton();
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 3, views);
+
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	ID3D11Buffer* buffer = nullptr;
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
 void Bindings::DeferredPasses()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -328,12 +394,13 @@ void Bindings::DeferredPasses()
 
 	UpdateConstantBuffer();
 
+	NormalMappingShadows();
+
 	{
 		auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 		auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 		auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
-		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
 		ID3D11ShaderResourceView* srvs[6]{
@@ -341,7 +408,7 @@ void Bindings::DeferredPasses()
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
-			shadowMask.SRV,
+			filteredShadowTexture->srv.get(),
 			depth.depthSRV
 		};
 
@@ -365,10 +432,13 @@ void Bindings::DeferredPasses()
 		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
 		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
-		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 31.0f);
-		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 31.0f);
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
 
 		context->Dispatch(dispatchX, dispatchY, 1);
+
+		shader = GetComputeDeferredComposite();
+		context->CSSetShader(shader, nullptr, 0);
 	}
 
 	ID3D11ShaderResourceView* views[6]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
@@ -423,10 +493,23 @@ void Bindings::EndDeferred()
 
 void Bindings::ClearShaderCache()
 {
+	if (deferredNormalMappingShadowsCS) {
+		deferredNormalMappingShadowsCS->Release();
+		deferredNormalMappingShadowsCS = nullptr;
+	}
 	if (deferredCompositeCS) {
 		deferredCompositeCS->Release();
 		deferredCompositeCS = nullptr;
 	}
+}
+
+ID3D11ComputeShader* Bindings::GetComputeDeferredNormalMappingShadows()
+{
+	if (!deferredNormalMappingShadowsCS) {
+		logger::debug("Compiling DeferredNormalMappingShadowsCS");
+		deferredNormalMappingShadowsCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredNormalMappingShadowsCS.hlsl", {}, "cs_5_0");
+	}
+	return deferredNormalMappingShadowsCS;
 }
 
 ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()

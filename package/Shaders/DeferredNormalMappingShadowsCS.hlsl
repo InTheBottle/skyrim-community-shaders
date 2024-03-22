@@ -1,15 +1,11 @@
 
 #include "Common/GBuffer.hlsl"
 
-Texture2D<half3> SpecularTexture 				: register(t0);
-Texture2D<unorm half3> AlbedoTexture 			: register(t1);
-Texture2D<unorm half3> ReflectanceTexture 		: register(t2);
-Texture2D<unorm half3> NormalRoughnessTexture 	: register(t3);
-Texture2D<unorm half4> ShadowMaskTexture 		: register(t4);
-Texture2D<unorm half> DepthTexture 				: register(t5);
+Texture2D<unorm half2> NormalRoughnessTexture 	: register(t0);
+Texture2D<unorm half> ShadowMaskTexture 		: register(t1);
+Texture2D<unorm half> DepthTexture 				: register(t2);
 
-RWTexture2D<half4> MainRW 						: register(u0);
-RWTexture2D<half4> NormalTAAMaskSpecularMaskRW 	: register(u1);
+RWTexture2D<unorm half> FilteredShadowRW 			: register(u0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -27,8 +23,6 @@ cbuffer PerFrame : register(b0)
 	uint FrameCount;
 	uint pad0[3];
 };
-
-// #	define DEBUG
 
 half GetScreenDepth(half depth)
 {
@@ -72,8 +66,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim;
 
-	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
-	half3 normalVS = DecodeNormal(normalGlossiness.xyz);
+	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy]);
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
@@ -82,25 +75,6 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half shadowMask = ShadowMaskTexture[globalId.xy].x;
 
-	half softShadow = 0.0;
-	half weight = 0.0;
-
-	for(int i = -1; i < 1; i++)
-	{
-		for(int k = -1; k < 1; k++)
-		{
-			half tmpDepth = GetScreenDepth(DepthTexture[uint2(globalId.x + i, globalId.y + k)]);
-			half depthDelta =  1.0 - saturate(abs(depth - tmpDepth) * 0.1);
-			softShadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
-			weight += depthDelta;		
-		}
-	}
-
-	if (weight > 0.0){
-		softShadow /= weight;
-		shadowMask = softShadow;
-	}
-	
 	half3 viewPosition = DepthToView(uv, rawDepth, 0);
 	viewPosition.z = depth;
 	
@@ -111,41 +85,41 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half2 endPosPixel = clamp(endPosUV * BufferDim, 0, BufferDim);
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
+	
+	half shadow = 0;
 
-	half3 diffuseColor = MainRW[globalId.xy];
-	half3 specularColor = SpecularTexture[globalId.xy];
-
-	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
-
-	half glossiness = normalGlossiness.z;
-
-	half3 albedo = AlbedoTexture[globalId.xy];
-
-	half3 color = diffuseColor + specularColor;
-
-	color += albedo * max(0, NdotL) * DirLightColor.xyz * shadowMask;
-
-	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
-	color += albedo * directionalAmbientColor;
-
-#	if defined(DEBUG)
-	half2 texCoord = half2(globalId.xy) / BufferDim.xy;
-
-	if (texCoord.x < 0.5 && texCoord.y < 0.5)
+	half3 viewDirectionVS = normalize(viewPosition);
+	
+	// Only march for: not shadowed, not self-shadowed, march distance greater than 1 pixel
+	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && startPosPixel.x != endPosPixel.x && startPosPixel.y != endPosPixel.y;
+	
+	if (true)
 	{
-		color = color;
-	} else if (texCoord.x < 0.5)
-	{
-		color = albedo;
-	} else if (texCoord.y < 0.5)
-	{
-		color = normalWS;	
-	} else {
-		color = glossiness;	
+		half step = 1.0 / 5.0;
+		half pos = step + step * (InterleavedGradientNoise(globalId.xy) * 2.0 - 1.0);
+		half slope = -NdotL;
+
+		for(int i = 0; i < 5; i++)
+		{
+			uint2 	tmpCoords 	= lerp(startPosPixel, endPosPixel, pos);
+			half3	tmpNormal 	= DecodeNormal(NormalRoughnessTexture[tmpCoords]);
+			half	tmpDepth 	= GetScreenDepth(DepthTexture[tmpCoords]);
+			half	tmpNdotL 	= dot(tmpNormal, DirLightDirectionVS[0].xyz);
+
+			half	shadowed = -tmpNdotL;
+			shadowed += NdotL * pos;
+			shadowed += max(0, dot(tmpNormal, viewDirectionVS));
+			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.1);
+
+			slope += shadowed;
+
+			shadow += max(0, slope);
+			pos += step;
+		}
 	}
-#	endif
 
-	MainRW[globalId.xy] = half4(color, 1.0);
-	NormalTAAMaskSpecularMaskRW[globalId.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
+	shadow = saturate(1.0 - shadow);
+
+	FilteredShadowRW[globalId.xy] = shadowMask * shadow;
 }
 
