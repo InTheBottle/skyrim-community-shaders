@@ -132,7 +132,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	}
 #	endif
 
-	MainRW[globalId.xy] = half4(shadow.xxx, 1.0);
+	MainRW[globalId.xy] = half4(color, 1.0);
 	NormalTAAMaskSpecularMaskRW[globalId.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
 }
 
