@@ -88,7 +88,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 		for(int k = -1; k < 1; k++)
 		{
 			half tmpDepth = GetScreenDepth(DepthTexture[uint2(globalId.x + i, globalId.y + k)]);
-			half depthDelta =  1.0 - saturate(abs(depth - tmpDepth) * 0.1);
+			half depthDelta = 1.0 - saturate(abs(depth - tmpDepth) * 0.1);
 			shadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
 			weight += depthDelta;		
 		}

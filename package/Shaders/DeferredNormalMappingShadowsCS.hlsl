@@ -2,10 +2,9 @@
 #include "Common/GBuffer.hlsl"
 
 Texture2D<unorm half4> NormalRoughnessTexture 	: register(t0);
-Texture2D<unorm half> ShadowMaskTexture 		: register(t1);
-Texture2D<unorm half> DepthTexture 				: register(t2);
+Texture2D<unorm half> DepthTexture 				: register(t1);
 
-RWTexture2D<unorm half> FilteredShadowRW 			: register(u0);
+RWTexture2D<unorm half> ShadowMaskTextureRW 	: register(u0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -70,15 +69,18 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half skinMask = NormalRoughnessTexture[globalId.xy].w;
 	
-	half shadowMask = ShadowMaskTexture[globalId.xy].x;
+	half shadowMask = ShadowMaskTextureRW[globalId.xy].x;
 
 	if (skinMask != 0)
 	{
-		FilteredShadowRW[globalId.xy] = shadowMask;
+		ShadowMaskTextureRW[globalId.xy] = shadowMask;
 		return;
 	}
 
 	half rawDepth = DepthTexture[globalId.xy];
+	if (rawDepth > 0.99)
+		return;
+
 	half depth = GetScreenDepth(rawDepth);
 
 	uint eyeIndex = 0;
@@ -100,7 +102,6 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	
 	// Only march for: not shadowed, not self-shadowed, march distance greater than 1 pixel
 	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && startPosPixel.x != endPosPixel.x && startPosPixel.y != endPosPixel.y;
-	
 	if (validMarchPixel)
 	{
 		half step = 1.0 / 5.0;
@@ -128,6 +129,6 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	shadow = saturate(1.0 - shadow);
 
-	FilteredShadowRW[globalId.xy] = shadowMask * shadow;
+	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, shadow);
 }
 

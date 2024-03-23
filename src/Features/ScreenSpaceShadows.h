@@ -13,9 +13,6 @@ struct ScreenSpaceShadows : Feature
 
 	virtual inline std::string GetName() { return "Screen-Space Shadows"; }
 	virtual inline std::string GetShortName() { return "ScreenSpaceShadows"; }
-	inline std::string_view GetShaderDefineName() override { return "SCREEN_SPACE_SHADOWS"; }
-
-	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
 
 	struct Settings
 	{
@@ -29,13 +26,6 @@ struct ScreenSpaceShadows : Feature
 		float BlurRadius = 0.5f;
 		float BlurDropoff = 0.005f;
 		bool Enabled = true;
-	};
-
-	struct alignas(16) PerPass
-	{
-		uint32_t EnableSSS;
-		uint32_t FrameCount;
-		uint32_t pad[2];
 	};
 
 	struct alignas(16) RaymarchCB
@@ -54,34 +44,20 @@ struct ScreenSpaceShadows : Feature
 
 	Settings settings;
 
-	ConstantBuffer* perPass = nullptr;
-
 	ID3D11SamplerState* computeSampler = nullptr;
-
-	Texture2D* screenSpaceShadowsTexture = nullptr;
-	Texture2D* screenSpaceShadowsTextureTemp = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchProgram = nullptr;
 
-	ID3D11ComputeShader* horizontalBlurProgram = nullptr;
-	ID3D11ComputeShader* verticalBlurProgram = nullptr;
-
 	bool renderedScreenCamera = false;
-
+	void DrawShadows();
 	virtual void SetupResources();
 	virtual void Reset();
 
 	virtual void DrawSettings();
-	void ModifyGrass(const RE::BSShader* shader, const uint32_t descriptor);
-	void ModifyDistantTree(const RE::BSShader*, const uint32_t descriptor);
-
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeShader();
-	ID3D11ComputeShader* GetComputeShaderHorizontalBlur();
-	ID3D11ComputeShader* GetComputeShaderVerticalBlur();
 
-	void ModifyLighting(const RE::BSShader* shader, const uint32_t descriptor);
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
 
 	virtual void Load(json& o_json);

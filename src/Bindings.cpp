@@ -2,6 +2,7 @@
 #include "State.h"
 #include "Util.h"
 #include <ShaderCache.h>
+#include <Features/ScreenSpaceShadows.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
@@ -353,18 +354,17 @@ void Bindings::NormalMappingShadows()
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
-		ID3D11ShaderResourceView* srvs[3]{
+		ID3D11ShaderResourceView* srvs[2]{
 			normalRoughness.SRV,
-			shadowMask.SRV,
 			depth.depthSRV
 		};
 
-		context->CSSetShaderResources(0, 3, srvs);
+		context->CSSetShaderResources(0, 2, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 
-		ID3D11UnorderedAccessView* uavs[1]{ filteredShadowTexture->uav.get() };
+		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 		auto buffer = deferredCB->CB();
@@ -385,8 +385,8 @@ void Bindings::NormalMappingShadows()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 3, views);
+	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
+	context->CSSetShaderResources(0, 2, views);
 
 	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -404,6 +404,10 @@ void Bindings::DeferredPasses()
 
 	UpdateConstantBuffer();
 
+	if (ScreenSpaceShadows::GetSingleton()->loaded) {
+		ScreenSpaceShadows::GetSingleton()->DrawShadows();
+	}
+
 	NormalMappingShadows();
 
 	{
@@ -412,13 +416,14 @@ void Bindings::DeferredPasses()
 		auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 
 		ID3D11ShaderResourceView* srvs[6]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
-			filteredShadowTexture->srv.get(),
+			shadowMask.SRV,
 			depth.depthSRV
 		};
 

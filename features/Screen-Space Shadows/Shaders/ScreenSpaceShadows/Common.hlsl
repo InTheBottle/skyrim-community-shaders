@@ -1,10 +1,10 @@
 #include "../Common/VR.hlsl"
 
-RWTexture2D<float> OcclusionRW : register(u0);
+RWTexture2D<unorm half> ShadowMaskRW : register(u0);
 
 SamplerState LinearSampler : register(s0);
 
-Texture2D<float4> DepthTexture : register(t0);
+Texture2D<float> DepthTexture : register(t0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -31,7 +31,7 @@ cbuffer PerFrame : register(b0)
 // Get a raw depth from the depth buffer.
 float GetDepth(float2 uv)
 {
-	return DepthTexture.SampleLevel(LinearSampler, uv * DynamicRes.xy, 0).r;
+	return DepthTexture[uv * DynamicRes.xy * BufferDim];
 }
 
 // Inverse project UV + raw depth into the view space.

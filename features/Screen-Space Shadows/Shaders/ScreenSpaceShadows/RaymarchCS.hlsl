@@ -1,7 +1,5 @@
 #include "Common.hlsl"
 
-Texture2D<float> ShadowTexture : register(t1);
-
 // Needed to fix a bug in VR that caused the arm
 // to have the "outline" of the VR headset canvas
 // rendered into it and to not cast rays outside the eyes
@@ -84,7 +82,7 @@ float ScreenSpaceShadowsUV(float2 texcoord, float3 lightDirectionVS, uint eyeInd
 	float3 rayStep = lightDirectionVS * stepLength;
 
 	// Offset starting position with interleaved gradient noise
-	float offset = InterleavedGradientNoise(texcoord * BufferDim);
+	float offset = InterleavedGradientNoise(texcoord * BufferDim) * 2 - 1;
 	rayPos += rayStep * offset;
 
 	float thickness = lerp(NearThickness, rayPos.z * FarThicknessScale, blendFactorFar);
@@ -119,9 +117,7 @@ float ScreenSpaceShadowsUV(float2 texcoord, float3 lightDirectionVS, uint eyeInd
 		// Distant shadows simulate real shadows whereas near shadows are only intended for small objects
 		float rayShadow = depthDelta / thickness;
 
-		// Check if the depth difference is considered a shadow
-		if (rayShadow > 0.0f && rayShadow <= 1.0f)
-			shadow += rayShadow;
+		shadow += smoothbumpstep(0, 1, rayShadow);
 	}
 
 	// Average samples
@@ -138,5 +134,5 @@ float ScreenSpaceShadowsUV(float2 texcoord, float3 lightDirectionVS, uint eyeInd
 								  : SV_DispatchThreadID) {
 	float2 texCoord = (DTid.xy + 0.5) * RcpBufferDim * DynamicRes.zw;
 	uint eyeIndex = GetEyeIndexFromTexCoord(texCoord);
-	OcclusionRW[DTid.xy] = ScreenSpaceShadowsUV(texCoord, InvDirLightDirectionVS.xyz, eyeIndex);
+	ShadowMaskRW[DTid.xy] = min(ShadowMaskRW[DTid.xy], ScreenSpaceShadowsUV(texCoord, InvDirLightDirectionVS.xyz, eyeIndex));
 }
