@@ -2002,26 +2002,31 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		specularColor = 0;
 #	endif
 
+#	if defined(DEFERRED)
+	diffuseColor += dirLightColor * saturate(dirLightAngle);
+	diffuseColor += directionalAmbientColor;
+#	endif
+
 #	if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #		if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap) {
 		diffuseColor = 1.0;
-		vertexColor = sRGB2Lin(vertexColor);
+		specularColor = sRGB2Lin(specularColor);
 	}
 #		endif
 
 #		if defined(CPM_AVAILABLE) && defined(ENVMAP)
 #			if defined(DYNAMIC_CUBEMAPS)
-	vertexColor += envColor * lerp(complexSpecular, 1.0, dynamicCubemap) * diffuseColor;
+	specularColor += envColor * lerp(complexSpecular, 1.0, dynamicCubemap) * diffuseColor;
 #			else
-	vertexColor += envColor * complexSpecular * diffuseColor;
+	specularColor += envColor * complexSpecular * diffuseColor;
 #			endif
 #		else
-	vertexColor += envColor * diffuseColor;
+	specularColor += envColor * diffuseColor;
 #		endif
 #		if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap)
-		vertexColor = Lin2sRGB(vertexColor);
+		specularColor = Lin2sRGB(specularColor);
 #		endif
 #	endif
 
