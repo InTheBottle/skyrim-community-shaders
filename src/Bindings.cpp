@@ -137,7 +137,6 @@ void Bindings::SetupResources()
 		// Normal + Roughness
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 
-
 		{
 			texDesc.Format = DXGI_FORMAT_R8_UNORM;
 			srvDesc.Format = texDesc.Format;
@@ -300,10 +299,13 @@ void Bindings::StartDeferred()
 	}
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, state)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 
 	// Backup original render targets
 	for (uint i = 0; i < 4; i++) {
-		forwardRenderTargets[i] = state->GetRuntimeData().renderTargets[i];
+		forwardRenderTargets[i] = renderTargets[i];
 	}
 
 	RE::RENDER_TARGET targets[6]{
@@ -316,17 +318,17 @@ void Bindings::StartDeferred()
 	};
 
 	for (uint i = 0; i < 6; i++) {
-		state->GetRuntimeData().renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
-		state->GetRuntimeData().setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
+		renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
+		setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
 	// Improved snow shader
 	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE) {
-		state->GetRuntimeData().renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
-		state->GetRuntimeData().setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
+		renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
+		setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
-	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
 
@@ -336,7 +338,7 @@ void Bindings::StartDeferred()
 	blendStates->a[1][0][1][0] = deferredBlendStates[2];
 	blendStates->a[1][0][11][0] = deferredBlendStates[3];
 
-	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = true;
 }
@@ -474,10 +476,12 @@ void Bindings::EndDeferred()
 		return;
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, state)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 
 	// Do not render to our targets past this point
 	for (uint i = 0; i < 4; i++) {
-		state->GetRuntimeData().renderTargets[i] = forwardRenderTargets[i];
+		renderTargets[i] = forwardRenderTargets[i];
 	}
 
 	for (uint i = 4; i < 8; i++) {
@@ -489,7 +493,7 @@ void Bindings::EndDeferred()
 
 	DeferredPasses();  // Perform deferred passes and composite forward buffers
 
-	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
 
@@ -499,7 +503,7 @@ void Bindings::EndDeferred()
 	blendStates->a[1][0][1][0] = forwardBlendStates[2];
 	blendStates->a[1][0][11][0] = forwardBlendStates[3];
 
-	state->GetRuntimeData().stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = false;
 }

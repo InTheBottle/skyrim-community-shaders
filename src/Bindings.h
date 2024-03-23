@@ -32,7 +32,7 @@ public:
 	ID3D11BlendState* deferredBlendStates[4];
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
-	
+
 	ID3D11ComputeShader* deferredNormalMappingShadowsCS = nullptr;
 	ID3D11ComputeShader* deferredCompositeCS = nullptr;
 
@@ -84,7 +84,7 @@ public:
 			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
 			{
 				// Here is where the first opaque objects start rendering
-				GetSingleton()->StartDeferred();		
+				GetSingleton()->StartDeferred();
 				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -94,7 +94,7 @@ public:
 		{
 			static void thunk(RE::BSShaderAccumulator* This, uint32_t RenderFlags)
 			{
-				func(This, RenderFlags);	
+				func(This, RenderFlags);
 				// After this point, water starts rendering
 				GetSingleton()->EndDeferred();
 			}
@@ -113,13 +113,13 @@ public:
 
 		static void Install()
 		{
-			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841));
+			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
 
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
-			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308));
+			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
-	
+
 			logger::info("[Bindings] Installed hooks");
 		}
 	};
