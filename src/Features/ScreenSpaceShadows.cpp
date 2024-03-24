@@ -14,8 +14,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NearDistance,
 	NearThickness,
 	NearHardness,
-	BlurRadius,
-	BlurDropoff,
 	Enabled)
 
 void ScreenSpaceShadows::DrawSettings()
@@ -29,22 +27,6 @@ void ScreenSpaceShadows::DrawSettings()
 		ImGui::SliderInt("Max Samples", (int*)&settings.MaxSamples, 1, 512);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Controls the accuracy of traced shadows.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx("Blur Filter", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur radius.");
-		}
-
-		ImGui::SliderFloat("Blur Depth Dropoff", &settings.BlurDropoff, 0.001f, 0.1f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur depth dropoff.");
 		}
 
 		ImGui::Spacing();

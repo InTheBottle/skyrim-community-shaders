@@ -78,7 +78,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	}
 
 	half rawDepth = DepthTexture[globalId.xy];
-	if (rawDepth > 0.99)
+	if (rawDepth == 1.0)
 		return;
 
 	half depth = GetScreenDepth(rawDepth);

@@ -16,15 +16,13 @@ struct ScreenSpaceShadows : Feature
 
 	struct Settings
 	{
-		uint32_t MaxSamples = !REL::Module::IsVR() ? 24u : 6u;
+		uint32_t MaxSamples = !REL::Module::IsVR() ? 16u : 6u;
 		float FarDistanceScale = 0.025f;
 		float FarThicknessScale = 0.025f;
 		float FarHardness = 8.0f;
 		float NearDistance = 16.0f;
-		float NearThickness = 2.0f;
-		float NearHardness = 32.0f;
-		float BlurRadius = 0.5f;
-		float BlurDropoff = 0.005f;
+		float NearThickness = 4.0f;
+		float NearHardness = 8.0f;
 		bool Enabled = true;
 	};
 
@@ -39,7 +37,7 @@ struct ScreenSpaceShadows : Feature
 		float4 InvDirLightDirectionVS;
 		float ShadowDistance = 10000;
 		Settings Settings;
-		uint32_t pad[1];
+		uint32_t pad[3];
 	};
 
 	Settings settings;

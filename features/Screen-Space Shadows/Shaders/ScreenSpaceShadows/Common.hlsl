@@ -23,8 +23,6 @@ cbuffer PerFrame : register(b0)
 	float NearDistance;
 	float NearThickness;
 	float NearHardness;
-	float BlurRadius;
-	float BlurDropoff;
 	bool Enabled;
 };
 
