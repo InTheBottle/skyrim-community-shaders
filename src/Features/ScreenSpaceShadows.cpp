@@ -26,73 +26,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Screen-Space Shadows", &settings.Enabled);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables screen-space shadows.");
-		}
-
-		ImGui::SliderInt("Max Samples", (int*)&settings.MaxSamples, 1, 512);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Controls the accuracy of traced shadows.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx("Blur Filter", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur radius.");
-		}
-
-		ImGui::SliderFloat("Blur Depth Dropoff", &settings.BlurDropoff, 0.001f, 0.1f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur depth dropoff.");
-		}
+		ImGui::SliderFloat("SurfaceThickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
+		ImGui::SliderFloat("BilinearThreshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
+		ImGui::SliderFloat("ShadowContrast", &bendSettings.ShadowContrast, 1.0f, 4.0f);
+		ImGui::Checkbox("IgnoreEdgePixels", (bool*)&bendSettings.IgnoreEdgePixels);
+		ImGui::Checkbox("UsePrecisionOffset", (bool*)&bendSettings.UsePrecisionOffset);
+		ImGui::Checkbox("BilinearSamplingOffsetMode", (bool*)&bendSettings.BilinearSamplingOffsetMode);
+		ImGui::Checkbox("DebugOutputEdgeMask", (bool*)&bendSettings.DebugOutputEdgeMask);
+		ImGui::Checkbox("DebugOutputThreadIndex", (bool*)&bendSettings.DebugOutputThreadIndex);
+		ImGui::Checkbox("DebugOutputWaveIndex", (bool*)&bendSettings.DebugOutputWaveIndex);
 
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNodeEx("Near Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Near Distance", &settings.NearDistance, 0, 128);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Distance.");
-		}
-
-		ImGui::SliderFloat("Near Thickness", &settings.NearThickness, 0, 128);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Thickness.");
-		}
-		ImGui::SliderFloat("Near Hardness", &settings.NearHardness, 0, 64);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Hardness.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx("Far Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Far Distance Scale", &settings.FarDistanceScale, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Distance Scale.");
-		}
-		ImGui::SliderFloat("Far Thickness Scale", &settings.FarThicknessScale, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Thickness Scale.");
-		}
-		ImGui::SliderFloat("Far Hardness", &settings.FarHardness, 0, 64);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Hardness.");
-		}
-
-		ImGui::TreePop();
-	}
 }
 
 enum class GrassShaderTechniques
@@ -221,7 +169,7 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 				auto& directionNi = dirLight->GetWorldDirection();
 				float3 light = { directionNi.x, directionNi.y, directionNi.z };
 				light.Normalize();
-				float4 lightProjection = float4(light.x, light.y, light.z, 0.0f);
+				float4 lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
 				lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);	
 				float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w};
 				
@@ -233,7 +181,7 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 					(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
 				};
 
-				auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
+				auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds, false, 64);
 				
 				auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 				context->CSSetShaderResources(0, 1, &depth.depthSRV);
@@ -259,13 +207,13 @@ void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
 					data.WaveOffset[0] = dispatchData.WaveOffset_Shader[0];
 					data.WaveOffset[1] = dispatchData.WaveOffset_Shader[1];
 
-					auto cameraData = Util::GetCameraData();
-					data.FarDepthValue = cameraData.x;
-					data.NearDepthValue = cameraData.y;
+					data.FarDepthValue = 1.0f;
+					data.NearDepthValue = 0.0f;
 
 					data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
 					data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
 			
+					data.settings = bendSettings;
 					ID3D11Buffer* buffer = nullptr;
 					context->CSSetConstantBuffers(0, 1, &buffer);
 

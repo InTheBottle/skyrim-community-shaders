@@ -19,7 +19,16 @@ cbuffer PerFrame : register(b0)
 	float2 InvDepthTextureSize;			// Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
 										// If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
 										// The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
-	uint pad[2];
+	float SurfaceThickness;
+	float BilinearThreshold;
+	float ShadowContrast;
+	bool IgnoreEdgePixels;
+	bool UsePrecisionOffset;
+	bool BilinearSamplingOffsetMode;
+	bool DebugOutputEdgeMask;
+	bool DebugOutputThreadIndex;
+	bool DebugOutputWaveIndex;
+	uint pad;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main
@@ -29,15 +38,25 @@ cbuffer PerFrame : register(b0)
 ) {
 	DispatchParameters parameters;
 	parameters.SetDefaults();
-
 	
 	parameters.LightCoordinate = LightCoordinate;
 	parameters.WaveOffset = WaveOffset;
-	parameters.FarDepthValue = FarDepthValue;
-	parameters.NearDepthValue = NearDepthValue;
+	parameters.FarDepthValue = 1;
+	parameters.NearDepthValue = 0;
 	parameters.InvDepthTextureSize = InvDepthTextureSize;
 	parameters.DepthTexture = DepthTexture;
 	parameters.OutputTexture = OutputTexture;
 	parameters.PointBorderSampler = PointBorderSampler;
+
+	parameters.SurfaceThickness = SurfaceThickness;
+	parameters.BilinearThreshold = BilinearThreshold;
+	parameters.ShadowContrast = ShadowContrast;
+	parameters.IgnoreEdgePixels = IgnoreEdgePixels;
+	parameters.UsePrecisionOffset = UsePrecisionOffset;
+	parameters.BilinearSamplingOffsetMode = BilinearSamplingOffsetMode;
+	parameters.DebugOutputEdgeMask = DebugOutputEdgeMask;
+	parameters.DebugOutputThreadIndex = DebugOutputThreadIndex;
+	parameters.DebugOutputWaveIndex = DebugOutputWaveIndex;
+
 	WriteScreenSpaceShadow(parameters, groupID, groupThreadID);
 }

@@ -38,6 +38,21 @@ struct ScreenSpaceShadows : Feature
 		uint32_t pad[2];
 	};
 
+	struct BendSettings
+	{
+		float SurfaceThickness = 0.005f;
+		float BilinearThreshold = 0.02f;
+		float ShadowContrast = 1.0f;
+		uint IgnoreEdgePixels = false;
+		uint UsePrecisionOffset = false;
+		uint BilinearSamplingOffsetMode = false;
+		uint DebugOutputEdgeMask = false;
+		uint DebugOutputThreadIndex = false;
+		uint DebugOutputWaveIndex = false;
+	};
+
+	BendSettings bendSettings;
+
 	struct alignas(16) RaymarchCB
 	{
 		// Runtime data returned from BuildDispatchList():
@@ -49,10 +64,12 @@ struct ScreenSpaceShadows : Feature
 		float NearDepthValue;  // Set to the Depth Buffer Value for the near clip plane, as determined by renderer projection matrix setup (typically 1).
 
 		// Sampling data:
-		float InvDepthTextureSize[2];  // Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
-									 // If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
-									 // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
-		uint pad[2];
+		float InvDepthTextureSize[2];	// Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
+										// If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
+										// The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
+		
+		BendSettings settings;
+		uint pad[1];
 	};
 
 	Settings settings;

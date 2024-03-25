@@ -36,7 +36,7 @@
 //													// numthreads[WAVE_SIZE, 1, 1]
 //													// Only tested with 64.
 //		
-		#define SAMPLE_COUNT 60						// Number of shadow samples per-pixel.
+		#define SAMPLE_COUNT 128						// Number of shadow samples per-pixel.
 //													// Determines overall cost, as this value controls the length of the shadow (in pixels).
 //													// The number of texture-reads performed per-thread will be (SAMPLE_COUNT / WAVE_SIZE + 2) * 2.
 //													// Recommended starting value is 60 (This would be 4 reads per thread if WAVE_SIZE is 64). A value of 64 would require 6 reads.
@@ -46,11 +46,11 @@
 //		//	However, the samples very close to the start pixel can optionally be forced to disable this averaging, so a single sample can fully shadow the pixel (HardShadowSamples)
 //		//	Plus, a number of the last (most distant) samples can (for a small cost) apply a fade-out effect to soften a hash shadow cutoff (FadeOutSamples)
 //		
-		#define HARD_SHADOW_SAMPLES 4				// Number of initial shadow samples that will produce a hard shadow, and not perform sample-averaging.
+		#define HARD_SHADOW_SAMPLES 0				// Number of initial shadow samples that will produce a hard shadow, and not perform sample-averaging.
 //													// This trades aliasing for grounding pixels very close to the shadow caster.
 //													// Recommended starting value: 4
 //		
-		#define FADE_OUT_SAMPLES 8					// Number of samples that will fade out at the end of the shadow (for a minor cost).
+		#define FADE_OUT_SAMPLES 0					// Number of samples that will fade out at the end of the shadow (for a minor cost).
 //													// Recommended starting value: 8
 
 
@@ -304,15 +304,15 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 			// Store for debug output when inParameters.DebugOutputEdgeMask is true
 			if (i == 0) is_edge = use_point_filter;
 
-			if (inParameters.BilinearSamplingOffsetMode)
-			{
-				bilinear = use_point_filter ? 0 : bilinear;
-				//both shadow depth and starting depth are the same in this mode, unless shadow skipping edges
-				sampling_depth[i] = lerp(depths.x, depths.y, abs(bilinear));
-				shadowing_depth[i] = (inParameters.IgnoreEdgePixels && use_point_filter) ? edge_skip : sampling_depth[i];
-			}
-			else
-			{
+			// if (inParameters.BilinearSamplingOffsetMode)
+			// {
+			// 	bilinear = use_point_filter ? 0 : bilinear;
+			// 	//both shadow depth and starting depth are the same in this mode, unless shadow skipping edges
+			// 	sampling_depth[i] = lerp(depths.x, depths.y, abs(bilinear));
+			// 	shadowing_depth[i] = (inParameters.IgnoreEdgePixels && use_point_filter) ? edge_skip : sampling_depth[i];
+			// }
+			// else
+			// {
 				// The pixel starts sampling at this depth
 				sampling_depth[i] = depths.x;
 
@@ -323,7 +323,7 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 
 				// Shadows cast from this depth
 				shadowing_depth[i] = use_point_filter ? edge_depth : shadow_depth;
-			}
+			//}
 
 			// Store for later
 			sample_distance[i] = pixel_distance + (WAVE_SIZE * i) * direction;
@@ -396,8 +396,8 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 		float start_depth = sampling_depth[0];
 
 		// lerp away from far depth by a tiny fraction?
-		if (inParameters.UsePrecisionOffset)
-			start_depth = lerp(start_depth, inParameters.FarDepthValue, -1.0 / 0xFFFF);
+		// if (inParameters.UsePrecisionOffset)
+		// 	start_depth = lerp(start_depth, inParameters.FarDepthValue, -1.0 / 0xFFFF);
 
 		// perspective correct the depth
 		start_depth = (start_depth - inParameters.LightCoordinate.z) / sample_distance[0];
@@ -465,12 +465,12 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 
 		//write the result
 		{
-			if (inParameters.DebugOutputEdgeMask)
-				result = is_edge ? 1 : 0;
-			if (inParameters.DebugOutputThreadIndex)
-				result = (inGroupThreadID / (float)WAVE_SIZE);
-			if (inParameters.DebugOutputWaveIndex)			
-				result = frac(inGroupID.x / (float)WAVE_SIZE);
+			// if (inParameters.DebugOutputEdgeMask)
+			// 	result = is_edge ? 1 : 0;
+			// if (inParameters.DebugOutputThreadIndex)
+			// 	result = (inGroupThreadID / (float)WAVE_SIZE);
+			// if (inParameters.DebugOutputWaveIndex)			
+			// 	result = frac(inGroupID.x / (float)WAVE_SIZE);
 			
 			// Asking the GPU to write scattered single-byte pixels isn't great,
 			// But thankfully the latency is hidden by all the work we're doing...
