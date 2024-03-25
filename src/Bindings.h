@@ -2,6 +2,11 @@
 
 #include "Buffer.h"
 
+#define ALBEDO RE::RENDER_TARGETS::kINDIRECT
+#define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
+#define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
+#define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
+
 class Bindings
 {
 public:
@@ -37,6 +42,7 @@ public:
 	ID3D11ComputeShader* deferredCompositeCS = nullptr;
 
 	Texture2D* filteredShadowTexture = nullptr;
+	Texture2D* previousFilteredShadowTexture = nullptr;
 
 	void ClearShaderCache();
 	ID3D11ComputeShader* GetComputeDeferredNormalMappingShadows();
@@ -63,6 +69,8 @@ public:
 	};
 
 	ConstantBuffer* deferredCB = nullptr;
+
+	ID3D11SamplerState* linearSampler = nullptr;
 
 	void UpdateConstantBuffer();
 

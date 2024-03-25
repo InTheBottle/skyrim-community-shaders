@@ -2,6 +2,7 @@
 
 #include "State.h"
 #include "Util.h"
+#include <Bindings.h>
 
 using RE::RENDER_TARGETS;
 
@@ -105,6 +106,11 @@ void ScreenSpaceShadows::DrawShadows()
 	float resolutionY = State::GetSingleton()->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
 	{
+		ID3D11ShaderResourceView* view = nullptr;
+		context->PSSetShaderResources(14, 1, &view);
+	}
+
+	{
 		RaymarchCB data{};
 
 		data.BufferDim.x = (float)State::GetSingleton()->screenWidth;
@@ -142,36 +148,48 @@ void ScreenSpaceShadows::DrawShadows()
 		data.Settings = settings;
 
 		raymarchCB->Update(data);
+
+		ID3D11Buffer* buffer[1] = { raymarchCB->CB() };
+		context->CSSetConstantBuffers(1, 1, buffer);
+
+		context->CSSetSamplers(0, 1, &computeSampler);
+
+		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+
+		ID3D11ShaderResourceView* views[2] = { depth.depthSRV, normalRoughness.SRV };
+		context->CSSetShaderResources(0, 2, views);
+
+		ID3D11ShaderResourceView* stencilView = nullptr;
+		if (REL::Module::IsVR()) {
+			stencilView = depth.stencilSRV;
+			context->CSSetShaderResources(89, 1, &stencilView);
+		}
+
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		context->CSSetUnorderedAccessViews(0, 1, &shadowMask.UAV, nullptr);
+
+		auto shader = GetComputeShader();
+		context->CSSetShader(shader, nullptr, 0);
+
+		context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
+
+		if (REL::Module::IsVR()) {
+			stencilView = nullptr;
+			context->CSSetShaderResources(89, 1, &stencilView);
+		}
 	}
 
-	ID3D11Buffer* buffer[1] = { raymarchCB->CB() };
-	context->CSSetConstantBuffers(0, 1, buffer);
+	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
+	context->CSSetShaderResources(0, 2, views);
 
-	context->CSSetSamplers(0, 1, &computeSampler);
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	ID3D11Buffer* buffer = nullptr;
+	context->CSSetConstantBuffers(1, 1, &buffer);
 
-	ID3D11ShaderResourceView* view = depth.depthSRV;
-	context->CSSetShaderResources(0, 1, &view);
-
-	ID3D11ShaderResourceView* stencilView = nullptr;
-	if (REL::Module::IsVR()) {
-		stencilView = depth.stencilSRV;
-		context->CSSetShaderResources(89, 1, &stencilView);
-	}
-
-	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-	context->CSSetUnorderedAccessViews(0, 1, &shadowMask.UAV, nullptr);
-
-	auto shader = GetComputeShader();
-	context->CSSetShader(shader, nullptr, 0);
-
-	context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
-
-	if (REL::Module::IsVR()) {
-		stencilView = nullptr;
-		context->CSSetShaderResources(89, 1, &stencilView);
-	}
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void ScreenSpaceShadows::Draw(const RE::BSShader*, const uint32_t)
@@ -203,8 +221,6 @@ void ScreenSpaceShadows::SetupResources()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	{
-		logger::debug("Creating screenSpaceShadowsTexture");
-
 		auto device = renderer->GetRuntimeData().forwarder;
 
 		D3D11_SAMPLER_DESC samplerDesc = {};

@@ -124,11 +124,6 @@ void Bindings::SetupResources()
 		// TEMPORAL_AA_WATER_1
 		// TEMPORAL_AA_WATER_2
 
-#define ALBEDO RE::RENDER_TARGETS::kINDIRECT
-#define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
-#define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
-#define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
-
 		// Albedo
 		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 		// Specular
@@ -147,11 +142,29 @@ void Bindings::SetupResources()
 			filteredShadowTexture = new Texture2D(texDesc);
 			filteredShadowTexture->CreateSRV(srvDesc);
 			filteredShadowTexture->CreateUAV(uavDesc);
+
+			previousFilteredShadowTexture = new Texture2D(texDesc);
+			previousFilteredShadowTexture->CreateSRV(srvDesc);
+			previousFilteredShadowTexture->CreateUAV(uavDesc);
 		}
 	}
 
 	{
 		deferredCB = new ConstantBuffer(ConstantBufferDesc<DeferredCB>());
+	}
+
+	{
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
 	}
 }
 
@@ -214,8 +227,8 @@ void Bindings::UpdateConstantBuffer()
 	data.RcpBufferDim.x = 1.0f / State::GetSingleton()->screenWidth;
 	data.RcpBufferDim.y = 1.0f / State::GetSingleton()->screenHeight;
 
-	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-	data.FrameCount = viewport->uiFrameCount * (useTAA || state->upscalerLoaded);
+//	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+	data.FrameCount = viewport->uiFrameCount;
 
 	data.CameraData = Util::GetCameraData();
 
@@ -364,12 +377,9 @@ void Bindings::NormalMappingShadows()
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 
-		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
+		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV};
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-		auto buffer = deferredCB->CB();
-		context->CSSetConstantBuffers(0, 1, &buffer);
-
+		
 		auto shader = GetComputeDeferredNormalMappingShadows();
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -385,14 +395,11 @@ void Bindings::NormalMappingShadows()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
-	context->CSSetShaderResources(0, 2, views);
+	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 3, views);
 
-	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-	ID3D11Buffer* buffer = nullptr;
-	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }
@@ -404,11 +411,16 @@ void Bindings::DeferredPasses()
 
 	UpdateConstantBuffer();
 
+	{
+		auto buffer = deferredCB->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+	}
+
 	if (ScreenSpaceShadows::GetSingleton()->loaded) {
 		ScreenSpaceShadows::GetSingleton()->DrawShadows();
 	}
 
-	NormalMappingShadows();
+//	NormalMappingShadows();
 
 	{
 		auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
@@ -417,26 +429,28 @@ void Bindings::DeferredPasses()
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		auto motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
 
-		ID3D11ShaderResourceView* srvs[6]{
+		ID3D11ShaderResourceView* srvs[8]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
 			shadowMask.SRV,
-			depth.depthSRV
+			depth.depthSRV,
+			motionVector.SRV,
+			previousFilteredShadowTexture->srv.get()
 		};
 
-		context->CSSetShaderResources(0, 6, srvs);
+		context->CSSetShaderResources(0, 8, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 
-		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
-		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, filteredShadowTexture->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
 
-		auto buffer = deferredCB->CB();
-		context->CSSetConstantBuffers(0, 1, &buffer);
+		context->CSSetSamplers(0, 1, &linearSampler);
 
 		auto shader = GetComputeDeferredComposite();
 		context->CSSetShader(shader, nullptr, 0);
@@ -456,16 +470,18 @@ void Bindings::DeferredPasses()
 		context->CSSetShader(shader, nullptr, 0);
 	}
 
-	ID3D11ShaderResourceView* views[6]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 6, views);
+	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 8, views);
 
-	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
+	context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
 
 	ID3D11Buffer* buffer = nullptr;
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+
+	context->CopyResource(previousFilteredShadowTexture->resource.get(), filteredShadowTexture->resource.get());
 }
 
 void Bindings::EndDeferred()
