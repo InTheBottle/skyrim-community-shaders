@@ -7,9 +7,14 @@ Texture2D<unorm half3> ReflectanceTexture 		: register(t2);
 Texture2D<unorm half4> NormalRoughnessTexture 	: register(t3);
 Texture2D<unorm half> ShadowMaskTexture 		: register(t4);
 Texture2D<unorm half> DepthTexture 				: register(t5);
+Texture2D<half2> MotionVectorTexture 		: register(t6);
+Texture2D<unorm half> PrevFilteredShadowTexture	: register(t7);
 
 RWTexture2D<half4> MainRW 						: register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW 	: register(u1);
+RWTexture2D<unorm half> FilteredShadowMaskRW 	: register(u2);
+
+SamplerState LinearSampler : register(s0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -80,22 +85,38 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	uint eyeIndex = 0;
 
-	half shadow = 0.0;
-	half weight = 0.0;
+	half smin = 0;
+	half smax = 0;
 
-	for(int i = -1; i < 1; i++)
+	half2 offset = 1;
+
+	if (FrameCount & 1)
 	{
-		for(int k = -1; k < 1; k++)
-		{
-			half tmpDepth = GetScreenDepth(DepthTexture[uint2(globalId.x + i, globalId.y + k)]);
-			half depthDelta = 1.0 - saturate(abs(depth - tmpDepth) * 0.1);
-			shadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
-			weight += depthDelta;		
-		}
+		half2 offs = RcpBufferDim.xy * 0.5;
+
+		half4 s1 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(-offset.x, -offset.y));
+		half4 s2 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(+offset.x, +offset.y));
+
+		smin = min(min(min(min(min(min(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
+		smax = max(max(max(max(max(max(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
+	} else {
+		half2 offs = RcpBufferDim.xy * 0.5;
+
+		half4 s1 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(+offset.x, -offset.y));
+		half4 s2 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(-offset.x, +offset.y));
+
+		smin = min(min(min(min(min(min(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
+		smax = max(max(max(max(max(max(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
 	}
 
-	if (weight > 0.0)
-		shadow /= weight;
+	half2 motionVector = MotionVectorTexture[globalId.xy].xy;		
+	half2 uvOffset = uv + motionVector;
+
+	// Get the previous frame sample and clamp it with the neighborhood samples.
+    half shadow = PrevFilteredShadowTexture.SampleLevel(LinearSampler, uvOffset, 0);
+    shadow = clamp(shadow, smin, smax);
+
+	FilteredShadowMaskRW[globalId.xy] = shadow;
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 
@@ -132,7 +153,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	}
 #	endif
 
-	MainRW[globalId.xy] = half4(color, 1.0);
+	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 	NormalTAAMaskSpecularMaskRW[globalId.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
 }
 

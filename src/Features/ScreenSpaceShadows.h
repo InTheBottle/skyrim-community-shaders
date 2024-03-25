@@ -14,45 +14,50 @@ struct ScreenSpaceShadows : Feature
 	virtual inline std::string GetName() { return "Screen-Space Shadows"; }
 	virtual inline std::string GetShortName() { return "ScreenSpaceShadows"; }
 
-	struct Settings
+	struct BendSettings
 	{
-		uint32_t MaxSamples = !REL::Module::IsVR() ? 16u : 6u;
-		float FarDistanceScale = 0.025f;
-		float FarThicknessScale = 0.025f;
-		float FarHardness = 8.0f;
-		float NearDistance = 16.0f;
-		float NearThickness = 4.0f;
-		float NearHardness = 8.0f;
-		bool Enabled = true;
+		float SurfaceThickness = 0.005f;
+		float BilinearThreshold = 0.02f;
+		float ShadowContrast = 1.0f;
+		uint IgnoreEdgePixels = false;
+		uint UsePrecisionOffset = false;
+		uint BilinearSamplingOffsetMode = false;
+		uint DebugOutputEdgeMask = false;
+		uint DebugOutputThreadIndex = false;
+		uint DebugOutputWaveIndex = false;
 	};
+
+	BendSettings bendSettings;
 
 	struct alignas(16) RaymarchCB
 	{
-		float2 BufferDim;
-		float2 RcpBufferDim;
-		float4x4 ProjMatrix[2];
-		float4x4 InvProjMatrix[2];
-		float4 CameraData;
-		float4 DynamicRes;
-		float4 InvDirLightDirectionVS;
-		float ShadowDistance = 10000;
-		Settings Settings;
-		uint32_t pad[3];
+		// Runtime data returned from BuildDispatchList():
+		float LightCoordinate[4];  // Values stored in DispatchList::LightCoordinate_Shader by BuildDispatchList()
+		int WaveOffset[2];         // Values stored in DispatchData::WaveOffset_Shader by BuildDispatchList()
+
+		// Renderer Specific Values:
+		float FarDepthValue;   // Set to the Depth Buffer Value for the far clip plane, as determined by renderer projection matrix setup (typically 0).
+		float NearDepthValue;  // Set to the Depth Buffer Value for the near clip plane, as determined by renderer projection matrix setup (typically 1).
+
+		// Sampling data:
+		float InvDepthTextureSize[2];	// Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
+										// If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
+										// The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
+		
+		BendSettings settings;
+		uint pad[1];
 	};
 
-	Settings settings;
-
-	ID3D11SamplerState* computeSampler = nullptr;
+	ID3D11SamplerState* pointBorderSampler = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchProgram = nullptr;
 
-	bool renderedScreenCamera = false;
-	void DrawShadows();
 	virtual void SetupResources();
 	virtual void Reset();
 
 	virtual void DrawSettings();
+
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeShader();
 
@@ -60,6 +65,8 @@ struct ScreenSpaceShadows : Feature
 
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
+
+	void DrawShadows();
 
 	virtual void RestoreDefaultSettings();
 };
