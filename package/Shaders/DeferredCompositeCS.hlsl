@@ -7,8 +7,6 @@ Texture2D<unorm half3> ReflectanceTexture 		: register(t2);
 Texture2D<unorm half4> NormalRoughnessTexture 	: register(t3);
 Texture2D<unorm half> ShadowMaskTexture 		: register(t4);
 Texture2D<unorm half> DepthTexture 				: register(t5);
-Texture2D<half2> MotionVectorTexture 		: register(t6);
-Texture2D<unorm half> PrevFilteredShadowTexture	: register(t7);
 
 RWTexture2D<half4> MainRW 						: register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW 	: register(u1);
@@ -85,57 +83,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	uint eyeIndex = 0;
 
-	// half smin = 0;
-	// half smax = 0;
-
-	// half2 offset = 1;
-
-	// if (FrameCount & 1)
-	// {
-	// 	half2 offs = RcpBufferDim.xy * 0.5;
-
-	// 	half4 s1 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(-offset.x, -offset.y));
-	// 	half4 s2 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(+offset.x, +offset.y));
-
-	// 	smin = min(min(min(min(min(min(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
-	// 	smax = max(max(max(max(max(max(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
-	// } else {
-	// 	half2 offs = RcpBufferDim.xy * 0.5;
-
-	// 	half4 s1 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(+offset.x, -offset.y));
-	// 	half4 s2 = ShadowMaskTexture.Gather(LinearSampler, uv + offs * half2(-offset.x, +offset.y));
-
-	// 	smin = min(min(min(min(min(min(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
-	// 	smax = max(max(max(max(max(max(s1.r, s1.g), s1.b), s1.a), s2.r), s2.g), s2.b);
-	// }
-
-	// half2 motionVector = MotionVectorTexture[globalId.xy].xy;		
-	// half2 uvOffset = uv + motionVector;
-
-	// // Get the previous frame sample and clamp it with the neighborhood samples.
-    // half shadow = PrevFilteredShadowTexture.SampleLevel(LinearSampler, uvOffset, 0);
-    // shadow = ShadowMaskTexture[globalId.xy];
-
-	// FilteredShadowMaskRW[globalId.xy] = shadow;
-
-	half shadow = 0.0;
-	half weight = 0.0;
-
-	for(int i = -2; i < 2; i++)
-	{
-		for(int k = -2; k < 2; k++)
-		{
-			half tmpDepth = GetScreenDepth(DepthTexture[uint2(globalId.x + i, globalId.y + k)]);
-			half depthDelta = 1.0 - saturate(abs(depth - tmpDepth));
-			shadow += ShadowMaskTexture[uint2(globalId.x + i, globalId.y + k)] * depthDelta;
-			weight += depthDelta;		
-		}
-	}
-
-	if (weight > 0.0)
-		shadow /= weight;
-
-	shadow = ShadowMaskTexture[globalId.xy];
+	half shadow = ShadowMaskTexture[globalId.xy];
 	
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 
