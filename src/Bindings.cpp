@@ -409,15 +409,15 @@ void Bindings::DeferredPasses()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
-	if (ScreenSpaceShadows::GetSingleton()->loaded) {
-		ScreenSpaceShadows::GetSingleton()->DrawShadows();
-	}
-
 	UpdateConstantBuffer();
 
 	{
 		auto buffer = deferredCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
+	}
+
+	if (ScreenSpaceShadows::GetSingleton()->loaded) {
+		ScreenSpaceShadows::GetSingleton()->DrawShadows();
 	}
 
 //	NormalMappingShadows();

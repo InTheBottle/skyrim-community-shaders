@@ -44,20 +44,49 @@ void ScreenSpaceShadows::DrawSettings()
 
 void ScreenSpaceShadows::ClearShaderCache()
 {
-	if (raymarchProgram) {
-		raymarchProgram->Release();
-		raymarchProgram = nullptr;
+	if (raymarch) {
+		raymarch->Release();
+		raymarch = nullptr;
+	}
+	if (blurH) {
+		blurH->Release();
+		blurH = nullptr;
+	}
+	if (blurV) {
+		blurV->Release();
+		blurV = nullptr;
 	}
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
 {
-	if (!raymarchProgram) {
-		logger::debug("Compiling raymarchProgram");
-		raymarchProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
+	if (!raymarch) {
+		logger::debug("Compiling RaymarchCS");
+		raymarch = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
 	}
-	return raymarchProgram;
+	return raymarch;
 }
+
+
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurH()
+{
+	if (!blurH) {
+		logger::debug("Compiling BlurCS HORIZONTAL");
+		blurH = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0");
+	}
+	return blurH;
+}
+
+
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurV()
+{
+	if (!blurV) {
+		logger::debug("Compiling BlurCS VERTICAL");
+		blurV = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "VERTICAL", nullptr } }, "cs_5_0");
+	}
+	return blurV;
+}
+
 
 void ScreenSpaceShadows::DrawShadows()
 {
@@ -87,7 +116,7 @@ void ScreenSpaceShadows::DrawShadows()
 		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
 	};
 
-	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds, false, 64);
+	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds, false, 128);
 				
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	context->CSSetShaderResources(0, 1, &depth.depthSRV);
@@ -100,7 +129,7 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetShader(GetComputeShader(), nullptr, 0);
 
 	auto buffer = raymarchCB->CB();
-	context->CSSetConstantBuffers(0, 1, &buffer);
+	context->CSSetConstantBuffers(1, 1, &buffer);
 
 	for (int i = 0; i < dispatchList.DispatchCount; i++)
 	{
@@ -135,6 +164,63 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+
+	buffer = nullptr;
+	context->CSSetConstantBuffers(1, 1, &buffer);
+
+	BlurShadowMask();
+}
+
+void ScreenSpaceShadows::BlurShadowMask()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+
+	ID3D11ShaderResourceView* view = shadowMask.SRV;
+	context->CSSetShaderResources(0, 1, &view);
+
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+	view = depth.depthSRV;
+	context->CSSetShaderResources(1, 1, &view);
+
+	ID3D11UnorderedAccessView* uav = shadowMaskTemp->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	context->CSSetSamplers(0, 1, &linearSampler);
+
+	context->CSSetShader(GetComputeShaderBlurH(), nullptr, 0);
+
+	uint32_t dispatchX = (uint32_t)std::ceil(shadowMaskTemp->desc.Width / 32.0f);
+	uint32_t dispatchY = (uint32_t)std::ceil(shadowMaskTemp->desc.Height / 32.0f);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	view = nullptr;
+	context->CSSetShaderResources(0, 1, &view);
+
+	uav = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	view = shadowMaskTemp->srv.get();
+	context->CSSetShaderResources(0, 1, &view);
+
+	uav = shadowMask.UAV;
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	context->CSSetShader(GetComputeShaderBlurV(), nullptr, 0);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	view = nullptr;
+	context->CSSetShaderResources(0, 1, &view);
+
+	uav = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void ScreenSpaceShadows::Draw(const RE::BSShader*, const uint32_t)
@@ -166,8 +252,6 @@ void ScreenSpaceShadows::SetupResources()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	{
-		logger::debug("Creating screenSpaceShadowsTexture");
-
 		auto device = renderer->GetRuntimeData().forwarder;
 
 		D3D11_SAMPLER_DESC samplerDesc = {};
@@ -178,14 +262,54 @@ void ScreenSpaceShadows::SetupResources()
 		samplerDesc.MaxAnisotropy = 1;
 		samplerDesc.MinLOD = 0;
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		samplerDesc.BorderColor[0] = 0.0f;
-		samplerDesc.BorderColor[1] = 0.0f;
-		samplerDesc.BorderColor[2] = 0.0f;
-		samplerDesc.BorderColor[3] = 0.0f;
+		samplerDesc.BorderColor[0] = 1.0f;
+		samplerDesc.BorderColor[1] = 1.0f;
+		samplerDesc.BorderColor[2] = 1.0f;
+		samplerDesc.BorderColor[3] = 1.0f;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
+	}
+
+	{
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
+	}
+
+	{
+		auto& shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+
+		shadowMask.texture->GetDesc(&texDesc);
+		shadowMask.SRV->GetDesc(&srvDesc);
+		shadowMask.RTV->GetDesc(&rtvDesc);
+		shadowMask.UAV->GetDesc(&uavDesc);
+
+		{
+			texDesc.Format = DXGI_FORMAT_R8_UNORM;
+			srvDesc.Format = texDesc.Format;
+			rtvDesc.Format = texDesc.Format;
+			uavDesc.Format = texDesc.Format;
+
+			shadowMaskTemp = new Texture2D(texDesc);
+			shadowMaskTemp->CreateSRV(srvDesc);
+			shadowMaskTemp->CreateUAV(uavDesc);
+		}
 	}
 }
 
 void ScreenSpaceShadows::Reset()
 {
 }
+

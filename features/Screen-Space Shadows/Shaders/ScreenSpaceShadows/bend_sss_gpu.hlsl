@@ -32,11 +32,11 @@
 // The following Macros must be defined in the compute shader file before including this header:
 //		
 //		
-		#define WAVE_SIZE 64						// Wavefront size of the compute shader running this code. 
+		#define WAVE_SIZE 128						// Wavefront size of the compute shader running this code. 
 //													// numthreads[WAVE_SIZE, 1, 1]
 //													// Only tested with 64.
 //		
-		#define SAMPLE_COUNT 128						// Number of shadow samples per-pixel.
+		#define SAMPLE_COUNT 60						// Number of shadow samples per-pixel.
 //													// Determines overall cost, as this value controls the length of the shadow (in pixels).
 //													// The number of texture-reads performed per-thread will be (SAMPLE_COUNT / WAVE_SIZE + 2) * 2.
 //													// Recommended starting value is 60 (This would be 4 reads per thread if WAVE_SIZE is 64). A value of 64 would require 6 reads.

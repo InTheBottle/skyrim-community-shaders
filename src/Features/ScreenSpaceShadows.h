@@ -16,7 +16,7 @@ struct ScreenSpaceShadows : Feature
 
 	struct BendSettings
 	{
-		float SurfaceThickness = 0.005f;
+		float SurfaceThickness = 0.01f;
 		float BilinearThreshold = 0.02f;
 		float ShadowContrast = 1.0f;
 		uint IgnoreEdgePixels = false;
@@ -49,9 +49,14 @@ struct ScreenSpaceShadows : Feature
 	};
 
 	ID3D11SamplerState* pointBorderSampler = nullptr;
+	ID3D11SamplerState* linearSampler = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
-	ID3D11ComputeShader* raymarchProgram = nullptr;
+	ID3D11ComputeShader* raymarch = nullptr;
+	ID3D11ComputeShader* blurH = nullptr;
+	ID3D11ComputeShader* blurV = nullptr;
+
+	Texture2D* shadowMaskTemp = nullptr;
 
 	virtual void SetupResources();
 	virtual void Reset();
@@ -60,13 +65,17 @@ struct ScreenSpaceShadows : Feature
 
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeShader();
+	ID3D11ComputeShader* GetComputeShaderBlurH();
+	ID3D11ComputeShader* GetComputeShaderBlurV();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
 
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
 
+
 	void DrawShadows();
+	void BlurShadowMask();
 
 	virtual void RestoreDefaultSettings();
 };
