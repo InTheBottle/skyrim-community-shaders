@@ -33,7 +33,6 @@ struct ScreenSpaceShadows : Feature
 		float4x4 ProjMatrix[2];
 		float4x4 InvProjMatrix[2];
 		float4 CameraData;
-		float4 DynamicRes;
 		float4 InvDirLightDirectionVS;
 		float ShadowDistance = 10000;
 		Settings Settings;
@@ -42,10 +41,15 @@ struct ScreenSpaceShadows : Feature
 
 	Settings settings;
 
+	Texture2D* downscaledDepth = nullptr;
 	ID3D11SamplerState* computeSampler = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchProgram = nullptr;
+
+	ID3D11ComputeShader* downscaleDepthCS = nullptr;
+
+	Texture2D* lqShadows = nullptr;
 
 	bool renderedScreenCamera = false;
 	void DrawShadows();
@@ -55,6 +59,9 @@ struct ScreenSpaceShadows : Feature
 	virtual void DrawSettings();
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeShader();
+	ID3D11ComputeShader* GetComputeShaderDownscale();
+	void DownscaleDepth();
+	ID3D11ComputeShader* GetComputeShaderUpscale();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
 

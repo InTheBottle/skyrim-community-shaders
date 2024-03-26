@@ -430,8 +430,9 @@ void Bindings::DeferredPasses()
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		auto motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
+		auto lqShadows = ScreenSpaceShadows::GetSingleton()->lqShadows;
 
-		ID3D11ShaderResourceView* srvs[8]{
+		ID3D11ShaderResourceView* srvs[9]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
@@ -439,10 +440,11 @@ void Bindings::DeferredPasses()
 			shadowMask.SRV,
 			depth.depthSRV,
 			motionVector.SRV,
-			previousFilteredShadowTexture->srv.get()
+			previousFilteredShadowTexture->srv.get(),
+			lqShadows->srv.get()
 		};
 
-		context->CSSetShaderResources(0, 8, srvs);
+		context->CSSetShaderResources(0, 9, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
@@ -470,8 +472,8 @@ void Bindings::DeferredPasses()
 		context->CSSetShader(shader, nullptr, 0);
 	}
 
-	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 8, views);
+	ID3D11ShaderResourceView* views[9]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 9, views);
 
 	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
 	context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);

@@ -79,6 +79,10 @@ void ScreenSpaceShadows::ClearShaderCache()
 		raymarchProgram->Release();
 		raymarchProgram = nullptr;
 	}
+	if (downscaleDepthCS) {
+		downscaleDepthCS->Release();
+		downscaleDepthCS = nullptr;
+	}
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
@@ -90,8 +94,48 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
 	return raymarchProgram;
 }
 
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderDownscale()
+{
+	if (!downscaleDepthCS) {
+		logger::debug("Compiling DownscaleDepthCS");
+		downscaleDepthCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\DownscaleDepthCS.hlsl", {}, "cs_5_0");
+	}
+	return downscaleDepthCS;
+}
+
+void ScreenSpaceShadows::DownscaleDepth()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+	ID3D11ShaderResourceView* view = depth.depthSRV;
+	context->CSSetShaderResources(0, 1, &view);
+
+	auto uav = downscaledDepth->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	auto shader = GetComputeShaderDownscale();
+	context->CSSetShader(shader, nullptr, 0);
+
+	context->Dispatch((uint32_t)std::ceil(downscaledDepth->desc.Width / 32.0f), (uint32_t)std::ceil(downscaledDepth->desc.Height / 32.0f), 1);
+
+	shader = nullptr;
+	context->CSSetShader(shader, nullptr, 0);
+
+	view = nullptr;
+	context->CSSetShaderResources(0, 1, &view);
+
+	uav = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+}
+
 void ScreenSpaceShadows::DrawShadows()
 {
+	DownscaleDepth();
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
@@ -100,10 +144,10 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
-	auto viewport = RE::BSGraphics::State::GetSingleton();
+	//auto viewport = RE::BSGraphics::State::GetSingleton();
 
-	float resolutionX = State::GetSingleton()->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-	float resolutionY = State::GetSingleton()->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+	//float resolutionX = State::GetSingleton()->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+	//float resolutionY = State::GetSingleton()->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
 	{
 		ID3D11ShaderResourceView* view = nullptr;
@@ -113,17 +157,11 @@ void ScreenSpaceShadows::DrawShadows()
 	{
 		RaymarchCB data{};
 
-		data.BufferDim.x = (float)State::GetSingleton()->screenWidth;
-		data.BufferDim.y = (float)State::GetSingleton()->screenHeight;
+		data.BufferDim.x = (float)downscaledDepth->desc.Width;
+		data.BufferDim.y = (float)downscaledDepth->desc.Height;
 
 		data.RcpBufferDim.x = 1.0f / data.BufferDim.x;
 		data.RcpBufferDim.y = 1.0f / data.BufferDim.y;
-
-		data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-		data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-		data.DynamicRes.z = 1.0f / data.DynamicRes.x;
-		data.DynamicRes.w = 1.0f / data.DynamicRes.y;
 
 		for (int eyeIndex = 0; eyeIndex < (!REL::Module::IsVR() ? 1 : 2); eyeIndex++) {
 			if (REL::Module::IsVR())
@@ -157,7 +195,7 @@ void ScreenSpaceShadows::DrawShadows()
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
-		ID3D11ShaderResourceView* views[2] = { depth.depthSRV, normalRoughness.SRV };
+		ID3D11ShaderResourceView* views[2] = { downscaledDepth->srv.get(), normalRoughness.SRV };
 		context->CSSetShaderResources(0, 2, views);
 
 		ID3D11ShaderResourceView* stencilView = nullptr;
@@ -166,13 +204,14 @@ void ScreenSpaceShadows::DrawShadows()
 			context->CSSetShaderResources(89, 1, &stencilView);
 		}
 
-		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-		context->CSSetUnorderedAccessViews(0, 1, &shadowMask.UAV, nullptr);
+	//	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		auto uav = lqShadows->uav.get();
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
 		auto shader = GetComputeShader();
 		context->CSSetShader(shader, nullptr, 0);
 
-		context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
+		context->Dispatch((uint32_t)std::ceil(downscaledDepth->desc.Width / 32.0f), (uint32_t)std::ceil(downscaledDepth->desc.Height / 32.0f), 1);
 
 		if (REL::Module::IsVR()) {
 			stencilView = nullptr;
@@ -232,6 +271,41 @@ void ScreenSpaceShadows::SetupResources()
 		samplerDesc.MinLOD = 0;
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &computeSampler));
+	}
+
+	{
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+
+		main.texture->GetDesc(&texDesc);
+		main.SRV->GetDesc(&srvDesc);
+		main.RTV->GetDesc(&rtvDesc);
+		main.UAV->GetDesc(&uavDesc);
+
+		texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		srvDesc.Format = texDesc.Format;
+		rtvDesc.Format = texDesc.Format;
+		uavDesc.Format = texDesc.Format;
+
+		texDesc.Width /= 2;
+		texDesc.Height /= 2;
+
+		lqShadows = new Texture2D(texDesc);
+		lqShadows->CreateSRV(srvDesc);
+		lqShadows->CreateUAV(uavDesc);
+		
+		texDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		srvDesc.Format = texDesc.Format;
+		rtvDesc.Format = texDesc.Format;
+		uavDesc.Format = texDesc.Format;
+
+		downscaledDepth = new Texture2D(texDesc);
+		downscaledDepth->CreateSRV(srvDesc);
+		downscaledDepth->CreateUAV(uavDesc);
 	}
 }
 
