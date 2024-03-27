@@ -22,13 +22,6 @@ cbuffer PerFrame : register(b1)
 	float SurfaceThickness;
 	float BilinearThreshold;
 	float ShadowContrast;
-	bool IgnoreEdgePixels;
-	bool UsePrecisionOffset;
-	bool BilinearSamplingOffsetMode;
-	bool DebugOutputEdgeMask;
-	bool DebugOutputThreadIndex;
-	bool DebugOutputWaveIndex;
-	uint pad;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main
@@ -51,12 +44,6 @@ cbuffer PerFrame : register(b1)
 	parameters.SurfaceThickness = SurfaceThickness;
 	parameters.BilinearThreshold = BilinearThreshold;
 	parameters.ShadowContrast = ShadowContrast;
-	parameters.IgnoreEdgePixels = IgnoreEdgePixels;
-	parameters.UsePrecisionOffset = UsePrecisionOffset;
-	parameters.BilinearSamplingOffsetMode = BilinearSamplingOffsetMode;
-	parameters.DebugOutputEdgeMask = DebugOutputEdgeMask;
-	parameters.DebugOutputThreadIndex = DebugOutputThreadIndex;
-	parameters.DebugOutputWaveIndex = DebugOutputWaveIndex;
 
 	WriteScreenSpaceShadow(parameters, groupID, groupThreadID);
 }

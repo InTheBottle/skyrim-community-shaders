@@ -2,6 +2,7 @@
 
 #include "State.h"
 #include "Util.h"
+#include "Bindings.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4838 4244)
@@ -12,7 +13,8 @@ using RE::RENDER_TARGETS;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceShadows::BendSettings,
-	EnableShadows,
+	Enable,
+	EnableNormalMappingShadows,
 	EnableBlur,
 	SurfaceThickness,
 	BilinearThreshold,
@@ -21,7 +23,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Shadows", (bool*)&bendSettings.EnableShadows);
+		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
+		ImGui::Checkbox("Enable Normal Mapping Shadows", (bool*)&bendSettings.EnableNormalMappingShadows);
 		ImGui::Checkbox("Enable Blur", (bool*)&bendSettings.EnableBlur);
 
 		ImGui::SliderFloat("SurfaceThickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
@@ -36,53 +39,63 @@ void ScreenSpaceShadows::DrawSettings()
 
 void ScreenSpaceShadows::ClearShaderCache()
 {
-	if (raymarch) {
-		raymarch->Release();
-		raymarch = nullptr;
+	if (raymarchCS) {
+		raymarchCS->Release();
+		raymarchCS = nullptr;
 	}
-	if (blurH) {
-		blurH->Release();
-		blurH = nullptr;
+	if (normalMappingShadowsCS) {
+		normalMappingShadowsCS->Release();
+		normalMappingShadowsCS = nullptr;
 	}
-	if (blurV) {
-		blurV->Release();
-		blurV = nullptr;
+	if (blurHCS) {
+		blurHCS->Release();
+		blurHCS = nullptr;
+	}
+	if (blurVCS) {
+		blurVCS->Release();
+		blurVCS = nullptr;
 	}
 }
 
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
-	if (!raymarch) {
+	if (!raymarchCS) {
 		logger::debug("Compiling RaymarchCS");
-		raymarch = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
+		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
 	}
-	return raymarch;
+	return raymarchCS;
 }
 
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeNormalMappingShadows()
+{
+	if (!normalMappingShadowsCS) {
+		logger::debug("Compiling NormalMappingShadowsCS");
+		normalMappingShadowsCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\NormalMappingShadowsCS.hlsl", {}, "cs_5_0");
+	}
+	return normalMappingShadowsCS;
+}
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurH()
 {
-	if (!blurH) {
+	if (!blurHCS) {
 		logger::debug("Compiling BlurCS HORIZONTAL");
-		blurH = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0");
+		blurHCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0");
 	}
-	return blurH;
+	return blurHCS;
 }
-
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurV()
 {
-	if (!blurV) {
+	if (!blurVCS) {
 		logger::debug("Compiling BlurCS VERTICAL");
-		blurV = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "VERTICAL", nullptr } }, "cs_5_0");
+		blurVCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "VERTICAL", nullptr } }, "cs_5_0");
 	}
-	return blurV;
+	return blurVCS;
 }
-
 
 void ScreenSpaceShadows::DrawShadows()
 {
-	if (!bendSettings.EnableShadows)
+	if (!bendSettings.Enable)
 		return;
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -121,7 +134,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	context->CSSetSamplers(0, 1, &pointBorderSampler);
 
-	context->CSSetShader(GetComputeShader(), nullptr, 0);
+	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
 
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
@@ -163,8 +176,59 @@ void ScreenSpaceShadows::DrawShadows()
 	buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
+	if (bendSettings.EnableNormalMappingShadows)
+		DrawNormalMappingShadows();
+
 	if (bendSettings.EnableBlur)
 		BlurShadowMask();
+}
+
+void ScreenSpaceShadows::DrawNormalMappingShadows()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	{
+		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+		ID3D11ShaderResourceView* srvs[2]{
+			normalRoughness.SRV,
+			depth.depthSRV
+		};
+
+		context->CSSetShaderResources(0, 2, srvs);
+
+		auto deferred = Bindings::GetSingleton();
+		auto main = renderer->GetRuntimeData().renderTargets[deferred->forwardRenderTargets[0]];
+		auto normals = renderer->GetRuntimeData().renderTargets[deferred->forwardRenderTargets[2]];
+
+		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		auto shader = GetComputeNormalMappingShadows();
+		context->CSSetShader(shader, nullptr, 0);
+
+		auto state = State::GetSingleton();
+		auto viewport = RE::BSGraphics::State::GetSingleton();
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 3, views);
+
+	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void ScreenSpaceShadows::BlurShadowMask()

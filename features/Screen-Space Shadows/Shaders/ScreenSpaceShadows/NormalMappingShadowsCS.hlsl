@@ -1,5 +1,5 @@
 
-#include "Common/GBuffer.hlsl"
+#include "../Common/GBuffer.hlsl"
 
 Texture2D<unorm half4> NormalRoughnessTexture 	: register(t0);
 Texture2D<unorm half> DepthTexture 				: register(t1);

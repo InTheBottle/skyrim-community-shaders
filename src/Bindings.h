@@ -38,14 +38,9 @@ public:
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
 
-	ID3D11ComputeShader* deferredNormalMappingShadowsCS = nullptr;
 	ID3D11ComputeShader* deferredCompositeCS = nullptr;
 
-	Texture2D* filteredShadowTexture = nullptr;
-	Texture2D* previousFilteredShadowTexture = nullptr;
-
 	void ClearShaderCache();
-	ID3D11ComputeShader* GetComputeDeferredNormalMappingShadows();
 	ID3D11ComputeShader* GetComputeDeferredComposite();
 
 	bool inWorld = false;
@@ -69,8 +64,6 @@ public:
 	};
 
 	ConstantBuffer* deferredCB = nullptr;
-
-	ID3D11SamplerState* linearSampler = nullptr;
 
 	void UpdateConstantBuffer();
 

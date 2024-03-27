@@ -132,39 +132,10 @@ void Bindings::SetupResources()
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 		// Normal + Roughness
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
-
-		{
-			texDesc.Format = DXGI_FORMAT_R8_UNORM;
-			srvDesc.Format = texDesc.Format;
-			rtvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-
-			filteredShadowTexture = new Texture2D(texDesc);
-			filteredShadowTexture->CreateSRV(srvDesc);
-			filteredShadowTexture->CreateUAV(uavDesc);
-
-			previousFilteredShadowTexture = new Texture2D(texDesc);
-			previousFilteredShadowTexture->CreateSRV(srvDesc);
-			previousFilteredShadowTexture->CreateUAV(uavDesc);
-		}
 	}
 
 	{
 		deferredCB = new ConstantBuffer(ConstantBufferDesc<DeferredCB>());
-	}
-
-	{
-		auto device = renderer->GetRuntimeData().forwarder;
-
-		D3D11_SAMPLER_DESC samplerDesc = {};
-		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.MaxAnisotropy = 1;
-		samplerDesc.MinLOD = 0;
-		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
 	}
 }
 
@@ -227,8 +198,8 @@ void Bindings::UpdateConstantBuffer()
 	data.RcpBufferDim.x = 1.0f / State::GetSingleton()->screenWidth;
 	data.RcpBufferDim.y = 1.0f / State::GetSingleton()->screenHeight;
 
-//	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-	data.FrameCount = viewport->uiFrameCount;
+	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+	data.FrameCount = useTAA ? viewport->uiFrameCount : 0;
 
 	data.CameraData = Util::GetCameraData();
 
@@ -357,53 +328,6 @@ void Bindings::StartDeferred()
 	deferredPass = true;
 }
 
-void Bindings::NormalMappingShadows()
-{
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
-
-	{
-		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
-		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-		ID3D11ShaderResourceView* srvs[2]{
-			normalRoughness.SRV,
-			depth.depthSRV
-		};
-
-		context->CSSetShaderResources(0, 2, srvs);
-
-		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
-		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
-
-		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV};
-		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-		
-		auto shader = GetComputeDeferredNormalMappingShadows();
-		context->CSSetShader(shader, nullptr, 0);
-
-		auto state = State::GetSingleton();
-		auto viewport = RE::BSGraphics::State::GetSingleton();
-
-		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
-		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-	}
-
-	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 3, views);
-
-	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-	context->CSSetShader(nullptr, nullptr, 0);
-}
-
 void Bindings::DeferredPasses()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -420,8 +344,6 @@ void Bindings::DeferredPasses()
 		ScreenSpaceShadows::GetSingleton()->DrawShadows();
 	}
 
-//	NormalMappingShadows();
-
 	{
 		auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 		auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
@@ -429,28 +351,23 @@ void Bindings::DeferredPasses()
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-		auto motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
 
-		ID3D11ShaderResourceView* srvs[8]{
+		ID3D11ShaderResourceView* srvs[7]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
 			shadowMask.SRV,
-			depth.depthSRV,
-			motionVector.SRV,
-			previousFilteredShadowTexture->srv.get()
+			depth.depthSRV
 		};
 
-		context->CSSetShaderResources(0, 8, srvs);
+		context->CSSetShaderResources(0, 7, srvs);
 
 		auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 		auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 
-		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, filteredShadowTexture->uav.get() };
-		context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
-
-		context->CSSetSamplers(0, 1, &linearSampler);
+		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 
 		auto shader = GetComputeDeferredComposite();
 		context->CSSetShader(shader, nullptr, 0);
@@ -470,18 +387,16 @@ void Bindings::DeferredPasses()
 		context->CSSetShader(shader, nullptr, 0);
 	}
 
-	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 8, views);
+	ID3D11ShaderResourceView* views[7]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 7, views);
 
-	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 
 	ID3D11Buffer* buffer = nullptr;
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-
-	context->CopyResource(previousFilteredShadowTexture->resource.get(), filteredShadowTexture->resource.get());
 }
 
 void Bindings::EndDeferred()
@@ -539,23 +454,10 @@ void Bindings::CheckOpaque()
 
 void Bindings::ClearShaderCache()
 {
-	if (deferredNormalMappingShadowsCS) {
-		deferredNormalMappingShadowsCS->Release();
-		deferredNormalMappingShadowsCS = nullptr;
-	}
 	if (deferredCompositeCS) {
 		deferredCompositeCS->Release();
 		deferredCompositeCS = nullptr;
 	}
-}
-
-ID3D11ComputeShader* Bindings::GetComputeDeferredNormalMappingShadows()
-{
-	if (!deferredNormalMappingShadowsCS) {
-		logger::debug("Compiling DeferredNormalMappingShadowsCS");
-		deferredNormalMappingShadowsCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredNormalMappingShadowsCS.hlsl", {}, "cs_5_0");
-	}
-	return deferredNormalMappingShadowsCS;
 }
 
 ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()
