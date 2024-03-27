@@ -41,7 +41,7 @@ half GetScreenDepth(half2 uv)
 	return GetScreenDepth2(GetDepth(uv));
 }
 
-#define KERNEL_RADIUS 2
+#define KERNEL_RADIUS 1
 #define g_Sharpness 1.0
 
 half BlurFunction(half2 uv, half r, half center_c, half center_d, inout half w_total)
