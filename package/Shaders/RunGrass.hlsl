@@ -110,12 +110,12 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
 	float dirLightAngle = dot(DirLightDirection.xyz, instanceNormal);
-	float3 diffuseMultiplier = input.InstanceData1.www * input.Color.xyz * saturate(dirLightAngle.xxx);
+	float3 diffuseMultiplier = input.InstanceData1.www * input.Color.xyz;
 
 	float perInstanceFade = dot(cb8[(asuint(cb7[0].x) >> 2)].xyzw, M_IdentityMatrix[(asint(cb7[0].x) & 3)].xyzw);
 	float distanceFade = 1 - saturate((length(projSpacePosition.xyz) - AlphaParam1) / AlphaParam2);
 
-	vsout.DiffuseColor.xyz = DirLightColor.xyz * diffuseMultiplier;
+	vsout.DiffuseColor.xyz = diffuseMultiplier;
 	vsout.DiffuseColor.w = distanceFade * perInstanceFade;
 
 	vsout.TexCoord.xy = input.TexCoord.xy;
@@ -194,11 +194,14 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.MotionVectors = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
 
-	float3 normal = normalize(WorldToView(float3(0, 0, 1), false, 0));
+	float3 ddx = ddx_coarse(input.ViewSpacePosition);
+	float3 ddy = ddy_coarse(input.ViewSpacePosition);
+	float3 normal = normalize(cross(ddx, ddy));
+
 	psout.Normal.xy = EncodeNormal(normal);
 	psout.Normal.zw = float2(0, 0);
 
-	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z * 0.5, 1);
+	psout.Albedo = float4(baseColor.xyz * input.DiffuseColor.xyz * 0.5, 1);
 #	endif
 
 	return psout;
