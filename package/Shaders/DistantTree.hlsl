@@ -20,6 +20,7 @@ struct VS_OUTPUT
 #else
 	float4 WorldPosition : POSITION1;
 	float4 PreviousWorldPosition : POSITION2;
+	float4 ViewPosition : POSITION3;
 #endif
 };
 
@@ -54,6 +55,7 @@ VS_OUTPUT main(VS_INPUT input)
 #	else
 	vsout.WorldPosition = mul(World, finalModelPosition);
 	vsout.PreviousWorldPosition = mul(PreviousWorld, finalModelPosition);
+	vsout.ViewPosition = viewPosition;
 #	endif
 
 	vsout.Position = viewPosition;
@@ -161,10 +163,14 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.MotionVector = screenMotionVector;
 
-	psout.Normal.xy = EncodeNormal(float3(0.0, 0.0, -1.0));
+	float3 ddx = ddx_coarse(input.ViewPosition);
+	float3 ddy = ddy_coarse(input.ViewPosition);
+	float3 normal = normalize(cross(ddx, ddy));
+
+	psout.Normal.xy = EncodeNormal(normal);
 	psout.Normal.zw = 0;
 
-	psout.Albedo = float4(baseColor.xyz * input.TexCoord.z, 1);
+	psout.Albedo = float4(baseColor.xyz * 0.5, 1);
 #	endif
 
 	return psout;
