@@ -26,7 +26,6 @@ public:
 	void Reset();
 
 	void StartDeferred();
-	void NormalMappingShadows();
 	void DeferredPasses();
 	void EndDeferred();
 
@@ -64,6 +63,8 @@ public:
 	};
 
 	ConstantBuffer* deferredCB = nullptr;
+
+	ID3D11SamplerState* linearSampler = nullptr;
 
 	void UpdateConstantBuffer();
 

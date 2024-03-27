@@ -73,7 +73,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 [numthreads(32, 32, 1)] void main(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID) 
 {
-	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim;
+	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xyz);
@@ -84,9 +84,29 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	uint eyeIndex = 0;
 
 	half shadow = ShadowMaskTexture[globalId.xy];
+	half weight = 1.0;
 	
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 
+	if (NdotL > 0.0)
+	{
+		// Approximation of PCF in screen-space
+		for(int i = -1; i < 1; i++)
+		{		
+			for(int k = -1; k < 1; k++)
+			{
+				if (i == 0 && k == 0)
+					continue;
+				float2 offset = float2(i, k) * RcpBufferDim.xy * 1.5;
+				float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
+				float attenuation = 1.0 - saturate(abs(sampleDepth - depth));
+				shadow += ShadowMaskTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
+				weight += attenuation;
+			}
+		}
+		shadow /= weight;
+	}	
+	
 	half4 diffuseColor = MainRW[globalId.xy];
 	half3 specularColor = SpecularTexture[globalId.xy];
 
@@ -97,8 +117,8 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half4 albedo = AlbedoTexture[globalId.xy];
 
 	half3 color = diffuseColor + specularColor;
-
-	color += albedo * max(0, NdotL) * DirLightColor.xyz * shadow;
+	
+	color += albedo * lerp(max(0, NdotL), 1.0, albedo.w) * DirLightColor.xyz * shadow;
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 	color += albedo * directionalAmbientColor;

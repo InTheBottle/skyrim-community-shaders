@@ -15,17 +15,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceShadows::BendSettings,
 	Enable,
 	EnableNormalMappingShadows,
-	EnableBlur,
+	SampleCount,
 	SurfaceThickness,
 	BilinearThreshold,
-	ShadowContrast)
+	ShadowContrast
+)
 
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
 		ImGui::Checkbox("Enable Normal Mapping Shadows", (bool*)&bendSettings.EnableNormalMappingShadows);
-		ImGui::Checkbox("Enable Blur", (bool*)&bendSettings.EnableBlur);
+		ImGui::SliderInt("Sample Count", (int*)&bendSettings.SampleCount, 1, 4);
 
 		ImGui::SliderFloat("SurfaceThickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
 		ImGui::SliderFloat("BilinearThreshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
@@ -47,21 +48,24 @@ void ScreenSpaceShadows::ClearShaderCache()
 		normalMappingShadowsCS->Release();
 		normalMappingShadowsCS = nullptr;
 	}
-	if (blurHCS) {
-		blurHCS->Release();
-		blurHCS = nullptr;
-	}
-	if (blurVCS) {
-		blurVCS->Release();
-		blurVCS = nullptr;
-	}
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
+	static uint sampleCount = bendSettings.SampleCount;
+
+	if (sampleCount != bendSettings.SampleCount)
+	{
+		sampleCount = bendSettings.SampleCount;
+		if (raymarchCS) {
+			raymarchCS->Release();
+			raymarchCS = nullptr;
+		}
+	}
+
 	if (!raymarchCS) {
 		logger::debug("Compiling RaymarchCS");
-		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
+		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", sampleCount * 64).c_str() } }, "cs_5_0");
 	}
 	return raymarchCS;
 }
@@ -73,24 +77,6 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeNormalMappingShadows()
 		normalMappingShadowsCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\NormalMappingShadowsCS.hlsl", {}, "cs_5_0");
 	}
 	return normalMappingShadowsCS;
-}
-
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurH()
-{
-	if (!blurHCS) {
-		logger::debug("Compiling BlurCS HORIZONTAL");
-		blurHCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0");
-	}
-	return blurHCS;
-}
-
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurV()
-{
-	if (!blurVCS) {
-		logger::debug("Compiling BlurCS VERTICAL");
-		blurVCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\BlurCS.hlsl", { { "VERTICAL", nullptr } }, "cs_5_0");
-	}
-	return blurVCS;
 }
 
 void ScreenSpaceShadows::DrawShadows()
@@ -173,14 +159,14 @@ void ScreenSpaceShadows::DrawShadows()
 
 	context->CSSetShader(nullptr, nullptr, 0);
 
+	ID3D11SamplerState* sampler = nullptr;
+	context->CSSetSamplers(0, 1, &sampler);
+
 	buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
 	if (bendSettings.EnableNormalMappingShadows)
 		DrawNormalMappingShadows();
-
-	if (bendSettings.EnableBlur)
-		BlurShadowMask();
 }
 
 void ScreenSpaceShadows::DrawNormalMappingShadows()
@@ -190,20 +176,11 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 
 	{
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
-		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-		ID3D11ShaderResourceView* srvs[2]{
-			normalRoughness.SRV,
-			depth.depthSRV
-		};
-
+		ID3D11ShaderResourceView* srvs[2]{ normalRoughness.SRV, depth.depthSRV };
 		context->CSSetShaderResources(0, 2, srvs);
 
-		auto deferred = Bindings::GetSingleton();
-		auto main = renderer->GetRuntimeData().renderTargets[deferred->forwardRenderTargets[0]];
-		auto normals = renderer->GetRuntimeData().renderTargets[deferred->forwardRenderTargets[2]];
-
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
@@ -228,57 +205,8 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-	context->CSSetShader(nullptr, nullptr, 0);
-}
-
-void ScreenSpaceShadows::BlurShadowMask()
-{
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
-
-	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-
-	ID3D11ShaderResourceView* view = shadowMask.SRV;
-	context->CSSetShaderResources(0, 1, &view);
-
-	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-	view = depth.depthSRV;
-	context->CSSetShaderResources(1, 1, &view);
-
-	ID3D11UnorderedAccessView* uav = shadowMaskTemp->uav.get();
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-	context->CSSetSamplers(0, 1, &linearSampler);
-
-	context->CSSetShader(GetComputeShaderBlurH(), nullptr, 0);
-
-	uint32_t dispatchX = (uint32_t)std::ceil(shadowMaskTemp->desc.Width / 32.0f);
-	uint32_t dispatchY = (uint32_t)std::ceil(shadowMaskTemp->desc.Height / 32.0f);
-
-	context->Dispatch(dispatchX, dispatchY, 1);
-
-	view = nullptr;
-	context->CSSetShaderResources(0, 1, &view);
-
-	uav = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-	view = shadowMaskTemp->srv.get();
-	context->CSSetShaderResources(0, 1, &view);
-
-	uav = shadowMask.UAV;
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-	context->CSSetShader(GetComputeShaderBlurV(), nullptr, 0);
-
-	context->Dispatch(dispatchX, dispatchY, 1);
-
-	view = nullptr;
-	context->CSSetShaderResources(0, 1, &view);
-
-	uav = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	ID3D11SamplerState* sampler = nullptr;
+	context->CSSetSamplers(0, 1, &sampler);
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }
@@ -327,20 +255,6 @@ void ScreenSpaceShadows::SetupResources()
 		samplerDesc.BorderColor[2] = 1.0f;
 		samplerDesc.BorderColor[3] = 1.0f;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
-	}
-
-	{
-		auto device = renderer->GetRuntimeData().forwarder;
-
-		D3D11_SAMPLER_DESC samplerDesc = {};
-		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.MaxAnisotropy = 1;
-		samplerDesc.MinLOD = 0;
-		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
 	}
 
 	{

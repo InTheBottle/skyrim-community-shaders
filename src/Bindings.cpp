@@ -137,6 +137,20 @@ void Bindings::SetupResources()
 	{
 		deferredCB = new ConstantBuffer(ConstantBufferDesc<DeferredCB>());
 	}
+
+	{
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
+	}
 }
 
 void Bindings::Reset()
@@ -368,6 +382,8 @@ void Bindings::DeferredPasses()
 
 		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
 		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+		context->CSSetSamplers(0, 1, &linearSampler);
 
 		auto shader = GetComputeDeferredComposite();
 		context->CSSetShader(shader, nullptr, 0);

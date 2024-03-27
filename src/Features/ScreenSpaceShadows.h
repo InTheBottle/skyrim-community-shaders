@@ -18,10 +18,10 @@ struct ScreenSpaceShadows : Feature
 	{
 		float SurfaceThickness = 0.01f;
 		float BilinearThreshold = 0.02f;
-		float ShadowContrast = 1.0f;
+		float ShadowContrast = 4.0f;
 		uint Enable = 1;
 		uint EnableNormalMappingShadows = 1;
-		uint EnableBlur = 1;
+		uint SampleCount = 1;
 	};
 
 	BendSettings bendSettings;
@@ -45,13 +45,10 @@ struct ScreenSpaceShadows : Feature
 	};
 
 	ID3D11SamplerState* pointBorderSampler = nullptr;
-	ID3D11SamplerState* linearSampler = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchCS = nullptr;
 	ID3D11ComputeShader* normalMappingShadowsCS = nullptr;
-	ID3D11ComputeShader* blurHCS = nullptr;
-	ID3D11ComputeShader* blurVCS = nullptr;
 
 	Texture2D* shadowMaskTemp = nullptr;
 
@@ -63,8 +60,6 @@ struct ScreenSpaceShadows : Feature
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeRaymarch();
 	ID3D11ComputeShader* GetComputeNormalMappingShadows();
-	ID3D11ComputeShader* GetComputeShaderBlurH();
-	ID3D11ComputeShader* GetComputeShaderBlurV();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
 
@@ -73,7 +68,6 @@ struct ScreenSpaceShadows : Feature
 
 	void DrawShadows();
 	void DrawNormalMappingShadows();
-	void BlurShadowMask();
 
 	virtual void RestoreDefaultSettings();
 };
