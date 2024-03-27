@@ -222,10 +222,10 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 3, views);
+	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
+	context->CSSetShaderResources(0, 2, views);
 
-	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
