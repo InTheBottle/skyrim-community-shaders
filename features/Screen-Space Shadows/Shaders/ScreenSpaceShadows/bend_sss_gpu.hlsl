@@ -389,6 +389,9 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 		// Sync wavefronts now groupshared DepthData is written
 		GroupMemoryBarrierWithGroupSync();
 
+		// Skip first person
+		skip_pixel = skip_pixel || GetScreenDepth(sampling_depth[0]) < 16.5;
+
 		// If the starting depth isn't in depth bounds, then we don't need a shadow
 		if (skip_pixel)
 			return;
@@ -473,7 +476,7 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 			// 	result = frac(inGroupID.x / (half)WAVE_SIZE);
 			
 			// Asking the GPU to write scattered single-byte pixels isn't great,
-			// But thankfully the latency is hidden by all the work we're doing...
+			// But thankfully the latency is hidden by all the work we're doing...		
 			inParameters.OutputTexture[(int2)write_xy] = min(inParameters.OutputTexture[(int2)write_xy], result);
 		}
 	}

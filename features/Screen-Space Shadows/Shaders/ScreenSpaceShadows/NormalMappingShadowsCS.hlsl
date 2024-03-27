@@ -82,6 +82,8 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 		return;
 
 	half depth = GetScreenDepth(rawDepth);
+	if (depth < 16.5)
+		return;
 
 	uint eyeIndex = 0;
 

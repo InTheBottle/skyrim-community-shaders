@@ -1,3 +1,25 @@
+cbuffer PerFrameShared : register(b0)
+{
+	float4 DirLightDirectionVS[2];
+	float4 DirLightColor;
+	float4 CameraData;
+	float2 BufferDim;
+	float2 RcpBufferDim;
+	float4x4 ViewMatrix[2];
+	float4x4 ProjMatrix[2];
+	float4x4 ViewProjMatrix[2];
+	float4x4 InvViewMatrix[2];
+	float4x4 InvProjMatrix[2];
+	row_major float3x4 DirectionalAmbient;
+	uint FrameCount;
+	uint pad0[3];
+};
+
+half GetScreenDepth(half depth)
+{
+	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
+}
+
 #include "bend_sss_gpu.hlsl"
 
 Texture2D<unorm half> DepthTexture : register(t0); // Depth Buffer Texture (rasterized non-linear depth)		 
