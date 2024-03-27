@@ -2257,6 +2257,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
 	if (lightingData[0].Opaque){
+		psout.Albedo.w = 0;
 		psout.NormalGlossiness.w = 0;
 #if defined(SKIN)
 		psout.NormalGlossiness.w = 1;
