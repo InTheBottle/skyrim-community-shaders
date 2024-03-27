@@ -100,8 +100,11 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half3 viewDirectionVS = normalize(viewPosition);
 	
+	// Fade based on perceivable difference
+	half fade = smoothstep(4, 5, length(startPosPixel - endPosPixel));
+
 	// Only march for: not shadowed, not self-shadowed, march distance greater than 1 pixel
-	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && startPosPixel.x != endPosPixel.x && startPosPixel.y != endPosPixel.y;
+	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && fade > 0.0;
 	if (validMarchPixel)
 	{
 		half step = 1.0 / 5.0;
@@ -128,6 +131,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	}
 
 	shadow = saturate(1.0 - shadow);
+	shadow = lerp(1.0, shadow, saturate(fade));
 
 	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, shadow);
 }
