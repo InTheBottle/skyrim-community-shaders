@@ -32,7 +32,7 @@
 // The following Macros must be defined in the compute shader file before including this header:
 //		
 //		
-		#define WAVE_SIZE 128						// Wavefront size of the compute shader running this code. 
+		#define WAVE_SIZE 64						// Wavefront size of the compute shader running this code. 
 //													// numthreads[WAVE_SIZE, 1, 1]
 //													// Only tested with 64.
 //		
