@@ -302,7 +302,7 @@ void Bindings::StartDeferred()
 		REFLECTANCE,
 	};
 
-	for (uint i = 0; i < 6; i++) {
+	for (uint i = 2; i < 6; i++) {
 		renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
 		setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
