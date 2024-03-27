@@ -12,29 +12,21 @@ using RE::RENDER_TARGETS;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceShadows::BendSettings,
+	EnableShadows,
+	EnableBlur,
 	SurfaceThickness,
 	BilinearThreshold,
-	ShadowContrast,
-	IgnoreEdgePixels,
-	UsePrecisionOffset,
-	BilinearSamplingOffsetMode,
-	DebugOutputEdgeMask,
-	DebugOutputThreadIndex,
-	DebugOutputWaveIndex)
+	ShadowContrast)
 
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox("Enable Shadows", (bool*)&bendSettings.EnableShadows);
+		ImGui::Checkbox("Enable Blur", (bool*)&bendSettings.EnableBlur);
+
 		ImGui::SliderFloat("SurfaceThickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
 		ImGui::SliderFloat("BilinearThreshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
 		ImGui::SliderFloat("ShadowContrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
-
-		ImGui::Checkbox("IgnoreEdgePixels", (bool*)&bendSettings.IgnoreEdgePixels);
-		ImGui::Checkbox("UsePrecisionOffset", (bool*)&bendSettings.UsePrecisionOffset);
-		ImGui::Checkbox("BilinearSamplingOffsetMode", (bool*)&bendSettings.BilinearSamplingOffsetMode);
-		ImGui::Checkbox("DebugOutputEdgeMask", (bool*)&bendSettings.DebugOutputEdgeMask);
-		ImGui::Checkbox("DebugOutputThreadIndex", (bool*)&bendSettings.DebugOutputThreadIndex);
-		ImGui::Checkbox("DebugOutputWaveIndex", (bool*)&bendSettings.DebugOutputWaveIndex);
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -90,6 +82,9 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderBlurV()
 
 void ScreenSpaceShadows::DrawShadows()
 {
+	if (!bendSettings.EnableShadows)
+		return;
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
@@ -168,7 +163,8 @@ void ScreenSpaceShadows::DrawShadows()
 	buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
-	BlurShadowMask();
+	if (bendSettings.EnableBlur)
+		BlurShadowMask();
 }
 
 void ScreenSpaceShadows::BlurShadowMask()

@@ -19,12 +19,8 @@ struct ScreenSpaceShadows : Feature
 		float SurfaceThickness = 0.01f;
 		float BilinearThreshold = 0.02f;
 		float ShadowContrast = 1.0f;
-		uint IgnoreEdgePixels = false;
-		uint UsePrecisionOffset = false;
-		uint BilinearSamplingOffsetMode = false;
-		uint DebugOutputEdgeMask = false;
-		uint DebugOutputThreadIndex = false;
-		uint DebugOutputWaveIndex = false;
+		uint EnableShadows = 1;
+		uint EnableBlur = 1;
 	};
 
 	BendSettings bendSettings;
@@ -72,7 +68,6 @@ struct ScreenSpaceShadows : Feature
 
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
-
 
 	void DrawShadows();
 	void BlurShadowMask();
