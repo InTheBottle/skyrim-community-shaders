@@ -23,7 +23,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableParticleLightsDetection,
 	ParticleLightsSaturation,
 	EnableParticleLightsOptimization,
-	ParticleLightsOptimisationClusterRadius)
+	ParticleLightsOptimisationClusterRadius,
+	ParticleBrightness,
+	ParticleRadius,
+	BillboardBrightness,
+	BillboardRadius)
 
 void LightLimitFix::DrawSettings()
 {
@@ -54,11 +58,15 @@ void LightLimitFix::DrawSettings()
 		ImGui::Spacing();
 		ImGui::Spacing();
 
-		ImGui::TextWrapped("Particle Lights Color");
+		ImGui::TextWrapped("Particle Lights Customisation");
 		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, 1.0, 2.0, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Particle light saturation.");
 		}
+		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, 0.0, 10.0, "%.2f");
+		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, 0.0, 10.0, "%.2f");
+		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, 0.0, 10.0, "%.2f");
+		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -550,8 +558,6 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, LightLimitFix::Co
 		color.blue *= emittance->blue;
 	}
 
-	float radius = 0;
-
 	if (auto rendererData = a_pass->geometry->GetGeometryRuntimeData().rendererData) {
 		if (auto triShape = a_pass->geometry->AsTriShape()) {
 			uint32_t vertexSize = rendererData->vertexDesc.GetSize();
@@ -585,15 +591,6 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, LightLimitFix::Co
 					color.alpha *= vertexColor->data[3] / 255.f;
 				}
 			}
-
-			uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_POSITION);
-			for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
-				if (VertexPosition* vertex = reinterpret_cast<VertexPosition*>(&rendererData->rawVertexData[vertexSize * v + offset])) {
-					RE::NiPoint3 position{ (float)vertex->data[0], (float)vertex->data[1], (float)vertex->data[2] };
-					radius = std::max(radius, position.Length());
-				}
-			}
-			radius /= 255.f;
 		}
 	}
 
@@ -608,7 +605,7 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, LightLimitFix::Co
 		color.blue *= config->colorMult.blue;
 	}
 
-	queuedParticleLights.insert({ a_pass->geometry, { color, radius, *config } });
+	queuedParticleLights.insert({ a_pass->geometry, { color, *config } });
 	return true;
 }
 
@@ -649,8 +646,8 @@ float LightLimitFix::CalculateLightDistance(float3 a_lightPosition, float a_radi
 
 void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light, ParticleLights::Config* a_config, RE::BSGeometry* a_geometry, double a_timer)
 {
-	static float& lightFadeStart = (*(float*)RELOCATION_ID(527668, 414582).address());
-	static float& lightFadeEnd = (*(float*)RELOCATION_ID(527669, 414583).address());
+	static float& lightFadeStart = (*(float*)REL::RelocationID(527668, 414582).address());
+	static float& lightFadeEnd = (*(float*)REL::RelocationID(527669, 414583).address());
 
 	float distance = CalculateLightDistance(light.positionWS[0].data, light.radius);
 
@@ -746,6 +743,7 @@ void LightLimitFix::UpdateLights()
 		viewMatrixCached[eyeIndex] = eyeCount == 1 ?
 		                                 state->GetRuntimeData().cameraData.getEye(eyeIndex).viewMat :
 		                                 state->GetVRRuntimeData().cameraData.getEye(eyeIndex).viewMat;
+		viewMatrixCached[eyeIndex].Invert(viewMatrixInverseCached[eyeIndex]);
 	}
 
 	RE::NiLight* refLight = nullptr;
@@ -880,9 +878,9 @@ void LightLimitFix::UpdateLights()
 					color.x = particleLight.second.color.red * particleData->GetParticlesRuntimeData().color[p].red;
 					color.y = particleLight.second.color.green * particleData->GetParticlesRuntimeData().color[p].green;
 					color.z = particleLight.second.color.blue * particleData->GetParticlesRuntimeData().color[p].blue;
-					clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha;
+					clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
 
-					clusteredLight.radius += radius * particleLight.second.config.radiusMult;
+					clusteredLight.radius += radius * settings.ParticleRadius * particleLight.second.config.radiusMult;
 					clusteredLight.positionWS[0].data.x += positionWS.x;
 					clusteredLight.positionWS[0].data.y += positionWS.y;
 					clusteredLight.positionWS[0].data.z += positionWS.z;
@@ -900,9 +898,8 @@ void LightLimitFix::UpdateLights()
 
 				light.color = Saturation(light.color, settings.ParticleLightsSaturation);
 
-				light.color *= particleLight.second.color.alpha;
-
-				light.radius = particleLight.second.radius * 70.0f * 0.5f;
+				light.color *= particleLight.second.color.alpha * settings.BillboardBrightness;
+				light.radius = particleLight.first->worldBound.radius * settings.BillboardRadius * particleLight.second.config.radiusMult;
 
 				auto position = particleLight.first->world.translate;
 

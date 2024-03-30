@@ -123,7 +123,6 @@ public:
 	struct ParticleLightInfo
 	{
 		RE::NiColorA color;
-		float radius;
 		ParticleLights::Config& config;
 	};
 
@@ -132,6 +131,7 @@ public:
 
 	RE::NiPoint3 eyePositionCached[2]{};
 	Matrix viewMatrixCached[2]{};
+	Matrix viewMatrixInverseCached[2]{};
 
 	PerPass perPassData{};
 
@@ -169,6 +169,10 @@ public:
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
 		float ParticleLightsSaturation = 1.0f;
+		float ParticleBrightness = 1.0f;
+		float ParticleRadius = 1.0f;
+		float BillboardBrightness = 1.0f;
+		float BillboardRadius = 1.0f;
 		bool EnableParticleLightsOptimization = true;
 		uint ParticleLightsOptimisationClusterRadius = 32;
 	};
@@ -312,6 +316,8 @@ public:
 			stl::write_thunk_call<BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights>(REL::RelocationID(100565, 107300).address() + REL::Relocate(0x523, 0xB0E, 0x5fe));
 		}
 	};
+
+	bool SupportsVR() override { return true; };
 };
 
 template <>

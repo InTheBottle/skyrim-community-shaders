@@ -1235,6 +1235,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	complexMaterial = complexMaterial && complexMaterialColor.y > (4.0 / 255.0) && (complexMaterialColor.y < (1.0 - (4.0 / 255.0)));
 	shininess = lerp(shininess, shininess * complexMaterialColor.y, complexMaterial);
 	float3 complexSpecular = lerp(1.0, lerp(1.0, baseColor.xyz, complexMaterialColor.z), complexMaterial);
+	baseColor.xyz = lerp(baseColor.xyz, lerp(baseColor.xyz, 0.0, complexMaterialColor.z), complexMaterial);
 #	endif  // defined (CPM_AVAILABLE) && defined(ENVMAP)
 
 #	if defined(FACEGEN)
@@ -1372,7 +1373,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif  // LOD_LAND_BLEND
 
 #		if defined(SNOW)
-	useSnowSpecular = landSnowMask > 0;
+	useSnowSpecular = landSnowMask != 0.0;
 #		endif  // SNOW
 #	endif      // LANDSCAPE
 
@@ -1444,15 +1445,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		normal.xyz = texProjTmp2.xxx * (finalProjNormal - normal.xyz) + normal.xyz;
 		baseColor.xyz = texProjTmp2.xxx * (projDiffuse * ProjectedUVParams2.xyz - baseColor.xyz) + baseColor.xyz;
 
-		useSnowDecalSpecular = true;
 #			if defined(SNOW)
+		useSnowDecalSpecular = true;
 		psout.SnowParameters.y = GetSnowParameterY(texProjTmp2, baseColor.w);
 #			endif  // SNOW
 	} else {
 		if (texProjTmp > 0) {
 			baseColor.xyz = ProjectedUVParams2.xyz;
-			useSnowDecalSpecular = true;
 #			if defined(SNOW)
+			useSnowDecalSpecular = true;
 			psout.SnowParameters.y = GetSnowParameterY(texProjTmp, baseColor.w);
 #			endif  // SNOW
 		} else {
@@ -1704,7 +1705,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		if (shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) {
 			if (lightIndex < numShadowLights) {
 				lightColor *= shadowColor[ShadowLightMaskSelect[lightIndex]];
-				;
 			}
 		}
 
@@ -1821,7 +1821,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			endif
 
 #			if defined(RIM_LIGHTING)
-		lightDiffuseColor += nsLightColor * GetRimLightMultiplier(normalizedLightDirection, viewDirection, worldSpaceNormal.xyz) * rimSoftLightColor.xyz;
+		lightDiffuseColor += nsLightColor * GetRimLightMultiplier(normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz) * rimSoftLightColor.xyz;
 #			endif
 
 #			if defined(BACK_LIGHTING)
@@ -1829,7 +1829,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			endif
 
 #			if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-		lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, worldSpaceNormal.xyz, lightColor, shininess, uv);
+		lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz, lightColor, shininess, uv);
 #			endif
 
 		lightsDiffuseColor += lightDiffuseColor;
@@ -1914,6 +1914,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	if (dynamicCubemap) {
 #			if defined(CPM_AVAILABLE)
 		envRoughness = lerp(envRoughness, 1.0 - complexMaterialColor.y, (float)complexMaterial);
+		envRoughness *= envRoughness;
 		F0 = lerp(F0, sRGB2Lin(complexSpecular), (float)complexMaterial);
 #			endif
 
@@ -1965,13 +1966,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif  // MULTI_LAYER_PARALLAX
 
 #	if defined(SPECULAR)
+#		if defined(CPM_AVAILABLE) && defined(ENVMAP)
+	specularColor = (specularColor * glossiness * MaterialData.yyy) * lerp(SpecularColor.xyz, complexSpecular, complexMaterial);
+#		else
 	specularColor = (specularColor * glossiness * MaterialData.yyy) * SpecularColor.xyz;
+#		endif
 #	elif defined(SPARKLE)
 	specularColor *= glossiness;
 #	endif  // SPECULAR
 
+#	if defined(SNOW)
 	if (useSnowSpecular)
 		specularColor = 0;
+#	endif
 
 #	if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #		if defined(DYNAMIC_CUBEMAPS)
@@ -2003,28 +2010,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = tmpColor.xyz + ColourOutputClamp.xxx;
 	color.xyz = min(vertexColor.xyz, color.xyz);
 
-#	if defined(CPM_AVAILABLE) && defined(ENVMAP)
-	color.xyz += specularColor * complexSpecular;
-#	else
 	color.xyz += specularColor;
-#	endif  // defined (CPM_AVAILABLE) && defined(ENVMAP)
 
 	color.xyz = sRGB2Lin(color.xyz);
 
 #	if defined(WETNESS_EFFECTS)
 	color.xyz += wetnessSpecular * wetnessGlossinessSpecular;
-#	endif
-
-#	if defined(DYNAMIC_CUBEMAPS)
-#		if defined(EYE)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, viewPosition.z) * input.Color.xyz * envMask;
-#		elif defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5 - (saturate(envMask) * 0.5), 2 - saturate(envMask), viewPosition.z) * (1.0 - ((float)dynamicCubemap * saturate(envMask))) * input.Color.xyz;
-#		elif defined(HAIR)
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, viewPosition.z);
-#		else
-	color.xyz += GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.5, 2, viewPosition.z) * input.Color.xyz;
-#		endif
 #	endif
 
 #	if defined(EYE)
@@ -2131,7 +2122,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	tmp = saturate(tmp1 * tmp2);
 	tmp *= tmp * (3 + -2 * tmp);
 	psout.ScreenSpaceNormals.w = tmp * SSRParams.w;
-	psout.ScreenSpaceNormals.w = 0.0;
 
 #	if defined(WATER_BLENDING)
 	if (perPassWaterBlending[0].EnableWaterBlendingSSR) {
