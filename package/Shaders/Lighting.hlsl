@@ -1986,8 +1986,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 layerColor = TexLayerSampler.Sample(SampLayerSampler, layerUv).xyz;
 
-	vertexColor = (saturate(viewNormalAngle) * (1 - baseColor.w)).xxx * ((directionalAmbientColor + lightsDiffuseColor) * (input.Color.xyz * layerColor) - vertexColor) + vertexColor;
+	float mlpBlendFactor = saturate(viewNormalAngle) * (1.0 - baseColor.w);
 
+#		if defined(DEFERRED)
+	vertexColor = lerp(vertexColor, (directionalAmbientColor + lightsDiffuseColor + (dirLightColor * saturate(dirLightAngle.xxx))) * (input.Color.xyz * layerColor), mlpBlendFactor);
+	baseColor.xyz *= 1.0 - mlpBlendFactor;
+#		else
+	vertexColor = lerp(vertexColor, (directionalAmbientColor + lightsDiffuseColor) * (input.Color.xyz * layerColor), mlpBlendFactor);
+#		endif
 #	endif  // MULTI_LAYER_PARALLAX
 
 #	if defined(SPECULAR)
