@@ -12,6 +12,8 @@
 #include "Features/TerrainBlending.h"
 #include "Bindings.h"
 
+#include "VariableRateShading.h"
+
 void State::Draw()
 {
 	Bindings::GetSingleton()->CheckOpaque();
@@ -179,6 +181,7 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	Bindings::GetSingleton()->SetupResources();
+	VariableRateShading::GetSingleton()->Setup();
 }
 
 void State::Load(bool a_test)

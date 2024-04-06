@@ -6,6 +6,7 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "VariableRateShading.h"
 
 #include "ShaderTools/BSShaderHooks.h"
 
@@ -146,6 +147,11 @@ void hk_BSGraphics_SetDirtyStates(bool isCompute)
 
 	//if (shaderCache.IsEnabled())
 	//	Bindings::GetSingleton()->SetDirtyStates(isCompute);
+	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	if (state->GetRuntimeData().stateUpdateFlags.get() & RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET)
+	{
+		VariableRateShading::GetSingleton()->UpdateViews();
+	}
 
 	(ptr_BSGraphics_SetDirtyStates)(isCompute);
 
