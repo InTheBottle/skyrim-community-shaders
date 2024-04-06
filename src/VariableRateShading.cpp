@@ -3,13 +3,59 @@
 
 HMODULE hNVAPI_DLL;
 
+void VariableRateShading::DrawSettings()
+{
+	ImGui::Checkbox("Enable Fixed Foviated Rendering", &enableFFR);
+	ImGui::Spacing();
+}
+
 std::vector<uint8_t> CreateSingleEyeFixedFoveatedVRSPattern(int width, int height)
 {
 	std::vector<uint8_t> data(width * height);
 
+	enum class ShadingRate
+	{
+		k1x1,
+		k2x2dir,
+		k2x2,
+		k4x4dir,
+		k4x4,
+	};
+
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
-			data[y * width + x] = 3;
+			data[y * width + x] = 0;
+
+			float2 uv = { (float)x / (float)width, (float)y / (float)height };
+
+			float xDist = abs(0.5f - uv.x);
+			float yDist = abs(0.5f - uv.y);
+
+			bool xDir = xDist < yDist;
+
+			float quality = 1.0f - Vector2::Distance(uv, float2(0.5f, 0.5f));
+			ShadingRate shadingRate = ShadingRate::k1x1;
+
+			if (quality < 0.25)
+				shadingRate = ShadingRate::k4x4dir;
+			else if (quality < 0.5)
+				shadingRate = ShadingRate::k2x2;
+			else if (quality < 0.75)
+				shadingRate = ShadingRate::k2x2dir;
+			
+			if (shadingRate == ShadingRate::k2x2dir) {
+				if (!xDir)
+					data[y * width + x] = 1;
+				else
+					data[y * width + x] = 2;
+			} else if (shadingRate == ShadingRate::k2x2) {
+				data[y * width + x] = 3;
+			} else if (shadingRate == ShadingRate::k4x4dir) {
+				if (!xDir)
+					data[y * width + x] = 4;
+				else
+					data[y * width + x] = 5;
+			}
 		}
 	}
 
@@ -111,6 +157,8 @@ void VariableRateShading::UpdateViews()
 		enableVRS = true;
 	}
 
+	enableVRS = enableVRS && enableFFR;
+
 	if (enableVRS) {
 		ID3D11NvShadingRateResourceView* shadingRateView = singleEyeVRSView[0];
 
@@ -134,8 +182,11 @@ void VariableRateShading::UpdateViews()
 			memset(vsrd[i].shadingRateTable, 5, sizeof(vsrd[i].shadingRateTable));
 			vsrd[i].shadingRateTable[0] = NV_PIXEL_X1_PER_RASTER_PIXEL;
 			vsrd[i].shadingRateTable[1] = NV_PIXEL_X1_PER_2X1_RASTER_PIXELS;
-			vsrd[i].shadingRateTable[2] = NV_PIXEL_X1_PER_2X2_RASTER_PIXELS;
-			vsrd[i].shadingRateTable[3] = NV_PIXEL_X1_PER_4X4_RASTER_PIXELS;
+			vsrd[i].shadingRateTable[2] = NV_PIXEL_X1_PER_1X2_RASTER_PIXELS;
+			vsrd[i].shadingRateTable[3] = NV_PIXEL_X1_PER_2X2_RASTER_PIXELS;
+			vsrd[i].shadingRateTable[4] = NV_PIXEL_X1_PER_4X2_RASTER_PIXELS;
+			vsrd[i].shadingRateTable[5] = NV_PIXEL_X1_PER_2X4_RASTER_PIXELS;
+			vsrd[i].shadingRateTable[6] = NV_PIXEL_X1_PER_4X4_RASTER_PIXELS;
 		}
 	}
 
