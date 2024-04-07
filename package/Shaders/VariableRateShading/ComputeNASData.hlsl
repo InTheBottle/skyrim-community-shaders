@@ -1,9 +1,11 @@
 #define GROUP_SIZE (8 * 8)
 
 Texture2D<float3> InputTexture : register(t0);
-RWTexture2D<float2> OutputTexture : register(u0);
+Texture2D<float2> InputTextureMotionVectors : register(t1);
+RWTexture2D<float4> OutputTexture : register(u0);
 
 groupshared float4 sampleCache[GROUP_SIZE];
+groupshared float2 sampleCacheMotionVectors[GROUP_SIZE];
 groupshared float errXCache[GROUP_SIZE];
 groupshared float errYCache[GROUP_SIZE];
 
@@ -43,6 +45,19 @@ void main(uint3 GroupID : SV_GroupID, uint3 GroupThreadID : SV_GroupThreadID)
 
 	sampleCache[threadIndex] = l0 + l1;
 
+	float2 m = 0.0f;
+	m += InputTextureMotionVectors[sampleIndex + uint2(0, 0)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(1, 0)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(0, 1)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(1, 1)];
+
+	m += InputTextureMotionVectors[sampleIndex + uint2(0, 2)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(1, 2)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(0, 3)];
+	m += InputTextureMotionVectors[sampleIndex + uint2(1, 3)];
+
+	sampleCacheMotionVectors[threadIndex] = m;
+
 	// Derivatives X
     float4 a = float4(l0.y, l2.x, l1.y, l2.y);
     float4 b = float4(l0.x, l0.w, l1.x, l1.w);
@@ -68,6 +83,7 @@ void main(uint3 GroupID : SV_GroupID, uint3 GroupThreadID : SV_GroupThreadID)
 	{
 		if(threadIndex < s){
 			sampleCache[threadIndex] += sampleCache[threadIndex + s];
+			sampleCacheMotionVectors[threadIndex] += sampleCacheMotionVectors[threadIndex + s];
 			errXCache[threadIndex] = max(errXCache[threadIndex], errXCache[threadIndex + s]);
 			errYCache[threadIndex] = max(errYCache[threadIndex], errYCache[threadIndex + s]);
 		}
@@ -77,9 +93,10 @@ void main(uint3 GroupID : SV_GroupID, uint3 GroupThreadID : SV_GroupThreadID)
 
 	// Average
 	if(threadIndex == 0){
-		float avgLuma = dot(sampleCache[0], 1.0 / 8.0) / GROUP_SIZE;
+		float avgLuma = dot(sampleCache[0], 1.0 / 8.0) / GROUP_SIZE + 0.1;
+		float2 avgMotionVectors = dot(sampleCacheMotionVectors[0], 1.0 / 8.0) / GROUP_SIZE;
 		float errX = errXCache[0];
     	float errY = errYCache[0];
-		OutputTexture[GroupID.xy] = float2(errX, errY);
+		OutputTexture[GroupID.xy] = float4(float2(errX, errY) / abs(avgLuma), avgMotionVectors);
 	}
 }

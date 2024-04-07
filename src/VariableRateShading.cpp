@@ -36,24 +36,36 @@ ID3D11ComputeShader* VariableRateShading::GetComputeShadingRate()
 
 void VariableRateShading::DrawSettings()
 {
-	ImGui::Checkbox("Enable Adaptive Rate Shading", &enableFFR);
-	ImGui::Spacing();
+	ImGui::Checkbox("Enable Variable Rate Shading", &enableVRS);
 
-	ImGui::Image(reductionData->srv.get(), { (float)reductionData->desc.Width * 4, (float)reductionData->desc.Height * 4 });
+	ImGui::Spacing();
 }
 
-void VariableRateShading::ComputeNASData()
+void VariableRateShading::UpdateVRS()
 {
+	if (!vrsActive)
+		return;
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
-	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN];
+	ID3D11RenderTargetView* views[8];
+	ID3D11DepthStencilView* dsv;
+	context->OMGetRenderTargets(8, views, &dsv);
 
-	ID3D11ShaderResourceView* srvs[1]{
-		main.SRV
+	ID3D11RenderTargetView* nullViews[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	ID3D11DepthStencilView* nullDsv = nullptr;
+	context->OMSetRenderTargets(8, nullViews, nullDsv);
+
+	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN];
+	auto& motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
+
+	ID3D11ShaderResourceView* srvs[2]{
+		main.SRV,
+		motionVectors.SRV
 	};
 
-	context->CSSetShaderResources(0, 1, srvs);
+	context->CSSetShaderResources(0, 2, srvs);
 
 	ID3D11UnorderedAccessView* uavs[1]{ reductionData->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -64,6 +76,7 @@ void VariableRateShading::ComputeNASData()
 	context->Dispatch(reductionData->desc.Width, reductionData->desc.Height, 1);
 
 	srvs[0] = nullptr;
+	srvs[1] = nullptr;
 	context->CSSetShaderResources(0, 1, srvs);
 
 	uavs[0] = nullptr;
@@ -72,6 +85,17 @@ void VariableRateShading::ComputeNASData()
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	ComputeShadingRate();
+
+	context->OMSetRenderTargets(8, views, dsv);
+
+	for (int i = 0; i < 8; i++) {
+		if (views[i])
+			views[i]->Release();
+	}
+
+
+	if (dsv)
+		dsv->Release();
 }
 
 void VariableRateShading::ComputeShadingRate()
@@ -121,40 +145,9 @@ std::vector<uint8_t> CreateSingleEyeFixedFoveatedVRSPattern(int width, int heigh
 		k4x4,
 	};
 
-for (int y = 0; y < height; ++y) {
+	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
 			data[y * width + x] = 0;
-
-			float2 uv = { (float)x / (float)width, (float)y / (float)height };
-
-			float xDist = abs(0.5f - uv.x);
-			float yDist = abs(0.5f - uv.y);
-
-			bool xDir = xDist < yDist;
-
-			float quality = 1.0f - Vector2::Distance(uv, float2(0.5f, 0.5f));
-			ShadingRate shadingRate = ShadingRate::k1x1;
-
-			if (quality < 0.25)
-				shadingRate = ShadingRate::k4x4dir;
-			else if (quality < 0.5)
-				shadingRate = ShadingRate::k2x2;
-			else if (quality < 0.75)
-				shadingRate = ShadingRate::k2x2dir;
-
-			if (shadingRate == ShadingRate::k2x2dir) {
-				if (!xDir)
-					data[y * width + x] = 1;
-				else
-					data[y * width + x] = 2;
-			} else if (shadingRate == ShadingRate::k2x2) {
-				data[y * width + x] = 3;
-			} else if (shadingRate == ShadingRate::k4x4dir) {
-				if (!xDir)
-					data[y * width + x] = 4;
-				else
-					data[y * width + x] = 5;
-			}
 		}
 	}
 
@@ -204,7 +197,7 @@ void VariableRateShading::Setup()
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
 
-		texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
@@ -286,21 +279,24 @@ void VariableRateShading::SetupSingleEyeVRS(int eye, int width, int height)
 
 void VariableRateShading::UpdateViews()
 {
+	if (!vrsActive)
+		return;
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto context = renderer->GetRuntimeData().context;
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
-	bool enableVRS = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
+	bool vrsPass = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
 
 	if (state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY)
 	{
-		enableVRS = true;
+		vrsPass = true;
 	}
 
-	enableVRS = enableVRS && enableFFR;
+	vrsPass = enableVRS && vrsPass;
 
-	if (enableVRS) {
+	if (vrsPass) {
 		ID3D11NvShadingRateResourceView* shadingRateView = singleEyeVRSView[0];
 
 		NvAPI_Status statusSRRV = NvAPI_D3D11_RSSetShadingRateResourceView(context, shadingRateView);
@@ -317,7 +313,7 @@ void VariableRateShading::UpdateViews()
 
 	uint viewportCount = 8;
 
-	if (enableVRS) {
+	if (vrsPass) {
 		for (uint i = 0; i < viewportCount; i++) {
 			vsrd[i].enableVariablePixelShadingRate = true;
 			memset(vsrd[i].shadingRateTable, NV_PIXEL_X1_PER_RASTER_PIXEL, sizeof(vsrd[i].shadingRateTable));

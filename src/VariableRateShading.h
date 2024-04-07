@@ -12,7 +12,7 @@ public:
 		return &singleton;
 	}
 
-	bool enableFFR = true;
+	bool enableVRS = true;
 
 	bool nvapiLoaded = false;
 	bool vrsActive = false;
@@ -32,7 +32,7 @@ public:
 
 	void DrawSettings();
 
-	void ComputeNASData();
+	void UpdateVRS();
 	void ComputeShadingRate();
 
 	void Setup();

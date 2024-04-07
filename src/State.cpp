@@ -172,7 +172,7 @@ void State::Reset()
 	Bindings::GetSingleton()->Reset();
 	if (!RE::UI::GetSingleton()->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
-	VariableRateShading::GetSingleton()->ComputeNASData();
+	VariableRateShading::GetSingleton()->UpdateVRS();
 }
 
 void State::Setup()

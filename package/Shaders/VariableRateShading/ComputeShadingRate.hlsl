@@ -1,10 +1,12 @@
 RWTexture2D<uint> vrsSurface : register(u0);
-Texture2D<float2> nasDataSurface : register(t0);
+Texture2D<float4> nasDataSurface : register(t0);
 
 [numthreads(32, 32, 1)]
 void main(uint3 DispatchThreadID : SV_DispatchThreadID, uint3 GroupThreadID : SV_GroupThreadID, uint3 GroupID : SV_GroupID)
 {
-    float2 mVec = 0.0;
+    float4 nasData = nasDataSurface[DispatchThreadID.xy];
+    
+    float2 mVec = abs(nasData.zw);
 
     // Error scalers (equations from the I3D 2019 paper)
     // bhv for half rate, bqv for quarter rate
@@ -12,7 +14,7 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID, uint3 GroupThreadID : SV
     float2 bqv = 2.13 * pow(1.0 / (1 + pow(0.55 * mVec, 2.41)), 0.49);
 
     // Sample block error data from NAS data pass and apply the error scalars
-    float2 diff = nasDataSurface[DispatchThreadID.xy];
+    float2 diff = nasData.xy;
     float2 diff2 = diff * bhv;
     float2 diff4 = diff * bqv;
 
@@ -20,7 +22,7 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID, uint3 GroupThreadID : SV
     nasDataSurface.GetDimensions(screenWidth, screenHeight);
 
     float2 uv = DispatchThreadID.xy * rcp(float2(screenWidth, screenHeight));
-    float threshold = 0.01 + distance(float2(0.5, 0.5), uv) * 0.02;
+    float threshold = 0.1 + distance(float2(0.5, 0.5), uv) * 0.1;
     
     /*
         D3D12_SHADING_RATE_1X1	= 0,   // 0b0000
