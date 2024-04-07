@@ -3,6 +3,7 @@
 #include "Util.h"
 #include <ShaderCache.h>
 #include <Features/ScreenSpaceShadows.h>
+#include <VariableRateShading.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {

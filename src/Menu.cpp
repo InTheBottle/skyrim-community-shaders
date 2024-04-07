@@ -163,6 +163,7 @@ void Menu::DrawSettings()
 			if (ImGui::Button("Clear Shader Cache", { -1, 0 })) {
 				shaderCache.Clear();
 				Bindings::GetSingleton()->ClearShaderCache();
+				VariableRateShading::GetSingleton()->ClearShaderCache();
 				for (auto* feature : Feature::GetFeatureList()) {
 					if (feature->loaded) {
 						feature->ClearShaderCache();
