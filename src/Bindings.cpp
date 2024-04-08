@@ -1,6 +1,11 @@
 #include "Bindings.h"
 #include "State.h"
 #include "Util.h"
+#include <Features/CloudShadows.h>
+#include <Features/ScreenSpaceGI.h>
+#include <Features/ScreenSpaceShadows.h>
+#include <Features/TerrainOcclusion.h>
+#include <ShaderCache.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
@@ -54,27 +59,6 @@ void Bindings::AlphaBlendStateSetWriteMode(uint32_t a_value)
 	}
 }
 
-void Bindings::SetOverwriteTerrainMode(bool a_enable)
-{
-	if (overrideTerrain != a_enable) {
-		overrideTerrain = a_enable;
-		auto& state = State::GetSingleton()->shadowState;
-		GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-	}
-}
-
-void Bindings::SetOverwriteTerrainMaskingMode(TerrainMaskMode a_mode)
-{
-	if (terrainMask != a_mode) {
-		terrainMask = a_mode;
-		auto& state = State::GetSingleton()->shadowState;
-		GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-	}
-}
-
 struct DepthStates
 {
 	ID3D11DepthStencilState* a[6][40];
@@ -85,184 +69,522 @@ struct BlendStates
 	ID3D11BlendState* a[7][2][13][2];
 };
 
-// Reimplementation of elements of the renderer's bindings system to support additional features
-
-void Bindings::SetDirtyStates(bool)
+void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format)
 {
-	auto& state = State::GetSingleton()->shadowState;
-	auto& context = State::GetSingleton()->context;
-	GET_INSTANCE_MEMBER(depthStencilStencilMode, state)
-	GET_INSTANCE_MEMBER(depthStencilDepthMode, state)
-	GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
-	GET_INSTANCE_MEMBER(alphaBlendMode, state)
-	GET_INSTANCE_MEMBER(alphaBlendModeExtra, state)
-	GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
-	GET_INSTANCE_MEMBER(cubeMapRenderTarget, state)
-	GET_INSTANCE_MEMBER(cubeMapRenderTargetView, state)
-	GET_INSTANCE_MEMBER(depthStencil, state)
-	GET_INSTANCE_MEMBER(depthStencilSlice, state)
-	GET_INSTANCE_MEMBER(renderTargets, state)
-	GET_INSTANCE_MEMBER(setCubeMapRenderTargetMode, state)
-	GET_INSTANCE_MEMBER(setDepthStencilMode, state)
-	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-	GET_INSTANCE_MEMBER(stencilRef, state)
-	GET_INSTANCE_MEMBER(PSTexture, state)
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto device = renderer->GetRuntimeData().forwarder;
 
-	auto rendererData = RE::BSGraphics::Renderer::GetSingleton();
+	texDesc.Format = format;
+	srvDesc.Format = format;
+	rtvDesc.Format = format;
+	uavDesc.Format = format;
 
-	static DepthStates* depthStates = (DepthStates*)REL::RelocationID(524747, 411362).address();
-	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
-
-	if (stateUpdateFlags.any(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET, RE::BSGraphics::ShaderFlags::DIRTY_VRPREVIEW)) {
-		// Build active render target view array
-		ID3D11RenderTargetView* renderTargetViews[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
-		uint32_t viewCount = 0;
-
-		if (cubeMapRenderTarget == RE::RENDER_TARGETS_CUBEMAP::kNONE) {
-			// This loops through all 8 RTs or until a RENDER_TARGET_NONE entry is hit
-			for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
-				if (renderTargets[i] == RE::RENDER_TARGETS::kNONE) {
-					if (terrainMask == TerrainMaskMode::kWrite) {
-						if (i == 3 || i == 4) {
-							renderTargetViews[i] = terrainBlendingMask->rtv.get();
-							viewCount++;
-						}
-					}
-					break;
-				} else {
-					renderTargetViews[i] = rendererData->GetRuntimeData().renderTargets[renderTargets[i]].RTV;
-				}
-
-				viewCount++;
-
-				if (setRenderTargetMode[i] == RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR) {
-					context->ClearRenderTargetView(renderTargetViews[i], rendererData->GetRendererData().clearColor);
-					setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-				}
-			}
-		} else {
-			// Use a single RT for the cubemap
-			renderTargetViews[0] = rendererData->GetRendererData().cubemapRenderTargets[cubeMapRenderTarget].cubeSideRTV[cubeMapRenderTargetView];
-			viewCount = 1;
-
-			if (setCubeMapRenderTargetMode == RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR) {
-				context->ClearRenderTargetView(renderTargetViews[0], rendererData->GetRendererData().clearColor);
-				setCubeMapRenderTargetMode = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-			}
-		}
-
-		switch (setDepthStencilMode) {
-		case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR:
-		case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR_DEPTH:
-		case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR_STENCIL:
-		case RE::BSGraphics::SetRenderTargetMode::SRTM_INIT:
-			rendererData->GetRuntimeData().readOnlyDepth = false;
-			break;
-		}
-
-		// VR Only
-		if (REL::Module::IsVR() && rendererData->GetRuntimeData().readOnlyDepth && depthStencil != -1) {
-			rendererData->GetRuntimeData().readOnlyDepth = false;
-			for (int i = 0; i < 16; i++) {  // not sure what 16 is from
-				if (PSTexture[i] == rendererData->GetDepthStencilData().depthStencils[depthStencil].depthSRV ||
-					PSTexture[i] == rendererData->GetDepthStencilData().depthStencils[depthStencil].stencilSRV)
-					rendererData->GetRuntimeData().readOnlyDepth = true;
-			}
-		}
-
-		//
-		// Determine which depth stencil to render to. When there's no active depth stencil,
-		// simply send a nullptr to dx11.
-		//
-		ID3D11DepthStencilView* newDepthStencil = nullptr;
-
-		if (depthStencil != -1) {
-			if (rendererData->GetRuntimeData().readOnlyDepth)
-				newDepthStencil = rendererData->GetDepthStencilData().depthStencils[depthStencil].readOnlyViews[depthStencilSlice];
-			else
-				newDepthStencil = rendererData->GetDepthStencilData().depthStencils[depthStencil].views[depthStencilSlice];
-
-			// Only clear the stencil if specific flags are set
-			if (newDepthStencil) {
-				uint32_t clearFlags = 0;
-
-				switch (setDepthStencilMode) {
-				case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR:
-				case RE::BSGraphics::SetRenderTargetMode::SRTM_INIT:
-					clearFlags = D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL;
-					break;
-
-				case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR_DEPTH:
-					clearFlags = D3D11_CLEAR_DEPTH;
-					break;
-
-				case RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR_STENCIL:
-					clearFlags = D3D11_CLEAR_STENCIL;
-					break;
-				}
-
-				if (clearFlags) {
-					context->ClearDepthStencilView(newDepthStencil, clearFlags, 1.0f, 0);
-					setDepthStencilMode = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-				}
-			}
-		}
-
-		if (!REL::Module::IsVR())
-			context->OMSetRenderTargets(viewCount, renderTargetViews, newDepthStencil);
-		else {
-			// VR calls a function instead of using OMSetRenderTargets
-			typedef void (*_VR_OMSetRenderTargets)(ID3D11RenderTargetView* a_renderTargetView[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT], ID3D11DepthStencilView* a_depthStencilView, uint32_t a_numRTV);
-			REL::Relocation<_VR_OMSetRenderTargets> VR_OMSetRenderTargets{ REL::Offset(0x0dc4240) };
-			VR_OMSetRenderTargets(renderTargetViews, newDepthStencil, viewCount);
-		}
-		stateUpdateFlags.reset(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET, RE::BSGraphics::ShaderFlags::DIRTY_VRPREVIEW);
-	}
-
-	if (stateUpdateFlags.any(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_STENCILREF_MODE, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE)) {
-		stateUpdateFlags.reset(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_STENCILREF_MODE, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
-		if (overrideTerrain)
-			context->OMSetDepthStencilState(depthStates->a[std::to_underlying(RE::BSGraphics::DepthStencilDepthMode::kTestGreaterEqual)][depthStencilStencilMode], stencilRef);
-		else
-			context->OMSetDepthStencilState(depthStates->a[std::to_underlying(depthStencilDepthMode)][depthStencilStencilMode], stencilRef);
-	}
-
-	if (stateUpdateFlags.any(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND)) {
-		stateUpdateFlags.reset(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-		if (overrideTerrain)
-			context->OMSetBlendState(blendStates->a[1][alphaBlendAlphaToCoverage][alphaBlendWriteMode][alphaBlendModeExtra], nullptr, 0xFFFFFFFF);
-		else
-			context->OMSetBlendState(blendStates->a[alphaBlendMode][alphaBlendAlphaToCoverage][alphaBlendWriteMode][alphaBlendModeExtra], nullptr, 0xFFFFFFFF);
-	}
+	auto& data = renderer->GetRuntimeData().renderTargets[target];
+	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
+	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &srvDesc, &data.SRV));
+	DX::ThrowIfFailed(device->CreateRenderTargetView(data.texture, &rtvDesc, &data.RTV));
+	DX::ThrowIfFailed(device->CreateUnorderedAccessView(data.texture, &uavDesc, &data.UAV));
 }
 
 void Bindings::SetupResources()
 {
-	//auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	//auto mainTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-	//{
-	//	D3D11_TEXTURE2D_DESC texDesc{};
-	//	mainTexture.texture->GetDesc(&texDesc);
-	//	terrainBlendingMask = new Texture2D(texDesc);
+	{
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	//	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	//	mainTexture.SRV->GetDesc(&srvDesc);
-	//	terrainBlendingMask->CreateSRV(srvDesc);
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-	//	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-	//	mainTexture.RTV->GetDesc(&rtvDesc);
-	//	terrainBlendingMask->CreateRTV(rtvDesc);
-	//}
+		main.texture->GetDesc(&texDesc);
+		main.SRV->GetDesc(&srvDesc);
+		main.RTV->GetDesc(&rtvDesc);
+		main.UAV->GetDesc(&uavDesc);
+
+		// Available targets:
+		// MAIN ONLY ALPHA
+		// WATER REFLECTIONS
+		// BLURFULL_BUFFER
+		// LENSFLAREVIS
+		// SAO DOWNSCALED
+		// SAO CAMERAZ+MIP_LEVEL_0_ESRAM
+		// SAO_RAWAO_DOWNSCALED
+		// SAO_RAWAO_PREVIOUS_DOWNSCALDE
+		// SAO_TEMP_BLUR_DOWNSCALED
+		// INDIRECT
+		// INDIRECT_DOWNSCALED
+		// RAWINDIRECT
+		// RAWINDIRECT_DOWNSCALED
+		// RAWINDIRECT_PREVIOUS
+		// RAWINDIRECT_PREVIOUS_DOWNSCALED
+		// RAWINDIRECT_SWAP
+		// VOLUMETRIC_LIGHTING_HALF_RES
+		// VOLUMETRIC_LIGHTING_BLUR_HALF_RES
+		// VOLUMETRIC_LIGHTING_QUARTER_RES
+		// VOLUMETRIC_LIGHTING_BLUR_QUARTER_RES
+		// TEMPORAL_AA_WATER_1
+		// TEMPORAL_AA_WATER_2
+
+		// Albedo
+		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Specular
+		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT);
+		// Reflectance
+		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Normal + Roughness
+		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+	}
+
+	{
+		deferredCB = new ConstantBuffer(ConstantBufferDesc<DeferredCB>());
+	}
+
+	{
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
+	}
+
+	{
+		D3D11_TEXTURE2D_DESC texDesc;
+		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		mainTex.texture->GetDesc(&texDesc);
+
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+			.Format = texDesc.Format,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = {
+				.MostDetailedMip = 0,
+				.MipLevels = 1 }
+		};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
+			.Format = texDesc.Format,
+			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 }
+		};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+			.Format = texDesc.Format,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 }
+		};
+
+		{
+			giTexture = new Texture2D(texDesc);
+			giTexture->CreateSRV(srvDesc);
+			giTexture->CreateRTV(rtvDesc);
+			giTexture->CreateUAV(uavDesc);
+		}
+	}
 }
 
 void Bindings::Reset()
 {
-	//SetOverwriteTerrainMode(false);
-	//SetOverwriteTerrainMaskingMode(TerrainMaskMode::kNone);
+}
 
-	//auto& context = State::GetSingleton()->context;
-	//FLOAT clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	//context->ClearRenderTargetView(terrainBlendingMask->rtv.get(), clear);
+void Bindings::UpdateConstantBuffer()
+{
+	auto state = State::GetSingleton();
+	auto viewport = RE::BSGraphics::State::GetSingleton();
+
+	DeferredCB data{};
+
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+
+	if (REL::Module::IsVR()) {
+		auto posAdjust = shadowState->GetVRRuntimeData().posAdjust.getEye(0);
+		data.CamPosAdjust[0] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
+		posAdjust = shadowState->GetVRRuntimeData().posAdjust.getEye(1);
+		data.CamPosAdjust[1] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
+
+		data.ViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat;
+		data.ViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat;
+		data.ProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat;
+		data.ProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat;
+		data.ViewProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewProjMat;
+		data.ViewProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewProjMat;
+		data.InvViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat.Invert();
+		data.InvViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat.Invert();
+		data.InvProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat.Invert();
+		data.InvProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat.Invert();
+		data.InvViewProjMatrix[0] = data.InvViewMatrix[0] * data.InvProjMatrix[0];
+		data.InvViewProjMatrix[1] = data.InvViewMatrix[1] * data.InvProjMatrix[1];
+	} else {
+		auto posAdjust = shadowState->GetRuntimeData().posAdjust.getEye(0);
+		data.CamPosAdjust[0] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
+		data.ViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat;
+		data.ProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat;
+		data.ViewProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewProjMat;
+		data.InvViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat.Invert();
+		data.InvProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat.Invert();
+		data.InvViewProjMatrix[0] = data.InvViewMatrix[0] * data.InvProjMatrix[0];
+	}
+
+	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
+	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
+
+	data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
+
+	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+	data.DirLightColor *= !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+
+	auto& direction = dirLight->GetWorldDirection();
+	float4 position{ -direction.x, -direction.y, -direction.z, 0.0f };
+
+	data.DirLightDirectionVS[0] = float4::Transform(position, data.ViewMatrix[0]);
+	data.DirLightDirectionVS[0].Normalize();
+
+	data.DirLightDirectionVS[1] = float4::Transform(position, data.ViewMatrix[1]);
+	data.DirLightDirectionVS[1].Normalize();
+
+	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
+	RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
+	Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
+
+	data.BufferDim.x = state->screenWidth;
+	data.BufferDim.y = state->screenHeight;
+
+	data.RcpBufferDim.x = 1.0f / State::GetSingleton()->screenWidth;
+	data.RcpBufferDim.y = 1.0f / State::GetSingleton()->screenHeight;
+
+	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+	data.FrameCount = useTAA ? viewport->uiFrameCount : 0;
+
+	data.CameraData = Util::GetCameraData();
+
+	deferredCB->Update(data);
+}
+
+void Bindings::StartDeferred()
+{
+	if (!inWorld)
+		return;
+
+	auto& shaderCache = SIE::ShaderCache::Instance();
+
+	if (!shaderCache.IsEnabled())
+		return;
+
+	static bool setup = false;
+	if (!setup) {
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
+
+		{
+			forwardBlendStates[0] = blendStates->a[0][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[0]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = true;
+			blendDesc.RenderTarget[0].BlendEnable = false;
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+			for (uint i = 1; i < 8; i++) {
+				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
+			}
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[0]));
+		}
+
+		{
+			forwardBlendStates[1] = blendStates->a[0][0][10][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[1]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = true;
+			for (uint i = 1; i < 8; i++) {
+				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
+			}
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[1]));
+		}
+
+		{
+			forwardBlendStates[2] = blendStates->a[1][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[2]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = true;
+			for (uint i = 1; i < 8; i++) {
+				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
+			}
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[2]));
+		}
+
+		{
+			forwardBlendStates[3] = blendStates->a[1][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[3]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = true;
+			for (uint i = 1; i < 8; i++) {
+				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
+			}
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[3]));
+		}
+		setup = true;
+	}
+
+	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, state)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+
+	// Backup original render targets
+	for (uint i = 0; i < 4; i++) {
+		forwardRenderTargets[i] = renderTargets[i];
+	}
+
+	RE::RENDER_TARGET targets[6]{
+		RE::RENDER_TARGET::kMAIN,
+		RE::RENDER_TARGET::kMOTION_VECTOR,
+		NORMALROUGHNESS,
+		ALBEDO,
+		SPECULAR,
+		REFLECTANCE,
+	};
+
+	for (uint i = 2; i < 6; i++) {
+		renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
+		setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
+	}
+
+	// Improved snow shader
+	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE) {
+		renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
+		setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
+	}
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+
+	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
+
+	// Set modified blend states
+	blendStates->a[0][0][1][0] = deferredBlendStates[0];
+	blendStates->a[0][0][10][0] = deferredBlendStates[1];
+	blendStates->a[1][0][1][0] = deferredBlendStates[2];
+	blendStates->a[1][0][11][0] = deferredBlendStates[3];
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+
+	deferredPass = true;
+}
+
+void Bindings::DeferredPasses()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+	auto state = State::GetSingleton();
+	auto viewport = RE::BSGraphics::State::GetSingleton();
+
+	UpdateConstantBuffer();
+
+	{
+		auto buffer = deferredCB->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+	}
+
+	{
+		FLOAT clr[4] = { 0., 0., 0., 1. };
+		context->ClearUnorderedAccessViewFloat(giTexture->uav.get(), clr);
+	}
+
+	if (ScreenSpaceShadows::GetSingleton()->loaded) {
+		ScreenSpaceShadows::GetSingleton()->DrawShadows();
+	}
+
+	if (TerrainOcclusion::GetSingleton()->loaded) {
+		TerrainOcclusion::GetSingleton()->DrawTerrainOcclusion();
+	}
+
+	if (CloudShadows::GetSingleton()->loaded) {
+		CloudShadows::GetSingleton()->DrawShadows();
+	}
+
+	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
+	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
+	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
+	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+
+	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
+	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
+
+	{
+		ID3D11ShaderResourceView* srvs[6]{
+			specular.SRV,
+			albedo.SRV,
+			reflectance.SRV,
+			normalRoughness.SRV,
+			shadowMask.SRV,
+			depth.depthSRV
+		};
+
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetSamplers(0, 1, &linearSampler);
+
+		auto shader = GetComputeDirectionalShadow();
+		context->CSSetShader(shader, nullptr, 0);
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	// features that require full diffuse lighting should be put here
+	if (ScreenSpaceGI::GetSingleton()->loaded) {
+		ScreenSpaceGI::GetSingleton()->DrawSSGI(giTexture);
+	}
+
+	{
+		ID3D11ShaderResourceView* srvs[7]{
+			specular.SRV,
+			albedo.SRV,
+			reflectance.SRV,
+			normalRoughness.SRV,
+			shadowMask.SRV,
+			depth.depthSRV,
+			giTexture->srv.get(),
+		};
+
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetSamplers(0, 1, &linearSampler);
+
+		auto shader = GetComputeDeferredComposite();
+		context->CSSetShader(shader, nullptr, 0);
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	ID3D11Buffer* buffer = nullptr;
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void Bindings::EndDeferred()
+{
+	if (!inWorld)
+		return;
+
+	inWorld = false;
+
+	auto& shaderCache = SIE::ShaderCache::Instance();
+
+	if (!shaderCache.IsEnabled())
+		return;
+
+	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, state)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+
+	// Do not render to our targets past this point
+	for (uint i = 0; i < 4; i++) {
+		renderTargets[i] = forwardRenderTargets[i];
+	}
+
+	for (uint i = 4; i < 8; i++) {
+		state->GetRuntimeData().renderTargets[i] = RE::RENDER_TARGET::kNONE;
+	}
+
+	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+
+	DeferredPasses();  // Perform deferred passes and composite forward buffers
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+
+	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
+
+	// Restore modified blend states
+	blendStates->a[0][0][1][0] = forwardBlendStates[0];
+	blendStates->a[0][0][10][0] = forwardBlendStates[1];
+	blendStates->a[1][0][1][0] = forwardBlendStates[2];
+	blendStates->a[1][0][11][0] = forwardBlendStates[3];
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+
+	deferredPass = false;
+}
+
+void Bindings::CheckOpaque()
+{
+	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(alphaBlendMode, state)
+
+	opaque = alphaBlendMode == 0;
+}
+
+void Bindings::ClearShaderCache()
+{
+	if (deferredCompositeCS) {
+		deferredCompositeCS->Release();
+		deferredCompositeCS = nullptr;
+	}
+	if (directionalShadowCS) {
+		directionalShadowCS->Release();
+		directionalShadowCS = nullptr;
+	}
+}
+
+ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()
+{
+	if (!deferredCompositeCS) {
+		logger::debug("Compiling DeferredCompositeCS");
+		deferredCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "MainCompositePass");
+	}
+	return deferredCompositeCS;
+}
+
+ID3D11ComputeShader* Bindings::GetComputeDirectionalShadow()
+{
+	if (!directionalShadowCS) {
+		logger::debug("Compiling DirectionalShadowCS");
+		directionalShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalShadowPass");
+	}
+	return directionalShadowCS;
 }

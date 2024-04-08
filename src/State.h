@@ -116,6 +116,7 @@ public:
 		float4 CameraData;
 		float2 BufferDim;
 		float Timer;
+		uint Opaque;
 	};
 
 	LightingData lightingData{};

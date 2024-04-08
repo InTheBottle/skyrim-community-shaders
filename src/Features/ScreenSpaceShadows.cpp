@@ -2,501 +2,288 @@
 
 #include "State.h"
 #include "Util.h"
+#include "Bindings.h"
+
+#pragma warning(push)
+#pragma warning(disable: 4838 4244)
+#include "ScreenSpaceShadows/bend_sss_cpu.h"
+#pragma warning(pop)
 
 using RE::RENDER_TARGETS;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	ScreenSpaceShadows::Settings,
-	MaxSamples,
-	FarDistanceScale,
-	FarThicknessScale,
-	FarHardness,
-	NearDistance,
-	NearThickness,
-	NearHardness,
-	BlurRadius,
-	BlurDropoff,
-	Enabled)
+	ScreenSpaceShadows::BendSettings,
+	Enable,
+	EnableNormalMappingShadows,
+	SampleCount,
+	SurfaceThickness,
+	BilinearThreshold,
+	ShadowContrast
+)
 
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Screen-Space Shadows", &settings.Enabled);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables screen-space shadows.");
-		}
+		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
+		ImGui::Checkbox("Enable Normal Mapping Shadows", (bool*)&bendSettings.EnableNormalMappingShadows);
+		ImGui::SliderInt("Sample Count", (int*)&bendSettings.SampleCount, 1, 4);
 
-		ImGui::SliderInt("Max Samples", (int*)&settings.MaxSamples, 1, 512);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Controls the accuracy of traced shadows.");
-		}
+		ImGui::SliderFloat("SurfaceThickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
+		ImGui::SliderFloat("BilinearThreshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
+		ImGui::SliderFloat("ShadowContrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
 
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
 	}
-
-	if (ImGui::TreeNodeEx("Blur Filter", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur radius.");
-		}
-
-		ImGui::SliderFloat("Blur Depth Dropoff", &settings.BlurDropoff, 0.001f, 0.1f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Blur depth dropoff.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx("Near Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Near Distance", &settings.NearDistance, 0.25f, 128);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Distance.");
-		}
-
-		ImGui::SliderFloat("Near Thickness", &settings.NearThickness, 0, 128);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Thickness.");
-		}
-		ImGui::SliderFloat("Near Hardness", &settings.NearHardness, 0, 64);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Near Shadow Hardness.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx("Far Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Far Distance Scale", &settings.FarDistanceScale, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Distance Scale.");
-		}
-		ImGui::SliderFloat("Far Thickness Scale", &settings.FarThicknessScale, 0, 1);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Thickness Scale.");
-		}
-		ImGui::SliderFloat("Far Hardness", &settings.FarHardness, 0, 64);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Far Shadow Hardness.");
-		}
-
-		ImGui::TreePop();
-	}
-}
-
-enum class GrassShaderTechniques
-{
-	RenderDepth = 8,
-};
-
-void ScreenSpaceShadows::ModifyGrass(const RE::BSShader*, const uint32_t descriptor)
-{
-	const auto technique = descriptor & 0b1111;
-	if (technique != static_cast<uint32_t>(GrassShaderTechniques::RenderDepth)) {
-		ModifyLighting(nullptr, 0);
-	}
-}
-
-enum class DistantTreeShaderTechniques
-{
-	DistantTreeBlock = 0,
-	Depth = 1,
-};
-
-void ScreenSpaceShadows::ModifyDistantTree(const RE::BSShader*, const uint32_t descriptor)
-{
-	const auto technique = descriptor & 1;
-	if (technique != static_cast<uint32_t>(DistantTreeShaderTechniques::Depth)) {
-		ModifyLighting(nullptr, 0);
-	}
-}
-
-enum class LightingShaderTechniques
-{
-	None = 0,
-	Envmap = 1,
-	Glowmap = 2,
-	Parallax = 3,
-	Facegen = 4,
-	FacegenRGBTint = 5,
-	Hair = 6,
-	ParallaxOcc = 7,
-	MTLand = 8,
-	LODLand = 9,
-	Snow = 10,  // unused
-	MultilayerParallax = 11,
-	TreeAnim = 12,
-	LODObjects = 13,
-	MultiIndexSparkle = 14,
-	LODObjectHD = 15,
-	Eye = 16,
-	Cloud = 17,  // unused
-	LODLandNoise = 18,
-	MTLandLODBlend = 19,
-	Outline = 20,
-};
-
-uint32_t GetTechnique(uint32_t descriptor)
-{
-	return 0x3F & (descriptor >> 24);
 }
 
 void ScreenSpaceShadows::ClearShaderCache()
 {
-	if (raymarchProgram) {
-		raymarchProgram->Release();
-		raymarchProgram = nullptr;
+	if (raymarchCS) {
+		raymarchCS->Release();
+		raymarchCS = nullptr;
 	}
-	if (horizontalBlurProgram) {
-		horizontalBlurProgram->Release();
-		horizontalBlurProgram = nullptr;
-	}
-	if (verticalBlurProgram) {
-		verticalBlurProgram->Release();
-		verticalBlurProgram = nullptr;
+	if (normalMappingShadowsCS) {
+		normalMappingShadowsCS->Release();
+		normalMappingShadowsCS = nullptr;
 	}
 }
 
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShader()
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
-	if (!raymarchProgram) {
-		logger::debug("Compiling raymarchProgram");
-		raymarchProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", {}, "cs_5_0");
+	static uint sampleCount = bendSettings.SampleCount;
+
+	if (sampleCount != bendSettings.SampleCount)
+	{
+		sampleCount = bendSettings.SampleCount;
+		if (raymarchCS) {
+			raymarchCS->Release();
+			raymarchCS = nullptr;
+		}
 	}
-	return raymarchProgram;
+
+	if (!raymarchCS) {
+		logger::debug("Compiling RaymarchCS");
+		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", sampleCount * 64).c_str() } }, "cs_5_0");
+	}
+	return raymarchCS;
 }
 
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderHorizontalBlur()
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeNormalMappingShadows()
 {
-	if (!horizontalBlurProgram) {
-		logger::debug("Compiling horizontalBlurProgram");
-		horizontalBlurProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\FilterCS.hlsl", { { "HORIZONTAL", "" } }, "cs_5_0");
+	if (!normalMappingShadowsCS) {
+		logger::debug("Compiling NormalMappingShadowsCS");
+		normalMappingShadowsCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\NormalMappingShadowsCS.hlsl", {}, "cs_5_0");
 	}
-	return horizontalBlurProgram;
+	return normalMappingShadowsCS;
 }
 
-ID3D11ComputeShader* ScreenSpaceShadows::GetComputeShaderVerticalBlur()
+void ScreenSpaceShadows::DrawShadows()
 {
-	if (!verticalBlurProgram) {
-		verticalBlurProgram = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\FilterCS.hlsl", { { "VERTICAL", "" } }, "cs_5_0");
-		logger::debug("Compiling verticalBlurProgram");
-	}
-	return verticalBlurProgram;
-}
-
-void ScreenSpaceShadows::ModifyLighting(const RE::BSShader*, const uint32_t)
-{
-	if (!loaded)
+	if (!bendSettings.Enable)
 		return;
 
-	auto& context = State::GetSingleton()->context;
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
 	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
 
-	bool skyLight = true;
-	if (auto sky = RE::Sky::GetSingleton())
-		skyLight = sky->mode.get() == RE::Sky::Mode::kFull;
+	auto state = State::GetSingleton();
 
-	if (dirLight && skyLight) {
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto& directionNi = dirLight->GetWorldDirection();
+	float3 light = { directionNi.x, directionNi.y, directionNi.z };
+	light.Normalize();
+	float4 lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
+	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);	
+	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w};
+				
+	int viewportSize[2] = { (int)state->screenWidth, (int)state->screenHeight };
+			
+	int minRenderBounds[2] = { 0, 0 };
+	int maxRenderBounds[2] = { 
+		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale), 
+		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
+	};
 
-		if (!screenSpaceShadowsTexture) {
-			{
-				logger::debug("Creating screenSpaceShadowsTexture");
+	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
+				
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	context->CSSetShaderResources(0, 1, &depth.depthSRV);
 
-				auto& device = State::GetSingleton()->device;
+	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+	context->CSSetUnorderedAccessViews(0, 1, &shadowMask.UAV, nullptr);
 
-				D3D11_SAMPLER_DESC samplerDesc = {};
-				samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-				samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-				samplerDesc.MaxAnisotropy = 1;
-				samplerDesc.MinLOD = 0;
-				samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-				DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &computeSampler));
-			}
+	context->CSSetSamplers(0, 1, &pointBorderSampler);
 
-			{
-				auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
+	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
 
-				D3D11_TEXTURE2D_DESC texDesc{};
-				shadowMask.texture->GetDesc(&texDesc);
-				texDesc.Format = DXGI_FORMAT_R16_FLOAT;
-				texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
-				screenSpaceShadowsTexture = new Texture2D(texDesc);
+	auto buffer = raymarchCB->CB();
+	context->CSSetConstantBuffers(1, 1, &buffer);
 
-				texDesc.Width /= 2;
-				texDesc.Height /= 2;
-				screenSpaceShadowsTextureTemp = new Texture2D(texDesc);
+	for (int i = 0; i < dispatchList.DispatchCount; i++)
+	{
+		auto dispatchData = dispatchList.Dispatch[i];
+					
+		RaymarchCB data{};
+		data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
+		data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
+		data.LightCoordinate[2] = dispatchList.LightCoordinate_Shader[2];
+		data.LightCoordinate[3] = dispatchList.LightCoordinate_Shader[3];
 
-				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-				shadowMask.SRV->GetDesc(&srvDesc);
-				srvDesc.Format = texDesc.Format;
-				screenSpaceShadowsTexture->CreateSRV(srvDesc);
-				screenSpaceShadowsTextureTemp->CreateSRV(srvDesc);
+		data.WaveOffset[0] = dispatchData.WaveOffset_Shader[0];
+		data.WaveOffset[1] = dispatchData.WaveOffset_Shader[1];
 
-				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-				uavDesc.Format = texDesc.Format;
-				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-				uavDesc.Texture2D.MipSlice = 0;
-				screenSpaceShadowsTexture->CreateUAV(uavDesc);
-				screenSpaceShadowsTextureTemp->CreateUAV(uavDesc);
-			}
-		}
+		data.FarDepthValue = 1.0f;
+		data.NearDepthValue = 0.0f;
 
-		auto& shadowState = State::GetSingleton()->shadowState;
+		data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
+		data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
+			
+		data.settings = bendSettings;
 
-		bool enableSSS = true;
+		raymarchCB->Update(data);			
 
-		GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState)
-
-		if (cubeMapRenderTarget == RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS) {
-			enableSSS = false;
-
-		} else if (!renderedScreenCamera && settings.Enabled) {
-			renderedScreenCamera = true;
-
-			// Backup the game state
-			struct OldState
-			{
-				ID3D11ShaderResourceView* srvs[2];
-				ID3D11SamplerState* sampler;
-				ID3D11ComputeShader* shader;
-				ID3D11Buffer* buffer;
-				ID3D11UnorderedAccessView* uav;
-				ID3D11ClassInstance* instance;
-				UINT numInstances;
-			};
-
-			OldState old{};
-			context->CSGetShaderResources(0, 2, old.srvs);
-			context->CSGetSamplers(0, 1, &old.sampler);
-			context->CSGetShader(&old.shader, &old.instance, &old.numInstances);
-			context->CSGetConstantBuffers(0, 1, &old.buffer);
-			context->CSGetUnorderedAccessViews(0, 1, &old.uav);
-
-			{
-				auto viewport = RE::BSGraphics::State::GetSingleton();
-
-				float resolutionX = screenSpaceShadowsTexture->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-				float resolutionY = screenSpaceShadowsTexture->desc.Height * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-				{
-					RaymarchCB data{};
-
-					data.BufferDim.x = (float)screenSpaceShadowsTexture->desc.Width;
-					data.BufferDim.y = (float)screenSpaceShadowsTexture->desc.Height;
-
-					data.RcpBufferDim.x = 1.0f / data.BufferDim.x;
-					data.RcpBufferDim.y = 1.0f / data.BufferDim.y;
-
-					data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-					data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-					data.DynamicRes.z = 1.0f / data.DynamicRes.x;
-					data.DynamicRes.w = 1.0f / data.DynamicRes.y;
-
-					for (int eyeIndex = 0; eyeIndex < (!REL::Module::IsVR() ? 1 : 2); eyeIndex++) {
-						if (REL::Module::IsVR())
-							data.ProjMatrix[eyeIndex] = shadowState->GetVRRuntimeData().cameraData.getEye(eyeIndex).projMat;
-						else
-							data.ProjMatrix[eyeIndex] = shadowState->GetRuntimeData().cameraData.getEye().projMat;
-
-						data.InvProjMatrix[eyeIndex] = data.ProjMatrix[eyeIndex].Invert();
-					}
-
-					data.CameraData = Util::GetCameraData();
-
-					auto& direction = dirLight->GetWorldDirection();
-					float4 position{ -direction.x, -direction.y, -direction.z, 0.0f };
-
-					auto viewMatrix = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cameraData.getEye().viewMat : shadowState->GetVRRuntimeData().cameraData.getEye().viewMat;
-
-					data.InvDirLightDirectionVS = float4::Transform(position, viewMatrix);
-
-					data.ShadowDistance = 10000.0f;
-
-					data.Settings = settings;
-
-					raymarchCB->Update(data);
-				}
-
-				ID3D11Buffer* buffer[1] = { raymarchCB->CB() };
-				context->CSSetConstantBuffers(0, 1, buffer);
-
-				context->CSSetSamplers(0, 1, &computeSampler);
-
-				auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-				ID3D11ShaderResourceView* view = depth.depthSRV;
-				context->CSSetShaderResources(0, 1, &view);
-
-				ID3D11ShaderResourceView* stencilView = nullptr;
-				if (REL::Module::IsVR()) {
-					stencilView = depth.stencilSRV;
-					context->CSSetShaderResources(89, 1, &stencilView);
-				}
-
-				ID3D11UnorderedAccessView* uav = screenSpaceShadowsTexture->uav.get();
-				context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-				auto shader = GetComputeShader();
-				context->CSSetShader(shader, nullptr, 0);
-
-				context->Dispatch((uint32_t)std::ceil(resolutionX / 32.0f), (uint32_t)std::ceil(resolutionY / 32.0f), 1);
-
-				if (REL::Module::IsVR()) {
-					stencilView = nullptr;
-					context->CSSetShaderResources(89, 1, &stencilView);
-				}
-
-				// Filter
-				{
-					uav = nullptr;
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-					view = nullptr;
-					context->CSSetShaderResources(1, 1, &view);
-
-					view = screenSpaceShadowsTexture->srv.get();
-
-					context->CSSetShaderResources(1, 1, &view);
-
-					uav = screenSpaceShadowsTextureTemp->uav.get();
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-					shader = GetComputeShaderHorizontalBlur();
-					context->CSSetShader(shader, nullptr, 0);
-
-					context->Dispatch((uint32_t)std::ceil(resolutionX / 64.0f), (uint32_t)std::ceil(resolutionY / 64.0f), 1);
-				}
-
-				{
-					uav = nullptr;
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-					view = nullptr;
-					context->CSSetShaderResources(1, 1, &view);
-
-					view = screenSpaceShadowsTextureTemp->srv.get();
-
-					context->CSSetShaderResources(1, 1, &view);
-
-					uav = screenSpaceShadowsTexture->uav.get();
-					context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
-					shader = GetComputeShaderVerticalBlur();
-					context->CSSetShader(shader, nullptr, 0);
-
-					context->Dispatch((uint32_t)std::ceil(resolutionX / 64.0f), (uint32_t)std::ceil(resolutionY / 64.0f), 1);
-				}
-			}
-
-			// Restore the game state
-			context->CSSetShaderResources(0, 2, old.srvs);
-			for (uint8_t i = 0; i < 2; i++)
-				if (old.srvs[i])
-					old.srvs[i]->Release();
-
-			context->CSSetSamplers(0, 1, &old.sampler);
-			if (old.sampler)
-				old.sampler->Release();
-
-			context->CSSetShader(old.shader, &old.instance, old.numInstances);
-			if (old.shader)
-				old.shader->Release();
-
-			context->CSSetConstantBuffers(0, 1, &old.buffer);
-			if (old.buffer)
-				old.buffer->Release();
-
-			context->CSSetUnorderedAccessViews(0, 1, &old.uav, nullptr);
-			if (old.uav)
-				old.uav->Release();
-		}
-
-		PerPass data{};
-		data.EnableSSS = enableSSS && settings.Enabled;
-		perPass->Update(data);
-
-		if (renderedScreenCamera) {
-			auto shadowMask = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-			ID3D11ShaderResourceView* views[2]{};
-			views[0] = shadowMask.depthSRV;
-			views[1] = screenSpaceShadowsTexture->srv.get();
-			context->PSSetShaderResources(20, ARRAYSIZE(views), views);
-		}
-	} else {
-		PerPass data{};
-		data.EnableSSS = false;
-		perPass->Update(data);
+		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 	}
 
-	ID3D11Buffer* buffers[1]{};
-	buffers[0] = perPass->CB();
-	context->PSSetConstantBuffers(5, ARRAYSIZE(buffers), buffers);
+	ID3D11ShaderResourceView* views[1]{ nullptr };
+	context->CSSetShaderResources(0, 1, views);
 
-	context->PSSetSamplers(14, 1, &computeSampler);
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+
+	ID3D11SamplerState* sampler = nullptr;
+	context->CSSetSamplers(0, 1, &sampler);
+
+	buffer = nullptr;
+	context->CSSetConstantBuffers(1, 1, &buffer);
+
+	if (bendSettings.EnableNormalMappingShadows)
+		DrawNormalMappingShadows();
 }
 
-void ScreenSpaceShadows::Draw(const RE::BSShader* shader, const uint32_t descriptor)
+void ScreenSpaceShadows::DrawNormalMappingShadows()
 {
-	switch (shader->shaderType.get()) {
-	case RE::BSShader::Type::Grass:
-		ModifyGrass(shader, descriptor);
-		break;
-	case RE::BSShader::Type::DistantTree:
-		ModifyDistantTree(shader, descriptor);
-		break;
-	case RE::BSShader::Type::Lighting:
-		ModifyLighting(shader, descriptor);
-		break;
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto context = renderer->GetRuntimeData().context;
+
+	{
+		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		ID3D11ShaderResourceView* srvs[2]{ normalRoughness.SRV, depth.depthSRV };
+		context->CSSetShaderResources(0, 2, srvs);
+
+		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		auto shader = GetComputeNormalMappingShadows();
+		context->CSSetShader(shader, nullptr, 0);
+
+		auto state = State::GetSingleton();
+		auto viewport = RE::BSGraphics::State::GetSingleton();
+
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
 	}
+
+	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
+	context->CSSetShaderResources(0, 2, views);
+
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	ID3D11SamplerState* sampler = nullptr;
+	context->CSSetSamplers(0, 1, &sampler);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void ScreenSpaceShadows::Draw(const RE::BSShader*, const uint32_t)
+{
 }
 
 void ScreenSpaceShadows::Load(json& o_json)
 {
 	if (o_json[GetName()].is_object())
-		settings = o_json[GetName()];
+		bendSettings = o_json[GetName()];
 
 	Feature::Load(o_json);
 }
 
 void ScreenSpaceShadows::Save(json& o_json)
 {
-	o_json[GetName()] = settings;
+	o_json[GetName()] = bendSettings;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
-	settings = {};
+	bendSettings = {};
 }
 
 void ScreenSpaceShadows::SetupResources()
 {
-	perPass = new ConstantBuffer(ConstantBufferDesc<PerPass>());
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>());
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	{
+		auto device = renderer->GetRuntimeData().forwarder;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		samplerDesc.BorderColor[0] = 1.0f;
+		samplerDesc.BorderColor[1] = 1.0f;
+		samplerDesc.BorderColor[2] = 1.0f;
+		samplerDesc.BorderColor[3] = 1.0f;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
+	}
+
+	{
+		auto& shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+
+		shadowMask.texture->GetDesc(&texDesc);
+		shadowMask.SRV->GetDesc(&srvDesc);
+		shadowMask.RTV->GetDesc(&rtvDesc);
+		shadowMask.UAV->GetDesc(&uavDesc);
+
+		{
+			texDesc.Format = DXGI_FORMAT_R8_UNORM;
+			srvDesc.Format = texDesc.Format;
+			rtvDesc.Format = texDesc.Format;
+			uavDesc.Format = texDesc.Format;
+
+			shadowMaskTemp = new Texture2D(texDesc);
+			shadowMaskTemp->CreateSRV(srvDesc);
+			shadowMaskTemp->CreateUAV(uavDesc);
+		}
+	}
 }
 
 void ScreenSpaceShadows::Reset()
 {
-	renderedScreenCamera = false;
 }
 
-bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type shaderType)
-{
-	switch (shaderType) {
-	case RE::BSShader::Type::Lighting:
-	case RE::BSShader::Type::Grass:
-	case RE::BSShader::Type::DistantTree:
-		return true;
-	default:
-		return false;
-	}
-}

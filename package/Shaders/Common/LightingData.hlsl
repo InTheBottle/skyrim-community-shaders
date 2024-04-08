@@ -9,6 +9,7 @@ struct LightingData
 	float4 CameraData;
 	float2 BufferDim;
 	float Timer;
+	bool Opaque;
 };
 
 StructuredBuffer<LightingData> lightingData : register(t126);
