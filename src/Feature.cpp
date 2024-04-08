@@ -8,9 +8,11 @@
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/LightLimitFix.h"
+#include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
+#include "Features/TerrainOcclusion.h"
 #include "Features/WaterBlending.h"
 #include "Features/WaterCaustics.h"
 #include "Features/WaterParallax.h"
@@ -115,7 +117,9 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		TerrainBlending::GetSingleton(),
 		WaterParallax::GetSingleton(),
 		WaterCaustics::GetSingleton(),
-		SubsurfaceScattering::GetSingleton()
+		SubsurfaceScattering::GetSingleton(),
+		TerrainOcclusion::GetSingleton(),
+		ScreenSpaceGI::GetSingleton()
 	};
 
 	static std::vector<Feature*> featuresVR = {
@@ -128,7 +132,8 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		LightLimitFix::GetSingleton(),
 		TerrainBlending::GetSingleton(),
 		WaterCaustics::GetSingleton(),
-		SubsurfaceScattering::GetSingleton()
+		SubsurfaceScattering::GetSingleton(),
+		ScreenSpaceGI::GetSingleton()
 	};
 
 	return REL::Module::IsVR() ? featuresVR : features;
