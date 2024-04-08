@@ -140,8 +140,6 @@ void TerrainOcclusion::ClearShaderCache()
 
 void TerrainOcclusion::SetupResources()
 {
-	auto device = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().forwarder;
-
 	logger::debug("Listing height maps...");
 	{
 		std::filesystem::path texture_dir{ L"Data\\textures\\heightmaps\\" };
@@ -562,6 +560,7 @@ void TerrainOcclusion::DrawTerrainOcclusion()
 
 	std::array<ID3D11ShaderResourceView*, 5> srvs = { nullptr };
 	std::array<ID3D11UnorderedAccessView*, 2> uavs = { nullptr };
+	std::array<ID3D11SamplerState*, 2> samplers = { nullptr };
 
 	{
 		srvs.at(0) = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
