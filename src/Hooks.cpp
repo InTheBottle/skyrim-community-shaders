@@ -143,18 +143,7 @@ decltype(&hk_BSGraphics_SetDirtyStates) ptr_BSGraphics_SetDirtyStates;
 
 void hk_BSGraphics_SetDirtyStates(bool isCompute)
 {
-	//auto& shaderCache = SIE::ShaderCache::Instance();
-
-	//if (shaderCache.IsEnabled())
-	//	Bindings::GetSingleton()->SetDirtyStates(isCompute);
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
-	if (state->GetRuntimeData().stateUpdateFlags.get() & RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET)
-	{
-		VariableRateShading::GetSingleton()->UpdateViews();
-	}
-
 	(ptr_BSGraphics_SetDirtyStates)(isCompute);
-
 	State::GetSingleton()->Draw();
 }
 

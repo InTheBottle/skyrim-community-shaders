@@ -22,9 +22,9 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID, uint3 GroupThreadID : SV
     nasDataSurface.GetDimensions(screenWidth, screenHeight);
 
     float2 uv = DispatchThreadID.xy * rcp(float2(screenWidth, screenHeight));
-    float threshold = 0.1 + distance(float2(0.5, 0.5), uv) * 0.1;
+    float threshold = lerp(0.1, 0.2, distance(float2(0.5, 0.5), uv));
     
-    /*
+    /*`
         D3D12_SHADING_RATE_1X1	= 0,   // 0b0000
         D3D12_SHADING_RATE_1X2	= 0x1, // 0b0001
         D3D12_SHADING_RATE_2X1	= 0x4, // 0b0100

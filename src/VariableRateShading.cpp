@@ -277,7 +277,7 @@ void VariableRateShading::SetupSingleEyeVRS(int eye, int width, int height)
 	}
 }
 
-void VariableRateShading::UpdateViews()
+void VariableRateShading::UpdateViews(bool a_enable)
 {
 	if (!vrsActive)
 		return;
@@ -287,14 +287,21 @@ void VariableRateShading::UpdateViews()
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
-	bool vrsPass = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
+	vrsPass = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
 
 	if (state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY)
 	{
 		vrsPass = true;
 	}
 
-	vrsPass = enableVRS && vrsPass;
+	vrsPass = enableVRS && vrsPass && a_enable && !RE::UI::GetSingleton()->GameIsPaused();
+
+	static bool currentVRS = false;
+
+	if (currentVRS == vrsPass)
+		return;
+
+	currentVRS = vrsPass;
 
 	if (vrsPass) {
 		ID3D11NvShadingRateResourceView* shadingRateView = singleEyeVRSView[0];
@@ -324,14 +331,6 @@ void VariableRateShading::UpdateViews()
 			vsrd[i].shadingRateTable[4] = NV_PIXEL_X1_PER_4X2_RASTER_PIXELS;
 			vsrd[i].shadingRateTable[5] = NV_PIXEL_X1_PER_2X4_RASTER_PIXELS;
 			vsrd[i].shadingRateTable[6] = NV_PIXEL_X1_PER_4X4_RASTER_PIXELS;
-
-			//vsrd[i].shadingRateTable[0] = NV_PIXEL_X1_PER_RASTER_PIXEL;
-			//vsrd[i].shadingRateTable[0x1] = NV_PIXEL_X1_PER_1X2_RASTER_PIXELS;
-			//vsrd[i].shadingRateTable[0x4] = NV_PIXEL_X1_PER_2X1_RASTER_PIXELS;
-			//vsrd[i].shadingRateTable[0x5] = NV_PIXEL_X1_PER_2X2_RASTER_PIXELS;
-			//vsrd[i].shadingRateTable[0x6] = NV_PIXEL_X1_PER_2X4_RASTER_PIXELS;
-			//vsrd[i].shadingRateTable[0x9] = NV_PIXEL_X1_PER_4X2_RASTER_PIXELS;
-			//vsrd[i].shadingRateTable[0xa] = NV_PIXEL_X1_PER_4X4_RASTER_PIXELS;
 		}
 	}
 

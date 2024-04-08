@@ -16,6 +16,7 @@ public:
 
 	bool nvapiLoaded = false;
 	bool vrsActive = false;
+	bool vrsPass = false;
 	ID3D11Texture2D* singleEyeVRSTex[2];
 	ID3D11UnorderedAccessView* singleEyeVRSUAV[2];
 	ID3D11NvShadingRateResourceView* singleEyeVRSView[2];
@@ -37,5 +38,6 @@ public:
 
 	void Setup();
 	void SetupSingleEyeVRS(int eye, int width, int height);
-	void UpdateViews();
+	void UpdateViews(bool a_enable);
+
 };

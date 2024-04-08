@@ -17,31 +17,34 @@
 void State::Draw()
 {
 	Bindings::GetSingleton()->CheckOpaque();
-	auto& shaderCache = SIE::ShaderCache::Instance();
-	if (shaderCache.IsEnabled() && currentShader && updateShader) {
+	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
-		if (type > 0 && type < RE::BSShader::Type::Total) {
-			if (enabledClasses[type - 1]) {
-				ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
-				UpdateSharedData(currentShader, currentPixelDescriptor);
+		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky);
+		auto& shaderCache = SIE::ShaderCache::Instance();
+		if (shaderCache.IsEnabled()) {
+			if (type > 0 && type < RE::BSShader::Type::Total) {
+				if (enabledClasses[type - 1]) {
+					ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
+					UpdateSharedData(currentShader, currentPixelDescriptor);
 
-				auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+					auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 
-				static RE::BSGraphics::VertexShader* vertexShader = nullptr;
-				static RE::BSGraphics::PixelShader* pixelShader = nullptr;
+					static RE::BSGraphics::VertexShader* vertexShader = nullptr;
+					static RE::BSGraphics::PixelShader* pixelShader = nullptr;
 
-				vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);
-				pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
+					vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);
+					pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
 
-				if (vertexShader && pixelShader) {
-					context->VSSetShader(vertexShader->shader, NULL, NULL);
-					context->PSSetShader(pixelShader->shader, NULL, NULL);
-				}
+					if (vertexShader && pixelShader) {
+						context->VSSetShader(vertexShader->shader, NULL, NULL);
+						context->PSSetShader(pixelShader->shader, NULL, NULL);
+					}
 
-				if (vertexShader && pixelShader) {
-					for (auto* feature : Feature::GetFeatureList()) {
-						if (feature->loaded) {
-							feature->Draw(currentShader, currentPixelDescriptor);
+					if (vertexShader && pixelShader) {
+						for (auto* feature : Feature::GetFeatureList()) {
+							if (feature->loaded) {
+								feature->Draw(currentShader, currentPixelDescriptor);
+							}
 						}
 					}
 				}
