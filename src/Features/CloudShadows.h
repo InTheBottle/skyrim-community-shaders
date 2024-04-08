@@ -19,22 +19,16 @@ struct CloudShadows : Feature
 	struct Settings
 	{
 		uint EnableCloudShadows = true;
-
 		float CloudHeight = 2e3f / 1.428e-2f;
 		float PlanetRadius = 6371e3f / 1.428e-2f;
-
 		float EffectMix = 1.f;
-
 		float TransparencyPower = 0.1f;
 	} settings;
 
 	struct PerPass
 	{
 		Settings Settings;
-
 		float RcpHPlusR;
-
-		float padding;
 	};
 	std::unique_ptr<StructuredBuffer> perPass = nullptr;
 

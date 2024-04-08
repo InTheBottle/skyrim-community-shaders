@@ -7,6 +7,7 @@ cbuffer ShadowUpdateCB : register(b1)
 	float2 LightDeltaZ : packoffset(c0.z);  // per lightUVDir, normalised, [upper, lower] penumbra, should be negative
 	uint StartPxCoord : packoffset(c1.x);
 	float2 PxSize : packoffset(c1.y);
+	float pad : packoffset(c1.w);
 }
 
 float GetInterpolatedHeight(float2 pxCoord, bool isVertical)
