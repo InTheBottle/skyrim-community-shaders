@@ -468,8 +468,9 @@ struct PS_OUTPUT
 	float4 Albedo : SV_Target3;
 	float4 Specular : SV_Target4;
 	float4 Reflectance : SV_Target5;
+	float4 Masks : SV_Target6;
 #	if defined(SNOW)
-	float4 SnowParameters : SV_Target6;
+	float4 SnowParameters : SV_Target7;
 #	endif
 };
 #else
@@ -1829,6 +1830,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
+	
+#	if !defined(DEFERRED)
+	diffuseColor += directionalAmbientColor;
+#	endif
 
 	diffuseColor += emitColor.xyz;
 
@@ -2181,15 +2186,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
+	psout.Masks = float4(0, 0, 0, psout.Diffuse.w);
+
+#		if defined(SSS) && defined(SKIN)
+	psout.Masks.x = saturate(baseColor.a);
+#		endif
 
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
+
 	if (lightingData[0].Opaque) {
 		psout.Albedo.w = 0;
 		psout.NormalGlossiness.w = 0;
-#		if defined(SKIN)
-		psout.NormalGlossiness.w = 1;
+#		if defined(SSS) && defined(SKIN)
+		psout.Masks.w = !perPassSSS[0].IsBeastRace;
 #		endif
 	}
 #	endif

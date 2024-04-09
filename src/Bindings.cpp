@@ -5,6 +5,7 @@
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
 #include <Features/TerrainOcclusion.h>
+#include <Features/SubsurfaceScattering.h>
 #include <ShaderCache.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
@@ -135,6 +136,8 @@ void Bindings::SetupResources()
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 		// Normal + Roughness
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Masks
+		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 	}
 
 	{
@@ -353,24 +356,20 @@ void Bindings::StartDeferred()
 		forwardRenderTargets[i] = renderTargets[i];
 	}
 
-	RE::RENDER_TARGET targets[6]{
+	RE::RENDER_TARGET targets[8]{
 		RE::RENDER_TARGET::kMAIN,
 		RE::RENDER_TARGET::kMOTION_VECTOR,
 		NORMALROUGHNESS,
 		ALBEDO,
 		SPECULAR,
 		REFLECTANCE,
+		MASKS,
+		forwardRenderTargets[3] // Improved snow shader
 	};
 
-	for (uint i = 2; i < 6; i++) {
+	for (uint i = 2; i < 8; i++) {
 		renderTargets[i] = targets[i];                                             // We must use unused targets to be indexable
 		setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
-	}
-
-	// Improved snow shader
-	if (forwardRenderTargets[3] != RE::RENDER_TARGET::kNONE) {
-		renderTargets[6] = forwardRenderTargets[3];                                // We must use unused targets to be indexable
-		setRenderTargetMode[6] = RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR;  // Dirty from last frame, this calls ClearRenderTargetView once
 	}
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
@@ -465,39 +464,78 @@ void Bindings::DeferredPasses()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	// features that require full diffuse lighting should be put here
+	// Features that require full diffuse lighting should be put here
+
 	if (ScreenSpaceGI::GetSingleton()->loaded) {
 		ScreenSpaceGI::GetSingleton()->DrawSSGI(giTexture);
 	}
 
 	{
-		ID3D11ShaderResourceView* srvs[7]{
-			specular.SRV,
-			albedo.SRV,
-			reflectance.SRV,
-			normalRoughness.SRV,
-			shadowMask.SRV,
-			depth.depthSRV,
-			giTexture->srv.get(),
-		};
+		{
+			ID3D11ShaderResourceView* srvs[7]{
+				specular.SRV,
+				albedo.SRV,
+				reflectance.SRV,
+				normalRoughness.SRV,
+				shadowMask.SRV,
+				depth.depthSRV,
+				giTexture->srv.get(),
+			};
 
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+			ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetSamplers(0, 1, &linearSampler);
+			context->CSSetSamplers(0, 1, &linearSampler);
 
-		auto shader = GetComputeDeferredComposite();
-		context->CSSetShader(shader, nullptr, 0);
+			auto shader = GetComputeAmbientComposite();
+			context->CSSetShader(shader, nullptr, 0);
 
-		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+			float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+			float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
-		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
-		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+			uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+			uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
 
-		context->Dispatch(dispatchX, dispatchY, 1);
+			context->Dispatch(dispatchX, dispatchY, 1);
+		}
+	}
+
+	if (SubsurfaceScattering::GetSingleton()->loaded) {
+		SubsurfaceScattering::GetSingleton()->DrawSSSWrapper(false);
+	}
+
+	{
+		{
+			ID3D11ShaderResourceView* srvs[7]{
+				specular.SRV,
+				albedo.SRV,
+				reflectance.SRV,
+				normalRoughness.SRV,
+				shadowMask.SRV,
+				depth.depthSRV,
+				giTexture->srv.get(),
+			};
+
+			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+			ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			context->CSSetSamplers(0, 1, &linearSampler);
+
+			auto shader = GetComputeMainComposite();
+			context->CSSetShader(shader, nullptr, 0);
+
+			float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+			float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+			uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 32.0f);
+			uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
+
+			context->Dispatch(dispatchX, dispatchY, 1);
+		}
 	}
 
 	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
@@ -510,6 +548,8 @@ void Bindings::DeferredPasses()
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+
+
 }
 
 void Bindings::EndDeferred()
@@ -567,10 +607,6 @@ void Bindings::CheckOpaque()
 
 void Bindings::ClearShaderCache()
 {
-	if (deferredCompositeCS) {
-		deferredCompositeCS->Release();
-		deferredCompositeCS = nullptr;
-	}
 	if (directionalShadowCS) {
 		directionalShadowCS->Release();
 		directionalShadowCS = nullptr;
@@ -579,15 +615,14 @@ void Bindings::ClearShaderCache()
 		directionalCS->Release();
 		directionalCS = nullptr;
 	}
-}
-
-ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()
-{
-	if (!deferredCompositeCS) {
-		logger::debug("Compiling DeferredCompositeCS MainCompositePass");
-		deferredCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "MainCompositePass");
+	if (ambientCompositeCS) {
+		ambientCompositeCS->Release();
+		ambientCompositeCS = nullptr;
 	}
-	return deferredCompositeCS;
+	if (mainCompositeCS) {
+		mainCompositeCS->Release();
+		mainCompositeCS = nullptr;
+	}
 }
 
 ID3D11ComputeShader* Bindings::GetComputeDirectionalShadow()
@@ -606,4 +641,22 @@ ID3D11ComputeShader* Bindings::GetComputeDirectional()
 		directionalCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalPass");
 	}
 	return directionalCS;
+}
+
+ID3D11ComputeShader* Bindings::GetComputeAmbientComposite()
+{
+	if (!ambientCompositeCS) {
+		logger::debug("Compiling DeferredCompositeCS AmbientCompositePass");
+		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "AmbientCompositePass");
+	}
+	return ambientCompositeCS;
+}
+
+ID3D11ComputeShader* Bindings::GetComputeMainComposite()
+{
+	if (!mainCompositeCS) {
+		logger::debug("Compiling DeferredCompositeCS MainCompositePass");
+		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "MainCompositePass");
+	}
+	return mainCompositeCS;
 }

@@ -174,8 +174,10 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 	{
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-		ID3D11ShaderResourceView* srvs[2]{ normalRoughness.SRV, depth.depthSRV };
-		context->CSSetShaderResources(0, 2, srvs);
+		auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
+
+		ID3D11ShaderResourceView* srvs[3]{ normalRoughness.SRV, depth.depthSRV, masks.SRV };
+		context->CSSetShaderResources(0, 3, srvs);
 
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
@@ -196,8 +198,8 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
-	context->CSSetShaderResources(0, 2, views);
+	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 3, views);
 
 	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -234,8 +236,6 @@ void ScreenSpaceShadows::SetupResources()
 {
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>());
 
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
 	{
 		auto& device = State::GetSingleton()->device;
 
@@ -252,31 +252,6 @@ void ScreenSpaceShadows::SetupResources()
 		samplerDesc.BorderColor[2] = 1.0f;
 		samplerDesc.BorderColor[3] = 1.0f;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
-	}
-
-	{
-		auto& shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
-
-		D3D11_TEXTURE2D_DESC texDesc{};
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-
-		shadowMask.texture->GetDesc(&texDesc);
-		shadowMask.SRV->GetDesc(&srvDesc);
-		shadowMask.RTV->GetDesc(&rtvDesc);
-		shadowMask.UAV->GetDesc(&uavDesc);
-
-		{
-			texDesc.Format = DXGI_FORMAT_R8_UNORM;
-			srvDesc.Format = texDesc.Format;
-			rtvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-
-			shadowMaskTemp = new Texture2D(texDesc);
-			shadowMaskTemp->CreateSRV(srvDesc);
-			shadowMaskTemp->CreateUAV(uavDesc);
-		}
 	}
 }
 

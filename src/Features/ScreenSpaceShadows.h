@@ -50,8 +50,6 @@ struct ScreenSpaceShadows : Feature
 	ID3D11ComputeShader* raymarchCS = nullptr;
 	ID3D11ComputeShader* normalMappingShadowsCS = nullptr;
 
-	Texture2D* shadowMaskTemp = nullptr;
-
 	virtual void SetupResources();
 	virtual void Reset();
 

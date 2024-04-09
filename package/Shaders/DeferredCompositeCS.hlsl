@@ -91,26 +91,30 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
-
-	half shadow = ShadowMaskTexture[globalId.xy];
+	
 	half weight = 1.0;
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
+	half shadow = 1.0;
 
 	if (NdotL > 0.0) {
-		// Approximation of PCF in screen-space
-		for (int i = -1; i < 1; i++) {
-			for (int k = -1; k < 1; k++) {
-				if (i == 0 && k == 0)
-					continue;
-				float2 offset = float2(i, k) * RcpBufferDim.xy * 1.5;
-				float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
-				float attenuation = 1.0 - saturate(abs(sampleDepth - depth));
-				shadow += ShadowMaskTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
-				weight += attenuation;
+		shadow = ShadowMaskTexture[globalId.xy];
+
+		if (shadow != 0){
+			// Approximation of PCF in screen-space
+			for (int i = -1; i < 1; i++) {
+				for (int k = -1; k < 1; k++) {
+					if (i == 0 && k == 0)
+						continue;
+					float2 offset = float2(i, k) * RcpBufferDim.xy * 1.5;
+					float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
+					float attenuation = 1.0 - saturate(abs(sampleDepth - depth));
+					shadow += ShadowMaskTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
+					weight += attenuation;
+				}
 			}
+			shadow /= weight;
 		}
-		shadow /= weight;
 	}
 
 	half4 albedo = AlbedoTexture[globalId.xy];
@@ -121,6 +125,33 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
+[numthreads(32, 32, 1)] void AmbientCompositePass(uint3 globalId
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
+	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
+
+	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
+	half3 normalVS = DecodeNormal(normalGlossiness.xyz);
+
+	uint eyeIndex = 0;
+
+	half4 diffuseColor = MainRW[globalId.xy];
+
+	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+
+	half4 albedo = AlbedoTexture[globalId.xy];
+
+	half4 giAo = GITexture[globalId.xy];
+	half3 gi = giAo.rgb;
+	half ao = giAo.w;
+
+	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
+	diffuseColor.rgb += albedo * directionalAmbientColor * ao + gi;
+
+	MainRW[globalId.xy] = half4(diffuseColor.xyz, 1.0);
+}
+
 [numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
 											   : SV_DispatchThreadID, uint3 localId
 											   : SV_GroupThreadID, uint3 groupId
@@ -130,9 +161,6 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xyz);
 
-	half rawDepth = DepthTexture[globalId.xy];
-	half depth = GetScreenDepth(rawDepth);
-
 	uint eyeIndex = 0;
 
 	half4 diffuseColor = MainRW[globalId.xy];
@@ -141,17 +169,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
 
 	half glossiness = normalGlossiness.z;
-
-	half4 albedo = AlbedoTexture[globalId.xy];
-
 	half3 color = diffuseColor + specularColor;
-
-	half4 giAo = GITexture[globalId.xy];
-	half3 gi = giAo.rgb;
-	half ao = giAo.w;
-
-	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
-	color += albedo * directionalAmbientColor * ao + gi;
 
 #if defined(DEBUG)
 	half2 texCoord = half2(globalId.xy) / BufferDim.xy;

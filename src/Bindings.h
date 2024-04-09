@@ -6,6 +6,7 @@
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
 #define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
 #define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
+#define MASKS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
 
 class Bindings
 {
@@ -39,12 +40,13 @@ public:
 	
 	ID3D11ComputeShader* directionalShadowCS = nullptr;
 	ID3D11ComputeShader* directionalCS = nullptr;
-	ID3D11ComputeShader* deferredCompositeCS = nullptr;
+	ID3D11ComputeShader* ambientCompositeCS = nullptr;
+	ID3D11ComputeShader* mainCompositeCS = nullptr;
 
 	void ClearShaderCache();
-	ID3D11ComputeShader* GetComputeDeferredComposite();
+	ID3D11ComputeShader* GetComputeAmbientComposite();
+	ID3D11ComputeShader* GetComputeMainComposite();
 	ID3D11ComputeShader* GetComputeDirectionalShadow();
-
 	ID3D11ComputeShader* GetComputeDirectional();
 
 	bool inWorld = false;

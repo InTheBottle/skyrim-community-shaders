@@ -3,6 +3,7 @@
 
 Texture2D<unorm half4> NormalRoughnessTexture : register(t0);
 Texture2D<unorm half> DepthTexture : register(t1);
+Texture2D<unorm half4> MasksTexture : register(t2);
 
 RWTexture2D<unorm half> ShadowMaskTextureRW : register(u0);
 
@@ -52,14 +53,11 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy].xy);
 
-	half skinMask = NormalRoughnessTexture[globalId.xy].w;
+	half skinMask = MasksTexture[globalId.xy].x;
+	if (skinMask == 1.0)
+		return;
 
 	half shadowMask = ShadowMaskTextureRW[globalId.xy].x;
-
-	if (skinMask != 0) {
-		ShadowMaskTextureRW[globalId.xy] = shadowMask;
-		return;
-	}
 
 	half rawDepth = DepthTexture[globalId.xy];
 	if (rawDepth == 1.0)
@@ -117,5 +115,5 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	shadow = saturate(1.0 - shadow);
 	shadow = lerp(1.0, shadow, saturate(fade));
 
-	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, shadow);
+	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, lerp(shadow, 1.0, skinMask));
 }
