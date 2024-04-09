@@ -278,7 +278,7 @@ void ScreenSpaceGI::Save([[maybe_unused]] json& o_json)
 void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	logger::debug("Creating buffers...");
 	{
@@ -466,7 +466,7 @@ bool ScreenSpaceGI::ShadersOK()
 
 void ScreenSpaceGI::GenerateHilbertLUT()
 {
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	ID3D11UnorderedAccessView* uav = texHilbertLUT->uav.get();
 	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
@@ -559,7 +559,7 @@ void ScreenSpaceGI::DrawSSGI(Texture2D* outGI)
 
 	//////////////////////////////////////////////////////
 
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto rts = renderer->GetRuntimeData().renderTargets;

@@ -72,7 +72,7 @@ struct BlendStates
 void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format)
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	texDesc.Format = format;
 	srvDesc.Format = format;
@@ -142,7 +142,7 @@ void Bindings::SetupResources()
 	}
 
 	{
-		auto device = renderer->GetRuntimeData().forwarder;
+		auto& device = State::GetSingleton()->device;
 
 		D3D11_SAMPLER_DESC samplerDesc = {};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -279,8 +279,7 @@ void Bindings::StartDeferred()
 
 	static bool setup = false;
 	if (!setup) {
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		auto device = renderer->GetRuntimeData().forwarder;
+		auto& device = State::GetSingleton()->device;
 
 		static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
 
@@ -392,7 +391,7 @@ void Bindings::StartDeferred()
 void Bindings::DeferredPasses()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 	auto state = State::GetSingleton();
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 

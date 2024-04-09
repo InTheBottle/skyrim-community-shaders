@@ -2160,8 +2160,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #			endif
 
-	psout.Albedo.w = blendFactorTerrain;
-
 #			if defined(SNOW)
 	psout.SnowParameters.w = blendFactorTerrain;
 #			endif

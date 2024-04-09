@@ -169,7 +169,7 @@ void ScreenSpaceShadows::DrawShadows()
 void ScreenSpaceShadows::DrawNormalMappingShadows()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	{
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
@@ -237,7 +237,7 @@ void ScreenSpaceShadows::SetupResources()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	{
-		auto device = renderer->GetRuntimeData().forwarder;
+		auto& device = State::GetSingleton()->device;
 
 		D3D11_SAMPLER_DESC samplerDesc = {};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
