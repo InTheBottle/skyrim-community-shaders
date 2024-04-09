@@ -407,18 +407,6 @@ void Bindings::DeferredPasses()
 		context->ClearUnorderedAccessViewFloat(giTexture->uav.get(), clr);
 	}
 
-	if (ScreenSpaceShadows::GetSingleton()->loaded) {
-		ScreenSpaceShadows::GetSingleton()->DrawShadows();
-	}
-
-	if (TerrainOcclusion::GetSingleton()->loaded) {
-		TerrainOcclusion::GetSingleton()->DrawTerrainOcclusion();
-	}
-
-	if (CloudShadows::GetSingleton()->loaded) {
-		CloudShadows::GetSingleton()->DrawShadows();
-	}
-
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
@@ -428,6 +416,25 @@ void Bindings::DeferredPasses()
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
+
+	// Only render directional shadows if the game has a directional shadow caster
+	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+	auto shadowDirLight = (RE::BSShadowLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
+	bool dirShadow = shadowDirLight && shadowDirLight->maskSelect == 0;
+
+	if (dirShadow) {
+		if (ScreenSpaceShadows::GetSingleton()->loaded) {
+			ScreenSpaceShadows::GetSingleton()->DrawShadows();
+		}
+
+		if (TerrainOcclusion::GetSingleton()->loaded) {
+			TerrainOcclusion::GetSingleton()->DrawTerrainOcclusion();
+		}
+
+		if (CloudShadows::GetSingleton()->loaded) {
+			CloudShadows::GetSingleton()->DrawShadows();
+		}
+	}
 
 	{
 		ID3D11ShaderResourceView* srvs[6]{
@@ -446,7 +453,7 @@ void Bindings::DeferredPasses()
 
 		context->CSSetSamplers(0, 1, &linearSampler);
 
-		auto shader = GetComputeDirectionalShadow();
+		auto shader = dirShadow ? GetComputeDirectionalShadow() : GetComputeDirectional();
 		context->CSSetShader(shader, nullptr, 0);
 
 		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
@@ -568,12 +575,16 @@ void Bindings::ClearShaderCache()
 		directionalShadowCS->Release();
 		directionalShadowCS = nullptr;
 	}
+	if (directionalCS) {
+		directionalCS->Release();
+		directionalCS = nullptr;
+	}
 }
 
 ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()
 {
 	if (!deferredCompositeCS) {
-		logger::debug("Compiling DeferredCompositeCS");
+		logger::debug("Compiling DeferredCompositeCS MainCompositePass");
 		deferredCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "MainCompositePass");
 	}
 	return deferredCompositeCS;
@@ -582,8 +593,17 @@ ID3D11ComputeShader* Bindings::GetComputeDeferredComposite()
 ID3D11ComputeShader* Bindings::GetComputeDirectionalShadow()
 {
 	if (!directionalShadowCS) {
-		logger::debug("Compiling DirectionalShadowCS");
+		logger::debug("Compiling DeferredCompositeCS DirectionalShadowPass");
 		directionalShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalShadowPass");
 	}
 	return directionalShadowCS;
+}
+
+ID3D11ComputeShader* Bindings::GetComputeDirectional()
+{
+	if (!directionalCS) {
+		logger::debug("Compiling DeferredCompositeCS DirectionalPass");
+		directionalCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalPass");
+	}
+	return directionalCS;
 }
