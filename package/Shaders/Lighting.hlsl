@@ -2026,7 +2026,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 tmpColor = color.xyz * FrameParams.yyy;
 	color.xyz = tmpColor.xyz + ColourOutputClamp.xxx;
 	color.xyz = min(vertexColor.xyz, color.xyz);
-  
+
 #	if defined(CPM_AVAILABLE) && defined(ENVMAP)
 	specularColor *= complexSpecular;
 #	endif

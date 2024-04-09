@@ -7,9 +7,9 @@
 #include <fmt/std.h>
 #include <wrl/client.h>
 
+#include "Bindings.h"
 #include "Feature.h"
 #include "State.h"
-#include "Bindings.h"
 
 namespace SIE
 {

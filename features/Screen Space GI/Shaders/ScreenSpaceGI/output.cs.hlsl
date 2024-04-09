@@ -4,7 +4,8 @@ Texture2D<half4> srcAlbedo : register(t1);
 RWTexture2D<half4> outGI : register(u0);
 RWTexture2D<half3> outGIAlbedo : register(u1);
 
-[numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint2 dtid
+								: SV_DispatchThreadID) {
 	half4 o = outGI[dtid];
 	half4 i = srcGI[dtid];
 	half3 gi = i.rgb * srcAlbedo[dtid].rgb;

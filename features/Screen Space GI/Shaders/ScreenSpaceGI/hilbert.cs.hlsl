@@ -40,6 +40,7 @@ inline uint HilbertIndex(uint posX, uint posY)
 	return index;
 }
 
-[numthreads(32, 32, 1)] void main(uint2 tid : SV_DispatchThreadID) {
+[numthreads(32, 32, 1)] void main(uint2 tid
+								  : SV_DispatchThreadID) {
 	outHilbertLUT[tid] = HilbertIndex(tid.x, tid.y);
 }

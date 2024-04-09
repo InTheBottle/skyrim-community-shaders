@@ -52,7 +52,8 @@ float2 GetTerrainZ(float2 norm_z)
 	return float2(GetTerrainZ(norm_z.x), GetTerrainZ(norm_z.y));
 }
 
-[numthreads(32, 32, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
+[numthreads(32, 32, 1)] void main(uint2 dtid
+								  : SV_DispatchThreadID) {
 	float2 uv = (dtid + .5) * RcpBufferDim;
 #ifdef VR
 	const uint eyeIndex = uv > .5;

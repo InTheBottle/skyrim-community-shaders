@@ -337,7 +337,8 @@ void CalculateGI(
 	o_bentNormal = bentNormal;
 }
 
-[numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(const uint2 dtid
+								: SV_DispatchThreadID) {
 	float2 uv = (dtid + .5f) * RcpFrameDim;
 
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, dtid);

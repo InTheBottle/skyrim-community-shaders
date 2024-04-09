@@ -1,8 +1,8 @@
 #include "ScreenSpaceShadows.h"
 
+#include "Bindings.h"
 #include "State.h"
 #include "Util.h"
-#include "Bindings.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4838 4244)
@@ -18,8 +18,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SampleCount,
 	SurfaceThickness,
 	BilinearThreshold,
-	ShadowContrast
-)
+	ShadowContrast)
 
 void ScreenSpaceShadows::DrawSettings()
 {
@@ -54,8 +53,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
 	static uint sampleCount = bendSettings.SampleCount;
 
-	if (sampleCount != bendSettings.SampleCount)
-	{
+	if (sampleCount != bendSettings.SampleCount) {
 		sampleCount = bendSettings.SampleCount;
 		if (raymarchCS) {
 			raymarchCS->Release();
@@ -99,19 +97,19 @@ void ScreenSpaceShadows::DrawShadows()
 	float3 light = { directionNi.x, directionNi.y, directionNi.z };
 	light.Normalize();
 	float4 lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
-	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);	
-	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w};
-				
+	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);
+	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
+
 	int viewportSize[2] = { (int)state->screenWidth, (int)state->screenHeight };
-			
+
 	int minRenderBounds[2] = { 0, 0 };
-	int maxRenderBounds[2] = { 
-		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale), 
-		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
+	int maxRenderBounds[2] = {
+		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),
+		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale)
 	};
 
 	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
-				
+
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	context->CSSetShaderResources(0, 1, &depth.depthSRV);
 
@@ -125,10 +123,9 @@ void ScreenSpaceShadows::DrawShadows()
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
-	for (int i = 0; i < dispatchList.DispatchCount; i++)
-	{
+	for (int i = 0; i < dispatchList.DispatchCount; i++) {
 		auto dispatchData = dispatchList.Dispatch[i];
-					
+
 		RaymarchCB data{};
 		data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
 		data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
@@ -143,10 +140,10 @@ void ScreenSpaceShadows::DrawShadows()
 
 		data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
 		data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
-			
+
 		data.settings = bendSettings;
 
-		raymarchCB->Update(data);			
+		raymarchCB->Update(data);
 
 		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 	}
@@ -286,4 +283,3 @@ void ScreenSpaceShadows::SetupResources()
 void ScreenSpaceShadows::Reset()
 {
 }
-

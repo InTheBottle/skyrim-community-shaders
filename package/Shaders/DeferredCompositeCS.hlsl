@@ -55,7 +55,10 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
-[numthreads(32, 32, 1)] void DirectionalShadowPass(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID) {
+[numthreads(32, 32, 1)] void DirectionalShadowPass(uint3 globalId
+												   : SV_DispatchThreadID, uint3 localId
+												   : SV_GroupThreadID, uint3 groupId
+												   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -93,7 +96,10 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
-[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID) {
+[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];

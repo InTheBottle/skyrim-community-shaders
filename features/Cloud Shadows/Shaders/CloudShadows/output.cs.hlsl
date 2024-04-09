@@ -56,7 +56,8 @@ float3 getCloudShadowMult(float3 rel_pos, float3 eye_to_sun)
 	return lerp(1.0, 1.0 - alpha, perPassCloudShadow[0].EffectMix);
 }
 
-[numthreads(32, 32, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
+[numthreads(32, 32, 1)] void main(uint2 dtid
+								  : SV_DispatchThreadID) {
 	float2 uv = (dtid + .5) * RcpBufferDim;
 #ifdef VR
 	const uint eyeIndex = uv > .5;

@@ -9,8 +9,8 @@
 #include "Feature.h"
 #include "Util.h"
 
-#include "Features/TerrainBlending.h"
 #include "Bindings.h"
+#include "Features/TerrainBlending.h"
 
 void State::Draw()
 {

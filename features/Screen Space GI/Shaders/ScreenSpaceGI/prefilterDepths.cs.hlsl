@@ -57,7 +57,9 @@ lpfloat DepthMIPFilter(lpfloat depth0, lpfloat depth1, lpfloat depth2, lpfloat d
 }
 
 groupshared lpfloat g_scratchDepths[8][8];
-[numthreads(8, 8, 1)] void main(uint2 dispatchThreadID : SV_DispatchThreadID, uint2 groupThreadID : SV_GroupThreadID) {
+[numthreads(8, 8, 1)] void main(uint2 dispatchThreadID
+								: SV_DispatchThreadID, uint2 groupThreadID
+								: SV_GroupThreadID) {
 	// MIP 0
 	const uint2 baseCoord = dispatchThreadID;
 	const uint2 pixCoord = baseCoord * 2;

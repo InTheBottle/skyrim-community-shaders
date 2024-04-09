@@ -18,7 +18,8 @@ RWTexture2D<float4> outRemappedPrevGI : register(u2);
 #	define REPROJECTION
 #endif
 
-[numthreads(8, 8, 1)] void main(const uint2 pixCoord : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(const uint2 pixCoord
+								: SV_DispatchThreadID) {
 	const float2 uv = (pixCoord + .5) * RcpFrameDim;
 	uint eyeIndex = GET_EYE_IDX(uv);
 	const float2 screen_pos = ConvertToStereoUV(uv, eyeIndex);

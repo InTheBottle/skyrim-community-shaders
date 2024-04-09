@@ -12,7 +12,8 @@ RWTexture2D<half4> outGI : register(u0);
 #define min4(v) min(min(v.x, v.y), min(v.z, v.w))
 #define max4(v) max(max(v.x, v.y), max(v.z, v.w))
 
-[numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(const uint2 dtid
+								: SV_DispatchThreadID) {
 	int2 px00 = (dtid >> 1) + (dtid & 1) - 1;
 	int2 px10 = px00 + int2(1, 0);
 	int2 px01 = px00 + int2(0, 1);
