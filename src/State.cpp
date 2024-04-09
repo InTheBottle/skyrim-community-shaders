@@ -623,8 +623,6 @@ void State::UpdateSharedData(const RE::BSShader* a_shader, const uint32_t)
 			updateBuffer = true;
 		}
 
-		auto context = renderer->GetRuntimeData().context;
-
 		if (updateBuffer) {
 			D3D11_MAPPED_SUBRESOURCE mapped;
 			DX::ThrowIfFailed(context->Map(lightingDataBuffer->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));

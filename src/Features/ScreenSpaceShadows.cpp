@@ -83,9 +83,9 @@ void ScreenSpaceShadows::DrawShadows()
 		return;
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto shadowState = State::GetSingleton()->shadowState;
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
