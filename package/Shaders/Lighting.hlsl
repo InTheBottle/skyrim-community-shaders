@@ -1830,7 +1830,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
-	
+
 #	if !defined(DEFERRED)
 	diffuseColor += directionalAmbientColor;
 #	endif

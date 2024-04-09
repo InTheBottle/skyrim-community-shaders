@@ -4,8 +4,8 @@
 #include <Features/CloudShadows.h>
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
-#include <Features/TerrainOcclusion.h>
 #include <Features/SubsurfaceScattering.h>
+#include <Features/TerrainOcclusion.h>
 #include <ShaderCache.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
@@ -364,7 +364,7 @@ void Bindings::StartDeferred()
 		SPECULAR,
 		REFLECTANCE,
 		MASKS,
-		forwardRenderTargets[3] // Improved snow shader
+		forwardRenderTargets[3]  // Improved snow shader
 	};
 
 	for (uint i = 2; i < 8; i++) {
@@ -548,8 +548,6 @@ void Bindings::DeferredPasses()
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-
-
 }
 
 void Bindings::EndDeferred()

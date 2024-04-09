@@ -2,8 +2,8 @@
 #include <Util.h>
 
 #include "State.h"
-#include <ShaderCache.h>
 #include <Bindings.h>
+#include <ShaderCache.h>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubsurfaceScattering::DiffusionProfile,
 	BlurRadius, Thickness, Strength, Falloff)
@@ -190,7 +190,7 @@ void SubsurfaceScattering::DrawSSSWrapper(bool a_firstPerson)
 	context->OMSetRenderTargets(8, nullViews, nullDsv);
 
 	DrawSSS(a_firstPerson);
-	
+
 	context->PSSetShaderResources(0, 8, srvs);
 	context->CSSetShaderResources(0, 8, srvsCS);
 	context->CSSetUnorderedAccessViews(0, 8, uavsCS, nullptr);
