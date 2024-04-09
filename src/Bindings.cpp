@@ -419,7 +419,7 @@ void Bindings::DeferredPasses()
 	// Only render directional shadows if the game has a directional shadow caster
 	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 	auto shadowDirLight = (RE::BSShadowLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
-	bool dirShadow = shadowDirLight && shadowDirLight->maskSelect == 0;
+	bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
 
 	if (dirShadow) {
 		if (ScreenSpaceShadows::GetSingleton()->loaded) {
