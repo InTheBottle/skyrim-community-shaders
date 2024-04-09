@@ -31,25 +31,25 @@
 // The following Macros must be defined in the compute shader file before including this header:
 //
 //
-#define WAVE_SIZE 64           // Wavefront size of the compute shader running this code.
-							   //													// numthreads[WAVE_SIZE, 1, 1]
-							   //													// Only tested with 64.
+#define WAVE_SIZE 64           // Wavefront size of the compute shader running this code.                                                                                                                      \
+							   //													// numthreads[WAVE_SIZE, 1, 1]                                                                                                                                   \
+							   //													// Only tested with 64.                                                                                                                                          \
+							   //                                                                                                                                                                              \
+							   //		#define SAMPLE_COUNT 512						// Number of shadow samples per-pixel.                                                                                                        \
+							   //													// Determines overall cost, as this value controls the length of the shadow (in pixels).                                                                         \
+							   //													// The number of texture-reads performed per-thread will be (SAMPLE_COUNT / WAVE_SIZE + 2) * 2.                                                                  \
+							   //													// Recommended starting value is 60 (This would be 4 reads per thread if WAVE_SIZE is 64). A value of 64 would require 6 reads.                                  \
+							   //                                                                                                                                                                              \
+							   //		// Not all shadow samples are treated the same:                                                                                                                             \
+							   //		//	The bulk of samples will average together in to groups of 4, to produce a slightly smoothed result (so one sample cannot fully show the pixel)                           \
+							   //		//	However, the samples very close to the start pixel can optionally be forced to disable this averaging, so a single sample can fully shadow the pixel (HardShadowSamples) \
+							   //		//	Plus, a number of the last (most distant) samples can (for a small cost) apply a fade-out effect to soften a hash shadow cutoff (FadeOutSamples)                         \
 							   //
-							   //		#define SAMPLE_COUNT 512						// Number of shadow samples per-pixel.
-							   //													// Determines overall cost, as this value controls the length of the shadow (in pixels).
-							   //													// The number of texture-reads performed per-thread will be (SAMPLE_COUNT / WAVE_SIZE + 2) * 2.
-							   //													// Recommended starting value is 60 (This would be 4 reads per thread if WAVE_SIZE is 64). A value of 64 would require 6 reads.
+#define HARD_SHADOW_SAMPLES 0  // Number of initial shadow samples that will produce a hard shadow, and not perform sample-averaging. \
+							   //													// This trades aliasing for grounding pixels very close to the shadow caster.           \
+							   //													// Recommended starting value: 4                                                        \
 							   //
-							   //		// Not all shadow samples are treated the same:
-							   //		//	The bulk of samples will average together in to groups of 4, to produce a slightly smoothed result (so one sample cannot fully show the pixel)
-							   //		//	However, the samples very close to the start pixel can optionally be forced to disable this averaging, so a single sample can fully shadow the pixel (HardShadowSamples)
-							   //		//	Plus, a number of the last (most distant) samples can (for a small cost) apply a fade-out effect to soften a hash shadow cutoff (FadeOutSamples)
-							   //
-#define HARD_SHADOW_SAMPLES 0  // Number of initial shadow samples that will produce a hard shadow, and not perform sample-averaging.
-							   //													// This trades aliasing for grounding pixels very close to the shadow caster.
-							   //													// Recommended starting value: 4
-							   //
-#define FADE_OUT_SAMPLES 0     // Number of samples that will fade out at the end of the shadow (for a minor cost).
+#define FADE_OUT_SAMPLES 0     // Number of samples that will fade out at the end of the shadow (for a minor cost). \
 							   //													// Recommended starting value: 8
 
 //#if defined(__HLSL_VERSION) || defined(__hlsl_dx_compiler)
