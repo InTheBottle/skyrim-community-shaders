@@ -129,7 +129,7 @@ void ScreenSpaceGI::DrawSettings()
 	{
 		auto _ = DisableGuard(settings.UseBitmask);
 
-		ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.05, 1.0, "%.2f");
+		ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.05f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
 
