@@ -55,10 +55,11 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
+
 [numthreads(32, 32, 1)] void DirectionalPass(uint3 globalId
-											 : SV_DispatchThreadID, uint3 localId
-											 : SV_GroupThreadID, uint3 groupId
-											 : SV_GroupID) {
+												   : SV_DispatchThreadID, uint3 localId
+												   : SV_GroupThreadID, uint3 groupId
+												   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -90,16 +91,18 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
-
+	
 	half weight = 1.0;
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
 	half shadow = 1.0;
 
-	if (NdotL > 0.0) {
+	half4 albedo = AlbedoTexture[globalId.xy];
+
+	if (NdotL > 0.0 || albedo.w > 0.0) {
 		shadow = ShadowMaskTexture[globalId.xy];
 
-		if (shadow != 0) {
+		if (shadow != 0){
 			// Approximation of PCF in screen-space
 			for (int i = -1; i < 1; i++) {
 				for (int k = -1; k < 1; k++) {
@@ -116,8 +119,6 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 		}
 	}
 
-	half4 albedo = AlbedoTexture[globalId.xy];
-
 	half3 color = MainRW[globalId.xy].rgb;
 	color += albedo * lerp(max(0, NdotL), 1.0, albedo.w) * DirLightColor.xyz * shadow;
 
@@ -125,9 +126,9 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 };
 
 [numthreads(32, 32, 1)] void AmbientCompositePass(uint3 globalId
-												  : SV_DispatchThreadID, uint3 localId
-												  : SV_GroupThreadID, uint3 groupId
-												  : SV_GroupID) {
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -151,11 +152,10 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	MainRW[globalId.xy] = half4(diffuseColor.xyz, 1.0);
 }
 
-	[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
-												   : SV_DispatchThreadID, uint3 localId
-												   : SV_GroupThreadID, uint3 groupId
-												   : SV_GroupID)
-{
+[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
