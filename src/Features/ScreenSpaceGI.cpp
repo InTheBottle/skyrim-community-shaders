@@ -484,7 +484,7 @@ void ScreenSpaceGI::GenerateHilbertLUT()
 void ScreenSpaceGI::UpdateSB()
 {
 	auto viewport = RE::BSGraphics::State::GetSingleton();
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 
 	uint resolution[2] = {
 		(uint)(State::GetSingleton()->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),

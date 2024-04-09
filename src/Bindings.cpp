@@ -201,7 +201,7 @@ void Bindings::UpdateConstantBuffer()
 
 	DeferredCB data{};
 
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& shadowState = State::GetSingleton()->shadowState;
 
 	if (REL::Module::IsVR()) {
 		auto posAdjust = shadowState->GetVRRuntimeData().posAdjust.getEye(0);
@@ -343,7 +343,7 @@ void Bindings::StartDeferred()
 		setup = true;
 	}
 
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(renderTargets, state)
 	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
@@ -517,7 +517,7 @@ void Bindings::EndDeferred()
 	if (!shaderCache.IsEnabled())
 		return;
 
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(renderTargets, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 
@@ -552,7 +552,7 @@ void Bindings::EndDeferred()
 
 void Bindings::CheckOpaque()
 {
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendMode, state)
 
 	opaque = alphaBlendMode == 0;
