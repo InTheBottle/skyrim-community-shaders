@@ -37,7 +37,7 @@ public:
 	ID3D11BlendState* deferredBlendStates[4];
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
-	
+
 	ID3D11ComputeShader* directionalShadowCS = nullptr;
 	ID3D11ComputeShader* directionalCS = nullptr;
 	ID3D11ComputeShader* ambientCompositeCS = nullptr;
