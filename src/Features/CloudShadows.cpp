@@ -183,7 +183,7 @@ void CloudShadows::DrawShadows()
 		static Util::FrameChecker frame_checker;
 
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		auto context = renderer->GetRuntimeData().context;
+		auto& context = State::GetSingleton()->context;
 		auto bindings = Bindings::GetSingleton();
 
 		if (frame_checker.isNewFrame())

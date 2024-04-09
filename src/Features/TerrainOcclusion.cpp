@@ -1,6 +1,7 @@
 #include "TerrainOcclusion.h"
 
 #include "Bindings.h"
+#include "State.h"
 #include "Util.h"
 
 #include <filesystem>
@@ -251,7 +252,7 @@ void TerrainOcclusion::Draw(const RE::BSShader*, const uint32_t)
 
 void TerrainOcclusion::UpdateBuffer()
 {
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	bool isHeightmapReady = IsHeightMapReady();
 
@@ -291,8 +292,7 @@ void TerrainOcclusion::LoadHeightmap()
 	if (cachedHeightmap && cachedHeightmap->worldspace == worldspace_name)  // already cached
 		return;
 
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	logger::debug("Loading height map...");
 	{
@@ -343,7 +343,7 @@ void TerrainOcclusion::Precompute()
 	if (!cachedHeightmap)
 		return;
 
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	logger::info("Creating occlusion texture...");
 	{
@@ -448,7 +448,7 @@ void TerrainOcclusion::UpdateShadow()
 	if (!IsHeightMapReady())
 		return;
 
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
 	auto sunLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
 	if (!sunLight)
@@ -555,7 +555,7 @@ void TerrainOcclusion::DrawTerrainOcclusion()
 	////////////////////////////////////////////////////////////////////////////////
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 	auto bindings = Bindings::GetSingleton();
 
 	std::array<ID3D11ShaderResourceView*, 5> srvs = { nullptr };
