@@ -1004,9 +1004,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	if defined(SKINNED) || !defined(MODELSPACENORMALS)
 	float3x3 tbn = float3x3(input.TBN0.xyz, input.TBN1.xyz, input.TBN2.xyz);
 
+#		if !defined(TREE_ANIM)
 	// Fix incorrect vertex normals on double-sided meshes
 	if (!frontFace)
 		tbn = -tbn;
+#		endif
 
 	float3x3 tbnTr = transpose(tbn);
 
