@@ -9,7 +9,7 @@
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(depthStencilDepthMode, state)
 	GET_INSTANCE_MEMBER(depthStencilDepthModePrevious, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
@@ -25,7 +25,7 @@ void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMo
 
 void Bindings::AlphaBlendStateSetMode(uint32_t a_mode)
 {
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendMode, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 
@@ -37,7 +37,7 @@ void Bindings::AlphaBlendStateSetMode(uint32_t a_mode)
 
 void Bindings::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
 {
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 
@@ -49,7 +49,7 @@ void Bindings::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
 
 void Bindings::AlphaBlendStateSetWriteMode(uint32_t a_value)
 {
-	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
 	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 

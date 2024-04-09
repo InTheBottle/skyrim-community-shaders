@@ -65,7 +65,7 @@ void CloudShadows::CheckResourcesSide(int side)
 	if (!frame_checker[side].isNewFrame())
 		return;
 
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	float black[4] = { 0, 0, 0, 0 };
 	context->ClearRenderTargetView(cubemapCloudOccRTVs[side], black);
@@ -91,7 +91,7 @@ void CloudShadows::ModifySky(const RE::BSShader*, const uint32_t descriptor)
 	if (!settings.EnableCloudShadows)
 		return;
 
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& shadowState = State::GetSingleton()->shadowState;
 	auto cubeMapRenderTarget = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cubeMapRenderTarget : shadowState->GetVRRuntimeData().cubeMapRenderTarget;
 	if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS)
 		return;
@@ -112,8 +112,8 @@ void CloudShadows::ModifySky(const RE::BSShader*, const uint32_t descriptor)
 	auto tech_enum = static_cast<SkyShaderTechniques>(descriptor);
 	if (tech_enum == SkyShaderTechniques::Clouds || tech_enum == SkyShaderTechniques::CloudsLerp || tech_enum == SkyShaderTechniques::CloudsFade) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		auto context = renderer->GetRuntimeData().context;
-		auto device = renderer->GetRuntimeData().forwarder;
+		auto& context = State::GetSingleton()->context;
+		auto& device = State::GetSingleton()->device;
 
 		{
 			ID3D11ShaderResourceView* srv = nullptr;
@@ -176,7 +176,7 @@ void CloudShadows::DrawShadows()
 		!RE::Sky::GetSingleton()->currentClimate)
 		return;
 
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& shadowState = State::GetSingleton()->shadowState;
 	auto cubeMapRenderTarget = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cubeMapRenderTarget : shadowState->GetVRRuntimeData().cubeMapRenderTarget;
 
 	if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS) {
@@ -256,7 +256,7 @@ void CloudShadows::Save(json& o_json)
 void CloudShadows::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	{
 		auto reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGET_CUBEMAP::kREFLECTIONS];
@@ -298,7 +298,7 @@ void CloudShadows::RestoreDefaultSettings()
 void CloudShadows::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::BSRenderPass* Pass, uint32_t Technique, bool AlphaTest, uint32_t RenderFlags)
 {
 	auto feat = GetSingleton();
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	func(Pass, Technique, AlphaTest, RenderFlags);
 

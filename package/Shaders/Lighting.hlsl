@@ -1252,6 +1252,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	complexMaterial = complexMaterial && complexMaterialColor.y > (4.0 / 255.0) && (complexMaterialColor.y < (1.0 - (4.0 / 255.0)));
 	shininess = lerp(shininess, shininess * complexMaterialColor.y, complexMaterial);
 	float3 complexSpecular = lerp(1.0, lerp(1.0, baseColor.xyz, complexMaterialColor.z), complexMaterial);
+	baseColor.xyz = lerp(baseColor.xyz, lerp(baseColor.xyz, 0.0, complexMaterialColor.z), complexMaterial);
 #	endif  // defined (CPM_AVAILABLE) && defined(ENVMAP)
 
 #	if defined(FACEGEN)
@@ -1712,7 +1713,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		if (shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) {
 			if (lightIndex < numShadowLights) {
 				lightColor *= shadowColor[ShadowLightMaskSelect[lightIndex]];
-				;
 			}
 		}
 
@@ -1918,6 +1918,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	if (dynamicCubemap) {
 #			if defined(CPM_AVAILABLE)
 		envRoughness = lerp(envRoughness, 1.0 - complexMaterialColor.y, (float)complexMaterial);
+		envRoughness *= envRoughness;
 		F0 = lerp(F0, sRGB2Lin(complexSpecular), (float)complexMaterial);
 #			endif
 
@@ -1977,7 +1978,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif  // MULTI_LAYER_PARALLAX
 
 #	if defined(SPECULAR)
+#		if defined(CPM_AVAILABLE) && defined(ENVMAP)
+	specularColor = (specularColor * glossiness * MaterialData.yyy) * lerp(SpecularColor.xyz, complexSpecular, complexMaterial);
+#		else
 	specularColor = (specularColor * glossiness * MaterialData.yyy) * SpecularColor.xyz;
+#		endif
 #	elif defined(SPARKLE)
 	specularColor *= glossiness;
 #	endif  // SPECULAR
@@ -2021,7 +2026,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 tmpColor = color.xyz * FrameParams.yyy;
 	color.xyz = tmpColor.xyz + ColourOutputClamp.xxx;
 	color.xyz = min(vertexColor.xyz, color.xyz);
-
+  
 #	if defined(CPM_AVAILABLE) && defined(ENVMAP)
 	specularColor *= complexSpecular;
 #	endif
@@ -2032,22 +2037,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	color.xyz = sRGB2Lin(color.xyz);
 
-#	if defined(DYNAMIC_CUBEMAPS)
-	float3 fresnel = 0.0;
-#		if defined(EYE)
-	fresnel = sqrt(color.xyz) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2, diffuseColor, viewPosition.z) * envMask;
-#		elif defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX)
-	fresnel = lerp(sqrt(color.xyz), sqrt(sRGB2Lin(envColor.xyz)), saturate(envMask)) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2 - saturate(envMask), diffuseColor, viewPosition.z) * (1.0 - ((float)dynamicCubemap * saturate(envMask)));
-#		else
-	fresnel = sqrt(color.xyz) * GetDynamicCubemapFresnel(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 0.0, 2, diffuseColor, viewPosition.z);
-#		endif
-#		if defined(WETNESS_EFFECTS)
-	color.xyz += fresnel * (1.0 - wetnessGlossinessSpecular);
-#		else
-	color.xyz += fresnel;
-#		endif
-#	endif
-
 #	if defined(WETNESS_EFFECTS)
 	color.xyz += wetnessSpecular * wetnessGlossinessSpecular;
 #	endif
@@ -2057,7 +2046,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 #	if defined(WATER_CAUSTICS)
-	color.xyz *= ComputeWaterCaustics(waterHeight, input.WorldPosition.xyz, worldSpaceNormal);
+	if (perPassWaterCaustics[0].EnableWaterCaustics)
+		color.xyz *= ComputeWaterCaustics(waterHeight, input.WorldPosition.xyz, worldSpaceNormal);
 #	endif
 
 	color.xyz = Lin2sRGB(color.xyz);

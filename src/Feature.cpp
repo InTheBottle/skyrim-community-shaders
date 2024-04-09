@@ -17,6 +17,7 @@
 #include "Features/WaterCaustics.h"
 #include "Features/WaterParallax.h"
 #include "Features/WetnessEffects.h"
+#include "State.h"
 
 void Feature::Load(json&)
 {
@@ -122,19 +123,9 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		ScreenSpaceGI::GetSingleton()
 	};
 
-	static std::vector<Feature*> featuresVR = {
-		DynamicCubemaps::GetSingleton(),
-		GrassLighting::GetSingleton(),
-		GrassCollision::GetSingleton(),
-		ScreenSpaceShadows::GetSingleton(),
-		ExtendedMaterials::GetSingleton(),
-		WetnessEffects::GetSingleton(),
-		LightLimitFix::GetSingleton(),
-		TerrainBlending::GetSingleton(),
-		WaterCaustics::GetSingleton(),
-		SubsurfaceScattering::GetSingleton(),
-		ScreenSpaceGI::GetSingleton()
-	};
-
-	return REL::Module::IsVR() ? featuresVR : features;
+	static std::vector<Feature*> featuresVR(features);
+	std::erase_if(featuresVR, [](Feature* a) {
+		return !a->SupportsVR();
+	});
+	return (REL::Module::IsVR() && !State::GetSingleton()->IsDeveloperMode()) ? featuresVR : features;
 }

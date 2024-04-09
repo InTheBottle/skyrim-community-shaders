@@ -70,4 +70,6 @@ struct ScreenSpaceShadows : Feature
 	void DrawNormalMappingShadows();
 
 	virtual void RestoreDefaultSettings();
+
+	bool SupportsVR() override { return true; };
 };

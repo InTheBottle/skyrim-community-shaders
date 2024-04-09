@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "State.h"
 
 struct WaterBlending : Feature
 {
@@ -46,4 +47,5 @@ public:
 	virtual void Save(json& o_json);
 
 	virtual void RestoreDefaultSettings();
+	bool SupportsVR() override { return true; };
 };

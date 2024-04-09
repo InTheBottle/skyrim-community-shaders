@@ -23,8 +23,6 @@ void State::Draw()
 				ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
 				UpdateSharedData(currentShader, currentPixelDescriptor);
 
-				auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-
 				static RE::BSGraphics::VertexShader* vertexShader = nullptr;
 				static RE::BSGraphics::PixelShader* pixelShader = nullptr;
 
@@ -32,17 +30,28 @@ void State::Draw()
 				pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
 
 				if (vertexShader && pixelShader) {
-					context->VSSetShader(vertexShader->shader, NULL, NULL);
-					context->PSSetShader(pixelShader->shader, NULL, NULL);
+					context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+					context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+				}
+
+				BeginPerfEvent(std::format("Draw: CommunityShaders {}::{}", magic_enum::enum_name(currentShader->shaderType.get()), currentPixelDescriptor));
+				if (IsDeveloperMode()) {
+					SetPerfMarker(std::format("Defines: {}", SIE::ShaderCache::GetDefinesString(currentShader->shaderType.get(), currentPixelDescriptor)));
 				}
 
 				if (vertexShader && pixelShader) {
 					for (auto* feature : Feature::GetFeatureList()) {
 						if (feature->loaded) {
+							auto hasShaderDefine = feature->HasShaderDefine(currentShader->shaderType.get());
+							if (hasShaderDefine)
+								BeginPerfEvent(feature->GetShortName());
 							feature->Draw(currentShader, currentPixelDescriptor);
+							if (hasShaderDefine)
+								EndPerfEvent();
 						}
 					}
 				}
+				EndPerfEvent();
 			}
 		}
 	}
@@ -51,9 +60,6 @@ void State::Draw()
 
 void State::DrawDeferred()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
-
 	ID3D11ShaderResourceView* srvs[8];
 	context->PSGetShaderResources(0, 8, srvs);
 
@@ -107,9 +113,6 @@ void State::DrawDeferred()
 
 void State::DrawPreProcess()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
-
 	ID3D11ShaderResourceView* srvs[8];
 	context->PSGetShaderResources(0, 8, srvs);
 
@@ -181,19 +184,42 @@ void State::Setup()
 	Bindings::GetSingleton()->SetupResources();
 }
 
-void State::Load(bool a_test)
+static const std::string& GetConfigPath(State::ConfigMode a_configMode)
 {
+	switch (a_configMode) {
+	case State::ConfigMode::USER:
+		return State::GetSingleton()->userConfigPath;
+	case State::ConfigMode::TEST:
+		return State::GetSingleton()->testConfigPath;
+	case State::ConfigMode::DEFAULT:
+	default:
+		return State::GetSingleton()->defaultConfigPath;
+	}
+}
+
+void State::Load(ConfigMode a_configMode)
+{
+	ConfigMode configMode = a_configMode;
 	auto& shaderCache = SIE::ShaderCache::Instance();
 
-	std::string configPath = a_test ? testConfigPath : userConfigPath;
+	std::string configPath = GetConfigPath(configMode);
 	std::ifstream i(configPath);
 	if (!i.is_open()) {
 		logger::info("Unable to open user config file ({}); trying default ({})", configPath, defaultConfigPath);
-		configPath = defaultConfigPath;
+		configMode = ConfigMode::DEFAULT;
+		configPath = GetConfigPath(configMode);
 		i.open(configPath);
 		if (!i.is_open()) {
-			logger::error("Error opening config file ({})\n", configPath);
-			return;
+			logger::info("No default config ({}), generating new one", configPath);
+			std::fill(enabledClasses, enabledClasses + RE::BSShader::Type::Total - 1, true);
+			enabledClasses[RE::BSShader::Type::ImageSpace - 1] = false;
+			enabledClasses[RE::BSShader::Type::Utility - 1] = false;
+			Save(configMode);
+			i.open(configPath);
+			if (!i.is_open()) {
+				logger::error("Error opening config file ({})\n", configPath);
+				return;
+			}
 		}
 	}
 	logger::info("Loading config file ({})", configPath);
@@ -256,14 +282,15 @@ void State::Load(bool a_test)
 	i.close();
 	if (settings["Version"].is_string() && settings["Version"].get<std::string>() != Plugin::VERSION.string()) {
 		logger::info("Found older config for version {}; upgrading to {}", (std::string)settings["Version"], Plugin::VERSION.string());
-		Save();
+		Save(configMode);
 	}
 }
 
-void State::Save(bool a_test)
+void State::Save(ConfigMode a_configMode)
 {
 	auto& shaderCache = SIE::ShaderCache::Instance();
-	std::ofstream o{ a_test ? testConfigPath : userConfigPath };
+	std::string configPath = GetConfigPath(a_configMode);
+	std::ofstream o{ configPath };
 	json settings;
 
 	Menu::GetSingleton()->Save(settings);
@@ -296,7 +323,7 @@ void State::Save(bool a_test)
 		feature->Save(settings);
 
 	o << settings.dump(1);
-	logger::info("Saving settings to {}", userConfigPath);
+	logger::info("Saving settings to {}", configPath);
 }
 
 void State::PostPostLoad()
@@ -423,15 +450,18 @@ void State::SetupResources()
 	D3D11_TEXTURE2D_DESC texDesc{};
 	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
 
+	isVR = REL::Module::IsVR();
 	screenWidth = (float)texDesc.Width;
 	screenHeight = (float)texDesc.Height;
+	context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
+	device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
+	shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 {
 	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting || a_shader.shaderType.get() == RE::BSShader::Type::Water || a_shader.shaderType.get() == RE::BSShader::Type::Effect) {
-		auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-
 		if (a_vertexDescriptor != lastVertexDescriptor || a_pixelDescriptor != lastPixelDescriptor) {
 			PerShader data{};
 			data.VertexShaderDescriptor = a_vertexDescriptor;
@@ -528,12 +558,25 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 	}
 }
 
+void State::BeginPerfEvent(std::string_view title)
+{
+	pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+}
+
+void State::EndPerfEvent()
+{
+	pPerf->EndEvent();
+}
+
+void State::SetPerfMarker(std::string_view title)
+{
+	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
+}
+
 void State::UpdateSharedData(const RE::BSShader* a_shader, const uint32_t)
 {
 	if (a_shader->shaderType.get() == RE::BSShader::Type::Lighting) {
 		bool updateBuffer = false;
-
-		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 		bool currentReflections = (!REL::Module::IsVR() ?
 										  shadowState->GetRuntimeData().cubeMapRenderTarget :

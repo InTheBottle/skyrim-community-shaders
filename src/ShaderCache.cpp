@@ -1148,21 +1148,21 @@ namespace SIE
 					ShaderClass::Vertex, type, descriptor);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						(RE::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
+						(REX::W32::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
 					newShader->constantBuffers[0].data = bufferData.get();
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						(RE::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
+						(REX::W32::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
 					newShader->constantBuffers[1].data = bufferData.get();
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						(RE::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
+						(REX::W32::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
 					newShader->constantBuffers[2].data = bufferData.get();
@@ -1205,21 +1205,21 @@ namespace SIE
 					ShaderClass::Pixel, type, descriptor);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						(RE::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
+						(REX::W32::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
 					newShader->constantBuffers[0].data = bufferData.get();
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						(RE::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
+						(REX::W32::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
 					newShader->constantBuffers[1].data = bufferData.get();
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						(RE::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
+						(REX::W32::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
 					newShader->constantBuffers[2].data = bufferData.get();
@@ -1605,7 +1605,7 @@ namespace SIE
 			std::lock_guard lockGuard(vertexShadersMutex);
 
 			const auto result = (*device)->CreateVertexShader(shaderBlob->GetBufferPointer(),
-				newShader->byteCodeSize, nullptr, &newShader->shader);
+				newShader->byteCodeSize, nullptr, reinterpret_cast<ID3D11VertexShader**>(&newShader->shader));
 			if (FAILED(result)) {
 				logger::error("Failed to create vertex shader {}::{}",
 					magic_enum::enum_name(shader.shaderType.get()), descriptor);
@@ -1633,7 +1633,7 @@ namespace SIE
 
 			std::lock_guard lockGuard(pixelShadersMutex);
 			const auto result = (*device)->CreatePixelShader(shaderBlob->GetBufferPointer(),
-				shaderBlob->GetBufferSize(), nullptr, &newShader->shader);
+				shaderBlob->GetBufferSize(), nullptr, reinterpret_cast<ID3D11PixelShader**>(&newShader->shader));
 			if (FAILED(result)) {
 				logger::error("Failed to create pixel shader {}::{}",
 					magic_enum::enum_name(shader.shaderType.get()),
@@ -1648,6 +1648,14 @@ namespace SIE
 			}
 		}
 		return nullptr;
+	}
+
+	std::string ShaderCache::GetDefinesString(RE::BSShader::Type enumType, uint32_t descriptor)
+	{
+		std::array<D3D_SHADER_MACRO, 64> defines{};
+		SIE::SShaderCache::GetShaderDefines(enumType, descriptor, &defines[0]);
+
+		return SIE::SShaderCache::MergeDefinesString(defines, true);
 	}
 
 	uint64_t ShaderCache::GetCachedHitTasks()
@@ -1879,6 +1887,29 @@ namespace SIE
 			GetHumanTime(GetEta() + totalMs));
 	}
 
+	void UpdateListener::UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache& cache, bool& clearCache, bool& fileDone)
+	{
+		std::string extension = filePath.extension().string();
+		std::string parentDir = filePath.parent_path().string();
+		std::string shaderTypeString = filePath.stem().string();
+		std::chrono::time_point<std::chrono::system_clock> modifiedTime{};
+		auto shaderType = magic_enum::enum_cast<RE::BSShader::Type>(shaderTypeString, magic_enum::case_insensitive);
+		fileDone = true;
+		if (std::filesystem::exists(filePath))
+			modifiedTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(filePath));
+		else  // if file doesn't exist, don't do anything
+			return;
+		if (!std::filesystem::is_directory(filePath) && extension.starts_with(".hlsl") && parentDir.ends_with("Shaders") && shaderType.has_value()) {  // TODO: Case insensitive checks
+			// Shader types, so only invalidate specific shader type (e.g,. Lighting)
+			cache.InsertModifiedShaderMap(shaderTypeString, modifiedTime);
+			cache.Clear(shaderType.value());
+		} else if (!std::filesystem::is_directory(filePath) && extension.starts_with(".hlsl")) {  // TODO: Case insensitive checks
+			// all other shaders, since we don't know what is using it, clear everything
+			clearCache = true;
+		}
+		fileDone = false;
+	}
+
 	void UpdateListener::processQueue()
 	{
 		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
@@ -1890,36 +1921,27 @@ namespace SIE
 				bool clearCache = false;
 				for (fileAction fAction : queue) {
 					const std::filesystem::path filePath = std::filesystem::path(std::format("{}\\{}", fAction.dir, fAction.filename));
-					std::chrono::time_point<std::chrono::system_clock> modifiedTime{};
-					std::string extension = filePath.extension().string();
-					std::string parentDir = filePath.parent_path().string();
-					std::string shaderTypeString = filePath.stem().string();
-					auto shaderType = magic_enum::enum_cast<RE::BSShader::Type>(shaderTypeString, magic_enum::case_insensitive);
+					bool fileDone = false;
 					switch (fAction.action) {
 					case efsw::Actions::Add:
+						logger::debug("Detected Added path {}", filePath.string());
+						UpdateCache(filePath, cache, clearCache, fileDone);
 						break;
 					case efsw::Actions::Delete:
+						logger::debug("Detected Deleted path {}", filePath.string());
 						break;
 					case efsw::Actions::Modified:
-						logger::debug("Detected changed path {}", filePath.string());
-						if (std::filesystem::exists(filePath))
-							modifiedTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(filePath));
-						else  // if file doesn't exist, don't do anything
-							return;
-						if (!std::filesystem::is_directory(filePath) && extension.starts_with(".hlsl") && parentDir.ends_with("Shaders") && shaderType.has_value()) {  // TODO: Case insensitive checks
-							// Shader types, so only invalidate specific shader type (e.g,. Lighting)
-							cache.InsertModifiedShaderMap(shaderTypeString, modifiedTime);
-							cache.Clear(shaderType.value());
-						} else if (!std::filesystem::is_directory(filePath) && extension.starts_with(".hlsl")) {  // TODO: Case insensitive checks
-							// all other shaders, since we don't know what is using it, clear everything
-							clearCache = true;
-						}
+						logger::debug("Detected Changed path {}", filePath.string());
+						UpdateCache(filePath, cache, clearCache, fileDone);
 						break;
 					case efsw::Actions::Moved:
+						logger::debug("Detected Moved path {}", filePath.string());
 						break;
 					default:
 						logger::error("Filewatcher received invalid action {}", magic_enum::enum_name(fAction.action));
 					}
+					if (fileDone)
+						continue;
 				}
 				if (clearCache) {
 					cache.DeleteDiskCache();
