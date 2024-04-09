@@ -10,6 +10,8 @@ Texture2D<unorm half> ShadowMaskTexture : register(t4);
 Texture2D<unorm half> DepthTexture : register(t5);
 Texture2D<unorm half4> GITexture : register(t6);
 
+Texture2DArray<float4> TexShadowMapSampler : register(t12);
+
 RWTexture2D<half4> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 
@@ -55,10 +57,11 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
+
 [numthreads(32, 32, 1)] void DirectionalPass(uint3 globalId
-											 : SV_DispatchThreadID, uint3 localId
-											 : SV_GroupThreadID, uint3 groupId
-											 : SV_GroupID) {
+												   : SV_DispatchThreadID, uint3 localId
+												   : SV_GroupThreadID, uint3 groupId
+												   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -90,18 +93,18 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
-
+	
 	half weight = 1.0;
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
-	half shadow = 1.0;
+	half shadow = ShadowMaskTexture[globalId.xy];
 
 	half4 albedo = AlbedoTexture[globalId.xy];
 
 	if (NdotL > 0.0 || albedo.w > 0.0) {
 		shadow = ShadowMaskTexture[globalId.xy];
 
-		if (shadow != 0) {
+		if (shadow != 0){
 			// Approximation of PCF in screen-space
 			for (int i = -1; i < 1; i++) {
 				for (int k = -1; k < 1; k++) {
@@ -121,13 +124,30 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 color = MainRW[globalId.xy].rgb;
 	color += albedo * lerp(max(0, NdotL), 1.0, albedo.w) * DirLightColor.xyz * shadow;
 
-	MainRW[globalId.xy] = half4(color.xyz, 1.0);
+    float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
+
+    float4 positionMS = mul(positionCS, InvViewProjMatrix[0]);
+    positionMS.xyz = positionMS.xyz / positionMS.w;
+
+	float shadowMapDepth = positionMS.w;
+
+	shadow = 0;
+        
+	float3 positionLS = mul((float4x3)ShadowMapProj[0], float4(positionMS.xyz, 1)).xyz;
+	
+	float shadowMapValue = TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, 0), 0).x;
+	if (shadowMapValue >= positionLS.z + 0.1)
+	{
+		shadow = 0;
+	}
+
+	MainRW[globalId.xy] = half4(positionMS.w, 1.0);
 };
 
 [numthreads(32, 32, 1)] void AmbientCompositePass(uint3 globalId
-												  : SV_DispatchThreadID, uint3 localId
-												  : SV_GroupThreadID, uint3 groupId
-												  : SV_GroupID) {
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -146,16 +166,15 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half ao = giAo.w;
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
-	diffuseColor.rgb += albedo * directionalAmbientColor * ao + gi;
+//	diffuseColor.rgb += albedo * directionalAmbientColor * ao + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor.xyz, 1.0);
 }
 
-	[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
-												   : SV_DispatchThreadID, uint3 localId
-												   : SV_GroupThreadID, uint3 groupId
-												   : SV_GroupID)
-{
+[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -169,7 +188,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
 
 	half glossiness = normalGlossiness.z;
-	half3 color = diffuseColor + specularColor;
+	half3 color = diffuseColor;
 
 #if defined(DEBUG)
 	half2 texCoord = half2(globalId.xy) / BufferDim.xy;

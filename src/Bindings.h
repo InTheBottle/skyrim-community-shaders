@@ -52,6 +52,18 @@ public:
 	bool inWorld = false;
 	bool deferredPass = false;
 
+	struct PerGeometry
+	{
+		float4 DebugColor;
+		float4 PropertyColor;
+		float4 AlphaTestRef;
+		float4 ShadowLightParam;
+		DirectX::XMFLOAT4X3 FocusShadowMapProj[4];
+		DirectX::XMFLOAT4X3 ShadowMapProj[4];
+	};
+
+	PerGeometry bufferCache[4];
+
 	struct alignas(16) DeferredCB
 	{
 		float4 CamPosAdjust[2];
@@ -69,7 +81,12 @@ public:
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		uint FrameCount;
 		uint pad0[3];
+		PerGeometry perGeometry;
 	};
+
+	uint currentLightIndex = 0;
+	uint currentShadowIndex = 0;
+	float4x4 shadowLightTransform[4][3];
 
 	ConstantBuffer* deferredCB = nullptr;
 
@@ -124,6 +141,18 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct CreateRenderTarget_ShadowMask_D3DXMatrixTranspose
+		{
+			static void thunk(float4x4& Out, float4x4& In)
+			{
+				func(Out, In);
+				auto singleton = GetSingleton();
+				singleton->shadowLightTransform[singleton->currentLightIndex][singleton->currentShadowIndex];
+				singleton->currentShadowIndex++;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
@@ -132,6 +161,8 @@ public:
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
+
+			stl::write_thunk_call<CreateRenderTarget_ShadowMask_D3DXMatrixTranspose>(REL::RelocationID(100981, 77226).address() + REL::Relocate(0x27A, 0x2BC));
 
 			logger::info("[Bindings] Installed hooks");
 		}

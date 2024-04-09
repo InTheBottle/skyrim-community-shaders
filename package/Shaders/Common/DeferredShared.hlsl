@@ -15,4 +15,10 @@ cbuffer PerFrameDeferredShared : register(b0)
 	row_major float3x4 DirectionalAmbient;
 	uint FrameCount;
 	uint pad0[3];
+	float4 DebugColor;
+	float4 PropertyColor;
+	float4 AlphaTestRef;
+	float4 ShadowLightParam;
+	float4x3 FocusShadowMapProj[4];
+	float4x3 ShadowMapProj[4];
 };

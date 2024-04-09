@@ -267,6 +267,19 @@ void Bindings::UpdateConstantBuffer()
 
 	data.CameraData = Util::GetCameraData();
 
+	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+	auto shadowDirLight = shadowSceneNode->GetRuntimeData().shadowDirLight;
+	if (shadowDirLight && shadowDirLight->shadowLightIndex == 0)
+	{
+		data.perGeometry = bufferCache[0];
+		//for (uint32_t i = 0; i < 3; i++)
+		//{
+		//	data.LightTransform[i] = shadowLightTransform[0][i];
+		//	data.StartSplitDistances[i] = shadowDirLight->startSplitDistances[i];
+		//	data.EndSplitDistances[i] = shadowDirLight->endSplitDistances[i];
+		//}
+	}
+
 	deferredCB->Update(data);
 }
 
@@ -419,7 +432,7 @@ void Bindings::DeferredPasses()
 	// Only render directional shadows if the game has a directional shadow caster
 	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 	auto shadowDirLight = (RE::BSShadowLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
-	bool dirShadow = shadowDirLight && shadowDirLight->maskSelect == 0;
+	bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
 
 	if (dirShadow) {
 		if (ScreenSpaceShadows::GetSingleton()->loaded) {
@@ -452,6 +465,10 @@ void Bindings::DeferredPasses()
 
 		context->CSSetSamplers(0, 1, &linearSampler);
 
+		auto shadowDepths = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kSHADOWMAPS];
+		auto view = shadowDepths.depthSRV;
+		context->CSSetShaderResources(12, 1, &view);
+
 		auto shader = dirShadow ? GetComputeDirectionalShadow() : GetComputeDirectional();
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -462,6 +479,9 @@ void Bindings::DeferredPasses()
 		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 32.0f);
 
 		context->Dispatch(dispatchX, dispatchY, 1);
+
+		ID3D11ShaderResourceView* views[1]{ nullptr };
+		context->CSSetShaderResources(12, ARRAYSIZE(views), views);
 	}
 
 	// Features that require full diffuse lighting should be put here

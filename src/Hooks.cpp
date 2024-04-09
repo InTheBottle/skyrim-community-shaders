@@ -261,6 +261,23 @@ void hk_PollInputDevices(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::
 	_InputFunc(a_dispatcher, a_events);
 }
 
+void hk_BSRenderPass__SetupShadowLightParameters(RE::BSRenderPass* This, unsigned int lightIndex, RE::BSGraphics::ConstantGroup* constantGroup);
+
+decltype(&hk_BSRenderPass__SetupShadowLightParameters) ptr_BSRenderPass__SetupShadowLightParameters;
+
+void hk_BSRenderPass__SetupShadowLightParameters(RE::BSRenderPass* This, unsigned int lightIndex, RE::BSGraphics::ConstantGroup* constantGroup)
+{
+	auto singleton = Bindings::GetSingleton();
+	singleton->currentLightIndex = lightIndex;
+	singleton->currentShadowIndex = 0;
+	(ptr_BSRenderPass__SetupShadowLightParameters)(This, lightIndex, constantGroup);
+	auto pixelShader = RE::BSGraphics::RendererShadowState::GetSingleton()->GetRuntimeData().currentPixelShader;
+
+	auto test = reinterpret_cast<Bindings::PerGeometry*>(reinterpret_cast<float*>(constantGroup->data) + 4 * pixelShader->constantTable[6]);
+
+	singleton->bufferCache[lightIndex] = *test;
+}
+
 namespace Hooks
 {
 	struct BSGraphics_Renderer_Init_InitD3D
@@ -410,6 +427,7 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+
 	void Install()
 	{
 		SKSE::AllocTrampoline(14);
@@ -451,5 +469,8 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_Normals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x458, 0x45B, 0x5B0));
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		stl::write_thunk_call<CreateRenderTarget_ShadowMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x555, 0x554, 0x6b9));
+	
+		logger::info("Hooking BSRenderPass::SetupShadowLightParameters");
+		*(uintptr_t*)&ptr_BSRenderPass__SetupShadowLightParameters = Detours::X64::DetourFunction(REL::RelocationID(100981, 107175).address(), (uintptr_t)&hk_BSRenderPass__SetupShadowLightParameters);
 	}
 }
