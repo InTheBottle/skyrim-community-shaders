@@ -27,8 +27,6 @@ void State::Draw()
 					ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
 					UpdateSharedData(currentShader, currentPixelDescriptor);
 
-					auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-
 					static RE::BSGraphics::VertexShader* vertexShader = nullptr;
 					static RE::BSGraphics::PixelShader* pixelShader = nullptr;
 
@@ -36,8 +34,8 @@ void State::Draw()
 					pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
 
 					if (vertexShader && pixelShader) {
-						context->VSSetShader(vertexShader->shader, NULL, NULL);
-						context->PSSetShader(pixelShader->shader, NULL, NULL);
+						context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+						context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
 					}
 
 					if (vertexShader && pixelShader) {

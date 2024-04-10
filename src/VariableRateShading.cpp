@@ -47,7 +47,7 @@ void VariableRateShading::UpdateVRS()
 		return;
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	ID3D11RenderTargetView* views[8];
 	ID3D11DepthStencilView* dsv;
@@ -100,8 +100,7 @@ void VariableRateShading::UpdateVRS()
 
 void VariableRateShading::ComputeShadingRate()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	ID3D11ShaderResourceView* srvs[1]{
 		reductionData->srv.get()
@@ -157,7 +156,7 @@ std::vector<uint8_t> CreateSingleEyeFixedFoveatedVRSPattern(int width, int heigh
 void VariableRateShading::Setup()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	logger::info("Trying to load NVAPI...");
 
@@ -231,8 +230,7 @@ void VariableRateShading::Setup()
 
 void VariableRateShading::SetupSingleEyeVRS(int eye, int width, int height)
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto device = renderer->GetRuntimeData().forwarder;
+	auto& device = State::GetSingleton()->device;
 
 	int vrsWidth = width / NV_VARIABLE_PIXEL_SHADING_TILE_WIDTH;
 	int vrsHeight = height / NV_VARIABLE_PIXEL_SHADING_TILE_HEIGHT;
@@ -282,8 +280,7 @@ void VariableRateShading::UpdateViews(bool a_enable)
 	if (!vrsActive)
 		return;
 
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
