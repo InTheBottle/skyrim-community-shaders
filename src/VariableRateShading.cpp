@@ -93,7 +93,6 @@ void VariableRateShading::UpdateVRS()
 			views[i]->Release();
 	}
 
-
 	if (dsv)
 		dsv->Release();
 }
@@ -208,22 +207,17 @@ void VariableRateShading::Setup()
 		reductionData->CreateUAV(uavDesc);
 	}
 
-
 	{
-		for (uint i = 0; i < 114; i++)
-		{
+		for (uint i = 0; i < 114; i++) {
 			auto& target = renderer->GetRuntimeData().renderTargets[i];
-			if (target.texture)
-			{
+			if (target.texture) {
 				D3D11_TEXTURE2D_DESC texDesc{};
 				target.texture->GetDesc(&texDesc);
 
-				if (texDesc.Width == width && texDesc.Height == height)
-				{
+				if (texDesc.Width == width && texDesc.Height == height) {
 					screenTargets.insert(i);
 				}
 			}
-
 		}
 	}
 }
@@ -286,8 +280,7 @@ void VariableRateShading::UpdateViews(bool a_enable)
 
 	vrsPass = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
 
-	if (state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY)
-	{
+	if (state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY) {
 		vrsPass = true;
 	}
 
@@ -309,8 +302,7 @@ void VariableRateShading::UpdateViews(bool a_enable)
 	}
 
 	NV_D3D11_VIEWPORT_SHADING_RATE_DESC vsrd[8];
-	for (uint i = 0; i < 8; i++)
-	{
+	for (uint i = 0; i < 8; i++) {
 		vsrd[i].enableVariablePixelShadingRate = false;
 		memset(vsrd[i].shadingRateTable, NV_PIXEL_X0_CULL_RASTER_PIXELS, sizeof(vsrd[0].shadingRateTable));
 	}

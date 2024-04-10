@@ -4,10 +4,10 @@
 #include <Features/CloudShadows.h>
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
-#include <VariableRateShading.h>
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
 #include <ShaderCache.h>
+#include <VariableRateShading.h>
 
 void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
