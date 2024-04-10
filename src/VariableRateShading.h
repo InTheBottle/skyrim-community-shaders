@@ -1,7 +1,7 @@
 #pragma once
 
-#include <nvapi.h>
 #include "Buffer.h"
+#include <nvapi.h>
 
 class VariableRateShading
 {
@@ -39,5 +39,4 @@ public:
 	void Setup();
 	void SetupSingleEyeVRS(int eye, int width, int height);
 	void UpdateViews(bool a_enable);
-
 };
