@@ -38,10 +38,20 @@ void State::Draw()
 						context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
 					}
 
+					BeginPerfEvent(std::format("Draw: CommunityShaders {}::{}", magic_enum::enum_name(currentShader->shaderType.get()), currentPixelDescriptor));
+					if (IsDeveloperMode()) {
+						SetPerfMarker(std::format("Defines: {}", SIE::ShaderCache::GetDefinesString(currentShader->shaderType.get(), currentPixelDescriptor)));
+					}
+
 					if (vertexShader && pixelShader) {
 						for (auto* feature : Feature::GetFeatureList()) {
 							if (feature->loaded) {
+								auto hasShaderDefine = feature->HasShaderDefine(currentShader->shaderType.get());
+								if (hasShaderDefine)
+									BeginPerfEvent(feature->GetShortName());
 								feature->Draw(currentShader, currentPixelDescriptor);
+								if (hasShaderDefine)
+									EndPerfEvent();
 							}
 						}
 					}
