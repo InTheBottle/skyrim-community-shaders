@@ -12,42 +12,39 @@
 #include "Bindings.h"
 #include "Features/TerrainBlending.h"
 
+#include "VariableRateShading.h"
+
 void State::Draw()
 {
 	Bindings::GetSingleton()->CheckOpaque();
-	auto& shaderCache = SIE::ShaderCache::Instance();
-	if (shaderCache.IsEnabled() && currentShader && updateShader) {
+	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
-		if (type > 0 && type < RE::BSShader::Type::Total) {
-			if (enabledClasses[type - 1]) {
-				ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
-				UpdateSharedData(currentShader, currentPixelDescriptor);
+		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky);
+		auto& shaderCache = SIE::ShaderCache::Instance();
+		if (shaderCache.IsEnabled()) {
+			if (type > 0 && type < RE::BSShader::Type::Total) {
+				if (enabledClasses[type - 1]) {
+					ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
+					UpdateSharedData(currentShader, currentPixelDescriptor);
 
-				static RE::BSGraphics::VertexShader* vertexShader = nullptr;
-				static RE::BSGraphics::PixelShader* pixelShader = nullptr;
+					auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 
-				vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);
-				pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
+					static RE::BSGraphics::VertexShader* vertexShader = nullptr;
+					static RE::BSGraphics::PixelShader* pixelShader = nullptr;
 
-				if (vertexShader && pixelShader) {
-					context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
-					context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
-				}
+					vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);
+					pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
 
-				BeginPerfEvent(std::format("Draw: CommunityShaders {}::{}", magic_enum::enum_name(currentShader->shaderType.get()), currentPixelDescriptor));
-				if (IsDeveloperMode()) {
-					SetPerfMarker(std::format("Defines: {}", SIE::ShaderCache::GetDefinesString(currentShader->shaderType.get(), currentPixelDescriptor)));
-				}
+					if (vertexShader && pixelShader) {
+						context->VSSetShader(vertexShader->shader, NULL, NULL);
+						context->PSSetShader(pixelShader->shader, NULL, NULL);
+					}
 
-				if (vertexShader && pixelShader) {
-					for (auto* feature : Feature::GetFeatureList()) {
-						if (feature->loaded) {
-							auto hasShaderDefine = feature->HasShaderDefine(currentShader->shaderType.get());
-							if (hasShaderDefine)
-								BeginPerfEvent(feature->GetShortName());
-							feature->Draw(currentShader, currentPixelDescriptor);
-							if (hasShaderDefine)
-								EndPerfEvent();
+					if (vertexShader && pixelShader) {
+						for (auto* feature : Feature::GetFeatureList()) {
+							if (feature->loaded) {
+								feature->Draw(currentShader, currentPixelDescriptor);
+							}
 						}
 					}
 				}
@@ -173,6 +170,7 @@ void State::Reset()
 	Bindings::GetSingleton()->Reset();
 	if (!RE::UI::GetSingleton()->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
+	VariableRateShading::GetSingleton()->UpdateVRS();
 }
 
 void State::Setup()
@@ -182,6 +180,7 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	Bindings::GetSingleton()->SetupResources();
+	VariableRateShading::GetSingleton()->Setup();
 }
 
 static const std::string& GetConfigPath(State::ConfigMode a_configMode)

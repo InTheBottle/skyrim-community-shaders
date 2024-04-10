@@ -6,6 +6,7 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "VariableRateShading.h"
 
 #include "ShaderTools/BSShaderHooks.h"
 
@@ -142,13 +143,7 @@ decltype(&hk_BSGraphics_SetDirtyStates) ptr_BSGraphics_SetDirtyStates;
 
 void hk_BSGraphics_SetDirtyStates(bool isCompute)
 {
-	//auto& shaderCache = SIE::ShaderCache::Instance();
-
-	//if (shaderCache.IsEnabled())
-	//	Bindings::GetSingleton()->SetDirtyStates(isCompute);
-
 	(ptr_BSGraphics_SetDirtyStates)(isCompute);
-
 	State::GetSingleton()->Draw();
 }
 
