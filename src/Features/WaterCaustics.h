@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Feature.h"
-
+#include "State.h"
 struct WaterCaustics : Feature
 {
 public:
@@ -10,6 +10,20 @@ public:
 		static WaterCaustics singleton;
 		return &singleton;
 	}
+
+	struct Settings
+	{
+		uint32_t EnableWaterCaustics = 1;
+	};
+
+	struct PerPass
+	{
+		Settings settings;
+	};
+
+	Settings settings;
+
+	std::unique_ptr<Buffer> perPass = nullptr;
 
 	ID3D11ShaderResourceView* causticsView;
 
@@ -30,4 +44,6 @@ public:
 	virtual void Save(json& o_json);
 
 	virtual void RestoreDefaultSettings();
+
+	bool SupportsVR() override { return true; };
 };

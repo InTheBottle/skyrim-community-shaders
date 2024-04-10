@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "State.h"
 
 class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
@@ -127,4 +128,6 @@ public:
 	void UpdateCubemapCapture();
 
 	virtual void DrawDeferred();
+
+	bool SupportsVR() override { return true; };
 };

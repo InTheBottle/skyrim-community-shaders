@@ -37,10 +37,10 @@ struct ScreenSpaceShadows : Feature
 		float NearDepthValue;  // Set to the Depth Buffer Value for the near clip plane, as determined by renderer projection matrix setup (typically 1).
 
 		// Sampling data:
-		float InvDepthTextureSize[2];	// Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
-										// If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
-										// The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
-		
+		float InvDepthTextureSize[2];  // Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
+									   // If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
+									   // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
+
 		BendSettings settings;
 	};
 
@@ -49,8 +49,6 @@ struct ScreenSpaceShadows : Feature
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchCS = nullptr;
 	ID3D11ComputeShader* normalMappingShadowsCS = nullptr;
-
-	Texture2D* shadowMaskTemp = nullptr;
 
 	virtual void SetupResources();
 	virtual void Reset();
@@ -70,4 +68,6 @@ struct ScreenSpaceShadows : Feature
 	void DrawNormalMappingShadows();
 
 	virtual void RestoreDefaultSettings();
+
+	bool SupportsVR() override { return true; };
 };

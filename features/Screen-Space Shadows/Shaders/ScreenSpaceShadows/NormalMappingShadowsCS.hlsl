@@ -1,27 +1,11 @@
-
+#include "../Common/DeferredShared.hlsl"
 #include "../Common/GBuffer.hlsl"
 
-Texture2D<unorm half4> NormalRoughnessTexture 	: register(t0);
-Texture2D<unorm half> DepthTexture 				: register(t1);
+Texture2D<unorm half4> NormalRoughnessTexture : register(t0);
+Texture2D<unorm half> DepthTexture : register(t1);
+Texture2D<unorm half4> MasksTexture : register(t2);
 
-RWTexture2D<unorm half> ShadowMaskTextureRW 	: register(u0);
-
-cbuffer PerFrame : register(b0)
-{
-	float4 DirLightDirectionVS[2];
-	float4 DirLightColor;
-	float4 CameraData;
-	float2 BufferDim;
-	float2 RcpBufferDim;
-	float4x4 ViewMatrix[2];
-	float4x4 ProjMatrix[2];
-	float4x4 ViewProjMatrix[2];
-	float4x4 InvViewMatrix[2];
-	float4x4 InvProjMatrix[2];
-	row_major float3x4 DirectionalAmbient;
-	uint FrameCount;
-	uint pad0[3];
-};
+RWTexture2D<unorm half> ShadowMaskTextureRW : register(u0);
 
 half GetScreenDepth(half depth)
 {
@@ -61,21 +45,19 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
-[numthreads(32, 32, 1)] void main(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID) 
-{
+[numthreads(32, 32, 1)] void main(uint3 globalId
+								  : SV_DispatchThreadID, uint3 localId
+								  : SV_GroupThreadID, uint3 groupId
+								  : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim;
 
 	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy].xy);
 
-	half skinMask = NormalRoughnessTexture[globalId.xy].w;
-	
-	half shadowMask = ShadowMaskTextureRW[globalId.xy].x;
-
-	if (skinMask != 0)
-	{
-		ShadowMaskTextureRW[globalId.xy] = shadowMask;
+	half skinMask = MasksTexture[globalId.xy].x;
+	if (skinMask == 1.0)
 		return;
-	}
+
+	half shadowMask = ShadowMaskTextureRW[globalId.xy].x;
 
 	half rawDepth = DepthTexture[globalId.xy];
 	if (rawDepth == 1.0)
@@ -89,7 +71,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half3 viewPosition = DepthToView(uv, rawDepth, 0);
 	viewPosition.z = depth;
-	
+
 	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 5;
 	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
 
@@ -97,30 +79,28 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half2 endPosPixel = clamp(endPosUV * BufferDim, 0, BufferDim);
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
-	
+
 	half shadow = 0;
 
 	half3 viewDirectionVS = normalize(viewPosition);
-	
+
 	// Fade based on perceivable difference
 	half fade = smoothstep(4, 5, length(startPosPixel - endPosPixel));
 
 	// Only march for: not shadowed, not self-shadowed, march distance greater than 1 pixel
 	bool validMarchPixel = NdotL > 0.0 && shadowMask != 0.0 && fade > 0.0;
-	if (validMarchPixel)
-	{
+	if (validMarchPixel) {
 		half step = 1.0 / 5.0;
 		half pos = step + step * (InterleavedGradientNoise(globalId.xy) * 2.0 - 1.0);
 		half slope = -NdotL;
 
-		for(int i = 0; i < 5; i++)
-		{
-			uint2 	tmpCoords 	= lerp(startPosPixel, endPosPixel, pos);
-			half3	tmpNormal 	= DecodeNormal(NormalRoughnessTexture[tmpCoords]);
-			half	tmpDepth 	= GetScreenDepth(DepthTexture[tmpCoords]);
-			half	tmpNdotL 	= dot(tmpNormal, DirLightDirectionVS[0].xyz);
+		for (int i = 0; i < 5; i++) {
+			uint2 tmpCoords = lerp(startPosPixel, endPosPixel, pos);
+			half3 tmpNormal = DecodeNormal(NormalRoughnessTexture[tmpCoords]);
+			half tmpDepth = GetScreenDepth(DepthTexture[tmpCoords]);
+			half tmpNdotL = dot(tmpNormal, DirLightDirectionVS[0].xyz);
 
-			half	shadowed = -tmpNdotL;
+			half shadowed = -tmpNdotL;
 			shadowed += NdotL * pos;
 			shadowed += max(0, dot(tmpNormal, viewDirectionVS));
 			shadowed *= 1 - min(1, abs(depth - tmpDepth) * 0.1);
@@ -135,6 +115,5 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	shadow = saturate(1.0 - shadow);
 	shadow = lerp(1.0, shadow, saturate(fade));
 
-	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, shadow);
+	ShadowMaskTextureRW[globalId.xy] = min(shadowMask, lerp(shadow, 1.0, skinMask));
 }
-

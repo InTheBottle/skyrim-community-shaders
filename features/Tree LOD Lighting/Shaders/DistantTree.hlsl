@@ -3,7 +3,7 @@
 #include "Common/LightingData.hlsl"
 #include "Common/MotionBlur.hlsl"
 
-cbuffer PerFrame : register(b3)
+cbuffer TreePerFrame : register(b3)
 {
 	row_major float3x4 DirectionalAmbient;
 	float4 DirLightColor;
@@ -24,6 +24,9 @@ struct VS_INPUT
 	float4 InstanceData2 : TEXCOORD5;
 	float4 InstanceData3 : TEXCOORD6;  // Unused
 	float4 InstanceData4 : TEXCOORD7;  // Unused
+#if defined(VR)
+	uint InstanceID : SV_INSTANCEID;
+#endif  // VR
 };
 
 struct VS_OUTPUT
@@ -38,7 +41,16 @@ struct VS_OUTPUT
 #endif
 	float3 SphereNormal : TEXCOORD4;
 
-	row_major float3x4 World : POSITION3;
+#if !defined(VR)
+	row_major float3x4 World[1] : POSITION3;
+#else
+	row_major float3x4 World[2] : POSITION3;
+#endif  // VR
+#if defined(VR)
+	float ClipDistance : SV_ClipDistance0;  // o11
+	float CullDistance : SV_CullDistance0;  // p11
+	uint EyeIndex : EYEIDX0;
+#endif  // VR
 };
 
 #ifdef VSHADER
@@ -49,14 +61,25 @@ cbuffer PerTechnique : register(b0)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float4x4 WorldViewProj : packoffset(c0);
-	row_major float4x4 World : packoffset(c4);
-	row_major float4x4 PreviousWorld : packoffset(c8);
+#	if !defined(VR)
+	row_major float4x4 WorldViewProj[1] : packoffset(c0);
+	row_major float4x4 World[1] : packoffset(c4);
+	row_major float4x4 PreviousWorld[1] : packoffset(c8);
+#	else
+	row_major float4x4 WorldViewProj[2] : packoffset(c0);
+	row_major float4x4 World[2] : packoffset(c8);
+	row_major float4x4 PreviousWorld[2] : packoffset(c16);
+#	endif
 };
 
 VS_OUTPUT main(VS_INPUT input)
 {
 	VS_OUTPUT vsout;
+	uint eyeIndex = GetEyeIndexVS(
+#	if defined(VR)
+		input.InstanceID
+#	endif
+	);
 
 	float3 scaledModelPosition = input.InstanceData1.www * input.Position.xyz;
 	float3 adjustedModelPosition = 0.0.xxx;
@@ -65,14 +88,14 @@ VS_OUTPUT main(VS_INPUT input)
 	adjustedModelPosition.z = scaledModelPosition.z;
 
 	float4 finalModelPosition = float4(input.InstanceData1.xyz + adjustedModelPosition.xyz, 1.0);
-	float4 viewPosition = mul(WorldViewProj, finalModelPosition);
+	float4 viewPosition = mul(WorldViewProj[eyeIndex], finalModelPosition);
 
 #	ifdef RENDER_DEPTH
 	vsout.Depth.xy = viewPosition.zw;
 	vsout.Depth.zw = input.InstanceData2.zw;
 #	else
-	vsout.WorldPosition = mul(World, finalModelPosition);
-	vsout.PreviousWorldPosition = mul(PreviousWorld, finalModelPosition);
+	vsout.WorldPosition = mul(World[eyeIndex], finalModelPosition);
+	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], finalModelPosition);
 #	endif
 
 	vsout.Position = viewPosition;
@@ -83,10 +106,17 @@ VS_OUTPUT main(VS_INPUT input)
 	adjustedModelPosition.y = dot(input.InstanceData2.yx, scaledModelPosition.xy);
 	adjustedModelPosition.z = scaledModelPosition.z;
 
-	vsout.SphereNormal.xyz = mul(World, normalize(adjustedModelPosition));
+	vsout.SphereNormal.xyz = mul(World[eyeIndex], normalize(float4(adjustedModelPosition, 0)));
 
-	vsout.World = World;
-
+	vsout.World[0] = World[0];
+#	ifdef VR
+	vsout.World[1] = World[1];
+	vsout.EyeIndex = eyeIndex;
+	VR_OUTPUT VRout = GetVRVSOutput(vsout.Position, eyeIndex);
+	vsout.Position = VRout.VRPosition;
+	vsout.ClipDistance.x = VRout.ClipDistance;
+	vsout.CullDistance.x = VRout.CullDistance;
+#	endif  // VR
 	return vsout;
 }
 #endif
@@ -108,10 +138,12 @@ SamplerState SampDiffuse : register(s0);
 SamplerState SampShadowMaskSampler : register(s14);
 Texture2D<float4> TexDiffuse : register(t0);
 
+#	if !defined(VR)
 cbuffer AlphaTestRefCB : register(b11)
 {
 	float AlphaTestRefRS : packoffset(c0);
 }
+#	endif
 
 cbuffer PerTechnique : register(b0)
 {
@@ -119,24 +151,7 @@ cbuffer PerTechnique : register(b0)
 	float4 AmbientColor : packoffset(c1);
 };
 
-const static float DepthOffsets[16] = {
-	0.003921568,
-	0.533333361,
-	0.133333340,
-	0.666666687,
-	0.800000000,
-	0.266666681,
-	0.933333337,
-	0.400000000,
-	0.200000000,
-	0.733333349,
-	0.066666670,
-	0.600000000,
-	0.996078432,
-	0.466666669,
-	0.866666675,
-	0.333333343
-};
+const static float DepthOffsets[16] = { 0.003921568, 0.533333361, 0.133333340, 0.666666687, 0.800000000, 0.266666681, 0.933333337, 0.400000000, 0.200000000, 0.733333349, 0.066666670, 0.600000000, 0.996078432, 0.466666669, 0.866666675, 0.333333343 };
 
 float GetSoftLightMultiplier(float angle, float strength)
 {
@@ -186,6 +201,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 {
 	PS_OUTPUT psout;
 
+#	if !defined(VR)
+	uint eyeIndex = 0;
+#	else
+	uint eyeIndex = input.EyeIndex;
+#	endif
+
 #	if defined(RENDER_DEPTH)
 	uint2 temp = uint2(input.Position.xy);
 	uint index = ((temp.x << 2) & 12) | (temp.y & 3);
@@ -215,7 +236,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #		endif
 
-	float2 screenMotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition);
+	float2 screenMotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
 
 	psout.MotionVector = screenMotionVector;
 
@@ -249,7 +270,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 #		if defined(CLOUD_SHADOWS)
-	float3 normalizedDirLightDirectionWS = -normalize(mul(input.World, float4(DirLightDirection.xyz, 0))).xyz;
+	float3 normalizedDirLightDirectionWS = -normalize(mul(input.World[eyeIndex], float4(DirLightDirection.xyz, 0))).xyz;
 
 	float3 cloudShadowMult = 1.0;
 	if (perPassCloudShadow[0].EnableCloudShadows && !lightingData[0].Reflections) {
@@ -261,7 +282,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 nsDirLightColor = dirLightColor;
 
 #		if defined(SCREEN_SPACE_SHADOWS)
-	float dirLightSShadow = PrepassScreenSpaceShadows(input.WorldPosition);
+	float dirLightSShadow = PrepassScreenSpaceShadows(input.WorldPosition.xyz, eyeIndex);
 #		endif
 
 	float3 diffuseColor = 0;

@@ -351,10 +351,10 @@ void Menu::DrawSettings()
 				if (testInterval == 0) {
 					inTestMode = false;
 					logger::info("Disabling test mode.");
-					State::GetSingleton()->Load(true);  // restore last settings before entering test mode
+					State::GetSingleton()->Load(State::ConfigMode::TEST);  // restore last settings before entering test mode
 				} else if (testInterval && !inTestMode) {
 					logger::info("Saving current settings for test mode and starting test with interval {}.", testInterval);
-					State::GetSingleton()->Save(true);
+					State::GetSingleton()->Save(State::ConfigMode::TEST);
 					inTestMode = true;
 				} else {
 					logger::info("Setting new interval {}.", testInterval);
@@ -438,30 +438,36 @@ void Menu::DrawSettings()
 
 			static size_t selectedFeature = SIZE_T_MAX;
 			auto& featureList = Feature::GetFeatureList();
+			auto sortedList{ featureList };  // need a copy so the load order is not lost
+			std::sort(sortedList.begin(), sortedList.end(), [](Feature* a, Feature* b) {
+				return a->GetName() < b->GetName();
+			});
 
 			ImGui::TableNextColumn();
 			if (ImGui::BeginListBox("##FeatureList", { -FLT_MIN, -FLT_MIN })) {
-				for (size_t i = 0; i < featureList.size(); i++)
-					if (featureList[i]->loaded) {
-						if (ImGui::Selectable(fmt::format("{} ", featureList[i]->GetName()).c_str(), selectedFeature == i, ImGuiSelectableFlags_SpanAllColumns))
+				ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));  // Selected feature header color
+				for (size_t i = 0; i < sortedList.size(); i++)
+					if (sortedList[i]->loaded) {
+						if (ImGui::Selectable(fmt::format(" {} ", sortedList[i]->GetName()).c_str(), selectedFeature == i, ImGuiSelectableFlags_SpanAllColumns))
 							selectedFeature = i;
 						ImGui::SameLine();
-						ImGui::TextDisabled(fmt::format("({})", featureList[i]->version).c_str());
-					} else if (!featureList[i]->version.empty()) {
-						ImGui::TextDisabled(fmt::format("{} ({})", featureList[i]->GetName(), featureList[i]->version).c_str());
+						ImGui::TextDisabled(fmt::format("({})", sortedList[i]->version).c_str());
+					} else if (!sortedList[i]->version.empty()) {
+						ImGui::TextDisabled(fmt::format(" {} ({})", sortedList[i]->GetName(), sortedList[i]->version).c_str());
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::Text(featureList[i]->failedLoadedMessage.c_str());
+							ImGui::Text(sortedList[i]->failedLoadedMessage.c_str());
 						}
 					}
+				ImGui::PopStyleColor();
 				ImGui::EndListBox();
 			}
 
 			ImGui::TableNextColumn();
 
-			bool shownFeature = selectedFeature < featureList.size();
+			bool shownFeature = selectedFeature < sortedList.size();
 			if (shownFeature) {
 				if (ImGui::Button("Restore Defaults", { -1, 0 })) {
-					featureList[selectedFeature]->RestoreDefaultSettings();
+					sortedList[selectedFeature]->RestoreDefaultSettings();
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text(
@@ -472,7 +478,7 @@ void Menu::DrawSettings()
 
 			if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
 				if (shownFeature)
-					featureList[selectedFeature]->DrawSettings();
+					sortedList[selectedFeature]->DrawSettings();
 				else
 					ImGui::TextDisabled("Please select a feature on the left.");
 			}
@@ -566,7 +572,7 @@ void Menu::DrawOverlay()
 		if (remaining < 0) {
 			usingTestConfig = !usingTestConfig;
 			logger::info("Swapping mode to {}", usingTestConfig ? "test" : "user");
-			State::GetSingleton()->Load(usingTestConfig);
+			State::GetSingleton()->Load(usingTestConfig ? State::ConfigMode::TEST : State::ConfigMode::USER);
 			lastTestSwitch = high_resolution_clock::now();
 		}
 		ImGui::SetNextWindowBgAlpha(1);

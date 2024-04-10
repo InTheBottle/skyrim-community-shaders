@@ -1,19 +1,5 @@
-cbuffer PerFrameShared : register(b0)
-{
-	float4 DirLightDirectionVS[2];
-	float4 DirLightColor;
-	float4 CameraData;
-	float2 BufferDim;
-	float2 RcpBufferDim;
-	float4x4 ViewMatrix[2];
-	float4x4 ProjMatrix[2];
-	float4x4 ViewProjMatrix[2];
-	float4x4 InvViewMatrix[2];
-	float4x4 InvProjMatrix[2];
-	row_major float3x4 DirectionalAmbient;
-	uint FrameCount;
-	uint pad0[3];
-};
+
+#include "../Common/DeferredShared.hlsl"
 
 half GetScreenDepth(half depth)
 {
@@ -22,38 +8,38 @@ half GetScreenDepth(half depth)
 
 #include "bend_sss_gpu.hlsl"
 
-Texture2D<unorm half> DepthTexture : register(t0); // Depth Buffer Texture (rasterized non-linear depth)		 
-RWTexture2D<unorm half> OutputTexture : register(u0); // Output screen-space shadow buffer (typically single-channel, 8bit)	 
-SamplerState PointBorderSampler : register(s0); // A point sampler, with Wrap Mode set to Clamp-To-Border-Color (D3D12_TEXTURE_ADDRESS_MODE_BORDER), and Border Color set to "FarDepthValue" (typically zero), or some other far-depth value out of DepthBounds.
-									// If you have issues where invalid shadows are appearing from off-screen, it is likely that this sampler is not correctly setup
+Texture2D<unorm half> DepthTexture : register(t0);     // Depth Buffer Texture (rasterized non-linear depth)
+RWTexture2D<unorm half> OutputTexture : register(u0);  // Output screen-space shadow buffer (typically single-channel, 8bit)
+SamplerState PointBorderSampler : register(s0);        // A point sampler, with Wrap Mode set to Clamp-To-Border-Color (D3D12_TEXTURE_ADDRESS_MODE_BORDER), and Border Color set to "FarDepthValue" (typically zero), or some other far-depth value out of DepthBounds.
+													   // If you have issues where invalid shadows are appearing from off-screen, it is likely that this sampler is not correctly setup
 
 cbuffer PerFrame : register(b1)
 {
 	// Runtime data returned from BuildDispatchList():
-	float4 LightCoordinate;				// Values stored in DispatchList::LightCoordinate_Shader by BuildDispatchList()
-	int2 WaveOffset;					// Values stored in DispatchData::WaveOffset_Shader by BuildDispatchList()
+	float4 LightCoordinate;  // Values stored in DispatchList::LightCoordinate_Shader by BuildDispatchList()
+	int2 WaveOffset;         // Values stored in DispatchData::WaveOffset_Shader by BuildDispatchList()
 
 	// Renderer Specific Values:
-	float FarDepthValue;				// Set to the Depth Buffer Value for the far clip plane, as determined by renderer projection matrix setup (typically 0).
-	float NearDepthValue;				// Set to the Depth Buffer Value for the near clip plane, as determined by renderer projection matrix setup (typically 1).
+	float FarDepthValue;   // Set to the Depth Buffer Value for the far clip plane, as determined by renderer projection matrix setup (typically 0).
+	float NearDepthValue;  // Set to the Depth Buffer Value for the near clip plane, as determined by renderer projection matrix setup (typically 1).
 
 	// Sampling data:
-	float2 InvDepthTextureSize;			// Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
-										// If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
-										// The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
+	float2 InvDepthTextureSize;  // Inverse of the texture dimensions for 'DepthTexture' (used to convert from pixel coordinates to UVs)
+								 // If 'PointBorderSampler' is an Unnormalized sampler, then this value can be hard-coded to 1.
+								 // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
 	float SurfaceThickness;
 	float BilinearThreshold;
 	float ShadowContrast;
 };
 
-[numthreads(WAVE_SIZE, 1, 1)] void main
-(
-	int3 groupID : SV_GroupID, 
-	int groupThreadID : SV_GroupThreadID
-) {
+[numthreads(WAVE_SIZE, 1, 1)] void main(
+	int3 groupID
+	: SV_GroupID,
+	int groupThreadID
+	: SV_GroupThreadID) {
 	DispatchParameters parameters;
 	parameters.SetDefaults();
-	
+
 	parameters.LightCoordinate = LightCoordinate;
 	parameters.WaveOffset = WaveOffset;
 	parameters.FarDepthValue = 1;

@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-static constexpr REL::Version SHADER_CACHE_VERSION = { 0, 0, 0, 19 };
+static constexpr REL::Version SHADER_CACHE_VERSION = { 0, 0, 0, 20 };
 
 using namespace std::chrono;
 
@@ -115,6 +115,8 @@ namespace SIE
 				       type == RE::BSShader::Type::Water ||
 				       type == RE::BSShader::Type::Effect;
 			return type == RE::BSShader::Type::Lighting ||
+			       type == RE::BSShader::Type::DistantTree ||
+			       type == RE::BSShader::Type::Water ||
 			       type == RE::BSShader::Type::Grass;
 		}
 
@@ -172,6 +174,8 @@ namespace SIE
 			uint32_t descriptor);
 		RE::BSGraphics::PixelShader* MakeAndAddPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor);
+
+		static std::string GetDefinesString(RE::BSShader::Type enumType, uint32_t descriptor);
 
 		uint64_t GetCachedHitTasks();
 		uint64_t GetCompletedTasks();
@@ -314,8 +318,8 @@ namespace SIE
 			static_cast<size_t>(RE::BSShader::Type::Total)>
 			pixelShaders;
 
-		bool isEnabled = false;
-		bool isDiskCache = false;
+		bool isEnabled = true;
+		bool isDiskCache = true;
 		bool isAsync = true;
 		bool isDump = false;
 		bool hideError = false;
@@ -340,6 +344,7 @@ namespace SIE
 	class UpdateListener : public efsw::FileWatchListener
 	{
 	public:
+		void UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache& cache, bool& clearCache, bool& retFlag);
 		void processQueue();
 		void handleFileAction(efsw::WatchID, const std::string& dir, const std::string& filename, efsw::Action action, std::string) override;
 

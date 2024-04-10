@@ -1,8 +1,8 @@
 #include "ScreenSpaceShadows.h"
 
+#include "Bindings.h"
 #include "State.h"
 #include "Util.h"
-#include "Bindings.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4838 4244)
@@ -18,8 +18,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SampleCount,
 	SurfaceThickness,
 	BilinearThreshold,
-	ShadowContrast
-)
+	ShadowContrast)
 
 void ScreenSpaceShadows::DrawSettings()
 {
@@ -54,8 +53,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
 	static uint sampleCount = bendSettings.SampleCount;
 
-	if (sampleCount != bendSettings.SampleCount)
-	{
+	if (sampleCount != bendSettings.SampleCount) {
 		sampleCount = bendSettings.SampleCount;
 		if (raymarchCS) {
 			raymarchCS->Release();
@@ -85,9 +83,9 @@ void ScreenSpaceShadows::DrawShadows()
 		return;
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto shadowState = State::GetSingleton()->shadowState;
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
@@ -99,19 +97,19 @@ void ScreenSpaceShadows::DrawShadows()
 	float3 light = { directionNi.x, directionNi.y, directionNi.z };
 	light.Normalize();
 	float4 lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
-	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);	
-	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w};
-				
+	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, shadowState->GetRuntimeData().cameraData.getEye().viewProjMat);
+	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
+
 	int viewportSize[2] = { (int)state->screenWidth, (int)state->screenHeight };
-			
+
 	int minRenderBounds[2] = { 0, 0 };
-	int maxRenderBounds[2] = { 
-		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale), 
-		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale) 
+	int maxRenderBounds[2] = {
+		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),
+		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale)
 	};
 
 	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
-				
+
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	context->CSSetShaderResources(0, 1, &depth.depthSRV);
 
@@ -125,10 +123,9 @@ void ScreenSpaceShadows::DrawShadows()
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
-	for (int i = 0; i < dispatchList.DispatchCount; i++)
-	{
+	for (int i = 0; i < dispatchList.DispatchCount; i++) {
 		auto dispatchData = dispatchList.Dispatch[i];
-					
+
 		RaymarchCB data{};
 		data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
 		data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
@@ -143,10 +140,10 @@ void ScreenSpaceShadows::DrawShadows()
 
 		data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
 		data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
-			
+
 		data.settings = bendSettings;
 
-		raymarchCB->Update(data);			
+		raymarchCB->Update(data);
 
 		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 	}
@@ -172,13 +169,15 @@ void ScreenSpaceShadows::DrawShadows()
 void ScreenSpaceShadows::DrawNormalMappingShadows()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto context = renderer->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 
 	{
 		auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-		ID3D11ShaderResourceView* srvs[2]{ normalRoughness.SRV, depth.depthSRV };
-		context->CSSetShaderResources(0, 2, srvs);
+		auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
+
+		ID3D11ShaderResourceView* srvs[3]{ normalRoughness.SRV, depth.depthSRV, masks.SRV };
+		context->CSSetShaderResources(0, 3, srvs);
 
 		auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 		ID3D11UnorderedAccessView* uavs[1]{ shadowMask.UAV };
@@ -199,8 +198,8 @@ void ScreenSpaceShadows::DrawNormalMappingShadows()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
-	context->CSSetShaderResources(0, 2, views);
+	ID3D11ShaderResourceView* views[3]{ nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 3, views);
 
 	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -237,10 +236,8 @@ void ScreenSpaceShadows::SetupResources()
 {
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>());
 
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
 	{
-		auto device = renderer->GetRuntimeData().forwarder;
+		auto& device = State::GetSingleton()->device;
 
 		D3D11_SAMPLER_DESC samplerDesc = {};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -256,34 +253,8 @@ void ScreenSpaceShadows::SetupResources()
 		samplerDesc.BorderColor[3] = 1.0f;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointBorderSampler));
 	}
-
-	{
-		auto& shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSHADOW_MASK];
-
-		D3D11_TEXTURE2D_DESC texDesc{};
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-
-		shadowMask.texture->GetDesc(&texDesc);
-		shadowMask.SRV->GetDesc(&srvDesc);
-		shadowMask.RTV->GetDesc(&rtvDesc);
-		shadowMask.UAV->GetDesc(&uavDesc);
-
-		{
-			texDesc.Format = DXGI_FORMAT_R8_UNORM;
-			srvDesc.Format = texDesc.Format;
-			rtvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-
-			shadowMaskTemp = new Texture2D(texDesc);
-			shadowMaskTemp->CreateSRV(srvDesc);
-			shadowMaskTemp->CreateUAV(uavDesc);
-		}
-	}
 }
 
 void ScreenSpaceShadows::Reset()
 {
 }
-

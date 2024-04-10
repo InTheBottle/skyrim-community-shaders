@@ -6,6 +6,7 @@
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
 #define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
 #define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
+#define MASKS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
 
 class Bindings
 {
@@ -37,16 +38,23 @@ public:
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
 
-	ID3D11ComputeShader* deferredCompositeCS = nullptr;
+	ID3D11ComputeShader* directionalShadowCS = nullptr;
+	ID3D11ComputeShader* directionalCS = nullptr;
+	ID3D11ComputeShader* ambientCompositeCS = nullptr;
+	ID3D11ComputeShader* mainCompositeCS = nullptr;
 
 	void ClearShaderCache();
-	ID3D11ComputeShader* GetComputeDeferredComposite();
+	ID3D11ComputeShader* GetComputeAmbientComposite();
+	ID3D11ComputeShader* GetComputeMainComposite();
+	ID3D11ComputeShader* GetComputeDirectionalShadow();
+	ID3D11ComputeShader* GetComputeDirectional();
 
 	bool inWorld = false;
 	bool deferredPass = false;
 
 	struct alignas(16) DeferredCB
 	{
+		float4 CamPosAdjust[2];
 		float4 DirLightDirectionVS[2];
 		float4 DirLightColor;
 		float4 CameraData;
@@ -57,6 +65,7 @@ public:
 		DirectX::XMFLOAT4X4 ViewProjMatrix[2];
 		DirectX::XMFLOAT4X4 InvViewMatrix[2];
 		DirectX::XMFLOAT4X4 InvProjMatrix[2];
+		DirectX::XMFLOAT4X4 InvViewProjMatrix[2];
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		uint FrameCount;
 		uint pad0[3];
@@ -65,6 +74,8 @@ public:
 	ConstantBuffer* deferredCB = nullptr;
 
 	ID3D11SamplerState* linearSampler = nullptr;
+
+	Texture2D* giTexture = nullptr;  // RGB - GI/IL, A - AO
 
 	void UpdateConstantBuffer();
 
