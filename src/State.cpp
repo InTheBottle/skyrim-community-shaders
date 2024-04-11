@@ -18,7 +18,7 @@ void State::Draw()
 {
 	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
-		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky);
+		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 		auto& shaderCache = SIE::ShaderCache::Instance();
 		if (shaderCache.IsEnabled()) {
 			if (type > 0 && type < RE::BSShader::Type::Total) {
