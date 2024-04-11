@@ -46,7 +46,7 @@ typedef float3x3 lpfloat3x3;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#include "../Common/DeferredShared.hlsl"
+#include "../Common/DeferredShared.hlsli"
 
 cbuffer SSGICB : register(b1)
 {

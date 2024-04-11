@@ -1,4 +1,4 @@
-#include "../Common/DeferredShared.hlsl"
+#include "../Common/DeferredShared.hlsli"
 #include "../Common/VR.hlsli"
 
 struct PerPassTerraOcc
