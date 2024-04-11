@@ -1,4 +1,4 @@
-#include "Common/GBuffer.hlsl"
+#include "Common/GBuffer.hlsli"
 
 struct VS_INPUT
 {

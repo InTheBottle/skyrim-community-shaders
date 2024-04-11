@@ -1,6 +1,6 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
-#include "Common/GBuffer.hlsl"
+#include "Common/GBuffer.hlsli"
 #include "Common/LightingData.hlsl"
 #include "Common/MotionBlur.hlsl"
 #include "Common/Permutation.hlsl"

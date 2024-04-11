@@ -1,12 +1,12 @@
 
-#include "../Common/DeferredShared.hlsl"
+#include "../Common/DeferredShared.hlsli"
 
 half GetScreenDepth(half depth)
 {
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-#include "bend_sss_gpu.hlsl"
+#include "bend_sss_gpu.hlsli"
 
 Texture2D<unorm half> DepthTexture : register(t0);     // Depth Buffer Texture (rasterized non-linear depth)
 RWTexture2D<unorm half> OutputTexture : register(u0);  // Output screen-space shadow buffer (typically single-channel, 8bit)
