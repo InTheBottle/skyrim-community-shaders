@@ -92,7 +92,9 @@ void CloudShadows::ModifySky(const RE::BSShader*, const uint32_t descriptor)
 		return;
 
 	auto& shadowState = State::GetSingleton()->shadowState;
-	auto cubeMapRenderTarget = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cubeMapRenderTarget : shadowState->GetVRRuntimeData().cubeMapRenderTarget;
+
+	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
+
 	if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS)
 		return;
 
@@ -177,7 +179,8 @@ void CloudShadows::DrawShadows()
 		return;
 
 	auto& shadowState = State::GetSingleton()->shadowState;
-	auto cubeMapRenderTarget = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cubeMapRenderTarget : shadowState->GetVRRuntimeData().cubeMapRenderTarget;
+
+	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
 
 	if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS) {
 		static Util::FrameChecker frame_checker;

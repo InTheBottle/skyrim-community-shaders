@@ -22,9 +22,9 @@
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "../Common/FastMath.hlsl"
-#include "../Common/GBuffer.hlsl"
-#include "../Common/VR.hlsl"
+#include "../Common/FastMath.hlsli"
+#include "../Common/GBuffer.hlsli"
+#include "../Common/VR.hlsli"
 #include "common.hlsli"
 
 #if USE_HALF_FLOAT_PRECISION == 0

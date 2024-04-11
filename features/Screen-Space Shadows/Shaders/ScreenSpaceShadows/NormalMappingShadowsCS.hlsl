@@ -1,5 +1,5 @@
-#include "../Common/DeferredShared.hlsl"
-#include "../Common/GBuffer.hlsl"
+#include "../Common/DeferredShared.hlsli"
+#include "../Common/GBuffer.hlsli"
 
 Texture2D<unorm half4> NormalRoughnessTexture : register(t0);
 Texture2D<unorm half> DepthTexture : register(t1);

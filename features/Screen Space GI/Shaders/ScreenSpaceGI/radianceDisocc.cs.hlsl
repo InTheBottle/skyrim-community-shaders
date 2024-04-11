@@ -1,5 +1,5 @@
-#include "../Common/GBuffer.hlsl"
-#include "../Common/VR.hlsl"
+#include "../Common/GBuffer.hlsli"
+#include "../Common/VR.hlsli"
 #include "common.hlsli"
 
 Texture2D<half4> srcDiffuse : register(t0);

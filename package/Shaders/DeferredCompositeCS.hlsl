@@ -1,6 +1,6 @@
 
-#include "Common/DeferredShared.hlsl"
-#include "Common/GBuffer.hlsl"
+#include "Common/DeferredShared.hlsli"
+#include "Common/GBuffer.hlsli"
 
 Texture2D<half3> SpecularTexture : register(t0);
 Texture2D<unorm half3> AlbedoTexture : register(t1);

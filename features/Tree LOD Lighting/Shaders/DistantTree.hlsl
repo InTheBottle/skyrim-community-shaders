@@ -192,10 +192,6 @@ float3x3 CalculateTBN(float3 N, float3 p, float2 uv)
 #		include "ScreenSpaceShadows/ShadowsPS.hlsli"
 #	endif
 
-#	if defined(CLOUD_SHADOWS)
-#		include "CloudShadows/CloudShadows.hlsli"
-#	endif
-
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -269,16 +265,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		dirLightColor *= DirLightScale;
 	}
 
-#		if defined(CLOUD_SHADOWS)
-	float3 normalizedDirLightDirectionWS = -normalize(mul(input.World[eyeIndex], float4(DirLightDirection.xyz, 0))).xyz;
-
-	float3 cloudShadowMult = 1.0;
-	if (perPassCloudShadow[0].EnableCloudShadows && !lightingData[0].Reflections) {
-		cloudShadowMult = getCloudShadowMult(input.WorldPosition.xyz, normalizedDirLightDirectionWS.xyz, SampDiffuse);
-		dirLightColor *= cloudShadowMult;
-	}
-#		endif
-
 	float3 nsDirLightColor = dirLightColor;
 
 #		if defined(SCREEN_SPACE_SHADOWS)
@@ -303,10 +289,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	lightsDiffuseColor += subsurfaceColor * dirLightColor * saturate(-dirLightAngle) * SubsurfaceScatteringAmount;
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, float4(worldNormal.xyz, 1));
-#		if defined(CLOUD_SHADOWS)
-	if (perPassCloudShadow[0].EnableCloudShadows && !lightingData[0].Reflections)
-		directionalAmbientColor *= lerp(1.0, cloudShadowMult, perPassCloudShadow[0].AbsorptionAmbient);
-#		endif
 	lightsDiffuseColor += directionalAmbientColor;
 
 	diffuseColor += lightsDiffuseColor;
