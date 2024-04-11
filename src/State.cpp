@@ -590,9 +590,9 @@ void State::UpdateSharedData(const RE::BSShader* a_shader, const uint32_t)
 	if (a_shader->shaderType.get() == RE::BSShader::Type::Lighting) {
 		bool updateBuffer = false;
 
-		bool currentReflections = (!REL::Module::IsVR() ?
-										  shadowState->GetRuntimeData().cubeMapRenderTarget :
-										  shadowState->GetVRRuntimeData().cubeMapRenderTarget) == RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS;
+		GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
+
+		bool currentReflections = cubeMapRenderTarget == RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS;
 
 		if (lightingData.Reflections != (uint)currentReflections) {
 			updateBuffer = true;
