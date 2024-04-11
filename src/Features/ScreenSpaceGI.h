@@ -73,7 +73,6 @@ struct ScreenSpaceGI : Feature
 	struct alignas(16) SSGICB
 	{
 		float4x4 PrevInvViewMat[2];
-		float2 DepthUnpackConsts[2];
 		float2 NDCToViewMul[2];
 		float2 NDCToViewAdd[2];
 		float2 NDCToViewMul_x_PixelSize[2];

@@ -67,10 +67,10 @@ groupshared lpfloat g_scratchDepths[8][8];
 	const uint eyeIndex = GET_EYE_IDX(uv);
 
 	float4 depths4 = srcNDCDepth.GatherRed(samplerPointClamp, uv, int2(1, 1));
-	lpfloat depth0 = ClampDepth(ScreenToViewDepth(depths4.w, eyeIndex));
-	lpfloat depth1 = ClampDepth(ScreenToViewDepth(depths4.z, eyeIndex));
-	lpfloat depth2 = ClampDepth(ScreenToViewDepth(depths4.x, eyeIndex));
-	lpfloat depth3 = ClampDepth(ScreenToViewDepth(depths4.y, eyeIndex));
+	lpfloat depth0 = ClampDepth(ScreenToViewDepth(depths4.w));
+	lpfloat depth1 = ClampDepth(ScreenToViewDepth(depths4.z));
+	lpfloat depth2 = ClampDepth(ScreenToViewDepth(depths4.x));
+	lpfloat depth3 = ClampDepth(ScreenToViewDepth(depths4.y));
 	outDepth0[pixCoord + uint2(0, 0)] = (lpfloat)depth0;
 	outDepth0[pixCoord + uint2(1, 0)] = (lpfloat)depth1;
 	outDepth0[pixCoord + uint2(0, 1)] = (lpfloat)depth2;

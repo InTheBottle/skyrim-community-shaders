@@ -502,7 +502,6 @@ void ScreenSpaceGI::UpdateSB()
 			auto eye = (!REL::Module::IsVR()) ? state->GetRuntimeData().cameraData.getEye(eyeIndex) : state->GetVRRuntimeData().cameraData.getEye(eyeIndex);
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.DepthUnpackConsts[eyeIndex] = { -eye.projMat(3, 2), eye.projMat(2, 2) };
 			data.NDCToViewMul[eyeIndex] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
 			data.NDCToViewAdd[eyeIndex] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
 			data.NDCToViewMul_x_PixelSize[eyeIndex] = data.NDCToViewMul[eyeIndex] / res;

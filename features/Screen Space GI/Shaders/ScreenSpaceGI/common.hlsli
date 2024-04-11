@@ -51,7 +51,6 @@ typedef float3x3 lpfloat3x3;
 cbuffer SSGICB : register(b1)
 {
 	float4x4 PrevInvViewMat[2];
-	float4 DepthUnpackConsts;
 	float4 NDCToViewMul;
 	float4 NDCToViewAdd;
 	float4 NDCToViewMul_x_PixelSize;
@@ -141,14 +140,9 @@ float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth, 
 	return ret;
 }
 
-float ScreenToViewDepth(const float screenDepth, const uint eyeIndex)
+float ScreenToViewDepth(const float screenDepth)
 {
-	const float2 consts = eyeIndex == 0 ? DepthUnpackConsts.xy : DepthUnpackConsts.zw;
-
-	float depthLinearizeMul = consts.x;
-	float depthLinearizeAdd = consts.y;
-	// Optimised version of "-cameraClipNear / (cameraClipFar - projDepth * (cameraClipFar - cameraClipNear)) * cameraClipFar"
-	return depthLinearizeMul / (depthLinearizeAdd - screenDepth);
+	return (CameraData.w / (-screenDepth * CameraData.z + CameraData.x));
 }
 
 float3 ViewToWorldPosition(const float3 pos, const float4x4 invView)
