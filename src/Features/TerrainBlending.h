@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Bindings.h"
+#include "Deferred.h"
 #include "Buffer.h"
 #include "Feature.h"
 
@@ -60,8 +60,8 @@ public:
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
 			{
 				func(This, a_pass, a_renderFlags);
-				//	Bindings::GetSingleton()->SetOverwriteTerrainMode(false);
-				//	Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(Bindings::TerrainMaskMode::kNone);
+				//	Deferred::GetSingleton()->SetOverwriteTerrainMode(false);
+				//	Deferred::GetSingleton()->SetOverwriteTerrainMaskingMode(Deferred::TerrainMaskMode::kNone);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};

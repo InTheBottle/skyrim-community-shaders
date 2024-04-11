@@ -1,4 +1,4 @@
-#include "Bindings.h"
+#include "Deferred.h"
 #include "State.h"
 #include "Util.h"
 #include <Features/CloudShadows.h>
@@ -9,7 +9,7 @@
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
 
-void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
+void Deferred::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
 	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(depthStencilDepthMode, state)
@@ -25,7 +25,7 @@ void Bindings::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMo
 	}
 }
 
-void Bindings::AlphaBlendStateSetMode(uint32_t a_mode)
+void Deferred::AlphaBlendStateSetMode(uint32_t a_mode)
 {
 	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendMode, state)
@@ -37,7 +37,7 @@ void Bindings::AlphaBlendStateSetMode(uint32_t a_mode)
 	}
 }
 
-void Bindings::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
+void Deferred::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
 {
 	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
@@ -49,7 +49,7 @@ void Bindings::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
 	}
 }
 
-void Bindings::AlphaBlendStateSetWriteMode(uint32_t a_value)
+void Deferred::AlphaBlendStateSetWriteMode(uint32_t a_value)
 {
 	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
@@ -88,7 +88,7 @@ void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D
 	DX::ThrowIfFailed(device->CreateUnorderedAccessView(data.texture, &uavDesc, &data.UAV));
 }
 
-void Bindings::SetupResources()
+void Deferred::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
@@ -194,11 +194,11 @@ void Bindings::SetupResources()
 	}
 }
 
-void Bindings::Reset()
+void Deferred::Reset()
 {
 }
 
-void Bindings::UpdateConstantBuffer()
+void Deferred::UpdateConstantBuffer()
 {
 	auto state = State::GetSingleton();
 	auto viewport = RE::BSGraphics::State::GetSingleton();
@@ -271,7 +271,7 @@ void Bindings::UpdateConstantBuffer()
 	deferredCB->Update(data);
 }
 
-void Bindings::StartDeferred()
+void Deferred::StartDeferred()
 {
 	if (!inWorld)
 		return;
@@ -388,7 +388,7 @@ void Bindings::StartDeferred()
 	deferredPass = true;
 }
 
-void Bindings::DeferredPasses()
+void Deferred::DeferredPasses()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& context = State::GetSingleton()->context;
@@ -555,7 +555,7 @@ void Bindings::DeferredPasses()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void Bindings::EndDeferred()
+void Deferred::EndDeferred()
 {
 	if (!inWorld)
 		return;
@@ -600,7 +600,7 @@ void Bindings::EndDeferred()
 	deferredPass = false;
 }
 
-void Bindings::ClearShaderCache()
+void Deferred::ClearShaderCache()
 {
 	if (directionalShadowCS) {
 		directionalShadowCS->Release();
@@ -620,7 +620,7 @@ void Bindings::ClearShaderCache()
 	}
 }
 
-ID3D11ComputeShader* Bindings::GetComputeDirectionalShadow()
+ID3D11ComputeShader* Deferred::GetComputeDirectionalShadow()
 {
 	if (!directionalShadowCS) {
 		logger::debug("Compiling DeferredCompositeCS DirectionalShadowPass");
@@ -629,7 +629,7 @@ ID3D11ComputeShader* Bindings::GetComputeDirectionalShadow()
 	return directionalShadowCS;
 }
 
-ID3D11ComputeShader* Bindings::GetComputeDirectional()
+ID3D11ComputeShader* Deferred::GetComputeDirectional()
 {
 	if (!directionalCS) {
 		logger::debug("Compiling DeferredCompositeCS DirectionalPass");
@@ -638,7 +638,7 @@ ID3D11ComputeShader* Bindings::GetComputeDirectional()
 	return directionalCS;
 }
 
-ID3D11ComputeShader* Bindings::GetComputeAmbientComposite()
+ID3D11ComputeShader* Deferred::GetComputeAmbientComposite()
 {
 	if (!ambientCompositeCS) {
 		logger::debug("Compiling DeferredCompositeCS AmbientCompositePass");
@@ -647,7 +647,7 @@ ID3D11ComputeShader* Bindings::GetComputeAmbientComposite()
 	return ambientCompositeCS;
 }
 
-ID3D11ComputeShader* Bindings::GetComputeMainComposite()
+ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 {
 	if (!mainCompositeCS) {
 		logger::debug("Compiling DeferredCompositeCS MainCompositePass");

@@ -11,7 +11,7 @@
 #include "Feature.h"
 #include "Features/LightLimitFix/ParticleLights.h"
 
-#include "Bindings.h"
+#include "Deferred.h"
 
 #include "VariableRateShading.h"
 
@@ -162,7 +162,7 @@ void Menu::DrawSettings()
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Clear Shader Cache", { -1, 0 })) {
 				shaderCache.Clear();
-				Bindings::GetSingleton()->ClearShaderCache();
+				Deferred::GetSingleton()->ClearShaderCache();
 				VariableRateShading::GetSingleton()->ClearShaderCache();
 				for (auto* feature : Feature::GetFeatureList()) {
 					if (feature->loaded) {

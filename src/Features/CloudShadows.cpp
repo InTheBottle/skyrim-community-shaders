@@ -2,7 +2,7 @@
 
 #include "State.h"
 
-#include "Bindings.h"
+#include "Deferred.h"
 #include "Util.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -187,7 +187,7 @@ void CloudShadows::DrawShadows()
 
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 		auto& context = State::GetSingleton()->context;
-		auto bindings = Bindings::GetSingleton();
+		auto deferred = Deferred::GetSingleton();
 
 		if (frame_checker.isNewFrame())
 			context->GenerateMips(texCubemapCloudOcc->srv.get());
@@ -204,7 +204,7 @@ void CloudShadows::DrawShadows()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(outputProgram, nullptr, 0);
-		context->Dispatch((bindings->giTexture->desc.Width + 31u) >> 5, (bindings->giTexture->desc.Height + 31u) >> 5, 1);
+		context->Dispatch((deferred->giTexture->desc.Width + 31u) >> 5, (deferred->giTexture->desc.Height + 31u) >> 5, 1);
 
 		// clean up
 		srvs.fill(nullptr);

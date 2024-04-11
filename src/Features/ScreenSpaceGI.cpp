@@ -1,6 +1,6 @@
 #include "ScreenSpaceGI.h"
 
-#include "Bindings.h"
+#include "Deferred.h"
 #include "State.h"
 #include "Util.h"
 
@@ -562,7 +562,7 @@ void ScreenSpaceGI::DrawSSGI(Texture2D* outGI)
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto rts = renderer->GetRuntimeData().renderTargets;
-	auto bindings = Bindings::GetSingleton();
+	auto deferred = Deferred::GetSingleton();
 
 	uint resolution[2] = {
 		(uint)(State::GetSingleton()->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),
@@ -604,7 +604,7 @@ void ScreenSpaceGI::DrawSSGI(Texture2D* outGI)
 	// fetch radiance and disocclusion
 	{
 		resetViews();
-		srvs[0] = rts[bindings->forwardRenderTargets[0]].SRV;
+		srvs[0] = rts[deferred->forwardRenderTargets[0]].SRV;
 		srvs[1] = texGI0->srv.get();
 		srvs[2] = texWorkingDepth->srv.get();
 		srvs[3] = rts[NORMALROUGHNESS].SRV;

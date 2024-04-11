@@ -9,7 +9,7 @@
 #include "Feature.h"
 #include "Util.h"
 
-#include "Bindings.h"
+#include "Deferred.h"
 #include "Features/TerrainBlending.h"
 
 #include "VariableRateShading.h"
@@ -174,7 +174,7 @@ void State::Reset()
 	for (auto* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			feature->Reset();
-	Bindings::GetSingleton()->Reset();
+	Deferred::GetSingleton()->Reset();
 	if (!RE::UI::GetSingleton()->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
 	VariableRateShading::GetSingleton()->UpdateVRS();
@@ -186,7 +186,7 @@ void State::Setup()
 	for (auto* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			feature->SetupResources();
-	Bindings::GetSingleton()->SetupResources();
+	Deferred::GetSingleton()->SetupResources();
 	VariableRateShading::GetSingleton()->Setup();
 }
 
@@ -339,7 +339,7 @@ void State::PostPostLoad()
 		logger::info("Skyrim Upscaler detected");
 	else
 		logger::info("Skyrim Upscaler not detected");
-	Bindings::Hooks::Install();
+	Deferred::Hooks::Install();
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)
@@ -511,7 +511,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (vr || !enableImprovedSnow->GetBool())
 					a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::Snow);
 
-				if (Bindings::GetSingleton()->deferredPass)
+				if (Deferred::GetSingleton()->deferredPass)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred;
 
 				{
@@ -559,7 +559,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 			break;
 		case RE::BSShader::Type::DistantTree:
 			{
-				if (Bindings::GetSingleton()->deferredPass)
+				if (Deferred::GetSingleton()->deferredPass)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::DistantTreeShaderFlags::Deferred;
 			}
 			break;

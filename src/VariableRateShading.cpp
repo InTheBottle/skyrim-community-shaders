@@ -274,6 +274,17 @@ void VariableRateShading::UpdateViews(bool a_enable)
 	if (!vrsActive)
 		return;
 
+	bool interior = false;
+	if (auto player = RE::PlayerCharacter::GetSingleton())
+	{
+		if (auto cell = player->GetParentCell())
+		{
+			if (cell->IsInteriorCell())
+			{
+				interior = true;
+			}
+		}
+	}
 	auto& context = State::GetSingleton()->context;
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
@@ -287,7 +298,7 @@ void VariableRateShading::UpdateViews(bool a_enable)
 		vrsPass = true;
 	}
 
-	vrsPass = enableVRS && vrsPass && a_enable && !RE::UI::GetSingleton()->GameIsPaused();
+	vrsPass = enableVRS && vrsPass && a_enable && !RE::UI::GetSingleton()->GameIsPaused() && interior;
 
 	static bool currentVRS = false;
 

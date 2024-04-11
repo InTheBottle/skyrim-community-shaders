@@ -1,6 +1,6 @@
 #include "TerrainBlending.h"
 
-#include "Bindings.h"
+#include "Deferred.h"
 #include "State.h"
 
 void TerrainBlending::DrawSettings()
@@ -60,8 +60,8 @@ void TerrainBlending::PostPostLoad()
 void TerrainBlending::SetupGeometry(RE::BSRenderPass*)
 {
 	//if (!enableBlending) {
-	//	Bindings::GetSingleton()->SetOverwriteTerrainMode(false);
-	//	Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(Bindings::TerrainMaskMode::kNone);
+	//	Deferred::GetSingleton()->SetOverwriteTerrainMode(false);
+	//	Deferred::GetSingleton()->SetOverwriteTerrainMaskingMode(Deferred::TerrainMaskMode::kNone);
 	//	return;
 	//}
 
@@ -69,19 +69,19 @@ void TerrainBlending::SetupGeometry(RE::BSRenderPass*)
 
 	//if (a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape)) {
 	//	if (validPass) {
-	//		Bindings::GetSingleton()->SetOverwriteTerrainMode(true);
-	//		Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(Bindings::TerrainMaskMode::kRead);
+	//		Deferred::GetSingleton()->SetOverwriteTerrainMode(true);
+	//		Deferred::GetSingleton()->SetOverwriteTerrainMaskingMode(Deferred::TerrainMaskMode::kRead);
 
 	//		auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-	//		auto view = Bindings::GetSingleton()->terrainBlendingMask ? Bindings::GetSingleton()->terrainBlendingMask->srv.get() : nullptr;
+	//		auto view = Deferred::GetSingleton()->terrainBlendingMask ? Deferred::GetSingleton()->terrainBlendingMask->srv.get() : nullptr;
 	//		if (view)
 	//			context->PSSetShaderResources(35, 1, &view);
 	//	} else {
-	//		Bindings::GetSingleton()->SetOverwriteTerrainMode(false);
-	//		Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(Bindings::TerrainMaskMode::kNone);
+	//		Deferred::GetSingleton()->SetOverwriteTerrainMode(false);
+	//		Deferred::GetSingleton()->SetOverwriteTerrainMaskingMode(Deferred::TerrainMaskMode::kNone);
 	//	}
 	//} else {
-	//	Bindings::GetSingleton()->SetOverwriteTerrainMode(false);
+	//	Deferred::GetSingleton()->SetOverwriteTerrainMode(false);
 	//	bool staticReference = false;
 	//	if (validPass) {
 	//		if (auto ref = a_pass->geometry->GetUserData()) {
@@ -92,10 +92,10 @@ void TerrainBlending::SetupGeometry(RE::BSRenderPass*)
 	//			}
 	//		}
 	//	}
-	//	Bindings::GetSingleton()->SetOverwriteTerrainMaskingMode(validPass && !staticReference ?
+	//	Deferred::GetSingleton()->SetOverwriteTerrainMaskingMode(validPass && !staticReference ?
 	//																 (!REL::Module::IsVR() ?
-	//																		 Bindings::TerrainMaskMode::kWrite :
-	//																		 Bindings::TerrainMaskMode::kRead) :  // Fix VR artifact where static objects would appear shifted in each eye
-	//																 Bindings::TerrainMaskMode::kNone);
+	//																		 Deferred::TerrainMaskMode::kWrite :
+	//																		 Deferred::TerrainMaskMode::kRead) :  // Fix VR artifact where static objects would appear shifted in each eye
+	//																 Deferred::TerrainMaskMode::kNone);
 	//}
 }

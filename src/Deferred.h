@@ -8,12 +8,12 @@
 #define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
 #define MASKS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
 
-class Bindings
+class Deferred
 {
 public:
-	static Bindings* GetSingleton()
+	static Deferred* GetSingleton()
 	{
-		static Bindings singleton;
+		static Deferred singleton;
 		return &singleton;
 	}
 
@@ -129,7 +129,7 @@ public:
 
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 
-			logger::info("[Bindings] Installed hooks");
+			logger::info("[Deferred] Installed hooks");
 		}
 	};
 };
