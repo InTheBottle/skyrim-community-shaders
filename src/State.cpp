@@ -16,7 +16,6 @@
 
 void State::Draw()
 {
-	Bindings::GetSingleton()->CheckOpaque();
 	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
 		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky);
@@ -623,12 +622,6 @@ void State::UpdateSharedData(const RE::BSShader* a_shader, const uint32_t)
 		}
 
 		lightingData.Timer = timer;
-
-		auto currentOpaque = Bindings::GetSingleton()->opaque;
-		if (currentOpaque != lightingData.Opaque) {
-			lightingData.Opaque = currentOpaque;
-			updateBuffer = true;
-		}
 
 		if (updateBuffer) {
 			D3D11_MAPPED_SUBRESOURCE mapped;

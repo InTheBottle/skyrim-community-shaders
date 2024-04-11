@@ -413,6 +413,7 @@ void Bindings::DeferredPasses()
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
+	auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
@@ -437,13 +438,14 @@ void Bindings::DeferredPasses()
 	}
 
 	{
-		ID3D11ShaderResourceView* srvs[6]{
+		ID3D11ShaderResourceView* srvs[7]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
 			shadowMask.SRV,
-			depth.depthSRV
+			depth.depthSRV,
+			masks.SRV
 		};
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
@@ -473,13 +475,14 @@ void Bindings::DeferredPasses()
 
 	{
 		{
-			ID3D11ShaderResourceView* srvs[7]{
+			ID3D11ShaderResourceView* srvs[8]{
 				specular.SRV,
 				albedo.SRV,
 				reflectance.SRV,
 				normalRoughness.SRV,
 				shadowMask.SRV,
 				depth.depthSRV,
+				masks.SRV,
 				giTexture->srv.get(),
 			};
 
@@ -509,13 +512,14 @@ void Bindings::DeferredPasses()
 
 	{
 		{
-			ID3D11ShaderResourceView* srvs[7]{
+			ID3D11ShaderResourceView* srvs[8]{
 				specular.SRV,
 				albedo.SRV,
 				reflectance.SRV,
 				normalRoughness.SRV,
 				shadowMask.SRV,
 				depth.depthSRV,
+				masks.SRV,
 				giTexture->srv.get(),
 			};
 
@@ -594,14 +598,6 @@ void Bindings::EndDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = false;
-}
-
-void Bindings::CheckOpaque()
-{
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(alphaBlendMode, state)
-
-	opaque = alphaBlendMode == 0;
 }
 
 void Bindings::ClearShaderCache()

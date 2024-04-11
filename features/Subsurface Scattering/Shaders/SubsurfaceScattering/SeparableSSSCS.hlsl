@@ -67,7 +67,7 @@ float InterleavedGradientNoise(float2 uv)
 	sssAmount = saturate((humanProfile ? (sssAmount.x - 0.5) : sssAmount) * 2.0);
 #	else
 	float sssAmount = MaskTexture[DTid.xy].x;
-	bool humanProfile = MaskTexture[DTid.xy].w > 0.5;
+	bool humanProfile = MaskTexture[DTid.xy].y == sssAmount;
 #	endif
 
 	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(1.0, 0.0), sssAmount, humanProfile);
@@ -80,7 +80,7 @@ float InterleavedGradientNoise(float2 uv)
 	sssAmount = saturate((humanProfile ? (sssAmount.x - 0.5) : sssAmount) * 2.0);
 #	else
 	float sssAmount = MaskTexture[DTid.xy].x;
-	bool humanProfile = MaskTexture[DTid.xy].w > 0.5;
+	bool humanProfile = MaskTexture[DTid.xy].y == sssAmount;
 #	endif
 
 	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(0.0, 1.0), sssAmount, humanProfile);

@@ -1913,6 +1913,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 vertexColor = input.Color.xyz;
 #	endif  // defined (HAIR)
 	float3 realVertexColor = vertexColor;
+	
 	vertexColor *= color.xyz;
 
 #	if defined(MULTI_LAYER_PARALLAX)
@@ -2188,21 +2189,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
 	psout.Masks = float4(0, 0, 0, psout.Diffuse.w);
 
-#		if defined(SSS) && defined(SKIN)
-	psout.Masks.x = saturate(baseColor.a);
-#		endif
-
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
 
-	if (lightingData[0].Opaque) {
-		psout.Albedo.w = 0;
-		psout.NormalGlossiness.w = 0;
 #		if defined(SSS) && defined(SKIN)
-		psout.Masks.w = !perPassSSS[0].IsBeastRace;
+	psout.Masks.x = saturate(baseColor.a);
+	psout.Masks.y = !perPassSSS[0].IsBeastRace;
 #		endif
-	}
 #	endif
 
 	return psout;

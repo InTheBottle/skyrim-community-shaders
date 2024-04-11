@@ -30,10 +30,6 @@ public:
 	void DeferredPasses();
 	void EndDeferred();
 
-	void CheckOpaque();
-
-	uint opaque = 0;
-
 	ID3D11BlendState* deferredBlendStates[4];
 	ID3D11BlendState* forwardBlendStates[4];
 	RE::RENDER_TARGET forwardRenderTargets[4];
@@ -118,7 +114,7 @@ public:
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 			{
-				GetSingleton()->CheckOpaque();
+			//	GetSingleton()->CheckOpaque();
 				func(This, Pass, RenderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
