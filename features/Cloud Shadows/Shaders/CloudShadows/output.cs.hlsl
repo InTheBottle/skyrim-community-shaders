@@ -1,5 +1,5 @@
 #include "../Common/DeferredShared.hlsl"
-#include "../Common/VR.hlsl"
+#include "../Common/VR.hlsli"
 
 struct PerPassCloudShadow
 {
