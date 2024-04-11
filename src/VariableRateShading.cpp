@@ -278,9 +278,12 @@ void VariableRateShading::UpdateViews(bool a_enable)
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
-	vrsPass = screenTargets.contains(state->GetRuntimeData().renderTargets[0]);
+	GET_INSTANCE_MEMBER(renderTargets, state);
+	GET_INSTANCE_MEMBER(depthStencil, state);
 
-	if (state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || state->GetRuntimeData().depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY) {
+	vrsPass = screenTargets.contains(renderTargets[0]);
+
+	if (depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN || depthStencil == RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY) {
 		vrsPass = true;
 	}
 
