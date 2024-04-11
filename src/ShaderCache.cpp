@@ -107,11 +107,6 @@ namespace SIE
 			Depth = 1,
 		};
 
-		enum class DistantTreeShaderFlags
-		{
-			AlphaTest = 0x10000,
-		};
-
 		static void GetDistantTreeShaderDefines(uint32_t descriptor, D3D_SHADER_MACRO* defines)
 		{
 			const auto technique = descriptor & 1;
@@ -119,8 +114,13 @@ namespace SIE
 			if (technique == static_cast<uint32_t>(DistantTreeShaderTechniques::Depth)) {
 				defines[lastIndex++] = { "RENDER_DEPTH", nullptr };
 			}
-			if (descriptor & static_cast<uint32_t>(DistantTreeShaderFlags::AlphaTest)) {
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::DistantTreeShaderFlags::AlphaTest)) {
 				defines[lastIndex++] = { "DO_ALPHA_TEST", nullptr };
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::DistantTreeShaderFlags::Deferred)) {
+				defines[lastIndex++] = { "DEFERRED", nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {

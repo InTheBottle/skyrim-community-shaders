@@ -467,7 +467,7 @@ void State::SetupResources()
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 {
-	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting || a_shader.shaderType.get() == RE::BSShader::Type::Water || a_shader.shaderType.get() == RE::BSShader::Type::Effect) {
+	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting || a_shader.shaderType.get() == RE::BSShader::Type::Water || a_shader.shaderType.get() == RE::BSShader::Type::Effect || a_shader.shaderType.get() == RE::BSShader::Type::DistantTree) {
 		if (a_vertexDescriptor != lastVertexDescriptor || a_pixelDescriptor != lastPixelDescriptor) {
 			PerShader data{};
 			data.VertexShaderDescriptor = a_vertexDescriptor;
@@ -555,6 +555,12 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToColor |
 									   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 									   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
+			}
+			break;
+		case RE::BSShader::Type::DistantTree:
+			{
+				if (Bindings::GetSingleton()->deferredPass)
+					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::DistantTreeShaderFlags::Deferred;
 			}
 			break;
 		}

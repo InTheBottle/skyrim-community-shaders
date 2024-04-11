@@ -71,12 +71,14 @@ struct PS_OUTPUT
 {
 	float4 Diffuse : SV_Target0;
 
-#if !defined(RENDER_DEPTH)
+#	if !defined(RENDER_DEPTH)
+#		if defined(DEFERRED)
 	float2 MotionVector : SV_Target1;
 	float4 Normal : SV_Target2;
 	float4 Albedo : SV_Target3;
 	float4 Masks : SV_Target6;
-#endif
+#	endif
+#	endif
 };
 
 #ifdef PSHADER
@@ -153,6 +155,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 
+#		if defined(DEFERRED)
 	psout.Diffuse.xyz = 0;
 	psout.Diffuse.w = 1;
 
@@ -173,6 +176,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Albedo = float4(baseColor.xyz * 0.5, 1);
 	psout.Masks = float4(0, 0, 1, 0);
+#		else
+	psout.Diffuse = float4((input.TexCoord.zzz * DiffuseColor.xyz + AmbientColor.xyz) * baseColor.xyz, 1.0);
+#		endif
 #	endif
 
 	return psout;

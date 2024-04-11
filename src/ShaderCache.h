@@ -300,6 +300,12 @@ namespace SIE
 			MotionVectorsNormals = 1 << 26,
 		};
 
+		enum class DistantTreeShaderFlags
+		{
+			Deferred = 1 << 8,
+			AlphaTest = 1 << 16,
+		};
+
 		uint blockedKeyIndex = (uint)-1;  // index in shaderMap; negative value indicates disabled
 		std::string blockedKey = "";
 		std::vector<uint32_t> blockedIDs;  // more than one descriptor could be blocked based on shader hash
