@@ -71,14 +71,14 @@ struct PS_OUTPUT
 {
 	float4 Diffuse : SV_Target0;
 
-#	if !defined(RENDER_DEPTH)
-#		if defined(DEFERRED)
+#if !defined(RENDER_DEPTH)
+#	if defined(DEFERRED)
 	float2 MotionVector : SV_Target1;
 	float4 Normal : SV_Target2;
 	float4 Albedo : SV_Target3;
 	float4 Masks : SV_Target6;
 #	endif
-#	endif
+#endif
 };
 
 #ifdef PSHADER
