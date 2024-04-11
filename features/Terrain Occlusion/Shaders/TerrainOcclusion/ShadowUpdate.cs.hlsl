@@ -80,7 +80,8 @@ groupshared float2 g_shadowHeight[1024];
 
 		// fetch last dispatch
 		if (gtid == 0 && all(floor(rawThreadUV - lightUVDir) == floor(rawThreadUV))) {
-			heights = max(heights, GetInterpolatedHeightRW(threadPxCoord - LightPxDir, isVertical) + LightDeltaZ);
+			float2 sampleHeights = GetInterpolatedHeightRW(threadPxCoord - LightPxDir, isVertical) + LightDeltaZ;
+			heights = heights.x > sampleHeights.x ? heights : sampleHeights;
 		}
 
 		g_shadowHeight[gtid] = heights;
@@ -93,7 +94,11 @@ groupshared float2 g_shadowHeight[1024];
 	{
 		if (isValid && gtid >= offset) {
 			if (all(floor(rawThreadUV - lightUVDir * offset) == floor(rawThreadUV)))  // no wraparound happend
-				g_shadowHeight[gtid] = max(g_shadowHeight[gtid], g_shadowHeight[gtid - offset] + LightDeltaZ * offset);
+			{
+				float2 currentHeights = g_shadowHeight[gtid];
+				float2 sampleHeights = g_shadowHeight[gtid - offset] + LightDeltaZ * offset;
+				g_shadowHeight[gtid] = currentHeights.x > sampleHeights.x ? currentHeights : sampleHeights;
+			}
 		}
 		GroupMemoryBarrierWithGroupSync();
 	}
@@ -101,7 +106,5 @@ groupshared float2 g_shadowHeight[1024];
 	// save
 	if (isValid) {
 		RWTexShadowHeights[uint2(threadPxCoord)] = lerp(pastHeights, g_shadowHeight[gtid], .2f);
-		// RWTexShadowHeights[uint2(threadPxCoord)] = gtid / 1024.f;
-		// RWTexShadowHeights[uint2(gtid, gid)] = threadUV;
 	}
 }
