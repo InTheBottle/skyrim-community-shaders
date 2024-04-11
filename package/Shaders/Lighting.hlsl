@@ -1913,7 +1913,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 vertexColor = input.Color.xyz;
 #	endif  // defined (HAIR)
 	float3 realVertexColor = vertexColor;
-	
+
 	vertexColor *= color.xyz;
 
 #	if defined(MULTI_LAYER_PARALLAX)

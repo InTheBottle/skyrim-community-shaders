@@ -114,7 +114,7 @@ public:
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 			{
-			//	GetSingleton()->CheckOpaque();
+				//	GetSingleton()->CheckOpaque();
 				func(This, Pass, RenderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
