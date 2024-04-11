@@ -148,7 +148,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	half4 giAo = GITexture[globalId.xy];
 	half3 gi = giAo.rgb;
 	half ao = giAo.w;
-	
+
 	half3 masks = MasksTexture[globalId.xy];
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
@@ -178,7 +178,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half glossiness = normalGlossiness.z;
 	half3 color = diffuseColor + specularColor;
-	
+
 #if defined(DEBUG)
 	half2 texCoord = half2(globalId.xy) / BufferDim.xy;
 
