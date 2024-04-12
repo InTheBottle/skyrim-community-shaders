@@ -275,12 +275,9 @@ void VariableRateShading::UpdateViews(bool a_enable)
 		return;
 
 	bool interior = false;
-	if (auto player = RE::PlayerCharacter::GetSingleton())
-	{
-		if (auto cell = player->GetParentCell())
-		{
-			if (cell->IsInteriorCell())
-			{
+	if (auto player = RE::PlayerCharacter::GetSingleton()) {
+		if (auto cell = player->GetParentCell()) {
+			if (cell->IsInteriorCell()) {
 				interior = true;
 			}
 		}
