@@ -1,11 +1,5 @@
 
 #include "../Common/DeferredShared.hlsli"
-
-half GetScreenDepth(half depth)
-{
-	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
-}
-
 #include "bend_sss_gpu.hlsli"
 
 Texture2D<unorm half> DepthTexture : register(t0);     // Depth Buffer Texture (rasterized non-linear depth)

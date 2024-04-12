@@ -1,5 +1,6 @@
 #include "../Common/DeferredShared.hlsli"
 #include "../Common/GBuffer.hlsli"
+#include "../Common/VR.hlsli"
 
 Texture2D<unorm half4> NormalRoughnessTexture : register(t0);
 Texture2D<unorm half> DepthTexture : register(t1);
@@ -10,13 +11,6 @@ RWTexture2D<unorm half> ShadowMaskTextureRW : register(u0);
 half GetScreenDepth(half depth)
 {
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
-}
-
-half2 WorldToUV(half3 x, bool is_position = true, uint a_eyeIndex = 0)
-{
-	half4 newPosition = half4(x, (half)is_position);
-	half4 uv = mul(ViewProjMatrix[a_eyeIndex], newPosition);
-	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
 half InterleavedGradientNoise(half2 uv)
@@ -67,18 +61,18 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	if (depth < 16.5)
 		return;
 
-	uint eyeIndex = 0;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
-	half3 viewPosition = DepthToView(uv, rawDepth, 0);
+	half3 viewPosition = DepthToView(uv, rawDepth, eyeIndex);
 	viewPosition.z = depth;
 
-	half3 endPosVS = viewPosition + DirLightDirectionVS[0].xyz * 5;
+	half3 endPosVS = viewPosition + DirLightDirectionVS[eyeIndex].xyz * 5;
 	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
 
 	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);
 	half2 endPosPixel = clamp(endPosUV * BufferDim, 0, BufferDim);
 
-	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
+	half NdotL = dot(normalVS, DirLightDirectionVS[eyeIndex].xyz);
 
 	half shadow = 0;
 
@@ -96,9 +90,9 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 		for (int i = 0; i < 5; i++) {
 			uint2 tmpCoords = lerp(startPosPixel, endPosPixel, pos);
-			half3 tmpNormal = DecodeNormal(NormalRoughnessTexture[tmpCoords]);
+			half3 tmpNormal = DecodeNormal(NormalRoughnessTexture[tmpCoords].xy);
 			half tmpDepth = GetScreenDepth(DepthTexture[tmpCoords]);
-			half tmpNdotL = dot(tmpNormal, DirLightDirectionVS[0].xyz);
+			half tmpNdotL = dot(tmpNormal, DirLightDirectionVS[eyeIndex].xyz);
 
 			half shadowed = -tmpNdotL;
 			shadowed += NdotL * pos;
