@@ -1,6 +1,7 @@
 
 #include "Common/DeferredShared.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/VR.hlsli"
 
 Texture2D<half3> SpecularTexture : register(t0);
 Texture2D<unorm half3> AlbedoTexture : register(t1);
@@ -23,44 +24,12 @@ half GetScreenDepth(half depth)
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-half2 WorldToUV(half3 x, bool is_position = true, uint a_eyeIndex = 0)
-{
-	half4 newPosition = half4(x, (half)is_position);
-	half4 uv = mul(ViewProjMatrix[a_eyeIndex], newPosition);
-	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
-}
-
-half InterleavedGradientNoise(half2 uv)
-{
-	// Temporal factor
-	half frameStep = half(FrameCount % 16) * 0.0625f;
-	uv.x += frameStep * 4.7526;
-	uv.y += frameStep * 3.1914;
-
-	half3 magic = half3(0.06711056f, 0.00583715f, 52.9829189f);
-	return frac(magic.z * frac(dot(uv, magic.xy)));
-}
-
-// Inverse project UV + raw depth into the view space.
-half3 DepthToView(half2 uv, half z, uint a_eyeIndex)
-{
-	uv.y = 1 - uv.y;
-	half4 cp = half4(uv * 2 - 1, z, 1);
-	half4 vp = mul(InvProjMatrix[a_eyeIndex], cp);
-	return vp.xyz / vp.w;
-}
-
-half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
-{
-	half4 uv = mul(ProjMatrix[a_eyeIndex], half4(position, (half)is_position));
-	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
-}
-
 [numthreads(32, 32, 1)] void DirectionalPass(uint3 globalId
 											 : SV_DispatchThreadID, uint3 localId
 											 : SV_GroupThreadID, uint3 groupId
 											 : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
@@ -70,7 +39,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half weight = 1.0;
 
-	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
+	half NdotL = dot(normalVS, DirLightDirectionVS[eyeIndex].xyz);
 
 	half3 albedo = AlbedoTexture[globalId.xy];
 	half3 masks = MasksTexture[globalId.xy];
@@ -86,6 +55,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 												   : SV_GroupThreadID, uint3 groupId
 												   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
@@ -95,7 +65,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	half weight = 1.0;
 
-	half NdotL = dot(normalVS, DirLightDirectionVS[0].xyz);
+	half NdotL = dot(normalVS, DirLightDirectionVS[eyeIndex].xyz);
 	half shadow = 1.0;
 
 	half3 albedo = AlbedoTexture[globalId.xy];
@@ -133,15 +103,14 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 												  : SV_GroupThreadID, uint3 groupId
 												  : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
 
-	uint eyeIndex = 0;
-
 	half4 diffuseColor = MainRW[globalId.xy];
 
-	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half3 albedo = AlbedoTexture[globalId.xy];
 
@@ -155,26 +124,24 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	diffuseColor.rgb += albedo * directionalAmbientColor * ao + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor.xyz, 1.0);
-}
+};
 
-	[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
-												   : SV_DispatchThreadID, uint3 localId
-												   : SV_GroupThreadID, uint3 groupId
-												   : SV_GroupID)
-{
+[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
+											   : SV_DispatchThreadID, uint3 localId
+											   : SV_GroupThreadID, uint3 groupId
+											   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
-
-	uint eyeIndex = 0;
 
 	half3 diffuseColor = MainRW[globalId.xy];
 	half3 specularColor = SpecularTexture[globalId.xy];
 	half3 albedo = AlbedoTexture[globalId.xy];
 	half3 masks = MasksTexture[globalId.xy];
 
-	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half glossiness = normalGlossiness.z;
 	half3 color = diffuseColor + specularColor;
