@@ -23,7 +23,7 @@ Texture2D<float4> nasDataSurface : register(t0);
 	nasDataSurface.GetDimensions(screenWidth, screenHeight);
 
 	float2 uv = DispatchThreadID.xy * rcp(float2(screenWidth, screenHeight));
-	float threshold = lerp(0.1, 0.2, distance(float2(0.5, 0.5), uv));
+	float threshold = lerp(0.07, 0.14, distance(float2(0.5, 0.5), uv));
 
 	/*`
         D3D12_SHADING_RATE_1X1	= 0,   // 0b0000
