@@ -2,7 +2,6 @@
 
 #include "FeatureVersions.h"
 #include "Features/CloudShadows.h"
-#include "Features/DistantTreeLighting.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/GrassCollision.h"
@@ -106,7 +105,6 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	// Cat: essentially load order i guess
 	static std::vector<Feature*> features = {
 		GrassLighting::GetSingleton(),
-		DistantTreeLighting::GetSingleton(),
 		GrassCollision::GetSingleton(),
 		ScreenSpaceShadows::GetSingleton(),
 		ExtendedMaterials::GetSingleton(),
