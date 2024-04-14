@@ -119,8 +119,6 @@ struct DispatchParameters
 		DebugOutputEdgeMask = false;
 		DebugOutputThreadIndex = false;
 		DebugOutputWaveIndex = false;
-		//DepthBounds					= half2(0,1);
-		//UseEarlyOut					= false;
 	}
 
 	// Runtime data returned from BuildDispatchList():
@@ -254,7 +252,22 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	int i;
 	bool is_edge = false;
 	bool skip_pixel = false;
+
+#if defined(RIGHT)
+	pixel_xy.x += 1.0 / inParameters.InvDepthTextureSize.x;
+#endif
+
 	half2 write_xy = floor(pixel_xy);
+
+#	if !defined(RIGHT)
+	half2 minUV = half2(0.0, 0.0);
+	half2 maxUV = half2(0.5, 1.0);
+#	else
+	half2 minUV = half2(0.5, 0.0);
+	half2 maxUV = half2(1.0, 1.0);
+#	endif
+
+	half2 uv = pixel_xy * inParameters.InvDepthTextureSize * half2(0.5, 1.0);
 
 	[unroll] for (i = 0; i < READ_COUNT; i++)
 	{
@@ -273,19 +286,19 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		read_xy += 0.5;
 #	endif
 
-#	if USE_UV_PIXEL_BIAS
 		half bias = bilinear > 0 ? 1 : -1;
 		half2 offset_xy = half2(x_axis_major ? 0 : bias, x_axis_major ? bias : 0);
 
 		// HLSL enforces that a pixel offset is a compile-time constant, which isn't strictly required (and can sometimes be a bit faster)
 		// So this fallback will use a manual uv offset instead
+#	if defined(VR)		
+		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize * half2(0.5, 1.0), 0);
+		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, (read_xy + offset_xy) * inParameters.InvDepthTextureSize * half2(0.5, 1.0), 0);
+		depths.x = lerp(depths.x, 1.0, (float)(depths.x == 0)); // Stencil area
+		depths.y = lerp(depths.y, 1.0, (float)(depths.y == 0)); // Stencil area
+#	else
 		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize, 0);
 		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, (read_xy + offset_xy) * inParameters.InvDepthTextureSize, 0);
-#	else
-		int bias = bilinear > 0 ? 1 : -1;
-		int2 offset_xy = int2(x_axis_major ? 0 : bias, x_axis_major ? bias : 0);
-		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize, 0);
-		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize, 0, offset_xy);
 #	endif
 
 		// Depth thresholds (bilinear/shadow thickness) are based on a fractional ratio of the difference between sampled depth and the far clip depth
@@ -298,15 +311,6 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		if (i == 0)
 			is_edge = use_point_filter;
 
-		// if (inParameters.BilinearSamplingOffsetMode)
-		// {
-		// 	bilinear = use_point_filter ? 0 : bilinear;
-		// 	//both shadow depth and starting depth are the same in this mode, unless shadow skipping edges
-		// 	sampling_depth[i] = lerp(depths.x, depths.y, abs(bilinear));
-		// 	shadowing_depth[i] = (inParameters.IgnoreEdgePixels && use_point_filter) ? edge_skip : sampling_depth[i];
-		// }
-		// else
-		// {
 		// The pixel starts sampling at this depth
 		sampling_depth[i] = depths.x;
 
@@ -317,7 +321,6 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 		// Shadows cast from this depth
 		shadowing_depth[i] = use_point_filter ? edge_depth : shadow_depth;
-		//}
 
 		// Store for later
 		sample_distance[i] = pixel_distance + (WAVE_SIZE * i) * direction;
@@ -383,7 +386,9 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	GroupMemoryBarrierWithGroupSync();
 
 	// Skip first person
+#	if !defined(VR)
 	skip_pixel = skip_pixel || GetScreenDepth(sampling_depth[0]) < 16.5;
+#	endif
 
 	// If the starting depth isn't in depth bounds, then we don't need a shadow
 	if (skip_pixel)
@@ -459,19 +464,9 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	// If the first samples are always producing a hard shadow, then compute this value separately.
 	result = min(hard_shadow, result);
 
-	//write the result
-	{
-		// if (inParameters.DebugOutputEdgeMask)
-		// 	result = is_edge ? 1 : 0;
-		// if (inParameters.DebugOutputThreadIndex)
-		// 	result = (inGroupThreadID / (half)WAVE_SIZE);
-		// if (inParameters.DebugOutputWaveIndex)
-		// 	result = frac(inGroupID.x / (half)WAVE_SIZE);
-
-		// Asking the GPU to write scattered single-byte pixels isn't great,
-		// But thankfully the latency is hidden by all the work we're doing...
-		inParameters.OutputTexture[(int2)write_xy] = min(inParameters.OutputTexture[(int2)write_xy], result);
-	}
+	// Asking the GPU to write scattered single-byte pixels isn't great,
+	// But thankfully the latency is hidden by all the work we're doing...
+	inParameters.OutputTexture[(int2)write_xy] = min(inParameters.OutputTexture[(int2)write_xy], result);	
 }
 
 #endif  // macro check

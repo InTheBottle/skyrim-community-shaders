@@ -48,6 +48,7 @@ struct ScreenSpaceShadows : Feature
 
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchCS = nullptr;
+	ID3D11ComputeShader* raymarchRightCS = nullptr;
 	ID3D11ComputeShader* normalMappingShadowsCS = nullptr;
 
 	virtual void SetupResources();
@@ -57,6 +58,8 @@ struct ScreenSpaceShadows : Feature
 
 	virtual void ClearShaderCache() override;
 	ID3D11ComputeShader* GetComputeRaymarch();
+	ID3D11ComputeShader* GetComputeRaymarchRight();
+
 	ID3D11ComputeShader* GetComputeNormalMappingShadows();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);

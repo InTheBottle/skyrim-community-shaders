@@ -43,6 +43,10 @@ void ScreenSpaceShadows::ClearShaderCache()
 		raymarchCS->Release();
 		raymarchCS = nullptr;
 	}
+	if (raymarchRightCS) {
+		raymarchRightCS->Release();
+		raymarchRightCS = nullptr;
+	}
 	if (normalMappingShadowsCS) {
 		normalMappingShadowsCS->Release();
 		normalMappingShadowsCS = nullptr;
@@ -66,6 +70,25 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", sampleCount * 64).c_str() } }, "cs_5_0");
 	}
 	return raymarchCS;
+}
+
+ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
+{
+	static uint sampleCount = bendSettings.SampleCount;
+
+	if (sampleCount != bendSettings.SampleCount) {
+		sampleCount = bendSettings.SampleCount;
+		if (raymarchRightCS) {
+			raymarchRightCS->Release();
+			raymarchRightCS = nullptr;
+		}
+	}
+
+	if (!raymarchRightCS) {
+		logger::debug("Compiling RaymarchCS RIGHT");
+		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", sampleCount * 64).c_str() }, { "RIGHT", "" } }, "cs_5_0");
+	}
+	return raymarchRightCS;
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeNormalMappingShadows()
@@ -106,14 +129,15 @@ void ScreenSpaceShadows::DrawShadows()
 	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
 
 	int viewportSize[2] = { (int)state->screenWidth, (int)state->screenHeight };
+	
+	if (REL::Module::IsVR())
+		viewportSize[0] /= 2;
 
 	int minRenderBounds[2] = { 0, 0 };
 	int maxRenderBounds[2] = {
 		(int)((float)viewportSize[0] * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),
 		(int)((float)viewportSize[1] * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale)
 	};
-
-	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	context->CSSetShaderResources(0, 1, &depth.depthSRV);
@@ -123,11 +147,13 @@ void ScreenSpaceShadows::DrawShadows()
 
 	context->CSSetSamplers(0, 1, &pointBorderSampler);
 
-	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
-
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
+	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
+
+	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
+	
 	for (int i = 0; i < dispatchList.DispatchCount; i++) {
 		auto dispatchData = dispatchList.Dispatch[i];
 
@@ -151,6 +177,46 @@ void ScreenSpaceShadows::DrawShadows()
 		raymarchCB->Update(data);
 
 		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
+	}
+
+	if (REL::Module::IsVR())
+	{
+		lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
+
+		viewProjMat = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewProjMat;
+
+		lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
+
+		float lightProjectionRightF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
+
+		context->CSSetShader(GetComputeRaymarchRight(), nullptr, 0);
+
+		dispatchList = Bend::BuildDispatchList(lightProjectionRightF, viewportSize, minRenderBounds, maxRenderBounds);
+
+		for (int i = 0; i < dispatchList.DispatchCount; i++) {
+			auto dispatchData = dispatchList.Dispatch[i];
+
+			RaymarchCB data{};
+			data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
+			data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
+			data.LightCoordinate[2] = dispatchList.LightCoordinate_Shader[2];
+			data.LightCoordinate[3] = dispatchList.LightCoordinate_Shader[3];
+
+			data.WaveOffset[0] = dispatchData.WaveOffset_Shader[0];
+			data.WaveOffset[1] = dispatchData.WaveOffset_Shader[1];
+
+			data.FarDepthValue = 1.0f;
+			data.NearDepthValue = 0.0f;
+
+			data.InvDepthTextureSize[0] = 1.0f / (float)viewportSize[0];
+			data.InvDepthTextureSize[1] = 1.0f / (float)viewportSize[1];
+
+			data.settings = bendSettings;
+
+			raymarchCB->Update(data);
+
+			context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
+		}
 	}
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };
