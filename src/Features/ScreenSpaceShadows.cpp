@@ -129,7 +129,7 @@ void ScreenSpaceShadows::DrawShadows()
 	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
 
 	int viewportSize[2] = { (int)state->screenWidth, (int)state->screenHeight };
-	
+
 	if (REL::Module::IsVR())
 		viewportSize[0] /= 2;
 
@@ -153,7 +153,7 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
 
 	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
-	
+
 	for (int i = 0; i < dispatchList.DispatchCount; i++) {
 		auto dispatchData = dispatchList.Dispatch[i];
 
@@ -179,8 +179,7 @@ void ScreenSpaceShadows::DrawShadows()
 		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 	}
 
-	if (REL::Module::IsVR())
-	{
+	if (REL::Module::IsVR()) {
 		lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
 
 		viewProjMat = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewProjMat;

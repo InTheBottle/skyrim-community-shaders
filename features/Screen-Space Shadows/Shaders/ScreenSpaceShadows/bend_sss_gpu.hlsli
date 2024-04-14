@@ -253,9 +253,9 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	bool is_edge = false;
 	bool skip_pixel = false;
 
-#if defined(RIGHT)
+#	if defined(RIGHT)
 	pixel_xy.x += 1.0 / inParameters.InvDepthTextureSize.x;
-#endif
+#	endif
 
 	half2 write_xy = floor(pixel_xy);
 
@@ -291,11 +291,11 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 		// HLSL enforces that a pixel offset is a compile-time constant, which isn't strictly required (and can sometimes be a bit faster)
 		// So this fallback will use a manual uv offset instead
-#	if defined(VR)		
+#	if defined(VR)
 		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize * half2(0.5, 1.0), 0);
 		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, (read_xy + offset_xy) * inParameters.InvDepthTextureSize * half2(0.5, 1.0), 0);
-		depths.x = lerp(depths.x, 1.0, (float)(depths.x == 0)); // Stencil area
-		depths.y = lerp(depths.y, 1.0, (float)(depths.y == 0)); // Stencil area
+		depths.x = lerp(depths.x, 1.0, (float)(depths.x == 0));  // Stencil area
+		depths.y = lerp(depths.y, 1.0, (float)(depths.y == 0));  // Stencil area
 #	else
 		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, read_xy * inParameters.InvDepthTextureSize, 0);
 		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, (read_xy + offset_xy) * inParameters.InvDepthTextureSize, 0);
@@ -466,7 +466,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	// Asking the GPU to write scattered single-byte pixels isn't great,
 	// But thankfully the latency is hidden by all the work we're doing...
-	inParameters.OutputTexture[(int2)write_xy] = min(inParameters.OutputTexture[(int2)write_xy], result);	
+	inParameters.OutputTexture[(int2)write_xy] = min(inParameters.OutputTexture[(int2)write_xy], result);
 }
 
 #endif  // macro check
