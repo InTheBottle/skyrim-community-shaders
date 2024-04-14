@@ -347,10 +347,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	normal = normalize(lerp(normal, normalize(input.SphereNormal.xyz), input.SphereNormal.w));
 
 	if (complex) {
-		float3 normalColor = float4(TransformNormal(specColor.xyz), 1);
+		float3 normalColor = TransformNormal(specColor.xyz);
 		// world-space -> tangent-space -> world-space.
 		// This is because we don't have pre-computed tangents.
-		normal = normalize(mul(normalColor, CalculateTBN(normal, -input.WorldPosition, input.TexCoord.xy)));
+		normal = normalize(mul(normalColor, CalculateTBN(normal, -input.WorldPosition.xyz, input.TexCoord.xy)));
 	}
 
 	if (!complex || OverrideComplexGrassSettings)
@@ -438,11 +438,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		if defined(LIGHT_LIMIT_FIX)
 	if (perPassLLF[0].EnableLightsVisualisation) {
 		if (perPassLLF[0].LightsVisualisationMode == 0) {
-			psout.diffuseColor.xyz = TurboColormap(0);
+			diffuseColor.xyz = TurboColormap(0);
 		} else if (perPassLLF[0].LightsVisualisationMode == 1) {
-			psout.diffuseColor.xyz = TurboColormap(0);
+			diffuseColor.xyz = TurboColormap(0);
 		} else {
-			psout.diffuseColor.xyz = TurboColormap((float)lightCount / 128.0);
+			diffuseColor.xyz = TurboColormap((float)lightCount / 128.0);
 		}
 	} else {
 		psout.Diffuse = float4(diffuseColor, 1);
