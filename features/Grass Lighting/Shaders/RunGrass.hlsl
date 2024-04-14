@@ -1,8 +1,8 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
+#include "Common/GBuffer.hlsli"
 #include "Common/LightingData.hlsl"
 #include "Common/MotionBlur.hlsl"
-#include "Common/GBuffer.hlsli"
 
 #define GRASS
 
@@ -419,7 +419,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 				lightDiffuseColor += subsurfaceColor * lightColor * saturate(-lightAngle) * SubsurfaceScatteringAmount;
 				lightsDiffuseColor += lightDiffuseColor * intensityMultiplier;
-				
+
 				if (complex)
 					lightsSpecularColor += GetLightSpecularInput(normalizedLightDirection, viewDirection, normal, lightColor, Glossiness) * intensityMultiplier;
 			}
@@ -456,7 +456,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Masks = float4(0, 0, 0, 0);
 
 	float3 normalVS = normalize(WorldToView(normal, false, eyeIndex));
-	psout.NormalGlossiness = float4(EncodeNormal(normalVS), specColor.w, 1);	
+	psout.NormalGlossiness = float4(EncodeNormal(normalVS), specColor.w, 1);
 #	endif  // RENDER_DEPTH
 	return psout;
 }
