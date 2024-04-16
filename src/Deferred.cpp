@@ -196,6 +196,10 @@ void Deferred::SetupResources()
 
 void Deferred::Reset()
 {
+	//for (auto& str : perms)
+	//{
+	////	logger::info("{}", str);
+	//}
 }
 
 void Deferred::UpdateConstantBuffer()
@@ -293,12 +297,7 @@ void Deferred::StartDeferred()
 			D3D11_BLEND_DESC blendDesc;
 			forwardBlendStates[0]->GetDesc(&blendDesc);
 
-			blendDesc.IndependentBlendEnable = true;
-			blendDesc.RenderTarget[0].BlendEnable = false;
-			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-			for (uint i = 1; i < 8; i++) {
-				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
-			}
+			blendDesc.IndependentBlendEnable = false;
 
 			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[0]));
 		}
@@ -309,10 +308,8 @@ void Deferred::StartDeferred()
 			D3D11_BLEND_DESC blendDesc;
 			forwardBlendStates[1]->GetDesc(&blendDesc);
 
-			blendDesc.IndependentBlendEnable = true;
-			for (uint i = 1; i < 8; i++) {
-				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
-			}
+			blendDesc.IndependentBlendEnable = false;
+
 
 			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[1]));
 		}
@@ -323,10 +320,7 @@ void Deferred::StartDeferred()
 			D3D11_BLEND_DESC blendDesc;
 			forwardBlendStates[2]->GetDesc(&blendDesc);
 
-			blendDesc.IndependentBlendEnable = true;
-			for (uint i = 1; i < 8; i++) {
-				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
-			}
+			blendDesc.IndependentBlendEnable = false;
 
 			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[2]));
 		}
@@ -337,12 +331,42 @@ void Deferred::StartDeferred()
 			D3D11_BLEND_DESC blendDesc;
 			forwardBlendStates[3]->GetDesc(&blendDesc);
 
-			blendDesc.IndependentBlendEnable = true;
-			for (uint i = 1; i < 8; i++) {
-				blendDesc.RenderTarget[i] = blendDesc.RenderTarget[0];
-			}
+			blendDesc.IndependentBlendEnable = false;
 
 			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[3]));
+		}
+
+		{
+			forwardBlendStates[4] = blendStates->a[2][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[4]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[4]));
+		}
+
+		{
+			forwardBlendStates[5] = blendStates->a[2][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[5]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[5]));
+		}
+
+		{
+			forwardBlendStates[6] = blendStates->a[3][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[6]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[6]));
 		}
 		setup = true;
 	}
@@ -382,6 +406,9 @@ void Deferred::StartDeferred()
 	blendStates->a[0][0][10][0] = deferredBlendStates[1];
 	blendStates->a[1][0][1][0] = deferredBlendStates[2];
 	blendStates->a[1][0][11][0] = deferredBlendStates[3];
+	blendStates->a[2][0][1][0] = deferredBlendStates[4];
+	blendStates->a[2][0][11][0] = deferredBlendStates[5];
+	blendStates->a[3][0][11][0] = deferredBlendStates[6];
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
@@ -594,10 +621,28 @@ void Deferred::EndDeferred()
 	blendStates->a[0][0][10][0] = forwardBlendStates[1];
 	blendStates->a[1][0][1][0] = forwardBlendStates[2];
 	blendStates->a[1][0][11][0] = forwardBlendStates[3];
+	blendStates->a[2][0][1][0] = forwardBlendStates[4];
+	blendStates->a[2][0][11][0] = forwardBlendStates[5];
+	blendStates->a[3][0][11][0] = forwardBlendStates[6];
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = false;
+}
+
+void Deferred::UpdatePerms()
+{
+	if (deferredPass) {
+		auto& state = State::GetSingleton()->shadowState;
+		GET_INSTANCE_MEMBER(alphaBlendMode, state)
+		GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
+		GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
+		GET_INSTANCE_MEMBER(alphaBlendModeExtra, state)
+
+		std::string comboStr = std::format("{} {} {} {}", alphaBlendMode, alphaBlendAlphaToCoverage, alphaBlendWriteMode, alphaBlendModeExtra);
+
+		perms.insert(comboStr);
+	}
 }
 
 void Deferred::ClearShaderCache()

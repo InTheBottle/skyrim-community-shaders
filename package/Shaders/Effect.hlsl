@@ -424,9 +424,25 @@ Texture2D<float4> TexNoiseSampler : register(t2);
 Texture2D<float4> TexDepthSamplerEffect : register(t3);
 Texture2D<float4> TexGrayscaleSampler : register(t4);
 
+#if defined(DEFERRED)
 struct PS_OUTPUT
 {
-	float4 Color : SV_Target0;
+	float4 Diffuse : SV_Target0;
+#	if defined(MOTIONVECTORS_NORMALS)
+	float4 MotionVectors : SV_Target1;
+	float4 NormalGlossiness : SV_Target2;
+#	elif defined(NORMALS)
+	float4 NormalGlossiness : SV_Target2;
+#	endif
+	float4 Albedo : SV_Target3;
+	float4 Specular : SV_Target4;
+	float4 Reflectance : SV_Target5;
+	float4 Masks : SV_Target6;
+};
+#else
+struct PS_OUTPUT
+{
+	float4 Diffuse : SV_Target0;
 #if defined(MOTIONVECTORS_NORMALS)
 	float2 MotionVectors : SV_Target1;
 	float4 ScreenSpaceNormals : SV_Target2;
@@ -435,6 +451,7 @@ struct PS_OUTPUT
 	float4 Color2 : SV_Target2;
 #endif
 };
+#endif
 
 #ifdef PSHADER
 
@@ -443,6 +460,7 @@ struct PS_OUTPUT
 #	include "Common/MotionBlur.hlsl"
 #	include "Common/Permutation.hlsl"
 #	include "Common/LightingData.hlsl"
+#	include "Common/GBuffer.hlsli"
 
 cbuffer AlphaTestRefBuffer : register(b11)
 {
@@ -551,6 +569,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float lightingInfluence = LightingInfluence.x;
 	float3 propertyColor = PropertyColor.xyz;
+
 #	if defined(LIGHTING)
 	propertyColor = GetLightingColor(input.MSPosition);
 
@@ -680,21 +699,44 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	finalColor *= fogMul;
 #	endif
-	psout.Color = finalColor;
+	psout.Diffuse = finalColor;
 #	if defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
 	if (perPassLLF[0].EnableLightsVisualisation) {
 		if (perPassLLF[0].LightsVisualisationMode == 0) {
-			psout.Color.xyz = TurboColormap(0.0);
+			psout.Diffuse.xyz = TurboColormap(0.0);
 		} else if (perPassLLF[0].LightsVisualisationMode == 1) {
-			psout.Color.xyz = TurboColormap(0.0);
+			psout.Diffuse.xyz = TurboColormap(0.0);
 		} else {
-			psout.Color.xyz = TurboColormap((float)lightCount / 128.0);
+			psout.Diffuse.xyz = TurboColormap((float)lightCount / 128.0);
 		}
 	}
 #	endif
 
+#	if defined(DEFERRED)
+
 #	if defined(MOTIONVECTORS_NORMALS)
+#		if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
+	float3 screenSpaceNormal = normalize(input.TBN0);
+#		else
+	float3 screenSpaceNormal = normalize(input.ScreenSpaceNormal);
+#		endif
+	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
 	float2 screenMotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
+	psout.MotionVectors = float4(screenMotionVector, 0.0, psout.Diffuse.w);
+#	elif defined(NORMALS)
+#		if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
+	float3 screenSpaceNormal = normalize(input.TBN0);
+#		else
+	float3 screenSpaceNormal = normalize(input.ScreenSpaceNormal);
+#		endif
+	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
+#	endif
+
+	psout.Specular = float4(0.0.xxx, psout.Diffuse.w);
+	psout.Albedo = float4(baseColor.xyz * psout.Diffuse.w, psout.Diffuse.w);
+	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
+
+#	elif defined(MOTIONVECTORS_NORMALS)
 
 	psout.MotionVectors = screenMotionVector;
 
@@ -714,6 +756,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Color2 = finalColor;
 #	endif
+
 
 	return psout;
 }

@@ -16,6 +16,7 @@
 
 void State::Draw()
 {
+	Deferred::GetSingleton()->UpdatePerms();
 	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
 		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
@@ -555,6 +556,9 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToColor |
 									   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 									   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
+
+				if (Deferred::GetSingleton()->deferredPass)
+					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::EffectShaderFlags::Deferred;
 			}
 			break;
 		case RE::BSShader::Type::DistantTree:

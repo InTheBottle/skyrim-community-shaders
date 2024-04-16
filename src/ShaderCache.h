@@ -298,6 +298,7 @@ namespace SIE
 			SkyObject = 1 << 24,
 			MsnSpuSkinned = 1 << 25,
 			MotionVectorsNormals = 1 << 26,
+			Deferred = 1 << 27
 		};
 
 		enum class DistantTreeShaderFlags
