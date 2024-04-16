@@ -310,7 +310,6 @@ void Deferred::StartDeferred()
 
 			blendDesc.IndependentBlendEnable = false;
 
-
 			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[1]));
 		}
 

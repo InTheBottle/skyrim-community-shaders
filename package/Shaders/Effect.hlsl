@@ -443,13 +443,13 @@ struct PS_OUTPUT
 struct PS_OUTPUT
 {
 	float4 Diffuse : SV_Target0;
-#if defined(MOTIONVECTORS_NORMALS)
+#	if defined(MOTIONVECTORS_NORMALS)
 	float2 MotionVectors : SV_Target1;
 	float4 ScreenSpaceNormals : SV_Target2;
-#else
+#	else
 	float4 Normal : SV_Target1;
 	float4 Color2 : SV_Target2;
-#endif
+#	endif
 };
 #endif
 
@@ -714,23 +714,23 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(DEFERRED)
 
-#	if defined(MOTIONVECTORS_NORMALS)
-#		if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
+#		if defined(MOTIONVECTORS_NORMALS)
+#			if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
 	float3 screenSpaceNormal = normalize(input.TBN0);
-#		else
+#			else
 	float3 screenSpaceNormal = normalize(input.ScreenSpaceNormal);
-#		endif
+#			endif
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
 	float2 screenMotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
 	psout.MotionVectors = float4(screenMotionVector, 0.0, psout.Diffuse.w);
-#	elif defined(NORMALS)
-#		if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
+#		elif defined(NORMALS)
+#			if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
 	float3 screenSpaceNormal = normalize(input.TBN0);
-#		else
+#			else
 	float3 screenSpaceNormal = normalize(input.ScreenSpaceNormal);
-#		endif
+#			endif
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
-#	endif
+#		endif
 
 	psout.Specular = float4(0.0.xxx, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * psout.Diffuse.w, psout.Diffuse.w);
@@ -756,7 +756,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Color2 = finalColor;
 #	endif
-
 
 	return psout;
 }
