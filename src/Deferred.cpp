@@ -6,6 +6,7 @@
 #include <Features/ScreenSpaceShadows.h>
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
+#include <Features/Skylighting.h>
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
 
@@ -196,6 +197,7 @@ void Deferred::SetupResources()
 
 void Deferred::Reset()
 {
+	//logger::info("reset");
 	//for (auto& str : perms)
 	//{
 	////	logger::info("{}", str);
@@ -412,6 +414,8 @@ void Deferred::StartDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	deferredPass = true;
+
+	Skylighting::GetSingleton()->Bind();
 }
 
 void Deferred::DeferredPasses()
@@ -461,7 +465,16 @@ void Deferred::DeferredPasses()
 		if (CloudShadows::GetSingleton()->loaded) {
 			CloudShadows::GetSingleton()->DrawShadows();
 		}
+
+		if (Skylighting::GetSingleton()->loaded) {
+			ID3D11ShaderResourceView* srvs[1]{
+				Skylighting::GetSingleton()->skylightingTexture->srv.get(),
+			};
+
+			context->CSSetShaderResources(10, ARRAYSIZE(srvs), srvs);
+		}
 	}
+
 
 	{
 		ID3D11ShaderResourceView* srvs[7]{

@@ -997,6 +997,8 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		endif
 #	endif
 
+#include "Skylighting/Skylighting.hlsli"
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -1463,8 +1465,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 nsDirLightColor = dirLightColor;
 
-	if ((shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) && (shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir))
+	if ((shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) && (shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir)){
 		dirLightColor *= shadowColor.xxx;
+#	if defined(DEFERRED)
+		float skylightingSSS = SkylightingTexture.SampleLevel(SampShadowMaskSampler, screenUV, 0);
+		nsDirLightColor.xyz *= skylightingSSS;
+#	endif
+	}
 
 #	if !defined(DEFERRED) && defined(CPM_AVAILABLE) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
