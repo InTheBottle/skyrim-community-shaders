@@ -174,7 +174,9 @@ float InterleavedGradientNoise(float2 uv)
 			weight += attenuation;
 		}
 	}
-	skylighting /= weight;
+	
+	if (weight > 0.0)
+		skylighting /= weight;
 
 	float shadowDepth = lerp(skylighting, 1.0, 0.25);
 	diffuseColor *= ao;
