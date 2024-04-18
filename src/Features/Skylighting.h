@@ -72,6 +72,8 @@ public:
 	ID3D11ShaderResourceView* shadowView = nullptr;
 	Texture2D* skylightingTexture = nullptr;
 
+	ID3D11ShaderResourceView* noiseView = nullptr;
+
 	void Bind();
 	void Compute();
 

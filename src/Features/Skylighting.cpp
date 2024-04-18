@@ -1,6 +1,7 @@
 #include "Skylighting.h"
 #include <Util.h>
 #include <Deferred.h>
+#include <DDSTextureLoader.h>
 
 void Skylighting::DrawSettings()
 {
@@ -72,6 +73,13 @@ void Skylighting::SetupResources()
 
 	{
 		perFrameCB = new ConstantBuffer(ConstantBufferDesc<PerFrameCB>());
+	}
+
+	{
+		auto& device = State::GetSingleton()->device;
+		auto& context = State::GetSingleton()->context;
+
+		DirectX::CreateDDSTextureFromFile(device, context, L"Data\\Shaders\\Skylighting\\bluenoise.dds", nullptr, &noiseView);
 	}
 }
 
@@ -181,13 +189,14 @@ void Skylighting::Compute()
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
-	ID3D11ShaderResourceView* srvs[3]{
+	ID3D11ShaderResourceView* srvs[4]{
 		depth.depthSRV,
 		shadowView,
 		perShadow->srv.get(),
+		noiseView
 	};
 
-	context->CSSetShaderResources(0, 3, srvs);
+	context->CSSetShaderResources(0, 4, srvs);
 
 	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -208,8 +217,9 @@ void Skylighting::Compute()
 	srvs[0] = nullptr;
 	srvs[1] = nullptr;
 	srvs[2] = nullptr;
+	srvs[3] = nullptr;
 
-	context->CSSetShaderResources(0, 3, srvs);
+	context->CSSetShaderResources(0, 4, srvs);
 
 	uavs[0] = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);

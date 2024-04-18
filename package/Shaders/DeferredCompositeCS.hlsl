@@ -116,6 +116,8 @@ half GetScreenDepth(half depth)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
+float random (float2 uv)
+{
 	return frac(sin(dot(uv,float2(12.9898,78.233)))*43758.5453123);
 }
 
@@ -174,12 +176,12 @@ float InterleavedGradientNoise(float2 uv)
 	}
 	skylighting /= weight;
 
-	float shadowDepth = lerp(skylighting * 2.0, 1.0, 0.5);
+	float shadowDepth = lerp(skylighting, 1.0, 0.25);
 	diffuseColor *= ao;
-	diffuseColor += albedo * directionalAmbientColor * ao * shadowDepth;
+	diffuseColor += albedo * directionalAmbientColor * ao * shadowDepth * 2;
 	diffuseColor += gi;
 
-	float3 giao = (skylighting * ao) + gi;
+	float3 giao = (shadowDepth * ao) + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor, 1.0);
 };
