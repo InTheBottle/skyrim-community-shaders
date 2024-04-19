@@ -68,7 +68,6 @@ void Skylighting::SetupResources()
 		skylightingTexture = new Texture2D(texDesc);
 		skylightingTexture->CreateSRV(srvDesc);
 		skylightingTexture->CreateUAV(uavDesc);
-
 	}
 
 	{
@@ -80,6 +79,25 @@ void Skylighting::SetupResources()
 		auto& context = State::GetSingleton()->context;
 
 		DirectX::CreateDDSTextureFromFile(device, context, L"Data\\Shaders\\Skylighting\\bluenoise.dds", nullptr, &noiseView);
+	}
+
+	{
+		auto& device = State::GetSingleton()->device;
+
+		D3D11_SAMPLER_DESC sampDesc;
+
+		sampDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+		sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		sampDesc.MipLODBias = 0.0f;
+		sampDesc.MaxAnisotropy = 1;
+		sampDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+		sampDesc.BorderColor[0] = sampDesc.BorderColor[1] = sampDesc.BorderColor[2] = sampDesc.BorderColor[3] = 0;
+		sampDesc.MinLOD = 0;
+		sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+		DX::ThrowIfFailed(device->CreateSamplerState(&sampDesc, &comparisonSampler));
 	}
 }
 
@@ -206,8 +224,8 @@ void Skylighting::Compute()
 	auto buffer = perFrameCB->CB();
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
-	auto sampler = Deferred::GetSingleton()->linearSampler;
-	context->CSSetSamplers(0, 1, &sampler);
+	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
+	context->CSSetSamplers(0, 2, samplers);
 
 	context->CSSetShader(GetSkylightingCS(), nullptr, 0);
 
@@ -229,8 +247,9 @@ void Skylighting::Compute()
 	buffer = nullptr;
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
-	sampler = nullptr;
-	context->CSSetSamplers(0, 1, &sampler);
+	samplers[0] = nullptr;
+	samplers[1] = nullptr;
+	context->CSSetSamplers(0, 2, samplers);
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }

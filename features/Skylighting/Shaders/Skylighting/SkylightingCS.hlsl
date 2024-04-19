@@ -1,5 +1,5 @@
 
-Texture2D<unorm half> DepthTexture : register(t0);
+Texture2D<unorm float> DepthTexture : register(t0);
 
 struct PerGeometry
 {
@@ -17,7 +17,7 @@ struct PerGeometry
 	float4x4 CameraViewProjInverse;
 };
 
-Texture2DArray<float> TexShadowMapSampler : register(t1);
+Texture2DArray<unorm float> TexShadowMapSampler : register(t1);
 StructuredBuffer<PerGeometry> perShadow : register(t2);
 Texture2DArray<float4> BlueNoise : register(t3);
 
@@ -32,29 +32,11 @@ cbuffer PerFrame : register(b0)
 };
 
 SamplerState LinearSampler : register(s0);
+SamplerComparisonState ShadowSamplerPCF : register(s1);
 
 half GetBlueNoise(half2 uv)
 {
 	return BlueNoise[uint3(uv % 128, FrameCount % 64)];
-}
-
-// Rotation with angle (in radians) and axis
-// https://gist.github.com/keijiro/ee439d5e7388f3aafc5296005c8c3f33
-half3x3 AngleAxis3x3(half angle, half3 axis)
-{
-    half c, s;
-    sincos(angle, s, c);
-
-    half t = 1 - c;
-    half x = axis.x;
-    half y = axis.y;
-    half z = axis.z;
-
-    return half3x3(
-        t * x * x + c,      t * x * y - s * z,  t * x * z + s * y,
-        t * x * y + s * z,  t * y * y + c,      t * y * z - s * x,
-        t * x * z - s * y,  t * y * z + s * x,  t * z * z + c
-    );
 }
 
 half GetScreenDepth(half depth)
@@ -111,7 +93,7 @@ half GetScreenDepth(half depth)
 
 	half skylighting = 0;
 
-	for (uint i = 0; i < sampleCount; i++) 
+	[unroll] for (uint i = 0; i < sampleCount; i++) 
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix) * range;
 	
@@ -119,13 +101,13 @@ half GetScreenDepth(half depth)
 
 		half shadowMapDepth = length(positionMS.xyz);
 
-		if (sD.EndSplitDistances.z > shadowMapDepth)
+		[flatten] if (sD.EndSplitDistances.z > shadowMapDepth)
 		{        
 			half cascadeIndex = 0;
 			half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
 			half shadowMapThreshold = sD.AlphaTestRef.y;
 
-			if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
+			[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
 			{
 				lightProjectionMatrix = sD.ShadowMapProj[2];
 				shadowMapThreshold = sD.AlphaTestRef.z;
@@ -139,9 +121,9 @@ half GetScreenDepth(half depth)
 			}
 
 			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
-			half shadowMapValue = TexShadowMapSampler.SampleLevel(LinearSampler, half3(positionLS.xy, cascadeIndex), 0).x;
 
-			skylighting += saturate((shadowMapValue - (positionLS.z - shadowMapThreshold)) * 4096);
+			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - shadowMapThreshold * PoissonDisk[i].x);
+			skylighting += shadowMapValues;
 		}	
 	}
 

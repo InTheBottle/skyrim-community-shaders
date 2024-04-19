@@ -36,6 +36,8 @@ public:
 	ID3D11ComputeShader* skylightingCS = nullptr;
 	ID3D11ComputeShader* GetSkylightingCS();
 
+	ID3D11SamplerState* comparisonSampler;
+
 	struct alignas(16) PerFrameCB
 	{
 		float4 BufferDim;
