@@ -723,13 +723,6 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
 	float2 screenMotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, 0);
 	psout.MotionVectors = float4(screenMotionVector, 0.0, psout.Diffuse.w);
-#	elif defined(NORMALS)
-#		if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
-	float3 screenSpaceNormal = normalize(input.TBN0);
-#		else
-	float3 screenSpaceNormal = normalize(input.ScreenSpaceNormal);
-#		endif
-	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), 0.0, psout.Diffuse.w);
 #	endif
 
 	psout.Specular = float4(0.0.xxx, psout.Diffuse.w);
