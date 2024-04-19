@@ -82,56 +82,40 @@ half GetScreenDepth(half depth)
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
-	half noise = GetBlueNoise(globalId.xy);
+	half noise = GetBlueNoise(globalId.xy) * 2.0 - 1.0;
 	
-	half3x3 rotationMatrix = AngleAxis3x3(noise * 2.0 - 1.0, 0);
+	float2x2 rotationMatrix = float2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	half2 PoissonOffsets[32] = {
-		half2(0.06407013, 0.05409927),
-		half2(0.7366577, 0.5789394),
-		half2(-0.6270542, -0.5320278),
-		half2(-0.4096107, 0.8411095),
-		half2(0.6849564, -0.4990818),
-		half2(-0.874181, -0.04579735),
-		half2(0.9989998, 0.0009880066),
-		half2(-0.004920578, -0.9151649),
-		half2(0.1805763, 0.9747483),
-		half2(-0.2138451, 0.2635818),
-		half2(0.109845, 0.3884785),
-		half2(0.06876755, -0.3581074),
-		half2(0.374073, -0.7661266),
-		half2(0.3079132, -0.1216763),
-		half2(-0.3794335, -0.8271583),
-		half2(-0.203878, -0.07715034),
-		half2(0.5912697, 0.1469799),
-		half2(-0.88069, 0.3031784),
-		half2(0.5040108, 0.8283722),
-		half2(-0.5844124, 0.5494877),
-		half2(0.6017799, -0.1726654),
-		half2(-0.5554981, 0.1559997),
-		half2(-0.3016369, -0.3900928),
-		half2(-0.5550632, -0.1723762),
-		half2(0.925029, 0.2995041),
-		half2(-0.2473137, 0.5538505),
-		half2(0.9183037, -0.2862392),
-		half2(0.2469421, 0.6718712),
-		half2(0.3916397, -0.4328209),
-		half2(-0.03576927, -0.6220032),
-		half2(-0.04661255, 0.7995201),
-		half2(0.4402924, 0.3640312),
+	float2 PoissonDisk[16] =
+	{
+		float2(-0.94201624, -0.39906216),
+		float2(0.94558609, -0.76890725),
+		float2(-0.094184101, -0.92938870),
+		float2(0.34495938, 0.29387760),
+		float2(-0.91588581, 0.45771432),
+		float2(-0.81544232, -0.87912464),
+		float2(-0.38277543, 0.27676845),
+		float2(0.97484398, 0.75648379),
+		float2(0.44323325, -0.97511554),
+		float2(0.53742981, -0.47373420),
+		float2(-0.26496911, -0.41893023),
+		float2(0.79197514, 0.19090188),
+		float2(-0.24188840, 0.99706507),
+		float2(-0.81409955, 0.91437590),
+		float2(0.19984126, 0.78641367),
+		float2(0.14383161, -0.14100790)
 	};
 
-	uint sampleCount = 32;
+	uint sampleCount = 16;
 	half range = 256;
 
 	half skylighting = 0;
 
 	for (uint i = 0; i < sampleCount; i++) 
 	{
-		half3 offset = half3(PoissonOffsets[i].xy, 1.0 - PoissonOffsets[i].x) * range;
-		offset = mul(offset, rotationMatrix);
-
-		positionMS.xyz = startPositionMS + offset;
+		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix) * range;
+	
+		positionMS.xy = startPositionMS + offset;
 
 		half shadowMapDepth = length(positionMS.xyz);
 
