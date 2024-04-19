@@ -40,6 +40,7 @@ public:
 	{
 		float4 BufferDim;
 		float4 DynamicRes;
+		float4 CameraData;
 		uint FrameCount;
 		uint pad0[3];
 	};

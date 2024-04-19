@@ -27,6 +27,7 @@ cbuffer PerFrame : register(b0)
 {
 	float4 BufferDim;
 	float4 DynamicRes;
+	float4 CameraData;
 	uint FrameCount;
 };
 
@@ -56,6 +57,11 @@ half3x3 AngleAxis3x3(half angle, half3 axis)
     );
 }
 
+half GetScreenDepth(half depth)
+{
+	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
+}
+
 [numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
 
@@ -64,15 +70,17 @@ half3x3 AngleAxis3x3(half angle, half3 axis)
 	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
 	PerGeometry sD = perShadow[0];
+	sD.EndSplitDistances.x = GetScreenDepth(sD.EndSplitDistances.x);
+	sD.EndSplitDistances.y = GetScreenDepth(sD.EndSplitDistances.y);
+	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
+	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
     half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
     positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	half skylighting = 0;
+	half3 startPositionMS = positionMS;
 
-	half3 positionMSstart = positionMS;
-
-	half fadeFactor = saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z);
+	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
 	half noise = GetBlueNoise(globalId.xy);
 	
@@ -115,26 +123,37 @@ half3x3 AngleAxis3x3(half angle, half3 axis)
 
 	uint sampleCount = 32;
 	half range = 256;
-	
-	for (uint i = 0; i < sampleCount; i++) {
+
+	half skylighting = 0;
+
+	for (uint i = 0; i < sampleCount; i++) 
+	{
 		half3 offset = half3(PoissonOffsets[i].xy, 1.0 - PoissonOffsets[i].x) * range;
 		offset = mul(offset, rotationMatrix);
 
-		positionMS.xyz = positionMSstart + offset;
+		positionMS.xyz = startPositionMS + offset;
+
 		half shadowMapDepth = length(positionMS.xyz);
-		if (10000 > shadowMapDepth)
+
+		if (sD.EndSplitDistances.z > shadowMapDepth)
 		{        
 			half cascadeIndex = 0;
 			half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
 			half shadowMapThreshold = sD.AlphaTestRef.y;
 
-			if (1000 < shadowMapDepth)
+			if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
+			{
+				lightProjectionMatrix = sD.ShadowMapProj[2];
+				shadowMapThreshold = sD.AlphaTestRef.z;
+				cascadeIndex = 2;
+			}
+			else if (sD.EndSplitDistances.x < shadowMapDepth)
 			{
 				lightProjectionMatrix = sD.ShadowMapProj[1];
 				shadowMapThreshold = sD.AlphaTestRef.z;
 				cascadeIndex = 1;
 			}
-					
+
 			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
 			half shadowMapValue = TexShadowMapSampler.SampleLevel(LinearSampler, half3(positionLS.xy, cascadeIndex), 0).x;
 

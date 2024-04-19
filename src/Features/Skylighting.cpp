@@ -184,6 +184,8 @@ void Skylighting::Compute()
 		auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
 		data.FrameCount = useTAA || state->upscalerLoaded ? viewport->uiFrameCount : 0;
 
+		data.CameraData = Util::GetCameraData();
+
 		perFrameCB->Update(data);
 	}
 
