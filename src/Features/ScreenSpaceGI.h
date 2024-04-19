@@ -66,8 +66,13 @@ struct ScreenSpaceGI : Feature
 		float GIStrength = 8.f;
 		// denoise
 		bool EnableTemporalDenoiser = true;
+		bool EnableBlur = true;
 		float DepthDisocclusion = 50.f;
+		float NormalDisocclusion = .8f;
 		uint MaxAccumFrames = 16;
+		float BlurRadius = 4.f;
+		uint BlurPasses = 1;
+		float DistanceNormalisation = .05f;
 	} settings;
 
 	struct alignas(16) SSGICB
@@ -101,20 +106,23 @@ struct ScreenSpaceGI : Feature
 		float GIStrength;
 
 		float DepthDisocclusion;
-		uint MaxAccumFrames;
+		float NormalDisocclusion;
+		uint MaxAccumFrames;  //
 
-		float pad[1];
+		float BlurRadius;
+		float DistanceNormalisation;
+
+		float pad[2];
 	};
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
 
 	eastl::unique_ptr<Texture2D> texHilbertLUT = nullptr;
 	eastl::unique_ptr<Texture2D> texWorkingDepth = nullptr;
 	winrt::com_ptr<ID3D11UnorderedAccessView> uavWorkingDepth[5] = { nullptr };
-	eastl::unique_ptr<Texture2D> texPrevDepth = nullptr;
+	eastl::unique_ptr<Texture2D> texPrevGeo = nullptr;
 	eastl::unique_ptr<Texture2D> texRadiance = nullptr;
-	eastl::unique_ptr<Texture2D> texAccumFrames = nullptr;
-	eastl::unique_ptr<Texture2D> texGI0 = { nullptr };
-	eastl::unique_ptr<Texture2D> texGI1 = nullptr;
+	eastl::unique_ptr<Texture2D> texAccumFrames[2] = { nullptr };
+	eastl::unique_ptr<Texture2D> texGI[2] = { nullptr };
 	eastl::unique_ptr<Texture2D> texPrevGIAlbedo = { nullptr };
 
 	winrt::com_ptr<ID3D11SamplerState> linearClampSampler = nullptr;
@@ -124,6 +132,7 @@ struct ScreenSpaceGI : Feature
 	winrt::com_ptr<ID3D11ComputeShader> prefilterDepthsCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> outputCompute = nullptr;
 };

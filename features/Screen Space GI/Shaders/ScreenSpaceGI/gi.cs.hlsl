@@ -41,12 +41,12 @@ Texture2D<lpfloat> srcWorkingDepth : register(t0);
 Texture2D<lpfloat4> srcNormal : register(t1);
 Texture2D<lpfloat3> srcRadiance : register(t2);  // maybe half-res
 Texture2D<uint> srcHilbertLUT : register(t3);
-Texture2D<uint> srcAccumFrames : register(t4);  // maybe half-res
-Texture2D<lpfloat4> srcPrevGI : register(t5);   // maybe half-res
+Texture2D<unorm float> srcAccumFrames : register(t4);  // maybe half-res
+Texture2D<lpfloat4> srcPrevGI : register(t5);          // maybe half-res
 
 RWTexture2D<lpfloat4> outGI : register(u0);
 RWTexture2D<unorm float2> outBentNormal : register(u1);
-RWTexture2D<half> outPrevDepth : register(u2);
+RWTexture2D<half3> outPrevGeo : register(u2);
 
 lpfloat GetDepthFade(lpfloat depth)
 {
@@ -60,7 +60,8 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 	uint index = srcHilbertLUT.Load(uint3(pixCoord % 64, 0)).x;
 	index += 288 * (temporalIndex % 64);  // why 288? tried out a few and that's the best so far (with XE_HILBERT_LEVEL 6U) - but there's probably better :)
 	// R2 sequence - see http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
-	return lpfloat2(frac(0.5 + index * float2(0.75487766624669276005, 0.5698402909980532659114)));
+	// https://www.shadertoy.com/view/mts3zN
+	return lpfloat2(frac(0.5 + index * float2(0.245122333753, 0.430159709002)));
 }
 
 // HBIL pp.29
@@ -340,13 +341,15 @@ void CalculateGI(
 [numthreads(8, 8, 1)] void main(const uint2 dtid
 								: SV_DispatchThreadID) {
 	float2 uv = (dtid + .5f) * RcpFrameDim;
+	uint eyeIndex = GET_EYE_IDX(uv);
 
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, dtid);
 
-	outPrevDepth[dtid] = viewspaceZ;
-
 	lpfloat2 normalSample = FULLRES_LOAD(srcNormal, dtid, uv, samplerLinearClamp).xy;
 	lpfloat3 viewspaceNormal = (lpfloat3)DecodeNormal(normalSample);
+
+	half2 encodedWorldNormal = EncodeNormal(ViewToWorldVector(viewspaceNormal, InvViewMatrix[eyeIndex]));
+	outPrevGeo[dtid] = half3(viewspaceZ, encodedWorldNormal);
 
 // Move center pixel slightly towards camera to avoid imprecision artifacts due to depth buffer imprecision; offset depends on depth texture format used
 #if USE_HALF_FLOAT_PRECISION == 1
@@ -369,9 +372,9 @@ void CalculateGI(
 #ifdef TEMPORAL_DENOISER
 	if (viewspaceZ < DepthFadeRange.y) {
 		lpfloat4 prevGIAO = srcPrevGI[dtid];
-		uint accumFrames = srcAccumFrames[dtid];
+		uint accumFrames = srcAccumFrames[dtid] * 255;
 
-		currGIAO = lerp(prevGIAO, currGIAO, fastRcpNR0(accumFrames));
+		currGIAO = lerp(prevGIAO, currGIAO, rcp(accumFrames));
 	}
 #endif
 
