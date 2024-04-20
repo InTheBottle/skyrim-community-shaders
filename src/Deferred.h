@@ -8,6 +8,7 @@
 #define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
 #define NORMALROUGHNESS RE::RENDER_TARGETS::kRAWINDIRECT_DOWNSCALED
 #define MASKS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
+#define CLOUDSHADOWS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED
 
 class Deferred
 {
@@ -28,6 +29,8 @@ public:
 	void Reset();
 
 	void StartDeferred();
+	void OverrideBlendStates();
+	void ResetBlendStates();
 	void DeferredPasses();
 	void EndDeferred();
 
@@ -97,6 +100,7 @@ public:
 			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
 			{
 				// Here is where the first opaque objects start rendering
+				GetSingleton()->OverrideBlendStates();
 				GetSingleton()->StartDeferred();
 				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 			}
@@ -109,6 +113,7 @@ public:
 			{
 				func(This, RenderFlags);
 				// After this point, water starts rendering
+				GetSingleton()->ResetBlendStates();
 				GetSingleton()->EndDeferred();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
