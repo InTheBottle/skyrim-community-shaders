@@ -29,24 +29,29 @@ float3 GetVL(float3 worldPosition, float3 viewPosition, float rawDepth, float de
 	float noise = frac(0.5 + noiseIdx * 0.38196601125);
 
 	float3 endPointWS = worldPosition * depth / viewPosition.z;
-
+	
 	PerGeometry sD = perShadow[0];
-
+	sD.EndSplitDistances.x = GetScreenDepth(sD.EndSplitDistances.x);
+	sD.EndSplitDistances.y = GetScreenDepth(sD.EndSplitDistances.y);
+	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
+	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
+	
 	float3 volumetric = 0.0;
 	for (int i = 0; i < nSteps; ++i) {
 		float3 samplePositionWS = lerp(worldPosition, endPointWS, (i + noise) * step);
+		float shadowMapDepth = length(samplePositionWS.xyz);
 
 		half cascadeIndex = 0;
 		half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
 		half shadowMapThreshold = sD.AlphaTestRef.y;
 
-		[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < rawDepth)
+		[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
 		{
 			lightProjectionMatrix = sD.ShadowMapProj[2];
 			shadowMapThreshold = sD.AlphaTestRef.z;
 			cascadeIndex = 2;
 		}
-		else if (sD.EndSplitDistances.x < rawDepth)
+		else if (sD.EndSplitDistances.x < shadowMapDepth)
 		{
 			lightProjectionMatrix = sD.ShadowMapProj[1];
 			shadowMapThreshold = sD.AlphaTestRef.z;
