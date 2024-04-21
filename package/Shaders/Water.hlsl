@@ -578,9 +578,9 @@ float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
 {
 	float depth = DepthTex.Load(float3(screenPosition, 0)).x;
 	return
-#			if defined(VR)  // VR appears to use hard coded values
+#		if defined(VR)  // VR appears to use hard coded values
 		a_useVR ? depth * 1.01 + -0.01 :
-#			endif
+#		endif
 				  (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 //#		endif
@@ -607,17 +607,17 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 	return (1 - FresnelRI.x) * pow(viewAngle, 5) + FresnelRI.x;
 }
 
-#	if defined(SKYLIGHTING)
-#	define LinearSampler Normals01Sampler
-#		include "Skylighting/Skylighting.hlsli"
-#	endif
+#		if defined(SKYLIGHTING)
+#			define LinearSampler Normals01Sampler
+#			include "Skylighting/Skylighting.hlsli"
+#		endif
 
 #		if defined(WATER_CAUSTICS)
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition, inout float vl)
+	float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
 #		else
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition, inout float vl)
+	float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
 #		endif
 {
 #		if defined(REFRACTIONS)
@@ -653,10 +653,14 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	float3 refractionDiffuseColor = lerp(ShallowColor.xyz, DeepColor.xyz, distanceMul.y);
 
-#	if defined(SKYLIGHTING)
-	vl = GetVL(input.WPosition, viewPosition, DepthTex.Load(float3(screenPosition, 0)).x, depth, screenPosition);
-	refractionDiffuseColor = refractionDiffuseColor * lerp(vl, 1.0, 0.25);
-#	endif
+#			ifdef SKYLIGHTING
+	float4 refractionWorldPosition = mul(
+		CameraViewProjInverse[a_eyeIndex],
+		float4((refractionUV * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+	refractionWorldPosition.xyz /= refractionWorldPosition.w;
+	// float3 refractionWorldPosition = input.WPosition.xyz * depth / viewPosition.z; // this is without refraction
+	GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition, scatter, transmittance);
+#			endif
 
 #			if defined(UNDERWATER)
 	float refractionMul = 0;
@@ -671,6 +675,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 #			endif
 
 	return lerp(refractionColor * WaterParams.w, refractionDiffuseColor, refractionMul);
+	// return refractionColor * transmittance;  // this is physically accurate
 #		else
 	return lerp(ShallowColor.xyz, DeepColor.xyz, fresnel) * GetLdotN(normal);
 #		endif
@@ -787,17 +792,17 @@ PS_OUTPUT main(PS_INPUT input)
 	isSpecular = true;
 #		else
 
-	float vl = 1.0;
-
 	float3 specularColor = GetWaterSpecularColor(input, normal, viewDirection, distanceFactor, depthControl.y, eyeIndex);
+
+	float3 scatter = 0;
+	float3 transmittance = 1;
 #			if defined(WATER_CAUSTICS)
-	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, caustics, eyeIndex, viewPosition, vl);
+	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, caustics, eyeIndex, viewPosition, scatter, transmittance);
 #			else
-	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition, vl);
+	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition, scatter, transmittance);
 #			endif
 
 	float3 specularLighting = 0;
-
 
 #			if defined(LIGHT_LIMIT_FIX)
 	uint lightCount = 0;
@@ -835,9 +840,12 @@ PS_OUTPUT main(PS_INPUT input)
 	                        ((1 - fresnel) * (diffuseColor - finalSpecularColor)) +
 	                    finalSpecularColor;
 #			else
-	float3 sunColor = GetSunColor(normal, viewDirection) * vl;
+	float3 sunColor = GetSunColor(normal, viewDirection);
 	float specularFraction = lerp(1, fresnel * depthControl.x, distanceFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
+#				if defined(SKYLIGHTING)
+	finalColorPreFog += scatter;
+#				endif
 	float3 finalColor = lerp(finalColorPreFog, input.FogParam.xyz, input.FogParam.w);
 #			endif
 #		endif
