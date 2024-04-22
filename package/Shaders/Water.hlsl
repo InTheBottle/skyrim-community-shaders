@@ -632,8 +632,8 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	float2 screenPosition = DynamicResolutionParams1.xy * (DynamicResolutionParams2.xy * input.HPosition.xy);
 	float depth = GetScreenDepthWater(screenPosition);
 
-#			if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH)
 	float2 refractionScreenPosition = DynamicResolutionParams1.xy * (refractionUvRaw / VPOSOffset.xy);
+#			if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH)
 	float refractionDepth = GetScreenDepthWater(refractionScreenPosition);
 	float refractionDepthMul = length(float3((((VPOSOffset.zw + refractionUvRaw) * 2 - 1)) * refractionDepth / ProjData.xy, refractionDepth));
 
@@ -656,7 +656,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 #			ifdef SKYLIGHTING
 	float4 refractionWorldPosition = mul(
 		CameraViewProjInverse[a_eyeIndex],
-		float4((refractionUV * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		float4((refractionUvRaw * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
 	refractionWorldPosition.xyz /= refractionWorldPosition.w;
 	// float3 refractionWorldPosition = input.WPosition.xyz * depth / viewPosition.z; // this is without refraction
 	GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition, scatter, transmittance);
