@@ -841,6 +841,9 @@ PS_OUTPUT main(PS_INPUT input)
 	                    finalSpecularColor;
 #			else
 	float3 sunColor = GetSunColor(normal, viewDirection);
+#				if defined(SKYLIGHTING)
+	sunColor *= GetShadow(input.WPosition);
+#				endif
 	float specularFraction = lerp(1, fresnel * depthControl.x, distanceFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
 #				if defined(SKYLIGHTING)
