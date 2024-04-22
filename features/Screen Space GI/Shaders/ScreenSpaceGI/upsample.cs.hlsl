@@ -52,7 +52,7 @@ RWTexture2D<half4> outGI : register(u0);
 	}
 	else
 	{
-		atten = srcGI.SampleLevel(samplerLinearClamp, (dtid + .5) * RcpFrameDim * .25, 0);
+		atten = srcGI.SampleLevel(samplerLinearClamp, (dtid + .5) * RcpSrcFrameDim * OutFrameDim * RcpTexDim, 0);
 	}
 
 	outGI[dtid] = atten;

@@ -80,10 +80,13 @@ struct ScreenSpaceGI : Feature
 		float4x4 PrevInvViewMat[2];
 		float2 NDCToViewMul[2];
 		float2 NDCToViewAdd[2];
-		float2 NDCToViewMul_x_PixelSize[2];
 
-		float2 FrameDim;
-		float2 RcpFrameDim;  //
+		float2 TexDim;
+		float2 RcpTexDim;  //
+		float2 SrcFrameDim;
+		float2 RcpSrcFrameDim;  //
+		float2 OutFrameDim;
+		float2 RcpOutFrameDim;  //
 		uint FrameIndex;
 
 		uint NumSlices;

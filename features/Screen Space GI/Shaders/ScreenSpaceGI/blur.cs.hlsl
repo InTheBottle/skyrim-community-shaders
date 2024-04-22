@@ -26,13 +26,16 @@ static const float3 g_Poisson8[8] = {
 };
 
 [numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
+	const float srcScale = SrcFrameDim * RcpTexDim;
+	const float outScale = OutFrameDim * RcpTexDim;
+
 	float radius = BlurRadius;
 #ifdef TEMPORAL_DENOISER
 	radius /= (srcAccumFrames[dtid] * 255);
 #endif
 	const uint numSamples = 8;
 
-	const float2 uv = (dtid + .5) * RcpFrameDim;
+	const float2 uv = (dtid + .5) * RcpOutFrameDim;
 	uint eyeIndex = GET_EYE_IDX(uv);
 	const float2 screenPos = ConvertToStereoUV(uv, eyeIndex);
 
@@ -46,24 +49,24 @@ static const float3 g_Poisson8[8] = {
 		float w = g_Poisson8[i].z;
 
 		float2 pxOffset = radius * g_Poisson8[i].xy;
-		float2 uvOffset = pxOffset * RcpFrameDim;
-		float2 uvSample = uv + uvOffset;
+		float2 pxSample = dtid + .5 + pxOffset;
+		float2 uvSample = pxSample * RcpOutFrameDim;
+		float2 screenPosSample = ConvertToStereoUV(uvSample, eyeIndex);
 
-		if (eyeIndex != GET_EYE_IDX(uvSample))
+		if (any(screenPosSample < 0) || any(screenPosSample > 1))
 			continue;
 
-		const float2 screenPosSample = ConvertToStereoUV(uvSample, eyeIndex);
-		float depthSample = srcDepth.SampleLevel(samplerLinearClamp, uvSample, 0);
+		float depthSample = srcDepth.SampleLevel(samplerLinearClamp, uvSample * srcScale, 0);
 		float3 posSample = ScreenToViewPosition(screenPosSample, depthSample, eyeIndex);
 
-		float3 normalSample = DecodeNormal(srcNormal.SampleLevel(samplerLinearClamp, uvSample, 0).xy);
+		float3 normalSample = DecodeNormal(srcNormal.SampleLevel(samplerLinearClamp, uvSample * srcScale, 0).xy);
 
 		// geometry weight
 		w *= saturate(1 - abs(dot(normal, posSample - pos)) * DistanceNormalisation);
 		// normal weight
 		w *= 1 - saturate(acosFast4(saturate(dot(normalSample, normal))) / fsl_HALF_PI * 2);
 
-		lpfloat4 gi = srcGI.SampleLevel(samplerLinearClamp, uvSample * res_scale, 0);
+		lpfloat4 gi = srcGI.SampleLevel(samplerLinearClamp, uvSample * outScale, 0);
 
 		sum += gi * w;
 		wsum += w;

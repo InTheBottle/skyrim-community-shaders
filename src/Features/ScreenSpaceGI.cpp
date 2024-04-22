@@ -530,13 +530,11 @@ void ScreenSpaceGI::UpdateSB()
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 	auto& state = State::GetSingleton()->shadowState;
 
-	uint resolution[2] = {
-		(uint)(State::GetSingleton()->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),
-		(uint)(State::GetSingleton()->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale)
-	};
-	uint halfRes[2] = { (resolution[0] + 1) >> 1, (resolution[1] + 1) >> 1 };
-
-	float2 res = settings.HalfRes ? float2{ (float)halfRes[0], (float)halfRes[1] } : float2{ (float)resolution[0], (float)resolution[1] };
+	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
+	float2 dynres = res * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+	dynres = { floor(dynres.x), floor(dynres.y) };
+	float2 halfres = dynres * 0.5;
+	halfres = { floor(halfres.x), floor(halfres.y) };
 
 	static float4x4 prevInvView[2] = {};
 
@@ -548,15 +546,18 @@ void ScreenSpaceGI::UpdateSB()
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
 			data.NDCToViewMul[eyeIndex] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
 			data.NDCToViewAdd[eyeIndex] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
-			data.NDCToViewMul_x_PixelSize[eyeIndex] = data.NDCToViewMul[eyeIndex] / res;
 			if (REL::Module::IsVR())
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
 			prevInvView[eyeIndex] = eye.viewMat.Invert();
 		}
 
-		data.FrameDim = res;
-		data.RcpFrameDim = float2(1.0f) / res;
+		data.TexDim = res;
+		data.RcpTexDim = float2(1.0f) / res;
+		data.SrcFrameDim = dynres;
+		data.RcpSrcFrameDim = float2(1.0f) / dynres;
+		data.OutFrameDim = settings.HalfRes ? halfres : dynres;
+		data.RcpOutFrameDim = float2(1.0f) / (settings.HalfRes ? halfres : dynres);
 		data.FrameIndex = viewport->uiFrameCount;
 
 		data.NumSlices = settings.NumSlices;

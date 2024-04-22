@@ -79,6 +79,9 @@ void CalculateGI(
 	uint2 dtid, float2 uv, float viewspaceZ, lpfloat3 viewspaceNormal,
 	out lpfloat4 o_currGIAO, out lpfloat3 o_bentNormal)
 {
+	const float srcScale = SrcFrameDim * RcpTexDim;
+	const float outScale = OutFrameDim * RcpTexDim;
+
 	uint eyeIndex = GET_EYE_IDX(uv);
 	float2 normalizedScreenPos = ConvertToStereoUV(uv, eyeIndex);
 
@@ -95,7 +98,7 @@ void CalculateGI(
 	// if the offset is under approx pixel size (pixelTooCloseThreshold), push it out to the minimum distance
 	const lpfloat pixelTooCloseThreshold = 1.3;
 	// approx viewspace pixel size at pixCoord; approximation of NDCToViewspace( uv.xy + ViewportSize.xy, pixCenterPos.z ).xy - pixCenterPos.xy;
-	const float2 pixelDirRBViewspaceSizeAtCenterZ = viewspaceZ.xx * (eyeIndex == 0 ? NDCToViewMul_x_PixelSize.xy : NDCToViewMul_x_PixelSize.zw);
+	const float2 pixelDirRBViewspaceSizeAtCenterZ = viewspaceZ.xx * (eyeIndex == 0 ? NDCToViewMul.xy : NDCToViewMul.zw) * RcpOutFrameDim;
 
 	lpfloat screenspaceRadius = (lpfloat)EffectRadius / (lpfloat)pixelDirRBViewspaceSizeAtCenterZ.x;
 	// this is the min distance to start sampling from to avoid sampling from the center pixel (no useful data obtained from sampling center pixel)
@@ -121,11 +124,8 @@ void CalculateGI(
 		lpfloat3 directionVec = 0;
 		sincos(phi, directionVec.y, directionVec.x);
 
-		// convert to screen units for later use
-		lpfloat2 omega = lpfloat2(directionVec.x, -directionVec.y) * screenspaceRadius * RcpFrameDim;
-#ifdef VR
-		omega.x *= 2;
-#endif
+		// convert to px units for later use
+		lpfloat2 omega = lpfloat2(directionVec.x, -directionVec.y) * screenspaceRadius;
 
 		const lpfloat3 orthoDirectionVec = directionVec - (dot(directionVec, viewVec) * viewVec);
 		const lpfloat3 axisVec = normalize(cross(orthoDirectionVec, viewVec));
@@ -163,11 +163,12 @@ void CalculateGI(
 				s *= s;     // default 2 is fine
 				s += minS;  // avoid sampling center pixel
 
-				lpfloat2 sampleOffset = s * omega;  // no pixel alignment from original xegtao
+				lpfloat2 sampleOffset = s * omega;
 
-				float2 sampleScreenPos = normalizedScreenPos + sampleOffset * sideSign;
+				float2 samplePxCoord = dtid + .5 + sampleOffset * sideSign;
+				float2 sampleUV = samplePxCoord * RcpOutFrameDim;
+				float2 sampleScreenPos = ConvertToStereoUV(sampleUV, eyeIndex);
 				[branch] if (any(sampleScreenPos > 1.0) || any(sampleScreenPos < 0.0)) break;
-				float2 sampleUV = ConvertFromStereoUV(sampleScreenPos, eyeIndex);
 
 				lpfloat sampleOffsetLength = length(sampleOffset);
 				lpfloat mipLevel = (lpfloat)clamp(log2(sampleOffsetLength) - DepthMIPSamplingOffset, 0, 5);
@@ -175,7 +176,7 @@ void CalculateGI(
 				mipLevel = max(mipLevel, 1);
 #endif
 
-				float SZ = srcWorkingDepth.SampleLevel(samplerPointClamp, sampleUV, mipLevel);
+				float SZ = srcWorkingDepth.SampleLevel(samplerPointClamp, sampleUV * srcScale, mipLevel);
 				[branch] if (SZ > DepthFadeRange.y) continue;
 
 				float3 samplePos = ScreenToViewPosition(sampleScreenPos, SZ, eyeIndex);
@@ -221,13 +222,13 @@ void CalculateGI(
 					// IL
 					lpfloat frontBackMult = 1.f;
 #	ifdef BACKFACE
-					if (dot(DecodeNormal(srcNormal.SampleLevel(samplerPointClamp, sampleUV, 0).xy), sampleHorizonVec) > 0)  // backface
+					if (dot(DecodeNormal(srcNormal.SampleLevel(samplerPointClamp, sampleUV * srcScale, 0).xy), sampleHorizonVec) > 0)  // backface
 						frontBackMult = BackfaceStrength;
 #	endif
 
 					if (frontBackMult > 0.f) {
 #	ifdef BITMASK
-						lpfloat3 sampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * res_scale, mipLevel).rgb * frontBackMult * giBoost;
+						lpfloat3 sampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * outScale, mipLevel).rgb * frontBackMult * giBoost;
 
 						sampleRadiance *= countbits(maskedBits & ~bitmask) * (lpfloat)0.03125;  // 1/32
 						sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
@@ -236,7 +237,7 @@ void CalculateGI(
 						radiance += sampleRadiance;
 #	else
 						lpfloat3 newSampleRadiance = 0;
-						newSampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * res_scale, mipLevel).rgb * frontBackMult * giBoost;
+						newSampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * outScale, mipLevel).rgb * frontBackMult * giBoost;
 
 						lpfloat anglePrev = n + sideSign * HALF_PI - FastACos(horizonCos);  // lpfloat version is closest acos
 						lpfloat angleCurr = n + sideSign * HALF_PI - FastACos(shc);
@@ -340,12 +341,15 @@ void CalculateGI(
 
 [numthreads(8, 8, 1)] void main(const uint2 dtid
 								: SV_DispatchThreadID) {
-	float2 uv = (dtid + .5f) * RcpFrameDim;
+	const float srcScale = SrcFrameDim * RcpTexDim;
+	const float outScale = OutFrameDim * RcpTexDim;
+
+	float2 uv = (dtid + .5f) * RcpOutFrameDim;
 	uint eyeIndex = GET_EYE_IDX(uv);
 
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, dtid);
 
-	lpfloat2 normalSample = FULLRES_LOAD(srcNormal, dtid, uv, samplerLinearClamp).xy;
+	lpfloat2 normalSample = FULLRES_LOAD(srcNormal, dtid, uv * srcScale, samplerLinearClamp).xy;
 	lpfloat3 viewspaceNormal = (lpfloat3)DecodeNormal(normalSample);
 
 	half2 encodedWorldNormal = EncodeNormal(ViewToWorldVector(viewspaceNormal, InvViewMatrix[eyeIndex]));
