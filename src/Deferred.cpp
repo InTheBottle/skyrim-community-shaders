@@ -311,8 +311,6 @@ void Deferred::StartDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	deferredPass = true;
-
-	Skylighting::GetSingleton()->Bind();
 }
 
 void Deferred::DeferredPasses()
@@ -328,6 +326,8 @@ void Deferred::DeferredPasses()
 		auto buffer = deferredCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 	}
+
+	Skylighting::GetSingleton()->Bind();
 
 	{
 		FLOAT clr[4] = { 0., 0., 0., 1. };

@@ -112,6 +112,31 @@ half GetScreenDepth(half depth)
 
 	half3 color = MainRW[globalId.xy].rgb;
 	color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz * shadow;
+	
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
+	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
+	
+	float skylighting = SkylightingTexture[globalId.xy];
+
+	for (int i = -1.5; i < 1.5; i++) {
+		for (int k = -1.5; k < 1.5; k++) {
+			if (i == 0 && k == 0)
+				continue;
+			float2 offset = float2(i, k) * RcpBufferDim.xy;
+			float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
+			float attenuation = 1.0 - saturate(abs(sampleDepth - depth) * 0.01);
+			skylighting += SkylightingTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
+			weight += attenuation;
+		}
+	}
+	
+	if (weight > 0.0)
+		skylighting /= weight;
+
+	skylighting = lerp(skylighting * 2.0, 1.0, saturate(depth / 5000));
+	skylighting = lerp(skylighting, 1.0, 1.0 / 3.0);
+
+	color += albedo * directionalAmbientColor * skylighting;
 
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
@@ -144,7 +169,6 @@ float InterleavedGradientNoise(float2 uv)
 
 	half3 diffuseColor = MainRW[globalId.xy];
 
-	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half3 albedo = AlbedoTexture[globalId.xy];
 
@@ -153,6 +177,8 @@ float InterleavedGradientNoise(float2 uv)
 	half ao = giAo.w;
 
 	half3 masks = MasksTexture[globalId.xy];
+
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 
@@ -163,27 +189,29 @@ float InterleavedGradientNoise(float2 uv)
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
-	for (int i = -1.5; i < 1.5; i++) {
-		for (int k = -1.5; k < 1.5; k++) {
-			if (i == 0 && k == 0)
-				continue;
-			float2 offset = float2(i, k) * RcpBufferDim.xy;
-			float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
-			float attenuation = 1.0 - saturate(abs(sampleDepth - depth) * 0.01);
-			skylighting += SkylightingTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
-			weight += attenuation;
-		}
-	}
+	// for (int i = -1.5; i < 1.5; i++) {
+	// 	for (int k = -1.5; k < 1.5; k++) {
+	// 		if (i == 0 && k == 0)
+	// 			continue;
+	// 		float2 offset = float2(i, k) * RcpBufferDim.xy;
+	// 		float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
+	// 		float attenuation = 1.0 - saturate(abs(sampleDepth - depth) * 0.01);
+	// 		skylighting += SkylightingTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
+	// 		weight += attenuation;
+	// 	}
+	// }
 	
-	if (weight > 0.0)
-		skylighting /= weight;
+	// if (weight > 0.0)
+	// 	skylighting /= weight;
 
-	float shadowDepth = lerp(skylighting, 1.0, 0.25);
+	// skylighting = lerp(skylighting * 2.0, 1.0, saturate(depth / 5000));
+	// skylighting = lerp(skylighting, 1.0, 1.0 / 3.0);
+
 	diffuseColor *= ao;
-	diffuseColor += albedo * directionalAmbientColor * ao * shadowDepth * 2;
+	//diffuseColor += albedo * directionalAmbientColor * ao;
 	diffuseColor += gi;
 
-	float3 giao = (shadowDepth * ao) + gi;
+	//float3 giao = (skylighting * ao) + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor, 1.0);
 };

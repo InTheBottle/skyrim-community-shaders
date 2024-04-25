@@ -174,6 +174,16 @@ void Skylighting::CopyShadowData()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
+struct CAMERASTATE_RUNTIME_DATA
+{                                                                                                 \
+	RE::BSGraphics::ViewData camViewData;                                           /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */ \
+	RE::NiPoint3 posAdjust;                                                         /* 20 */                                                               \
+	RE::NiPoint3 currentPosAdjust;                                                  /* 38 */                                                               \
+	RE::NiPoint3 previousPosAdjust;                                                 /* 50 */                                                               \
+	bool useJitter;                    /* 68 */
+	uint32_t numData;                  /* 6c */
+};
+
 void Skylighting::Compute()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -204,25 +214,49 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
+
+		//if (auto sky = RE::Sky::GetSingleton()) {
+		//	if (auto precip = sky->precip) {
+		//		auto camera = precip->occlusionData.camera;
+		//		auto cache = (CAMERASTATE_RUNTIME_DATA*)RE::BSGraphics::State::GetSingleton()->FindCameraDataCache(camera.get(), true);
+		//		if (cache) {
+		//			data.viewProjMat = cache->camViewData.viewProjMat;
+		//		}
+		//	}
+		//}
+		data.viewProjMat = viewProjMat;
+		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
+		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
+
+		if (dirShadow)
+		{
+			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
+		}
+
 		perFrameCB->Update(data);
 	}
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
-	ID3D11ShaderResourceView* srvs[4]{
+	ID3D11ShaderResourceView* srvs[6]{
 		depth.depthSRV,
 		shadowView,
 		perShadow->srv.get(),
-		noiseView
+		noiseView,
+		precipitation.depthSRV,
+		normalRoughness.SRV
 	};
 
-	context->CSSetShaderResources(0, 4, srvs);
+	context->CSSetShaderResources(0, 6, srvs);
 
 	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	auto buffer = perFrameCB->CB();
-	context->CSSetConstantBuffers(0, 1, &buffer);
+	context->CSSetConstantBuffers(1, 1, &buffer);
 
 	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
 	context->CSSetSamplers(0, 2, samplers);
@@ -238,14 +272,16 @@ void Skylighting::Compute()
 	srvs[1] = nullptr;
 	srvs[2] = nullptr;
 	srvs[3] = nullptr;
+	srvs[4] = nullptr;
+	srvs[5] = nullptr;
 
-	context->CSSetShaderResources(0, 4, srvs);
+	context->CSSetShaderResources(0, 6, srvs);
 
 	uavs[0] = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	buffer = nullptr;
-	context->CSSetConstantBuffers(0, 1, &buffer);
+	context->CSSetConstantBuffers(1, 1, &buffer);
 
 	samplers[0] = nullptr;
 	samplers[1] = nullptr;
@@ -259,15 +295,60 @@ void Skylighting::Bind()
 	if (!loaded)
 		return;
 
-	Compute();
-
 	auto& context = State::GetSingleton()->context;
 
-	ID3D11ShaderResourceView* srvs[3]{
+	ID3D11ShaderResourceView* srvs[8];
+	context->PSGetShaderResources(0, 8, srvs);
+
+	ID3D11ShaderResourceView* srvsCS[8];
+	context->CSGetShaderResources(0, 8, srvsCS);
+
+	ID3D11UnorderedAccessView* uavsCS[8];
+	context->CSGetUnorderedAccessViews(0, 8, uavsCS);
+
+	ID3D11UnorderedAccessView* nullUavs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
+
+	ID3D11ShaderResourceView* nullSrvs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	context->PSSetShaderResources(0, 8, nullSrvs);
+	context->CSSetShaderResources(0, 8, nullSrvs);
+
+	ID3D11RenderTargetView* views[8];
+	ID3D11DepthStencilView* dsv;
+	context->OMGetRenderTargets(8, views, &dsv);
+
+	ID3D11RenderTargetView* nullViews[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	ID3D11DepthStencilView* nullDsv = nullptr;
+	context->OMSetRenderTargets(8, nullViews, nullDsv);
+
+	Compute();
+
+	context->PSSetShaderResources(0, 8, srvs);
+	context->CSSetShaderResources(0, 8, srvsCS);
+	context->CSSetUnorderedAccessViews(0, 8, uavsCS, nullptr);
+	context->OMSetRenderTargets(8, views, dsv);
+
+	for (int i = 0; i < 8; i++) {
+		if (srvs[i])
+			srvs[i]->Release();
+		if (srvsCS[i])
+			srvsCS[i]->Release();
+	}
+
+	for (int i = 0; i < 8; i++) {
+		if (views[i])
+			views[i]->Release();
+	}
+
+	if (dsv)
+		dsv->Release();
+
+
+	ID3D11ShaderResourceView* srvs2[3]{
 		shadowView,
 		perShadow->srv.get(),
 		skylightingTexture->srv.get()
 	};
 
-	context->PSSetShaderResources(80, 3, srvs);
+	context->PSSetShaderResources(80, 3, srvs2);
 }
