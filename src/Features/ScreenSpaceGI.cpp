@@ -129,27 +129,28 @@ void ScreenSpaceGI::DrawSettings()
 
 	ImGui::SliderFloat2("Depth Fade Range", &settings.DepthFadeRange.x, 1e4, 5e4, "%.0f game units");
 
-	ImGui::Separator();
+	if (showAdvanced) {
+		ImGui::Separator();
+		{
+			auto _ = DisableGuard(settings.UseBitmask);
 
-	{
-		auto _ = DisableGuard(settings.UseBitmask);
-
-		ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.05f, 1.0f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
-
-		if (showAdvanced) {
-			ImGui::SliderFloat("Thin Occluder Compensation", &settings.ThinOccluderCompensation, 0.f, 0.7f, "%.2f");
+			ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.05f, 1.0f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data");
-		}
-	}
-	{
-		auto _ = DisableGuard(!settings.UseBitmask);
+				ImGui::Text("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
 
-		ImGui::SliderFloat("Thickness", &settings.Thickness, 0.f, 500.0f, "%.1f game units");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("How thick the occluders are. 20 to 30 percent of effect radius is recommended.");
+			if (showAdvanced) {
+				ImGui::SliderFloat("Thin Occluder Compensation", &settings.ThinOccluderCompensation, 0.f, 0.7f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data");
+			}
+		}
+		{
+			auto _ = DisableGuard(!settings.UseBitmask);
+
+			ImGui::SliderFloat("Thickness", &settings.Thickness, 0.f, 500.0f, "%.1f game units");
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("How thick the occluders are. 20 to 30 percent of effect radius is recommended.");
+		}
 	}
 
 	///////////////////////////////
@@ -185,18 +186,20 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("How much of this frame's GI gets carried to the next frame.");
 		}
 
-		ImGui::Separator();
+		if (showAdvanced) {
+			ImGui::Separator();
 
-		recompileFlag |= ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Disable to get some frames, IF you don't care about light emitting from the back of objects.");
-		{
-			auto __ = DisableGuard(!settings.CheckBackface);
-			ImGui::Indent();
-			percentageSlider("Backface Lighting Mix", &settings.BackfaceStrength);
-			ImGui::Unindent();
+			recompileFlag |= ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("How bright at the back of objects is compared to the front. A small value to make up for foliage translucency.");
+				ImGui::Text("Disable to get some frames, IF you don't care about light emitting from the back of objects.");
+			{
+				auto __ = DisableGuard(!settings.CheckBackface);
+				ImGui::Indent();
+				percentageSlider("Backface Lighting Mix", &settings.BackfaceStrength);
+				ImGui::Unindent();
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("How bright at the back of objects is compared to the front. A small value to make up for foliage translucency.");
+			}
 		}
 	}
 
@@ -215,48 +218,50 @@ void ScreenSpaceGI::DrawSettings()
 		ImGui::EndTable();
 	}
 
-	ImGui::Separator();
-
-	{
-		auto _ = DisableGuard(!settings.EnableTemporalDenoiser);
-		ImGui::SliderInt("Max Frame Accumulation", (int*)&settings.MaxAccumFrames, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("How many past frames to accumulate results with. Higher values are less noisy but potentially cause ghosting.");
-	}
-
-	ImGui::Separator();
-
 	if (showAdvanced) {
-		auto _ = DisableGuard(!settings.EnableTemporalDenoiser && !(settings.EnableGI || settings.EnableGIBounce));
+		ImGui::Separator();
 
-		ImGui::SliderFloat("Movement Disocclusion", &settings.DepthDisocclusion, 0.f, 100.f, "%.1f game units");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text(
-				"If a pixel has moved this far from the last frame, its radiance will not be carried to this frame.\n"
-				"Lower values are stricter.");
-
-		ImGui::SliderFloat("Normal Disocclusion", &settings.NormalDisocclusion, 0.f, 1.f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text(
-				"If a pixel's normal deviates too much from the last frame, its radiance will not be carried to this frame.\n"
-				"Higher values are stricter.");
+		{
+			auto _ = DisableGuard(!settings.EnableTemporalDenoiser);
+			ImGui::SliderInt("Max Frame Accumulation", (int*)&settings.MaxAccumFrames, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("How many past frames to accumulate results with. Higher values are less noisy but potentially cause ghosting.");
+		}
 
 		ImGui::Separator();
-	}
 
-	{
-		auto _ = DisableGuard(!settings.EnableBlur);
-		ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0.f, 8.f, "%.1f px");
+		{
+			auto _ = DisableGuard(!settings.EnableTemporalDenoiser && !(settings.EnableGI || settings.EnableGIBounce));
 
-		ImGui::SliderInt("Blur Passes", (int*)&settings.BlurPasses, 1, 3, "%d", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Blurring repeatedly for x times.");
-
-		if (showAdvanced) {
-			ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, .1f, "%.4f");
+			ImGui::SliderFloat("Movement Disocclusion", &settings.DepthDisocclusion, 0.f, 100.f, "%.1f game units");
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text(
-					"Higher value makes the blur more sensitive to differences in geometry.");
+					"If a pixel has moved this far from the last frame, its radiance will not be carried to this frame.\n"
+					"Lower values are stricter.");
+
+			ImGui::SliderFloat("Normal Disocclusion", &settings.NormalDisocclusion, 0.f, 1.f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text(
+					"If a pixel's normal deviates too much from the last frame, its radiance will not be carried to this frame.\n"
+					"Higher values are stricter.");
+
+			ImGui::Separator();
+		}
+
+		{
+			auto _ = DisableGuard(!settings.EnableBlur);
+			ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0.f, 8.f, "%.1f px");
+
+			ImGui::SliderInt("Blur Passes", (int*)&settings.BlurPasses, 1, 3, "%d", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("Blurring repeatedly for x times.");
+
+			if (showAdvanced) {
+				ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, .1f, "%.4f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text(
+						"Higher value makes the blur more sensitive to differences in geometry.");
+			}
 		}
 	}
 
@@ -713,6 +718,7 @@ void ScreenSpaceGI::DrawSSGI(Texture2D* outGI)
 			srvs.at(3) = rts[NORMALROUGHNESS].SRV;
 
 			uavs.at(0) = texGI[!inputGITexIdx]->uav.get();
+			uavs.at(1) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
 
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
@@ -721,6 +727,7 @@ void ScreenSpaceGI::DrawSSGI(Texture2D* outGI)
 
 			inputGITexIdx = !inputGITexIdx;
 			lastFrameGITexIdx = inputGITexIdx;
+			lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
 		}
 	}
 

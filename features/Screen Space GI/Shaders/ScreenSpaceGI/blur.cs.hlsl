@@ -12,6 +12,7 @@ Texture2D<half> srcDepth : register(t2);
 Texture2D<half4> srcNormal : register(t3);
 
 RWTexture2D<lpfloat4> outGI : register(u0);
+RWTexture2D<unorm float> outAccumFrames : register(u1);
 
 // samples = 8, min distance = 0.5, average samples on radius = 2
 static const float3 g_Poisson8[8] = {
@@ -25,13 +26,20 @@ static const float3 g_Poisson8[8] = {
 	float3(+0.1564120, -0.8198990, +0.8346850)
 };
 
+float HistoryRadiusScaling(float accumFrames)
+{
+	return lerp(1, 0.5, accumFrames / MaxAccumFrames);
+};
+
 [numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
 	const float srcScale = SrcFrameDim * RcpTexDim;
 	const float outScale = OutFrameDim * RcpTexDim;
 
 	float radius = BlurRadius;
 #ifdef TEMPORAL_DENOISER
-	radius /= (srcAccumFrames[dtid] * 255);
+	float accumFrames = srcAccumFrames[dtid];
+	radius *= HistoryRadiusScaling(accumFrames * 255);
+	radius = max(radius, 2);
 #endif
 	const uint numSamples = 8;
 
@@ -44,6 +52,9 @@ static const float3 g_Poisson8[8] = {
 	float3 normal = DecodeNormal(FULLRES_LOAD(srcNormal, dtid, uv, samplerLinearClamp).xy);
 
 	lpfloat4 sum = srcGI[dtid];
+#ifdef TEMPORAL_DENOISER
+	lpfloat4 fsum = accumFrames;
+#endif
 	float4 wsum = 1;
 	for (uint i = 0; i < numSamples; i++) {
 		float w = g_Poisson8[i].z;
@@ -69,8 +80,14 @@ static const float3 g_Poisson8[8] = {
 		lpfloat4 gi = srcGI.SampleLevel(samplerLinearClamp, uvSample * outScale, 0);
 
 		sum += gi * w;
+#ifdef TEMPORAL_DENOISER
+		fsum += srcAccumFrames.SampleLevel(samplerLinearClamp, uvSample * outScale, 0);
+#endif
 		wsum += w;
 	}
 
 	outGI[dtid] = sum / wsum;
+#ifdef TEMPORAL_DENOISER
+	outAccumFrames[dtid] = fsum / wsum;
+#endif
 }
