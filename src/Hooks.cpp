@@ -147,6 +147,80 @@ void hk_BSGraphics_SetDirtyStates(bool isCompute)
 	State::GetSingleton()->Draw();
 }
 
+//
+// Renderer-specific types to handle uploading raw data to the GPU
+//
+struct LineShape
+{
+	ID3D11Buffer* m_VertexBuffer;
+	ID3D11Buffer* m_IndexBuffer;
+	uint64_t m_VertexDesc;
+	uint32_t m_RefCount;
+};
+
+struct TriShape : LineShape
+{
+	void* m_RawVertexData;
+	void* m_RawIndexData;
+};
+
+void hk_DrawTriShape(void* This, RE::BSGraphics::TriShape* GraphicsTriShape, uint32_t StartIndex, uint32_t Count);
+
+decltype(&hk_DrawTriShape) ptr_hk_DrawTriShape;
+
+
+
+static uint32_t CalculateVertexSize(uint64_t VertexDesc)
+{
+	// Vertex buffer slot 0
+	return (VertexDesc << 2) & 0x3C;
+}
+
+void SetVertexDescription(uint64_t VertexDesc)
+{
+	auto s = State::GetSingleton()->shadowState;
+
+	if (s->GetRuntimeData().vertexDesc != VertexDesc) {
+		s->GetRuntimeData().vertexDesc = VertexDesc;
+		s->GetRuntimeData().stateUpdateFlags |= RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC;
+	}
+}
+
+void SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY Topology)
+{
+	auto s = State::GetSingleton()->shadowState;
+
+	if (s->GetRuntimeData().topology != Topology) {
+		s->GetRuntimeData().topology = Topology;
+		s->GetRuntimeData().stateUpdateFlags |= RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO;
+	}
+}
+
+void hk_DrawTriShape(void*, RE::BSGraphics::TriShape* GraphicsTriShape, uint32_t StartIndex, uint32_t Count)
+{
+	SetVertexDescription(*((uint64_t*)&GraphicsTriShape->vertexDesc));
+	SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	
+	hk_BSGraphics_SetDirtyStates(false);
+
+	auto state = State::GetSingleton();
+	auto& context = state->context;
+
+	uint32_t stride = GraphicsTriShape->vertexDesc.GetSize();
+	uint32_t offset = 0;
+
+	auto vertexBuffer = reinterpret_cast<ID3D11Buffer*>(GraphicsTriShape->vertexBuffer);
+	auto indexBuffer = reinterpret_cast<ID3D11Buffer*>(GraphicsTriShape->indexBuffer);
+
+	context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+	context->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
+	if (Skylighting::GetSingleton()->inOcclusion)
+		context->DrawIndexed(512 * 512 * 512, StartIndex, 0);
+	else
+		context->DrawIndexed(Count * 3, StartIndex, 0);
+}
+
 decltype(&ID3D11Device::CreateVertexShader) ptrCreateVertexShader;
 decltype(&ID3D11Device::CreatePixelShader) ptrCreatePixelShader;
 
@@ -440,6 +514,8 @@ namespace Hooks
 
 		logger::info("Hooking BSShaderRenderTargets::Create");
 		*(uintptr_t*)&ptr_BSShaderRenderTargets_Create = Detours::X64::DetourFunction(REL::RelocationID(100458, 107175).address(), (uintptr_t)&hk_BSShaderRenderTargets_Create);
+	
+	//	*(uintptr_t*)&ptr_hk_DrawTriShape = Detours::X64::DetourFunction(REL::RelocationID(75477, 107175).address(), (uintptr_t)&hk_DrawTriShape);
 
 		logger::info("Hooking BSShaderRenderTargets::Create::CreateRenderTarget(s)");
 		stl::write_thunk_call<CreateRenderTarget_Main>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x3F0, 0x3F3, 0x548));

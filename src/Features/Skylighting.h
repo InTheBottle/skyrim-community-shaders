@@ -33,10 +33,55 @@ public:
 
 	virtual void RestoreDefaultSettings();
 
+	REX::W32::XMFLOAT4X4 viewProjMat;
+
+	RE::NiFrustum voxelFrustum{};
+	RE::NiPoint3 voxelCentre;
+
+	ID3D11VertexShader* voxelVS = nullptr;
+	ID3D11GeometryShader* voxelGS = nullptr;
+	ID3D11PixelShader* voxelPS = nullptr;
+	ID3D11ComputeShader* voxelCopyCS = nullptr;
+	ID3D11RasterizerState* voxelRasterState = nullptr;
+
+	Buffer* voxel1D = nullptr;
+	Texture3D* voxel = nullptr;
+
+	struct VoxelType
+	{
+		uint color;
+		uint normal;
+	};
+
+	ID3D11VertexShader* GetVoxelVS();
+	ID3D11GeometryShader* GetVoxelGS();
+	ID3D11PixelShader* GetVoxelPS();
+	ID3D11ComputeShader* GetVoxelCopyCS();
+
+	void ResetVoxels();
+	void UpdateVoxelBuffer();
+	void BindVoxelisation();
+	void VoxelisationDebug();
+	void UnbindVoxelisation();
+
 	ID3D11ComputeShader* skylightingCS = nullptr;
 	ID3D11ComputeShader* GetSkylightingCS();
 
 	ID3D11SamplerState* comparisonSampler;
+
+	struct alignas(16) VoxelCB
+	{
+		float3 GridCenter;
+		float DataSize;     // voxel half-extent in world space units
+		float DataSizeRCP;  // 1.0 / voxel-half extent
+		uint DataRes;       // voxel grid resolution
+		float DataResRCP;   // 1.0 / voxel grid resolution
+		float pad0[1];
+		float3 EyePosition;
+		float pad1[1];
+	};
+
+	ConstantBuffer* voxelCB = nullptr;
 
 	struct alignas(16) PerFrameCB
 	{
@@ -48,8 +93,6 @@ public:
 		uint FrameCount;
 		uint pad0[3];
 	};
-
-	REX::W32::XMFLOAT4X4 viewProjMat;
 
 	ConstantBuffer* perFrameCB = nullptr;
 
@@ -256,39 +299,104 @@ public:
 		uint64_t unk08;          // 08
 	};
 
+	float boundSize = 128;
+
+	class BSBatchRenderer
+	{
+	public:
+		struct PersistentPassList
+		{
+			RE::BSRenderPass* m_Head;
+			RE::BSRenderPass* m_Tail;
+		};
+
+		struct GeometryGroup
+		{
+			BSBatchRenderer* m_BatchRenderer;
+			PersistentPassList m_PassList;
+			uintptr_t UnkPtr4;
+			float m_Depth;  // Distance from geometry to camera location
+			uint16_t m_Count;
+			uint8_t m_Flags;  // Flags
+		};
+
+		struct PassGroup
+		{
+			RE::BSRenderPass* m_Passes[5];
+			uint32_t m_ValidPassBits;  // OR'd with (1 << PassIndex)
+		};
+
+		RE::BSTArray<void*> unk008;               // 008
+		RE::BSTHashMap<RE::UnkKey, RE::UnkValue> unk020;  // 020
+		std::uint64_t unk050;                 // 050
+		std::uint64_t unk058;                 // 058
+		std::uint64_t unk060;                 // 060
+		std::uint64_t unk068;                 // 068
+		GeometryGroup* m_GeometryGroups[16];
+		GeometryGroup* m_AlphaGroup;
+		void* unk1;
+		void* unk2;
+	};
+
+	bool inOcclusion = false;
+
 	struct BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl
 	{
-		static void* thunk(RE::BSLightingShaderProperty* property, RE::BSGeometry* geometry, [[maybe_unused]] uint32_t renderMode, [[maybe_unused]] RE::BSShaderAccumulator* accumulator)
+		static void* thunk(RE::BSLightingShaderProperty* property, RE::BSGeometry* geometry, [[maybe_unused]] uint32_t renderMode, [[maybe_unused]] RE::BSGraphics::BSShaderAccumulator* accumulator)
 		{
+			auto batch = (BSBatchRenderer*)accumulator->GetRuntimeData().batchRenderer;
+			batch->m_GeometryGroups[14]->m_Flags &= ~1;
+
 			using enum RE::BSShaderProperty::EShaderPropertyFlag;
 			using enum BSUtilityShader::Flags;
 
 			auto* precipitationOcclusionMapRenderPassList = reinterpret_cast<RenderPassArray*>(&property->unk0C8);
 
 			precipitationOcclusionMapRenderPassList->Clear();
-			if (property->flags.any(kZBufferWrite) && property->flags.none(kDecal, kDynamicDecal)) {
-				stl::enumeration<BSUtilityShader::Flags> technique;
-				technique.set(RenderDepth);
+			if (GetSingleton()->inOcclusion) {
+				if (property->flags.any(kSkinned) && property->flags.none(kTreeAnim))
+					return precipitationOcclusionMapRenderPassList;
+			} else {
+				if (property->flags.any(kSkinned))
+					return precipitationOcclusionMapRenderPassList;
+			}
 
-				if (property->flags.any(kModelSpaceNormals)) {
-					technique.set(Normals, BinormalTangent);
-				}
-				if (property->flags.any(kVertexColors)) {
-					technique.set(Vc);
-				}
-				if (property->flags.any(kLODObjects, kHDLODObjects)) {
-					technique.set(LodObject);
-				}
+			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting) && !(property->flags.any(kSkinned) && property->flags.none(kTreeAnim))) {
 
-				auto pass = precipitationOcclusionMapRenderPassList->EmplacePass(
-					BSUtilityShader::GetSingleton(),
-					property,
-					geometry,
-					technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
-				if (property->flags.any(kTreeAnim))
-					pass->accumulationHint = 11;
+				if (geometry->worldBound.radius > GetSingleton()->boundSize) {
+					stl::enumeration<BSUtilityShader::Flags> technique;
+					technique.set(RenderDepth);
+
+					precipitationOcclusionMapRenderPassList->EmplacePass(
+						BSUtilityShader::GetSingleton(),
+						property,
+						geometry,
+						technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
+				}
 			}
 			return precipitationOcclusionMapRenderPassList;
+		};
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct Precipitation_UpdateCamera_SetViewFrustum
+	{
+		static void thunk(RE::NiCamera* a1, RE::NiFrustum* a2)
+		{
+			if (GetSingleton()->inOcclusion)
+				GetSingleton()->voxelFrustum = *a2;
+			func(a1, a2);
+		};
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct Precipitation_UpdateCamera_UpdateObject
+	{
+		static void thunk(RE::NiCamera* a1, int64_t a2)
+		{
+			if (GetSingleton()->inOcclusion)
+				GetSingleton()->voxelCentre = a1->world.translate;
+			func(a1, a2);
 		};
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -297,9 +405,10 @@ public:
 	{
 		static void Install()
 		{
-			logger::info("Hooking BSLightingShaderProperty");
+			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
-
+			stl::write_thunk_call<Precipitation_UpdateCamera_SetViewFrustum>(REL::RelocationID(25643, 106583).address() + REL::Relocate(0x5D9, 0x308, 0x321));
+			stl::write_thunk_call<Precipitation_UpdateCamera_UpdateObject>(REL::RelocationID(25643, 106583).address() + REL::Relocate(0x5E8, 0x308, 0x321));
 		}
 	};
 

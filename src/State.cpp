@@ -56,6 +56,10 @@ void State::Draw()
 		auto type = currentShader->shaderType.get();
 		if (type == RE::BSShader::Type::Utility)
 		{
+			if (Skylighting::GetSingleton()->inOcclusion) {
+				Skylighting::GetSingleton()->BindVoxelisation();
+			}
+
 			if (currentPixelDescriptor & static_cast<uint32_t>(UtilityShaderFlags::RenderShadowmask)) {
 				Skylighting::GetSingleton()->CopyShadowData();
 			}		

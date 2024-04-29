@@ -1,15 +1,17 @@
 #include "Skylighting.h"
-#include <Util.h>
-#include <Deferred.h>
 #include <DDSTextureLoader.h>
+#include <Deferred.h>
+#include <Util.h>
 
 void Skylighting::DrawSettings()
 {
+	ImGui::Checkbox("Do occlusion", &Deferred::GetSingleton()->doOcclusion);
+
+	ImGui::SliderFloat("Bound Size", &boundSize, 0, 512, "%.2f");
 }
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
 {
-	
 }
 
 void Skylighting::SetupResources()
@@ -50,7 +52,6 @@ void Skylighting::SetupResources()
 	{
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-		
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -60,8 +61,8 @@ void Skylighting::SetupResources()
 		main.texture->GetDesc(&texDesc);
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
-		
-		texDesc.Format = DXGI_FORMAT_R16_UNORM;
+
+		texDesc.Format = DXGI_FORMAT_R16G16_UNORM;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
@@ -99,10 +100,95 @@ void Skylighting::SetupResources()
 
 		DX::ThrowIfFailed(device->CreateSamplerState(&sampDesc, &comparisonSampler));
 	}
+
+	{
+		D3D11_TEXTURE3D_DESC texDesc{};
+		
+		texDesc.Width = 512;
+		texDesc.Height = 512;
+		texDesc.Depth = 512;
+		texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+		texDesc.MipLevels = 0;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS;
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+		voxel = new Texture3D(texDesc);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+
+		srvDesc.Format = texDesc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;        
+		srvDesc.Texture3D.MipLevels = (UINT)-1;
+		srvDesc.Texture3D.MostDetailedMip = 0;
+
+		uavDesc.Format = texDesc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D;
+		uavDesc.Texture3D.MipSlice = 0;
+		uavDesc.Texture3D.FirstWSlice = 0;
+		uavDesc.Texture3D.WSize = (UINT)-1;
+
+		rtvDesc.Format = texDesc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE3D;
+		rtvDesc.Texture3D.MipSlice = 0;
+		rtvDesc.Texture3D.FirstWSlice = 0;
+		rtvDesc.Texture3D.WSize = (UINT)-1;
+
+		voxel->CreateSRV(srvDesc);
+		voxel->CreateUAV(uavDesc);
+		voxel->CreateRTV(rtvDesc);
+	}
+
+	{
+		D3D11_BUFFER_DESC sbDesc{};
+		sbDesc.Usage = D3D11_USAGE_DEFAULT;
+		sbDesc.CPUAccessFlags = 0;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.Flags = 0;
+
+		std::uint32_t numElements = 512 * 512 * 512;
+
+		sbDesc.StructureByteStride = sizeof(VoxelType);
+		sbDesc.ByteWidth = sizeof(VoxelType) * numElements;
+		voxel1D = new Buffer(sbDesc);
+		srvDesc.Buffer.NumElements = numElements;
+		voxel1D->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		voxel1D->CreateUAV(uavDesc);
+	}
+
+	{
+		voxelCB = new ConstantBuffer(ConstantBufferDesc<VoxelCB>());
+	}
+
+	{
+		auto& device = State::GetSingleton()->device;
+
+		D3D11_RASTERIZER_DESC rasterDesc{};
+		rasterDesc.CullMode = D3D11_CULL_NONE;
+		rasterDesc.FillMode = D3D11_FILL_SOLID;
+		rasterDesc.DepthClipEnable = TRUE;
+		rasterDesc.MultisampleEnable = TRUE;
+
+		device->CreateRasterizerState(&rasterDesc, &voxelRasterState);
+	}
 }
 
 void Skylighting::Reset()
 {
+	ResetVoxels();
 }
 
 void Skylighting::Load(json& o_json)
@@ -116,6 +202,146 @@ void Skylighting::Save(json&)
 
 void Skylighting::RestoreDefaultSettings()
 {
+}
+
+ID3D11VertexShader* Skylighting::GetVoxelVS()
+{
+	if (!voxelVS) {
+		logger::debug("Compiling VoxelVS");
+		voxelVS = (ID3D11VertexShader*)Util::CompileShader(L"Data\\Shaders\\Voxel\\VoxelVS.hlsl", {}, "vs_5_0");
+	}
+	return voxelVS;
+}
+
+ID3D11GeometryShader* Skylighting::GetVoxelGS()
+{
+	if (!voxelGS) {
+		logger::debug("Compiling VoxelGS");
+		voxelGS = (ID3D11GeometryShader*)Util::CompileShader(L"Data\\Shaders\\Voxel\\VoxelGS.hlsl", {}, "gs_5_0");
+	}
+	return voxelGS;
+}
+
+ID3D11PixelShader* Skylighting::GetVoxelPS()
+{
+	if (!voxelPS) {
+		logger::debug("Compiling VoxelPS");
+		voxelPS = (ID3D11PixelShader*)Util::CompileShader(L"Data\\Shaders\\Voxel\\VoxelPS.hlsl", {}, "ps_5_0");
+	}
+	return voxelPS;
+}
+
+ID3D11ComputeShader* Skylighting::GetVoxelCopyCS()
+{
+	if (!voxelCopyCS) {
+		logger::debug("Compiling VoxelCopyCS");
+		voxelCopyCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Voxel\\VoxelCopyCS.hlsl", {}, "cs_5_0");
+	}
+	return voxelCopyCS;
+}
+
+void Skylighting::ResetVoxels()
+{
+	//auto& context = State::GetSingleton()->context;
+
+	//FLOAT clearColor[4]{ 0, 0, 0, 0 };
+	//context->ClearUnorderedAccessViewFloat(voxel->uav.get(), clearColor);
+}
+
+void Skylighting::UpdateVoxelBuffer()
+{
+	VoxelCB data{};
+
+	data.GridCenter = { voxelCentre.x, voxelCentre.y, voxelCentre.z };
+	data.DataSize = 2048;
+	data.DataResRCP = 1.0f / 2048.0f;
+	data.DataRes = 512;
+	data.DataSizeRCP = 1.0f / 512.0f;
+
+	auto& state = State::GetSingleton()->shadowState;
+
+	auto eyePosition = state->GetRuntimeData().posAdjust.getEye(0);
+	data.EyePosition = { eyePosition.x, eyePosition.y, eyePosition.z };
+
+	voxelCB->Update(data);
+}
+
+void Skylighting::BindVoxelisation()
+{
+	auto& context = State::GetSingleton()->context;
+
+	context->VSSetShader(GetVoxelVS(), NULL, NULL);
+	context->GSSetShader(GetVoxelGS(), NULL, NULL);
+	context->PSSetShader(GetVoxelPS(), NULL, NULL);
+	context->RSSetState(voxelRasterState);
+
+	D3D11_VIEWPORT vp{};
+	vp.Width = 512;
+	vp.Height = 512;
+	vp.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &vp);
+
+	ID3D11UnorderedAccessView* uav = voxel1D->uav.get();
+	context->OMSetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, 1, &uav, nullptr);
+
+	{
+		auto buffer = voxelCB->CB();
+		context->GSSetConstantBuffers(0, 1, &buffer);
+
+		context->PSSetConstantBuffers(3, 1, &buffer);
+	}
+}
+
+void Skylighting::VoxelisationDebug()
+{
+	//auto& context = State::GetSingleton()->context;
+
+	//ID3D11ShaderResourceView* voxel_srv = voxelDebug->srv.get();
+	//context->VSSetShaderResources(9, 1, &voxel_srv);
+
+	//context->IASetInputLayout(nullptr);
+	//context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+
+	//context->Draw(VOXEL_RESOLUTION * VOXEL_RESOLUTION * VOXEL_RESOLUTION, 0);
+
+	//voxel_srv = nullptr;
+	//context->VSSetShaderResources(9, 1, &voxel_srv);
+}
+
+void Skylighting::UnbindVoxelisation()
+{
+	auto& context = State::GetSingleton()->context;
+
+	context->GSSetShader(NULL, NULL, NULL);
+
+	auto& state = State::GetSingleton()->shadowState;
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RASTER_CULL_MODE);
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
+	
+	auto buffer = voxelCB->CB();
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	ID3D11UnorderedAccessView* uavs[] = { voxel1D->uav.get(), voxel->uav.get() };
+	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+	context->CSSetShader(GetVoxelCopyCS(), NULL, NULL);
+
+	context->Dispatch((512 * 512 * 512) / 256, 1, 1);
+
+	context->CSSetShader(NULL, NULL, NULL);
+
+	uavs[0] = nullptr;
+	uavs[1] = nullptr;
+	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+	buffer = nullptr;
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	context->GenerateMips(voxel->srv.get());
 }
 
 ID3D11ComputeShader* Skylighting::GetSkylightingCS()
@@ -132,6 +358,22 @@ void Skylighting::ClearShaderCache()
 	if (skylightingCS) {
 		skylightingCS->Release();
 		skylightingCS = nullptr;
+	}
+	if (voxelVS) {
+		voxelVS->Release();
+		voxelVS = nullptr;
+	}
+	if (voxelGS) {
+		voxelGS->Release();
+		voxelGS = nullptr;
+	}
+	if (voxelPS) {
+		voxelPS->Release();
+		voxelPS = nullptr;
+	}
+	if (voxelCopyCS) {
+		voxelCopyCS->Release();
+		voxelCopyCS = nullptr;
 	}
 }
 
@@ -175,13 +417,13 @@ void Skylighting::CopyShadowData()
 }
 
 struct CAMERASTATE_RUNTIME_DATA
-{                                                                                                 \
-	RE::BSGraphics::ViewData camViewData;                                           /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */ \
-	RE::NiPoint3 posAdjust;                                                         /* 20 */                                                               \
-	RE::NiPoint3 currentPosAdjust;                                                  /* 38 */                                                               \
-	RE::NiPoint3 previousPosAdjust;                                                 /* 50 */                                                               \
-	bool useJitter;                    /* 68 */
-	uint32_t numData;                  /* 6c */
+{
+	RE::BSGraphics::ViewData camViewData; /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */
+	RE::NiPoint3 posAdjust;               /* 20 */
+	RE::NiPoint3 currentPosAdjust;        /* 38 */
+	RE::NiPoint3 previousPosAdjust;       /* 50 */
+	bool useJitter;                       /* 68 */
+	uint32_t numData;                     /* 6c */
 };
 
 void Skylighting::Compute()
@@ -214,7 +456,6 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
-
 		//if (auto sky = RE::Sky::GetSingleton()) {
 		//	if (auto precip = sky->precip) {
 		//		auto camera = precip->occlusionData.camera;
@@ -229,8 +470,7 @@ void Skylighting::Compute()
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
 		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
 
-		if (dirShadow)
-		{
+		if (dirShadow) {
 			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
 		}
 
@@ -238,7 +478,7 @@ void Skylighting::Compute()
 	}
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	//auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
 	ID3D11ShaderResourceView* srvs[6]{
@@ -246,7 +486,7 @@ void Skylighting::Compute()
 		shadowView,
 		perShadow->srv.get(),
 		noiseView,
-		precipitation.depthSRV,
+		Deferred::GetSingleton()->occlusionTexture->srv.get(),
 		normalRoughness.SRV
 	};
 
@@ -291,7 +531,7 @@ void Skylighting::Compute()
 }
 
 void Skylighting::Bind()
-{	
+{
 	if (!loaded)
 		return;
 
@@ -342,7 +582,6 @@ void Skylighting::Bind()
 
 	if (dsv)
 		dsv->Release();
-
 
 	ID3D11ShaderResourceView* srvs2[3]{
 		shadowView,

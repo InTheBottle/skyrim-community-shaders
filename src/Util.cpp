@@ -144,6 +144,8 @@ namespace Util
 			macros.push_back({ "COMPUTESHADER", "" });
 		else if (!_stricmp(ProgramType, "cs_5_1"))
 			macros.push_back({ "COMPUTESHADER", "" });
+		else if (!_stricmp(ProgramType, "gs_5_0"))
+			macros.push_back({ "GEOMETRYSHADER", "" });
 		else
 			return nullptr;
 
@@ -196,6 +198,10 @@ namespace Util
 		} else if (!_stricmp(ProgramType, "cs_4_0")) {
 			ID3D11ComputeShader* regShader;
 			DX::ThrowIfFailed(device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &regShader));
+			return regShader;
+		} else if (!_stricmp(ProgramType, "gs_5_0")) {
+			ID3D11GeometryShader* regShader;
+			DX::ThrowIfFailed(device->CreateGeometryShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &regShader));
 			return regShader;
 		}
 
