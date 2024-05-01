@@ -10,8 +10,9 @@
 #include "Util.h"
 
 #include "Deferred.h"
-#include "Features/TerrainBlending.h"
 #include "Features/Skylighting.h"
+#include "Features/TerrainBlending.h"
+
 
 #include "VariableRateShading.h"
 
@@ -49,16 +50,17 @@ enum class UtilityShaderFlags : uint64_t
 	OpaqueEffect = 1 << 29,
 };
 
+#include "VariableRateShading.h"
+
 void State::Draw()
 {
 	Deferred::GetSingleton()->UpdatePerms();
 	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
-		if (type == RE::BSShader::Type::Utility)
-		{
+		if (type == RE::BSShader::Type::Utility) {
 			if (currentPixelDescriptor & static_cast<uint32_t>(UtilityShaderFlags::RenderShadowmask)) {
 				Skylighting::GetSingleton()->CopyShadowData();
-			}		
+			}
 		}
 		VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 		auto& shaderCache = SIE::ShaderCache::Instance();
@@ -300,6 +302,8 @@ void State::Load(ConfigMode a_configMode)
 			shaderCache.backgroundCompilationThreadCount = std::clamp(advanced["Background Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
 		if (advanced["Use FileWatcher"].is_boolean())
 			shaderCache.SetFileWatcher(advanced["Use FileWatcher"]);
+		if (advanced["Extended Frame Annotations"].is_boolean())
+			extendedFrameAnnotations = advanced["Extended Frame Annotations"];
 	}
 
 	if (settings["General"].is_object()) {
@@ -350,6 +354,7 @@ void State::Save(ConfigMode a_configMode)
 	advanced["Compiler Threads"] = shaderCache.compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache.backgroundCompilationThreadCount;
 	advanced["Use FileWatcher"] = shaderCache.UseFileWatcher();
+	advanced["Extended Frame Annotations"] = extendedFrameAnnotations;
 	settings["Advanced"] = advanced;
 
 	json general;

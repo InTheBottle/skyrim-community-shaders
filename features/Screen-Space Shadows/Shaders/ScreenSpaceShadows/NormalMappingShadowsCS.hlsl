@@ -63,14 +63,14 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
-	half3 viewPosition = DepthToView(uv, rawDepth, eyeIndex);
+	half3 viewPosition = DepthToView(ConvertFromStereoUV(uv, eyeIndex), rawDepth, eyeIndex);  // viewPosition is in VR nonstereospace
 	viewPosition.z = depth;
 
 	half3 endPosVS = viewPosition + DirLightDirectionVS[eyeIndex].xyz * 5;
 	half2 endPosUV = ViewToUV(endPosVS, false, eyeIndex);
 
-	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);
-	half2 endPosPixel = clamp(endPosUV * BufferDim, 0, BufferDim);
+	half2 startPosPixel = clamp(uv * BufferDim, 0, BufferDim);                                   // uv is in VR stereo space
+	half2 endPosPixel = clamp(ConvertToStereoUV(endPosUV, eyeIndex) * BufferDim, 0, BufferDim);  // convert back to stereospace since derived from viewPosition
 
 	half NdotL = dot(normalVS, DirLightDirectionVS[eyeIndex].xyz);
 
@@ -89,7 +89,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 		half slope = -NdotL;
 
 		for (int i = 0; i < 5; i++) {
-			uint2 tmpCoords = lerp(startPosPixel, endPosPixel, pos);
+			uint2 tmpCoords = lerp(startPosPixel, endPosPixel, pos);  // coords are in stereo space to access Textures
 			half3 tmpNormal = DecodeNormal(NormalRoughnessTexture[tmpCoords].xy);
 			half tmpDepth = GetScreenDepth(DepthTexture[tmpCoords]);
 			half tmpNdotL = dot(tmpNormal, DirLightDirectionVS[eyeIndex].xyz);
