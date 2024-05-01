@@ -224,15 +224,15 @@ void TerrainOcclusion::CompileComputeShaders()
 {
 	logger::debug("Compiling shaders...");
 	{
-		auto program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\AOGen.cs.hlsl", { {} }, "cs_5_0"));
+		auto program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\AOGen.cs.hlsl", {}, "cs_5_0"));
 		if (program_ptr)
 			occlusionProgram.attach(program_ptr);
 
-		program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\ShadowUpdate.cs.hlsl", { {} }, "cs_5_0"));
+		program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\ShadowUpdate.cs.hlsl", {}, "cs_5_0"));
 		if (program_ptr)
 			shadowUpdateProgram.attach(program_ptr);
 
-		program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\Output.cs.hlsl", { {} }, "cs_5_0"));
+		program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainOcclusion\\Output.cs.hlsl", {}, "cs_5_0"));
 		if (program_ptr)
 			outputProgram.attach(program_ptr);
 	}
