@@ -4,9 +4,9 @@
 #include <Features/CloudShadows.h>
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
+#include <Features/Skylighting.h>
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
-#include <Features/Skylighting.h>
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
 
@@ -130,10 +130,15 @@ void Deferred::SetupResources()
 		// TEMPORAL_AA_WATER_1
 		// TEMPORAL_AA_WATER_2
 
+		// Albedo
 		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Specular
 		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT);
+		// Reflectance
 		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Normal + Roughness
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Masks
 		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 	}
 
@@ -282,6 +287,91 @@ void Deferred::StartDeferred()
 	if (!shaderCache.IsEnabled())
 		return;
 
+	static bool setup = false;
+	if (!setup) {
+		auto& device = State::GetSingleton()->device;
+
+		static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
+
+		{
+			forwardBlendStates[0] = blendStates->a[0][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[0]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[0]));
+		}
+
+		{
+			forwardBlendStates[1] = blendStates->a[0][0][10][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[1]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[1]));
+		}
+
+		{
+			forwardBlendStates[2] = blendStates->a[1][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[2]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[2]));
+		}
+
+		{
+			forwardBlendStates[3] = blendStates->a[1][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[3]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[3]));
+		}
+
+		{
+			forwardBlendStates[4] = blendStates->a[2][0][1][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[4]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[4]));
+		}
+
+		{
+			forwardBlendStates[5] = blendStates->a[2][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[5]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[5]));
+		}
+
+		{
+			forwardBlendStates[6] = blendStates->a[3][0][11][0];
+
+			D3D11_BLEND_DESC blendDesc;
+			forwardBlendStates[6]->GetDesc(&blendDesc);
+
+			blendDesc.IndependentBlendEnable = false;
+
+			DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, &deferredBlendStates[6]));
+		}
+		setup = true;
+	}
+
 	auto& state = State::GetSingleton()->shadowState;
 	GET_INSTANCE_MEMBER(renderTargets, state)
 	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
@@ -310,9 +400,20 @@ void Deferred::StartDeferred()
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
-	deferredPass = true;
+	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
 
-	Skylighting::GetSingleton()->Bind();
+	// Set modified blend states
+	blendStates->a[0][0][1][0] = deferredBlendStates[0];
+	blendStates->a[0][0][10][0] = deferredBlendStates[1];
+	blendStates->a[1][0][1][0] = deferredBlendStates[2];
+	blendStates->a[1][0][11][0] = deferredBlendStates[3];
+	blendStates->a[2][0][1][0] = deferredBlendStates[4];
+	blendStates->a[2][0][11][0] = deferredBlendStates[5];
+	blendStates->a[3][0][11][0] = deferredBlendStates[6];
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+
+	deferredPass = true;
 }
 
 void Deferred::DeferredPasses()
@@ -371,7 +472,6 @@ void Deferred::DeferredPasses()
 			context->CSSetShaderResources(10, ARRAYSIZE(srvs), srvs);
 		}
 	}
-
 
 	{
 		ID3D11ShaderResourceView* srvs[7]{
@@ -526,7 +626,6 @@ void Deferred::EndDeferred()
 	deferredPass = false;
 }
 
-
 void Deferred::OverrideBlendStates()
 {
 	static bool setup = false;
@@ -651,7 +750,7 @@ void Deferred::ResetBlendStates()
 }
 
 void Deferred::UpdatePerms()
-	{
+{
 	if (deferredPass) {
 		auto& state = State::GetSingleton()->shadowState;
 		GET_INSTANCE_MEMBER(alphaBlendMode, state)

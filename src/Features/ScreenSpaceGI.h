@@ -20,13 +20,13 @@ struct ScreenSpaceGI : Feature
 	virtual void Load(json& o_json) override;
 	virtual void Save(json& o_json) override;
 
-	virtual inline void Reset() override{};
+	virtual inline void Reset() override {};
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	void CompileComputeShaders();
 	bool ShadersOK();
 
-	virtual inline void Draw(const RE::BSShader*, const uint32_t) override{};
+	virtual inline void Draw(const RE::BSShader*, const uint32_t) override {};
 
 	void DrawSSGI(Texture2D* outGI);
 	void GenerateHilbertLUT();

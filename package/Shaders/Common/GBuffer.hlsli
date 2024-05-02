@@ -29,5 +29,5 @@ half2 EncodeNormalVanilla(half3 n)
 {
 	n.z = max(1.0 / 1000.0, sqrt(8 + -8 * n.z));
 	n.xy /= n.z;
-	return n + 0.5;
+	return n.xy + 0.5;
 }
