@@ -75,7 +75,7 @@ void CloudShadows::CompileComputeShaders()
 {
 	logger::debug("Compiling shaders...");
 	{
-		outputProgram = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\CloudShadows\\output.cs.hlsl", { {} }, "cs_5_0"));
+		outputProgram = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\CloudShadows\\output.cs.hlsl", {}, "cs_5_0"));
 	}
 }
 
