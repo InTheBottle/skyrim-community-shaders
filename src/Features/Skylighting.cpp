@@ -1,15 +1,18 @@
 #include "Skylighting.h"
-#include <Util.h>
-#include <Deferred.h>
 #include <DDSTextureLoader.h>
+#include <Deferred.h>
+#include <Util.h>
 
 void Skylighting::DrawSettings()
 {
+	ImGui::Checkbox("Do occlusion", &Deferred::GetSingleton()->doOcclusion);
+
+	ImGui::SliderFloat("Bound Size", &boundSize, 0, 512, "%.2f");
+	ImGui::SliderFloat("Distance", &occlusionDistance, 0, 20000);
 }
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
 {
-	
 }
 
 void Skylighting::SetupResources()
@@ -50,7 +53,6 @@ void Skylighting::SetupResources()
 	{
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-		
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -60,8 +62,8 @@ void Skylighting::SetupResources()
 		main.texture->GetDesc(&texDesc);
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
-		
-		texDesc.Format = DXGI_FORMAT_R16_UNORM;
+
+		texDesc.Format = DXGI_FORMAT_R16G16_UNORM;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
@@ -175,13 +177,13 @@ void Skylighting::CopyShadowData()
 }
 
 struct CAMERASTATE_RUNTIME_DATA
-{                                                                                                 \
-	RE::BSGraphics::ViewData camViewData;                                           /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */ \
-	RE::NiPoint3 posAdjust;                                                         /* 20 */                                                               \
-	RE::NiPoint3 currentPosAdjust;                                                  /* 38 */                                                               \
-	RE::NiPoint3 previousPosAdjust;                                                 /* 50 */                                                               \
-	bool useJitter;                    /* 68 */
-	uint32_t numData;                  /* 6c */
+{
+	RE::BSGraphics::ViewData camViewData; /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */
+	RE::NiPoint3 posAdjust;               /* 20 */
+	RE::NiPoint3 currentPosAdjust;        /* 38 */
+	RE::NiPoint3 previousPosAdjust;       /* 50 */
+	bool useJitter;                       /* 68 */
+	uint32_t numData;                     /* 6c */
 };
 
 void Skylighting::Compute()
@@ -214,23 +216,12 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
-
-		//if (auto sky = RE::Sky::GetSingleton()) {
-		//	if (auto precip = sky->precip) {
-		//		auto camera = precip->occlusionData.camera;
-		//		auto cache = (CAMERASTATE_RUNTIME_DATA*)RE::BSGraphics::State::GetSingleton()->FindCameraDataCache(camera.get(), true);
-		//		if (cache) {
-		//			data.viewProjMat = cache->camViewData.viewProjMat;
-		//		}
-		//	}
-		//}
 		data.viewProjMat = viewProjMat;
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
 		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
 
-		if (dirShadow)
-		{
+		if (dirShadow) {
 			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
 		}
 
@@ -238,7 +229,7 @@ void Skylighting::Compute()
 	}
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	//auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
 	ID3D11ShaderResourceView* srvs[6]{
@@ -246,7 +237,7 @@ void Skylighting::Compute()
 		shadowView,
 		perShadow->srv.get(),
 		noiseView,
-		precipitation.depthSRV,
+		Deferred::GetSingleton()->occlusionTexture->srv.get(),
 		normalRoughness.SRV
 	};
 
@@ -291,7 +282,7 @@ void Skylighting::Compute()
 }
 
 void Skylighting::Bind()
-{	
+{
 	if (!loaded)
 		return;
 
@@ -342,7 +333,6 @@ void Skylighting::Bind()
 
 	if (dsv)
 		dsv->Release();
-
 
 	ID3D11ShaderResourceView* srvs2[3]{
 		shadowView,

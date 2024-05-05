@@ -4,6 +4,7 @@
 #include "State.h"
 #include <State.h>
 #include <Features/SKylighting.h>
+#include <Util.h>
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
@@ -133,7 +134,10 @@ public:
 		char _pad0[0x8];
 	};
 
-	bool inPrecip = false;
+	Texture2D* occlusionTexture = nullptr;
+
+
+	bool doOcclusion = true;
 
 	struct Hooks
 	{
@@ -141,42 +145,44 @@ public:
 		{
 			static void thunk()
 			{
-				if (auto sky = RE::Sky::GetSingleton()) {
-					if (auto precip = sky->precip) {
-						State::GetSingleton()->BeginPerfEvent("SKYLIGHTING MASK");
-						State::GetSingleton()->SetPerfMarker("SKYLIGHTING MASK");
-
-						static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 515451).address());
-						float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
-
-						static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 515509).address());
-						RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
-
-						GetSingleton()->inPrecip = true;
-						PrecipitationShaderCubeSize = 5000;
-						PrecipitationShaderDirection = { 0, 0, -1 };
-						Precipitation_SetupMask(precip);
-						BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-						Precipitation_RenderMask(precip, rain);
-						GetSingleton()->inPrecip = false;
-						RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
-						Skylighting::GetSingleton()->viewProjMat = cube->occlusionProjection;
-						//Skylighting::GetSingleton()->Bind();
-
-						cube = nullptr;
-						delete rain;
-
-						PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
-						PrecipitationShaderDirection = originalParticleShaderDirection;
-
-
-						State::GetSingleton()->EndPerfEvent();
-					}
-				}
 				State::GetSingleton()->BeginPerfEvent("PRECIPITATION MASK");
-				State::GetSingleton()->SetPerfMarker("PRECIPITATION MASK");
-				func();
-				State::GetSingleton()->EndPerfEvent();
+
+				if (GetSingleton()->doOcclusion) {
+					if (auto sky = RE::Sky::GetSingleton()) {
+						if (auto precip = sky->precip) {
+							static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 515451).address());
+							float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
+
+							static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 515509).address());
+							RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
+
+							Skylighting::GetSingleton()->inOcclusion = true;
+							PrecipitationShaderCubeSize = Skylighting::GetSingleton()->occlusionDistance;
+							PrecipitationShaderDirection = { 0, 0, -1 };
+							Precipitation_SetupMask(precip);
+							BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
+							Precipitation_RenderMask(precip, rain);
+							Skylighting::GetSingleton()->inOcclusion = false;
+							RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
+							Skylighting::GetSingleton()->viewProjMat = cube->occlusionProjection;
+						
+							auto& context = State::GetSingleton()->context;
+							auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+							auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+							context->CopyResource(Deferred::GetSingleton()->occlusionTexture->resource.get(), precipitation.texture);
+
+							cube = nullptr;
+							delete rain;
+
+							PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
+							PrecipitationShaderDirection = originalParticleShaderDirection;
+						}
+					}
+					State::GetSingleton()->SetPerfMarker("PRECIPITATION MASK");
+					func();
+					State::GetSingleton()->EndPerfEvent();
+				}
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -216,41 +222,12 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		//struct UpdateCameraData_UpdateBuffer
-		//{
-		//	static void thunk(RE::BSGraphics::State* This, CameraStateData* a_cameraStateData, RE::NiRect<float> a_rect, char a_flags)
-		//	{
-		//		if (GetSingleton()->inPrecip)
-		//		{
-		//			Skylighting::GetSingleton()->viewProjMat = a_cameraStateData->CamViewData.m_ViewProjMat;
-		//		}
-		//		func(This, a_cameraStateData, a_rect, a_flags);
-		//	}
-		//	static inline REL::Relocation<decltype(thunk)> func;
-		//};
-
-		//struct UpdateCameraData_BuildCameraData
-		//{
-		//	static void thunk(RE::BSGraphics::State* This, CameraStateData* a_cameraStateData, RE::NiCamera* a_camera, bool a_jitter)
-		//	{
-		//		func(This, a_cameraStateData, a_camera, a_jitter);
-		//		if (GetSingleton()->inPrecip) {
-		//			Skylighting::GetSingleton()->viewProjMat = a_cameraStateData->CamViewData.m_ViewProjMat;
-		//		}
-		//	}
-		//	static inline REL::Relocation<decltype(thunk)> func;
-		//};
-
 		static void Install()
 		{
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x841, 0x791));
-
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
-
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
-			
-		//	stl::write_thunk_call<UpdateCameraData_BuildCameraData>(REL::RelocationID(75694, 106583).address() + REL::Relocate(0xCD, 0x308, 0x321));
 
 			logger::info("[Deferred] Installed hooks");
 		}

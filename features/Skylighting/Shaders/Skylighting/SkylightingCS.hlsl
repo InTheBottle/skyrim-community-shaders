@@ -22,7 +22,7 @@ StructuredBuffer<PerGeometry> perShadow : register(t2);
 Texture2DArray<float4> BlueNoise : register(t3);
 Texture2D<unorm float> OcclusionMapSampler : register(t4);
 
-RWTexture2D<unorm half> SkylightingTextureRW : register(u0);
+RWTexture2D<unorm half2> SkylightingTextureRW : register(u0);
 
 cbuffer PerFrame : register(b1)
 {
@@ -79,7 +79,7 @@ half3 DecodeNormal(half2 f)
 	return -normalize(n);
 }
 
-#define SHADOWMAP
+//#define SHADOWMAP
 
 #if !defined(SHADOWMAP)
 [numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
@@ -94,10 +94,6 @@ half3 DecodeNormal(half2 f)
 	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
 	PerGeometry sD = perShadow[0];
-	sD.EndSplitDistances.x = GetScreenDepth(sD.EndSplitDistances.x);
-	sD.EndSplitDistances.y = GetScreenDepth(sD.EndSplitDistances.y);
-	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
-	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
     half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
     positionMS.xyz = positionMS.xyz / positionMS.w;
@@ -130,24 +126,53 @@ half3 DecodeNormal(half2 f)
 
 	uint sampleCount = 16;
 
-	half skylighting = 0;
-	half occlusionThreshold = mul(OcclusionViewProj, half4(positionMS.xyz, 1)).z;
+	half2 skylighting = 0;
 
-	float upFactor = saturate(dot(normalize(ShadowDirection), float3(0, 0, -1)));
+	half occlusionThreshold = mul(OcclusionViewProj, half4(positionMS.xyz, 1)).z;
+	
+	float3 V = normalize(positionMS.xyz);
+	float3 R = -reflect(-V, normalWS);
+	
+	[unroll] for (uint i = 0; i < sampleCount; i++) 
+	{
+		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
+		half shift = half(i) / half(sampleCount);
+		half radius = length(offset);
+		
+		positionMS.xy = startPositionMS + lerp(normalWS.xy * radius, offset.xy, 0.5) * 256;
+
+		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
+		occlusionPosition.y = -occlusionPosition.y;
+		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
+
+		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
+		{			
+			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.1 * radius));
+			skylighting.x += shadowMapValues;
+		} else {
+			skylighting.x++;
+		}
+	}
 
 	[unroll] for (uint i = 0; i < sampleCount; i++) 
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
 		half shift = half(i) / half(sampleCount);
-
-		positionMS.xy = startPositionMS + lerp(normalWS.xy * shift * 2.0, offset.xy, 1) * 0;
+		half radius = length(offset);
+		
+		positionMS.xy = startPositionMS + lerp(R.xy * radius * 2.0, offset.xy, 0.0) * 64;
 
 		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
-		
-		half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 10));
-		skylighting += shadowMapValues;
+
+		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
+		{			
+			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.1 * radius));
+			skylighting.y += shadowMapValues;
+		} else {
+			skylighting.y++;
+		}
 	}
 
 	skylighting /= half(sampleCount);
@@ -210,13 +235,14 @@ half3 DecodeNormal(half2 f)
 	half skylighting = 0;
 	float upFactor = saturate(dot(normalize(ShadowDirection), float3(0, 0, -1)));
 	
+	uint validSamples = 0;
 	[unroll] for (uint i = 0; i < sampleCount; i++) 
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
-
 		half shift = half(i) / half(sampleCount);
-
-		positionMS.xy = startPositionMS + lerp(normalWS.xy * shift * 2.0, offset.xy, 0.5) * 256 + (128 * ShadowDirection.xy);
+		half radius = length(offset);
+		
+		positionMS.xy = startPositionMS + lerp(normalWS.xy * radius * 2.0, offset.xy, 0.5) * 256 + ShadowDirection.xy * 128;
 
 		half shadowMapDepth = length(positionMS.xyz);
 
@@ -241,7 +267,7 @@ half3 DecodeNormal(half2 f)
 
 			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
 
-			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - shadowMapThreshold * shift);
+			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
 			skylighting += shadowMapValues;
 		}	
 	}

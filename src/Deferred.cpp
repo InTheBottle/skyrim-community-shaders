@@ -7,6 +7,7 @@
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
 #include <Features/Skylighting.h>
+#include <Features/DynamicCubemaps.h>
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
 
@@ -188,15 +189,26 @@ void Deferred::SetupResources()
 			giTexture->CreateUAV(uavDesc);
 		}
 	}
+
+	{
+		auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+
+		precipitationOcclusion.texture->GetDesc(&texDesc);
+		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
+		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+
+		occlusionTexture = new Texture2D(texDesc);
+		occlusionTexture->CreateSRV(srvDesc);
+		occlusionTexture->CreateDSV(dsvDesc);
+	}
 }
 
 void Deferred::Reset()
 {
-	//logger::info("reset");
-	//for (auto& str : perms)
-	//{
-	////	logger::info("{}", str);
-	//}
 }
 
 void Deferred::UpdateConstantBuffer()
@@ -369,6 +381,15 @@ void Deferred::DeferredPasses()
 			};
 
 			context->CSSetShaderResources(10, ARRAYSIZE(srvs), srvs);
+		}
+
+		if (DynamicCubemaps::GetSingleton()->loaded) {
+			ID3D11ShaderResourceView* srvs[2]{
+				DynamicCubemaps::GetSingleton()->envTexture->srv.get(),
+				DynamicCubemaps::GetSingleton()->envReflectionsTexture->srv.get(),
+			};
+
+			context->CSSetShaderResources(12, ARRAYSIZE(srvs), srvs);
 		}
 	}
 
