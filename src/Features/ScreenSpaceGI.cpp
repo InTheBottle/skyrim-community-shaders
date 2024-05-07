@@ -1,4 +1,5 @@
 #include "ScreenSpaceGI.h"
+#include "Menu.h"
 
 #include "Deferred.h"
 #include "State.h"
@@ -272,35 +273,13 @@ void ScreenSpaceGI::DrawSettings()
 		static float debugRescale = .3f;
 		ImGui::SliderFloat("View Resize", &debugRescale, 0.f, 1.f);
 
-		// ImGui doesn't support U32
-		// if (ImGui::TreeNode("texHilbertLUT")) {
-		// 	ImGui::Image(texHilbertLUT->srv.get(), { (float)texHilbertLUT->desc.Width, (float)texHilbertLUT->desc.Height });
-		// 	ImGui::TreePop();
-		// }
-		if (ImGui::TreeNode("texWorkingDepth")) {
-			ImGui::Image(texWorkingDepth->srv.get(), { texWorkingDepth->desc.Width * debugRescale, texWorkingDepth->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
-		if (ImGui::TreeNode("texPrevGeo")) {
-			ImGui::Image(texPrevGeo->srv.get(), { texPrevGeo->desc.Width * debugRescale, texPrevGeo->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
-		if (ImGui::TreeNode("texRadiance")) {
-			ImGui::Image(texRadiance->srv.get(), { texRadiance->desc.Width * debugRescale, texRadiance->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
-		if (ImGui::TreeNode("texGI[0]")) {
-			ImGui::Image(texGI[0]->srv.get(), { texGI[0]->desc.Width * debugRescale, texGI[0]->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
-		if (ImGui::TreeNode("texGI[1]")) {
-			ImGui::Image(texGI[1]->srv.get(), { texGI[1]->desc.Width * debugRescale, texGI[1]->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
-		if (ImGui::TreeNode("texPrevGIAlbedo")) {
-			ImGui::Image(texPrevGIAlbedo->srv.get(), { texPrevGIAlbedo->desc.Width * debugRescale, texPrevGIAlbedo->desc.Height * debugRescale });
-			ImGui::TreePop();
-		}
+		//BUFFER_VIEWER_NODE(texHilbertLUT, debugRescale)
+		BUFFER_VIEWER_NODE(texWorkingDepth, debugRescale)
+		BUFFER_VIEWER_NODE(texPrevGeo, debugRescale)
+		BUFFER_VIEWER_NODE(texRadiance, debugRescale)
+		BUFFER_VIEWER_NODE(texGI[0], debugRescale)
+		BUFFER_VIEWER_NODE(texGI[1], debugRescale)
+		BUFFER_VIEWER_NODE(texPrevGIAlbedo, debugRescale)
 
 		ImGui::TreePop();
 	}
