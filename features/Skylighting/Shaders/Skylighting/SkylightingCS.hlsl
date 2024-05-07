@@ -3,15 +3,15 @@ Texture2D<unorm float> DepthTexture : register(t0);
 
 struct PerGeometry
 {
-	float4 VPOSOffset;					            
-	float4 ShadowSampleParam;   // fPoissonRadiusScale / iShadowMapResolution in z and w
-	float4 EndSplitDistances;   // cascade end distances int xyz, cascade count int z
-	float4 StartSplitDistances; // cascade start ditances int xyz, 4 int z
+	float4 VPOSOffset;
+	float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
+	float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
+	float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
 	float4 FocusShadowFadeParam;
-	float4 DebugColor;					      
-	float4 PropertyColor;					           
-	float4 AlphaTestRef;					          
-	float4 ShadowLightParam;   	// Falloff in x, ShadowDistance squared in z
+	float4 DebugColor;
+	float4 PropertyColor;
+	float4 AlphaTestRef;
+	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
 	float4x3 ShadowMapProj[4];
 	float4x4 CameraViewProjInverse;
@@ -44,7 +44,8 @@ half GetScreenDepth(half depth)
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
 
 	half rawDepth = DepthTexture[globalId.xy];
@@ -57,19 +58,18 @@ half GetScreenDepth(half depth)
 	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
 	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
-    half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
-    positionMS.xyz = positionMS.xyz / positionMS.w;
+	half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	half3 startPositionMS = positionMS;
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 - 1.0;
-	
+
 	float2x2 rotationMatrix = float2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	float2 PoissonDisk[16] =
-	{
+	float2 PoissonDisk[16] = {
 		float2(-0.94201624, -0.39906216),
 		float2(0.94558609, -0.76890725),
 		float2(-0.094184101, -0.92938870),
@@ -93,16 +93,16 @@ half GetScreenDepth(half depth)
 
 	half skylighting = 0;
 
-	[unroll] for (uint i = 0; i < sampleCount; i++) 
+	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix) * range;
-	
+
 		positionMS.xy = startPositionMS + offset;
 
 		half shadowMapDepth = length(positionMS.xyz);
 
 		[flatten] if (sD.EndSplitDistances.z > shadowMapDepth)
-		{        
+		{
 			half cascadeIndex = 0;
 			half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
 			half shadowMapThreshold = sD.AlphaTestRef.y;
@@ -124,7 +124,7 @@ half GetScreenDepth(half depth)
 
 			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - shadowMapThreshold * PoissonDisk[i].x);
 			skylighting += shadowMapValues;
-		}	
+		}
 	}
 
 	skylighting /= half(sampleCount);

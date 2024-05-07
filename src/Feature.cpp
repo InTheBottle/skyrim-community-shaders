@@ -18,7 +18,6 @@
 #include "Features/WaterParallax.h"
 #include "Features/WetnessEffects.h"
 
-
 #include "State.h"
 
 void Feature::Load(json&)

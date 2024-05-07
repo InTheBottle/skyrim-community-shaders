@@ -31,7 +31,8 @@ float HistoryRadiusScaling(float accumFrames)
 	return lerp(1, 0.5, accumFrames / MaxAccumFrames);
 };
 
-[numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(const uint2 dtid
+								: SV_DispatchThreadID) {
 	const float srcScale = SrcFrameDim * RcpTexDim;
 	const float outScale = OutFrameDim * RcpTexDim;
 

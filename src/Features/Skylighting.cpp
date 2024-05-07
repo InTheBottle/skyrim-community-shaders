@@ -1,7 +1,7 @@
 #include "Skylighting.h"
-#include <Util.h>
-#include <Deferred.h>
 #include <DDSTextureLoader.h>
+#include <Deferred.h>
+#include <Util.h>
 
 void Skylighting::DrawSettings()
 {
@@ -9,7 +9,6 @@ void Skylighting::DrawSettings()
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
 {
-	
 }
 
 void Skylighting::SetupResources()
@@ -50,7 +49,6 @@ void Skylighting::SetupResources()
 	{
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-		
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -60,7 +58,7 @@ void Skylighting::SetupResources()
 		main.texture->GetDesc(&texDesc);
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
-		
+
 		texDesc.Format = DXGI_FORMAT_R16_UNORM;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
@@ -255,7 +253,7 @@ void Skylighting::Compute()
 }
 
 void Skylighting::Bind()
-{	
+{
 	if (!loaded)
 		return;
 

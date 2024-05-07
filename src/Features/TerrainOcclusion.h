@@ -105,7 +105,7 @@ struct TerrainOcclusion : public Feature
 
 	virtual void DrawSettings() override;
 
-	virtual inline void Reset() override {};
+	virtual inline void Reset() override{};
 
 	virtual void Draw(const RE::BSShader*, const uint32_t) override;
 	void UpdateBuffer();

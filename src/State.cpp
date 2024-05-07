@@ -13,7 +13,6 @@
 #include "Features/Skylighting.h"
 #include "Features/TerrainBlending.h"
 
-
 #include "VariableRateShading.h"
 
 enum class UtilityShaderFlags : uint64_t
