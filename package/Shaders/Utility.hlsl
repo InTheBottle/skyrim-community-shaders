@@ -330,7 +330,7 @@ cbuffer PerGeometry : register(b2)
 #		if defined(RENDER_SHADOWMASK)
 	float4x3 ShadowMapProj[1][3] : packoffset(c16);  // 16, 19, 22
 #		elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
-	float4x4 ShadowMapProj : packoffset(c16);
+	float4x4 ShadowMapProj[1][3] : packoffset(c16);
 #		endif
 #	else
 	float4 VRUnknown : packoffset(c4);  // used to multiply by identity matrix, see e.g., 4202499.ps.bin.hlsl
@@ -345,7 +345,7 @@ cbuffer PerGeometry : register(b2)
 #		if defined(RENDER_SHADOWMASK)
 	float4x3 ShadowMapProj[2][3] : packoffset(c29);  // VR has a couple of offsets of 3, e.g., {29, 32, 35} and {38, 41, 44}, compare to Flat which does [16, 19, 22]
 #		elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
-	float4x4 ShadowMapProj : packoffset(c29);
+	float4x4 ShadowMapProj[2][3] : packoffset(c29);
 #		endif
 #	endif  // VR
 }
@@ -1573,7 +1573,7 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowColor.xyzw = fadeFactor * (shadowVisibility - 1) + 1;
 	}
 #		elif defined(RENDER_SHADOWMASKSPOT)
-	float4 positionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
+	float4 positionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
 	positionLS.xyz /= positionLS.w;
 	float2 shadowMapUv = positionLS.xy * 0.5 + 0.5;
 	float shadowBaseVisibility = 0;
@@ -1611,7 +1611,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKPB)
-	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
+	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
 
 	float shadowVisibility = 0;
 
@@ -1636,7 +1636,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKDPB)
-	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
+	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
 	float3 positionLS = unadjustedPositionLS.xyz / unadjustedPositionLS.w;
 	bool lowerHalf = unadjustedPositionLS.z * 0.5 + 0.5 < 0;
 	float3 normalizedPositionLS = normalize(positionLS);
