@@ -146,43 +146,53 @@ public:
 			static void thunk()
 			{
 				State::GetSingleton()->BeginPerfEvent("PRECIPITATION MASK");
+				State::GetSingleton()->SetPerfMarker("PRECIPITATION MASK");
 
-				if (GetSingleton()->doOcclusion) {
-					if (auto sky = RE::Sky::GetSingleton()) {
-						if (auto precip = sky->precip) {
-							static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 515451).address());
-							float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
+				static bool doPrecip = false;
 
-							static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 515509).address());
-							RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
+				auto sky = RE::Sky::GetSingleton();
+				auto precip = sky->precip;
+				bool hasPrecip = precip->currentPrecip.get();
 
-							Skylighting::GetSingleton()->inOcclusion = true;
-							PrecipitationShaderCubeSize = Skylighting::GetSingleton()->occlusionDistance;
-							PrecipitationShaderDirection = { 0, 0, -1 };
-							Precipitation_SetupMask(precip);
-							BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-							Precipitation_RenderMask(precip, rain);
-							Skylighting::GetSingleton()->inOcclusion = false;
-							RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
-							Skylighting::GetSingleton()->viewProjMat = cube->occlusionProjection;
-						
-							auto& context = State::GetSingleton()->context;
-							auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-							auto precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
-							context->CopyResource(Deferred::GetSingleton()->occlusionTexture->resource.get(), precipitation.texture);
-
-							cube = nullptr;
-							delete rain;
-
-							PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
-							PrecipitationShaderDirection = originalParticleShaderDirection;
-						}
-					}
-					State::GetSingleton()->SetPerfMarker("PRECIPITATION MASK");
+				if (hasPrecip && doPrecip) {
+					doPrecip = false;
 					func();
-					State::GetSingleton()->EndPerfEvent();
+				} else {
+					doPrecip = true;
+
+					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+					RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
+
+					precipitation.depthSRV = Deferred::GetSingleton()->occlusionTexture->srv.get();
+					precipitation.texture = Deferred::GetSingleton()->occlusionTexture->resource.get();
+					precipitation.views[0] = Deferred::GetSingleton()->occlusionTexture->dsv.get();
+
+					static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 515451).address());
+					float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
+
+					static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 515509).address());
+					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
+
+					Skylighting::GetSingleton()->inOcclusion = true;
+					PrecipitationShaderCubeSize = Skylighting::GetSingleton()->occlusionDistance;
+					PrecipitationShaderDirection = { 0, 0, -1 };
+					Precipitation_SetupMask(precip);
+					BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
+					Precipitation_RenderMask(precip, rain);
+					Skylighting::GetSingleton()->inOcclusion = false;
+					RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
+					Skylighting::GetSingleton()->viewProjMat = cube->occlusionProjection;
+
+					cube = nullptr;
+					delete rain;
+
+					PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
+					PrecipitationShaderDirection = originalParticleShaderDirection;
+
+					precipitation = precipitationCopy;
 				}
+				State::GetSingleton()->EndPerfEvent();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
