@@ -10,6 +10,7 @@
 #include <Features/DynamicCubemaps.h>
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
+#include <Features/SSVGI.h>
 
 void Deferred::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
 {
@@ -426,8 +427,33 @@ void Deferred::DeferredPasses()
 
 	// Features that require full diffuse lighting should be put here
 
+	{
+		ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	}
+
 	if (ScreenSpaceGI::GetSingleton()->loaded) {
 		ScreenSpaceGI::GetSingleton()->DrawSSGI(giTexture);
+	}
+
+	if (SSVGI::GetSingleton()->loaded) {
+		SSVGI::GetSingleton()->ComputeIndirectLighting(giTexture);
+	}
+	
+	
+	{
+		reshade::api::resource_view shader_resource_view = { reinterpret_cast<uintptr_t>(normalRoughness.SRV) };
+		_runtime->update_texture_bindings("NORMALROUGHNESS", shader_resource_view, reshade::api::resource_view{ 0 });
+	}
+
+	{
+		reshade::api::resource_view shader_resource_view = { reinterpret_cast<uintptr_t>(albedo.SRV) };
+		_runtime->update_texture_bindings("ALBEDO", shader_resource_view, reshade::api::resource_view{ 0 });
+	}
+
+	{
+		reshade::api::resource_view shader_resource_view = { reinterpret_cast<uintptr_t>(main.SRV) };
+		_runtime->update_texture_bindings("MAIN", shader_resource_view, reshade::api::resource_view{ 0 });
 	}
 
 	{

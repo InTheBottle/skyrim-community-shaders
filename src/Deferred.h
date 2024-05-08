@@ -13,6 +13,9 @@
 #define MASKS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS
 #define CLOUDSHADOWS RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED
 
+#include <reshade/reshade.hpp>
+
+
 class Deferred
 {
 public:
@@ -21,6 +24,9 @@ public:
 		static Deferred singleton;
 		return &singleton;
 	}
+
+	reshade::api::effect_runtime* _runtime = nullptr;
+
 
 	void DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode);
 
