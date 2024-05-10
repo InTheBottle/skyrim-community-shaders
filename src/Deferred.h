@@ -104,38 +104,8 @@ public:
 	}
 
 	void UpdateConstantBuffer();
-	
-	struct alignas(16) ViewData
-	{
-		DirectX::XMVECTOR m_ViewUp;
-		DirectX::XMVECTOR m_ViewRight;
-		DirectX::XMVECTOR m_ViewDir;
-		DirectX::XMMATRIX m_ViewMat;
-		DirectX::XMMATRIX m_ProjMat;
-		DirectX::XMMATRIX m_ViewProjMat;
-		DirectX::XMMATRIX m_UnknownMat1;
-		DirectX::XMMATRIX m_ViewProjMatrixUnjittered;
-		DirectX::XMMATRIX m_PreviousViewProjMatrixUnjittered;
-		DirectX::XMMATRIX m_ProjMatrixUnjittered;
-		DirectX::XMMATRIX m_UnknownMat2;
-		float m_ViewPort[4];// NiRect<float> { left = 0, right = 1, top = 1, bottom = 0 }
-		RE::NiPoint2 m_ViewDepthRange;
-		char _pad0[0x8];
-	};
-
-	struct CameraStateData
-	{
-		RE::NiCamera* pReferenceCamera;
-		ViewData CamViewData;
-		RE::NiPoint3 PosAdjust;
-		RE::NiPoint3 CurrentPosAdjust;
-		RE::NiPoint3 PreviousPosAdjust;
-		bool UseJitter;
-		char _pad0[0x8];
-	};
 
 	Texture2D* occlusionTexture = nullptr;
-
 
 	bool doOcclusion = true;
 
