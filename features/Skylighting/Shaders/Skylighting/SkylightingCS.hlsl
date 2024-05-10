@@ -131,51 +131,37 @@ half3 DecodeNormal(half2 f)
 	half occlusionThreshold = mul(OcclusionViewProj, half4(positionMS.xyz, 1)).z;
 	
 	float3 V = normalize(positionMS.xyz);
-	float3 R = -reflect(-V, normalWS);
+	float3 R = reflect(V, normalWS);
 	
-	[unroll] for (uint i = 0; i < sampleCount; i++) 
-	{
-		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
-		half shift = half(i) / half(sampleCount);
-		half radius = length(offset);
-		
-		positionMS.xy = startPositionMS + lerp(normalWS.xy * radius, offset.xy, 0.5) * 256;
-
-		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
-		occlusionPosition.y = -occlusionPosition.y;
-		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
-
-		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
-		{			
-			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.1 * radius));
-			skylighting.x += shadowMapValues;
-		} else {
-			skylighting.x++;
-		}
-	}
+	float2 weights = 0.0;
 
 	[unroll] for (uint i = 0; i < sampleCount; i++) 
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
 		half shift = half(i) / half(sampleCount);
 		half radius = length(offset);
-		
-		positionMS.xy = startPositionMS + lerp(R.xy * radius * 2.0, offset.xy, 0.0) * 64;
+	
+		positionMS.xy = startPositionMS + offset * 128;
 
 		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
+		half3 offsetDirection = normalize(half3(offset.xy, 0));
+
 		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
 		{			
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.1 * radius));
-			skylighting.y += shadowMapValues;
+			float2 contributions = float2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, saturate(dot(R.xy, offsetDirection.xy)));
+			skylighting += shadowMapValues * contributions;
+			weights += contributions;
 		} else {
-			skylighting.y++;
+			skylighting++;
+			weights++;
 		}
 	}
 
-	skylighting /= half(sampleCount);
+	skylighting /= weights;
 
 	SkylightingTextureRW[globalId.xy] = saturate(skylighting);
 }
