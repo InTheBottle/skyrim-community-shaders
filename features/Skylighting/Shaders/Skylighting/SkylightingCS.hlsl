@@ -80,6 +80,7 @@ half3 DecodeNormal(half2 f)
 }
 
 //#define SHADOWMAP
+#define PI 3.1415927
 
 #if !defined(SHADOWMAP)
 [numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
@@ -88,6 +89,7 @@ half3 DecodeNormal(half2 f)
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
 	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+	half roughness = 1.0 - normalGlossiness.z;
 
 	half rawDepth = DepthTexture[globalId.xy];
 
@@ -100,7 +102,7 @@ half3 DecodeNormal(half2 f)
 
 	half3 startPositionMS = positionMS;
 
-	half noise = GetBlueNoise(globalId.xy) * 2.0 * 3.141592;
+	half noise = GetBlueNoise(globalId.xy) * 2.0 * PI;
 	
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
@@ -151,8 +153,16 @@ half3 DecodeNormal(half2 f)
 
 		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
 		{			
-			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.1 * radius));
-			float2 contributions = float2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, saturate(dot(R.xy, offsetDirection.xy)));
+			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
+			
+			half3 H = normalize(-offsetDirection + V);
+			half NoH = dot(normalWS, H);
+			half a = NoH * roughness;
+   		 	half k = roughness / (1.0 - NoH * NoH + a * a);
+    		half ggx = k * k * (1.0 / PI);
+
+			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
+			
 			skylighting += shadowMapValues * contributions;
 			weights += contributions;
 		} else {
@@ -191,7 +201,7 @@ half3 DecodeNormal(half2 f)
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
-	half noise = GetBlueNoise(globalId.xy) * 2.0 * 3.141592;
+	half noise = GetBlueNoise(globalId.xy) * 2.0 * PI;
 	
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
