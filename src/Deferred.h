@@ -176,8 +176,15 @@ public:
 
 					Skylighting::GetSingleton()->inOcclusion = true;
 					PrecipitationShaderCubeSize = Skylighting::GetSingleton()->occlusionDistance;
+
+					float originaLastCubeSize = precip->lastCubeSize;
+					precip->lastCubeSize = PrecipitationShaderCubeSize;
+
 					PrecipitationShaderDirection = { 0, 0, -1 };
+
 					Precipitation_SetupMask(precip);
+					Precipitation_SetupMask(precip); // Calling setup twice fixes an issue when it is raining
+
 					BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
 					Precipitation_RenderMask(precip, rain);
 					Skylighting::GetSingleton()->inOcclusion = false;
@@ -188,6 +195,8 @@ public:
 					delete rain;
 
 					PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
+					precip->lastCubeSize = originaLastCubeSize;
+
 					PrecipitationShaderDirection = originalParticleShaderDirection;
 
 					precipitation = precipitationCopy;
