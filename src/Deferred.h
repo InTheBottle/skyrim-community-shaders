@@ -92,14 +92,14 @@ public:
 	static void Precipitation_SetupMask(RE::Precipitation* a_This)
 	{
 		using func_t = decltype(&Precipitation_SetupMask);
-		REL::Relocation<func_t> func{ REL::RelocationID(25641, 25641) };
+		REL::Relocation<func_t> func{ REL::RelocationID(25641, 26183) };
 		func(a_This);
 	}
 
 	static void Precipitation_RenderMask(RE::Precipitation* a_This, BSParticleShaderRainEmitter* a_emitter)
 	{
 		using func_t = decltype(&Precipitation_RenderMask);
-		REL::Relocation<func_t> func{ REL::RelocationID(25642, 25642) };
+		REL::Relocation<func_t> func{ REL::RelocationID(25642, 26184) };
 		func(a_This, a_emitter);
 	}
 
@@ -228,7 +228,7 @@ public:
 
 		static void Install()
 		{
-			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x841, 0x791));
+			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
