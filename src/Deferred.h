@@ -122,11 +122,26 @@ public:
 
 				auto sky = RE::Sky::GetSingleton();
 				auto precip = sky->precip;
-				bool hasPrecip = precip->currentPrecip.get();
 
-				if (hasPrecip && doPrecip) {
+				if (doPrecip) {
 					doPrecip = false;
-					func();
+
+					auto precipObject = precip->currentPrecip;
+					if (!precipObject)
+					{
+						precipObject = precip->lastPrecip;
+					}
+					if (precipObject) {
+						Precipitation_SetupMask(precip);
+						Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
+						auto effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
+						auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
+						auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
+						auto rain = (BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
+
+						Precipitation_RenderMask(precip, rain);
+					}
+
 				} else {
 					doPrecip = true;
 
