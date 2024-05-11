@@ -153,10 +153,10 @@ public:
 					precipitation.texture = Deferred::GetSingleton()->occlusionTexture->resource.get();
 					precipitation.views[0] = Deferred::GetSingleton()->occlusionTexture->dsv.get();
 
-					static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 515451).address());
+					static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
 					float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
 
-					static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 515509).address());
+					static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 401648).address());
 					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
 
 					Skylighting::GetSingleton()->inOcclusion = true;
