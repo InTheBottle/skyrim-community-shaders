@@ -4,6 +4,8 @@
 
 #define WATER
 
+#undef SKYLIGHTING
+
 #include "Common/LightingData.hlsl"
 
 struct VS_INPUT
