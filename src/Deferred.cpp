@@ -2,6 +2,7 @@
 #include "State.h"
 #include "Util.h"
 #include <Features/CloudShadows.h>
+#include <Features/DynamicCubemaps.h>
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
 #include <Features/Skylighting.h>
@@ -193,15 +194,26 @@ void Deferred::SetupResources()
 			giTexture->CreateUAV(uavDesc);
 		}
 	}
+
+	{
+		auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+
+		precipitationOcclusion.texture->GetDesc(&texDesc);
+		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
+		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+
+		occlusionTexture = new Texture2D(texDesc);
+		occlusionTexture->CreateSRV(srvDesc);
+		occlusionTexture->CreateDSV(dsvDesc);
+	}
 }
 
 void Deferred::Reset()
 {
-	//logger::info("reset");
-	//for (auto& str : perms)
-	//{
-	////	logger::info("{}", str);
-	//}
 }
 
 void Deferred::UpdateConstantBuffer()
@@ -400,19 +412,6 @@ void Deferred::StartDeferred()
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
-	static BlendStates* blendStates = (BlendStates*)REL::RelocationID(524749, 411364).address();
-
-	// Set modified blend states
-	blendStates->a[0][0][1][0] = deferredBlendStates[0];
-	blendStates->a[0][0][10][0] = deferredBlendStates[1];
-	blendStates->a[1][0][1][0] = deferredBlendStates[2];
-	blendStates->a[1][0][11][0] = deferredBlendStates[3];
-	blendStates->a[2][0][1][0] = deferredBlendStates[4];
-	blendStates->a[2][0][11][0] = deferredBlendStates[5];
-	blendStates->a[3][0][11][0] = deferredBlendStates[6];
-
-	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-
 	deferredPass = true;
 }
 
@@ -429,6 +428,8 @@ void Deferred::DeferredPasses()
 		auto buffer = deferredCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 	}
+
+	Skylighting::GetSingleton()->Bind();
 
 	{
 		FLOAT clr[4] = { 0., 0., 0., 1. };
@@ -470,6 +471,15 @@ void Deferred::DeferredPasses()
 			};
 
 			context->CSSetShaderResources(10, ARRAYSIZE(srvs), srvs);
+		}
+
+		if (DynamicCubemaps::GetSingleton()->loaded) {
+			ID3D11ShaderResourceView* srvs[2]{
+				DynamicCubemaps::GetSingleton()->envTexture->srv.get(),
+				DynamicCubemaps::GetSingleton()->envReflectionsTexture->srv.get(),
+			};
+
+			context->CSSetShaderResources(12, ARRAYSIZE(srvs), srvs);
 		}
 	}
 

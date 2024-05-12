@@ -1824,11 +1824,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			endif
 
 		envColor = GetDynamicCubemap(screenUV, worldSpaceNormal, worldSpaceVertexNormal, worldSpaceViewDirection, envRoughness, F0, diffuseColor, viewPosition.z) * envMask;
-
-		if (shaderDescriptors[0].PixelShaderDescriptor & _DefShadow && shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir) {
-			float upAngle = saturate(dot(float3(0, 0, 1), normalizedDirLightDirectionWS.xyz));
-			envColor *= lerp(1.0, shadowColor.x, saturate(upAngle) / 3.0);
-		}
 	}
 #		endif
 #	endif  // defined (ENVMAP) || defined (MULTI_LAYER_PARALLAX) || defined(EYE)
@@ -1902,16 +1897,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #		if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap) {
+#			if defined(DEFERRED)
+		diffuseColor = 0.0;
+#			else
 		diffuseColor = 1.0;
+#			endif
 		specularColor = sRGB2Lin(specularColor);
 	}
 #		endif
 
 #		if defined(CPM_AVAILABLE) && defined(ENVMAP)
 #			if defined(DYNAMIC_CUBEMAPS)
-	specularColor += envColor * lerp(complexSpecular, 1.0, dynamicCubemap) * diffuseColor;
+	envColor *= lerp(complexSpecular, 1.0, dynamicCubemap);
+	specularColor += envColor * diffuseColor;
 #			else
-	specularColor += envColor * complexSpecular * diffuseColor;
+	envColor *= complexSpecular;
+	specularColor += envColor * diffuseColor;
 #			endif
 #		else
 	specularColor += envColor * diffuseColor;
@@ -1963,8 +1964,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = min(specularTmp.xyz, color.xyz);
 #	endif  // defined (SPECULAR) || defined(SPARKLE)
 
-#	if defined(ENVMAP) && defined(TESTCUBEMAP)
-	color.xyz = specularTexture.SampleLevel(SampEnvSampler, envSamplingPoint, 1).xyz;
+#	if defined(TESTCUBEMAP)
+#		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
+#			if defined(DYNAMIC_CUBEMAPS)
+	baseColor.xyz = 0.0;
+	specularColor = 0.0;
+	diffuseColor = 0.0;
+	dynamicCubemap = true;
+	envColor = 1.0;
+	envRoughness = 0.0;
+#			endif
+#		endif
 #	endif
 
 #	if defined(LANDSCAPE) && !defined(LOD_LAND_BLEND)
@@ -2133,8 +2143,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Masks = float4(0, 0, 0, psout.Diffuse.w);
 
 	float outGlossiness = saturate(glossiness * SSRParams.w);
-
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
+
+#		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
+#			if defined(DYNAMIC_CUBEMAPS)
+	if (dynamicCubemap) {
+		psout.Reflectance.xyz = envColor;
+		psout.NormalGlossiness.z = 1.0 - envRoughness;
+	}
+#			endif
+#		endif
 
 #		if defined(SSS) && defined(SKIN)
 	psout.Masks.x = saturate(baseColor.a);

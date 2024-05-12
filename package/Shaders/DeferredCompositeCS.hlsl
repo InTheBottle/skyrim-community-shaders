@@ -12,10 +12,13 @@ Texture2D<unorm half> DepthTexture : register(t5);
 Texture2D<unorm half3> MasksTexture : register(t6);
 Texture2D<unorm half4> GITexture : register(t7);
 
-Texture2D<unorm half> SkylightingTexture : register(t10);
+Texture2D<unorm half2> SkylightingTexture : register(t10);
 
 RWTexture2D<half4> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
+
+TextureCube<unorm half3> EnvTexture : register(t12);
+TextureCube<unorm half3> ReflectionTexture : register(t13);
 
 SamplerState LinearSampler : register(s0);
 
@@ -71,7 +74,7 @@ half GetScreenDepth(half depth)
 	half3 masks = MasksTexture[globalId.xy];
 
 	half3 color = MainRW[globalId.xy].rgb;
-	color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz;
+	//color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz;
 
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
@@ -118,6 +121,14 @@ half GetScreenDepth(half depth)
 	half3 color = MainRW[globalId.xy].rgb;
 	color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz * shadow;
 
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
+	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
+
+	float skylighting = SkylightingTexture[globalId.xy];
+	skylighting *= saturate(dot(normalWS, float3(0, 0, 1)) * 0.5 + 0.5);
+
+	color += albedo * directionalAmbientColor * skylighting;
+
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
@@ -149,8 +160,6 @@ float InterleavedGradientNoise(float2 uv)
 
 	half3 diffuseColor = MainRW[globalId.xy];
 
-	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
-
 	half3 albedo = AlbedoTexture[globalId.xy];
 
 	half4 giAo = GITexture[globalId.xy];
@@ -158,6 +167,8 @@ float InterleavedGradientNoise(float2 uv)
 	half ao = giAo.w;
 
 	half3 masks = MasksTexture[globalId.xy];
+
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 
@@ -168,30 +179,28 @@ float InterleavedGradientNoise(float2 uv)
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
-	for (int i = -1.5; i < 1.5; i++) {
-		for (int k = -1.5; k < 1.5; k++) {
-			if (i == 0 && k == 0)
-				continue;
-			float2 offset = float2(i, k) * RcpBufferDim.xy;
-			float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
-			float attenuation = 1.0 - saturate(abs(sampleDepth - depth) * 0.01);
-			skylighting += SkylightingTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
-			weight += attenuation;
-		}
-	}
-
-	if (weight > 0.0)
-		skylighting /= weight;
-
-	float shadowDepth = lerp(skylighting, 1.0, 0.25);
 	diffuseColor *= ao;
-	diffuseColor += albedo * directionalAmbientColor * ao * shadowDepth * 2;
 	diffuseColor += gi;
 
-	float3 giao = (shadowDepth * ao) + gi;
+	skylighting *= saturate(dot(normalWS, float3(0, 0, 1)) * 0.5 + 0.5);
+	skylighting = lerp(skylighting, 1.0, 0.5);
+
+	diffuseColor += albedo * directionalAmbientColor * ao * skylighting;
+
+	float3 giao = (skylighting * directionalAmbientColor * ao) + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor, 1.0);
 };
+
+float3 sRGB2Lin(float3 color)
+{
+	return color > 0.04045 ? pow(color / 1.055 + 0.055 / 1.055, 2.4) : color / 12.92;
+}
+
+float3 Lin2sRGB(float3 color)
+{
+	return color > 0.0031308 ? 1.055 * pow(color, 1.0 / 2.4) - 0.055 : 12.92 * color;
+}
 
 [numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
 											   : SV_DispatchThreadID, uint3 localId
@@ -207,11 +216,40 @@ float InterleavedGradientNoise(float2 uv)
 	half3 specularColor = SpecularTexture[globalId.xy];
 	half3 albedo = AlbedoTexture[globalId.xy];
 	half3 masks = MasksTexture[globalId.xy];
+	half3 reflectance = ReflectanceTexture[globalId.xy];
 
 	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 
 	half glossiness = normalGlossiness.z;
-	half3 color = diffuseColor + specularColor;
+	half3 color = sRGB2Lin(diffuseColor) + sRGB2Lin(specularColor);
+
+	float skylighting = SkylightingTexture[globalId.xy].y;
+	half4 giAo = GITexture[globalId.xy];
+
+	half rawDepth = DepthTexture[globalId.xy];
+
+	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
+
+	PerGeometry sD = perShadow[0];
+
+	half4 positionMS = mul(InvViewMatrix[eyeIndex], positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
+
+	float3 V = normalize(positionMS.xyz);
+	float3 R = reflect(V, normalWS);
+
+	float roughness = 1.0 - glossiness;
+	float level = roughness * 9.0;
+
+	float3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
+	specularIrradiance = sRGB2Lin(specularIrradiance);
+
+	float3 specularIrradiance2 = ReflectionTexture.SampleLevel(LinearSampler, R, level).xyz;
+	specularIrradiance2 = sRGB2Lin(specularIrradiance2);
+
+	color += reflectance * lerp(specularIrradiance, specularIrradiance2, skylighting * giAo.w) * giAo.w;
+
+	color = Lin2sRGB(color);
 
 #if defined(DEBUG)
 	half2 texCoord = half2(globalId.xy) / BufferDim.xy;
