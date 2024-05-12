@@ -44,12 +44,11 @@ struct ScreenSpaceGI : Feature
 		bool EnableGI = true;
 		// performance/quality
 		uint NumSlices = 2;
-		uint NumSteps = 5;
+		uint NumSteps = 3;
 		bool HalfRes = true;
-		// float SampleDistributionPower = 1.f;
 		float DepthMIPSamplingOffset = 3.3f;
 		// visual
-		float EffectRadius = 200.f;  // world (viewspace) maximum size of the shadow
+		float EffectRadius = 200.f;
 		float EffectFalloffRange = .615f;
 		float ThinOccluderCompensation = 0.f;
 		float Thickness = 50.f;
@@ -68,9 +67,9 @@ struct ScreenSpaceGI : Feature
 		bool EnableTemporalDenoiser = true;
 		bool EnableBlur = true;
 		float DepthDisocclusion = 50.f;
-		float NormalDisocclusion = .8f;
+		float NormalDisocclusion = .3f;
 		uint MaxAccumFrames = 16;
-		float BlurRadius = 4.f;
+		float BlurRadius = 6.f;
 		uint BlurPasses = 1;
 		float DistanceNormalisation = .05f;
 	} settings;

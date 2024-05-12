@@ -55,7 +55,7 @@ public:
 	ConstantBuffer* perFrameCB = nullptr;
 
 	virtual void ClearShaderCache() override;
-	
+
 	struct alignas(16) PerGeometry
 	{
 		float4 VPOSOffset;

@@ -1,20 +1,26 @@
+#include "../Common/VR.hlsli"
 
 Texture2D<unorm float> DepthTexture : register(t0);
 
 struct PerGeometry
 {
-	float4 VPOSOffset;					            
-	float4 ShadowSampleParam;   // fPoissonRadiusScale / iShadowMapResolution in z and w
-	float4 EndSplitDistances;   // cascade end distances int xyz, cascade count int z
-	float4 StartSplitDistances; // cascade start ditances int xyz, 4 int z
+	float4 VPOSOffset;
+	float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
+	float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
+	float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
 	float4 FocusShadowFadeParam;
-	float4 DebugColor;					      
-	float4 PropertyColor;					           
-	float4 AlphaTestRef;					          
-	float4 ShadowLightParam;   	// Falloff in x, ShadowDistance squared in z
+	float4 DebugColor;
+	float4 PropertyColor;
+	float4 AlphaTestRef;
+	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
-	float4x3 ShadowMapProj[4];
-	float4x4 CameraViewProjInverse;
+#if !defined(VR)
+	float4x3 ShadowMapProj[1][3];
+	float4x4 CameraViewProjInverse[1];
+#else
+	float4x3 ShadowMapProj[2][3];
+	float4x4 CameraViewProjInverse[2];
+#endif  // VR
 };
 
 Texture2DArray<unorm float> TexShadowMapSampler : register(t1);
@@ -194,8 +200,8 @@ half3 DecodeNormal(half2 f)
 	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
 	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
-    half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
-    positionMS.xyz = positionMS.xyz / positionMS.w;
+	half4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	half3 startPositionMS = positionMS;
 
@@ -243,20 +249,20 @@ half3 DecodeNormal(half2 f)
 		half shadowMapDepth = length(positionMS.xyz);
 
 		[flatten] if (sD.EndSplitDistances.z > shadowMapDepth)
-		{        
+		{
 			half cascadeIndex = 0;
-			half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
+			half4x3 lightProjectionMatrix = sD.ShadowMapProj[eyeIndex][0];
 			half shadowMapThreshold = sD.AlphaTestRef.y;
 
 			[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
 			{
-				lightProjectionMatrix = sD.ShadowMapProj[2];
+				lightProjectionMatrix = sD.ShadowMapProj[eyeIndex][2];
 				shadowMapThreshold = sD.AlphaTestRef.z;
 				cascadeIndex = 2;
 			}
 			else if (sD.EndSplitDistances.x < shadowMapDepth)
 			{
-				lightProjectionMatrix = sD.ShadowMapProj[1];
+				lightProjectionMatrix = sD.ShadowMapProj[eyeIndex][1];
 				shadowMapThreshold = sD.AlphaTestRef.z;
 				cascadeIndex = 1;
 			}
@@ -265,7 +271,7 @@ half3 DecodeNormal(half2 f)
 
 			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
 			skylighting += shadowMapValues;
-		}	
+		}
 	}
 
 	skylighting /= half(sampleCount);

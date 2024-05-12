@@ -24,18 +24,23 @@ SamplerState LinearSampler : register(s0);
 
 struct PerGeometry
 {
-	float4 VPOSOffset;					            
-	float4 ShadowSampleParam;   // fPoissonRadiusScale / iShadowMapResolution in z and w
-	float4 EndSplitDistances;   // cascade end distances int xyz, cascade count int z
-	float4 StartSplitDistances; // cascade start ditances int xyz, 4 int z
+	float4 VPOSOffset;
+	float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
+	float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
+	float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
 	float4 FocusShadowFadeParam;
-	float4 DebugColor;					      
-	float4 PropertyColor;					           
-	float4 AlphaTestRef;					          
-	float4 ShadowLightParam;   	// Falloff in x, ShadowDistance squared in z
+	float4 DebugColor;
+	float4 PropertyColor;
+	float4 AlphaTestRef;
+	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
-	float4x3 ShadowMapProj[4];
-	float4x4 CameraViewProjInverse;
+#if !defined(VR)
+	float4x3 ShadowMapProj[1][3];
+	float4x4 CameraViewProjInverse[1];
+#else
+	float4x3 ShadowMapProj[2][3];
+	float4x4 CameraViewProjInverse[2];
+#endif  // VR
 };
 
 Texture2DArray<float4> TexShadowMapSampler : register(t10);
@@ -110,7 +115,7 @@ half GetScreenDepth(half depth)
 				weight += attenuation;
 			}
 		}
-		shadow /= weight;	
+		shadow /= weight;
 	}
 
 	half3 color = MainRW[globalId.xy].rgb;
@@ -127,9 +132,9 @@ half GetScreenDepth(half depth)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
-float random (float2 uv)
+float random(float2 uv)
 {
-	return frac(sin(dot(uv,float2(12.9898,78.233)))*43758.5453123);
+	return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453123);
 }
 
 float InterleavedGradientNoise(float2 uv)
@@ -170,7 +175,7 @@ float InterleavedGradientNoise(float2 uv)
 	float skylighting = SkylightingTexture[globalId.xy];
 
 	half weight = 1.0;
-	
+
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 

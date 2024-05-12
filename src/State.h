@@ -14,6 +14,8 @@ public:
 	}
 
 	bool enabledClasses[RE::BSShader::Type::Total - 1];
+	bool enablePShaders = true;
+	bool enableVShaders = true;
 
 	bool updateShader = true;
 	RE::BSShader* currentShader = nullptr;
@@ -93,6 +95,8 @@ public:
 	void BeginPerfEvent(std::string_view title);
 	void EndPerfEvent();
 	void SetPerfMarker(std::string_view title);
+
+	bool extendedFrameAnnotations = false;
 
 	struct PerShader
 	{

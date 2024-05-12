@@ -407,6 +407,7 @@ void Menu::DrawSettings()
 				ImGui::Text(std::format("Shader Compiler : {}", shaderCache.GetShaderStatsString()).c_str());
 				ImGui::TreePop();
 			}
+			ImGui::Checkbox("Extended Frame Annotations", &State::GetSingleton()->extendedFrameAnnotations);
 		}
 
 		if (ImGui::CollapsingHeader("Replace Original Shaders", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
@@ -423,7 +424,22 @@ void Menu::DrawSettings()
 					} else
 						ImGui::Checkbox(std::format("{}", magic_enum::enum_name(type)).c_str(), &state->enabledClasses[classIndex]);
 				}
-
+				if (state->IsDeveloperMode()) {
+					ImGui::Checkbox("Vertex", &state->enableVShaders);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text(
+							"Replace Vertex Shaders. "
+							"When false, will disable the custom Vertex Shaders for the types above. "
+							"For developers to test whether CS shaders match vanilla behavior. ");
+					}
+					ImGui::Checkbox("Pixel", &state->enablePShaders);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text(
+							"Replace Pixel Shaders. "
+							"When false, will disable the custom Pixel Shaders for the types above. "
+							"For developers to test whether CS shaders match vanilla behavior. ");
+					}
+				}
 				ImGui::EndTable();
 			}
 		}
