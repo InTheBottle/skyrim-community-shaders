@@ -2145,13 +2145,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
 
-#	if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
-#		if defined(DYNAMIC_CUBEMAPS)
+#		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
+#			if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap) {
 		psout.Reflectance.xyz = envColor;
 		psout.NormalGlossiness.z = 1.0 - envRoughness;
 	}
-#		endif
+#			endif
 #		endif
 
 #		if defined(SSS) && defined(SKIN)

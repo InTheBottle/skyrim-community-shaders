@@ -97,11 +97,11 @@ float3 Lin2sRGB(float3 color)
 		}
 	}
 
- #if defined(REFLECTIONS)
- 	color.rgb = lerp(color.rgb, sRGB2Lin(ReflectionsTexture.SampleLevel(LinearSampler, uv, 0)), saturate(mipLevel * (1.0 / 10.0)));
- #else
+#if defined(REFLECTIONS)
+	color.rgb = lerp(color.rgb, sRGB2Lin(ReflectionsTexture.SampleLevel(LinearSampler, uv, 0)), saturate(mipLevel * (1.0 / 10.0)));
+#else
 	color.rgb = lerp(color.rgb, color.rgb * sRGB2Lin(DefaultCubemap.SampleLevel(LinearSampler, uv, 0).x), saturate(mipLevel * (1.0 / 10.0)));
- #endif
+#endif
 
 	color.rgb = Lin2sRGB(color.rgb);
 	EnvInferredTexture[ThreadID] = max(0, color);

@@ -284,12 +284,12 @@ public:
 			uint32_t m_ValidPassBits;  // OR'd with (1 << PassIndex)
 		};
 
-		RE::BSTArray<void*> unk008;               // 008
+		RE::BSTArray<void*> unk008;                       // 008
 		RE::BSTHashMap<RE::UnkKey, RE::UnkValue> unk020;  // 020
-		std::uint64_t unk050;                 // 050
-		std::uint64_t unk058;                 // 058
-		std::uint64_t unk060;                 // 060
-		std::uint64_t unk068;                 // 068
+		std::uint64_t unk050;                             // 050
+		std::uint64_t unk058;                             // 058
+		std::uint64_t unk060;                             // 060
+		std::uint64_t unk068;                             // 068
 		GeometryGroup* m_GeometryGroups[16];
 		GeometryGroup* m_AlphaGroup;
 		void* unk1;
@@ -320,7 +320,6 @@ public:
 			}
 
 			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting) && !(property->flags.any(kSkinned) && property->flags.none(kTreeAnim))) {
-
 				if (geometry->worldBound.radius > GetSingleton()->boundSize) {
 					stl::enumeration<BSUtilityShader::Flags> technique;
 					technique.set(RenderDepth);

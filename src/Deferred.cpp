@@ -2,13 +2,12 @@
 #include "State.h"
 #include "Util.h"
 #include <Features/CloudShadows.h>
+#include <Features/DynamicCubemaps.h>
 #include <Features/ScreenSpaceGI.h>
 #include <Features/ScreenSpaceShadows.h>
 #include <Features/Skylighting.h>
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
-#include <Features/Skylighting.h>
-#include <Features/DynamicCubemaps.h>
 #include <ShaderCache.h>
 #include <VariableRateShading.h>
 

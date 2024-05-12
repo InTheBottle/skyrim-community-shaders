@@ -2,8 +2,8 @@
 
 #include "Buffer.h"
 #include "State.h"
-#include <State.h>
 #include <Features/SKylighting.h>
+#include <State.h>
 #include <Util.h>
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT

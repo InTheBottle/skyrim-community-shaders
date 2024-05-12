@@ -343,7 +343,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	// Swaps direction of the backfaces otherwise they seem to get lit from the wrong direction.
 	if (!frontFace)
 		normal = -normal;
-	
+
 	normal = normalize(lerp(normal, normalize(input.SphereNormal.xyz), sqrt(input.SphereNormal.w)));
 
 	if (complex) {
@@ -366,7 +366,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsSpecularColor = 0;
 
 	float dirLightAngle = dot(normal, DirLightDirection.xyz);
-	
+
 	float3 albedo = max(0, baseColor.xyz * input.VertexColor.xyz);
 
 	// Generated texture to simulate light transport.

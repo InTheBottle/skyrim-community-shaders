@@ -363,7 +363,7 @@ void DynamicCubemaps::Irradiance(bool a_reflections)
 			const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
 			spmapCB->Update(spmapConstants);
 
-			auto uav = a_reflections ? uavReflectionsArray[level - 1]  : uavArray[level - 1];
+			auto uav = a_reflections ? uavReflectionsArray[level - 1] : uavArray[level - 1];
 
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 			context->Dispatch(numGroups, numGroups, 6);
@@ -396,7 +396,7 @@ void DynamicCubemaps::UpdateCubemap()
 	} else if (nextTask == NextTask::kInferrence2) {
 		Inferrence(true);
 		nextTask = NextTask::kIrradiance2;
-	} else if (nextTask == NextTask::kIrradiance2){
+	} else if (nextTask == NextTask::kIrradiance2) {
 		nextTask = NextTask::kCapture;
 		Irradiance(true);
 	}

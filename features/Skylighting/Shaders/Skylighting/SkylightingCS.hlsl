@@ -89,9 +89,10 @@ half3 DecodeNormal(half2 f)
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
-	
+
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
 	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
@@ -103,17 +104,16 @@ half3 DecodeNormal(half2 f)
 
 	PerGeometry sD = perShadow[0];
 
-    half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
-    positionMS.xyz = positionMS.xyz / positionMS.w;
+	half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	half3 startPositionMS = positionMS;
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 * PI;
-	
+
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	half2 PoissonDisk[16] =
-	{
+	half2 PoissonDisk[16] = {
 		half2(-0.94201624, -0.39906216),
 		half2(0.94558609, -0.76890725),
 		half2(-0.094184101, -0.92938870),
@@ -137,18 +137,18 @@ half3 DecodeNormal(half2 f)
 	half2 skylighting = 0;
 
 	half occlusionThreshold = mul(OcclusionViewProj, half4(positionMS.xyz, 1)).z;
-	
+
 	float3 V = normalize(positionMS.xyz);
 	float3 R = reflect(V, normalWS);
-	
+
 	float2 weights = 0.0;
 
-	[unroll] for (uint i = 0; i < sampleCount; i++) 
+	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
 		half shift = half(i) / half(sampleCount);
 		half radius = length(offset);
-	
+
 		positionMS.xy = startPositionMS + offset * 128;
 
 		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
@@ -157,18 +157,17 @@ half3 DecodeNormal(half2 f)
 
 		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
-		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y))
-		{			
+		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) {
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
-			
+
 			half3 H = normalize(-offsetDirection + V);
 			half NoH = dot(normalWS, H);
 			half a = NoH * roughness;
-   		 	half k = roughness / (1.0 - NoH * NoH + a * a);
-    		half ggx = k * k * (1.0 / PI);
+			half k = roughness / (1.0 - NoH * NoH + a * a);
+			half ggx = k * k * (1.0 / PI);
 
 			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
-			
+
 			skylighting += shadowMapValues * contributions;
 			weights += contributions;
 		} else {
@@ -181,8 +180,9 @@ half3 DecodeNormal(half2 f)
 
 	SkylightingTextureRW[globalId.xy] = saturate(skylighting);
 }
-#	else
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+#else
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -194,7 +194,7 @@ half3 DecodeNormal(half2 f)
 	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
 	PerGeometry sD = perShadow[0];
-	
+
 	sD.EndSplitDistances.x = GetScreenDepth(sD.EndSplitDistances.x);
 	sD.EndSplitDistances.y = GetScreenDepth(sD.EndSplitDistances.y);
 	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
@@ -208,11 +208,10 @@ half3 DecodeNormal(half2 f)
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 * PI;
-	
+
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	half2 PoissonDisk[16] =
-	{
+	half2 PoissonDisk[16] = {
 		half2(-0.94201624, -0.39906216),
 		half2(0.94558609, -0.76890725),
 		half2(-0.094184101, -0.92938870),
@@ -236,14 +235,14 @@ half3 DecodeNormal(half2 f)
 
 	half skylighting = 0;
 	float upFactor = saturate(dot(normalize(ShadowDirection), float3(0, 0, -1)));
-	
+
 	uint validSamples = 0;
-	[unroll] for (uint i = 0; i < sampleCount; i++) 
+	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
 		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
 		half shift = half(i) / half(sampleCount);
 		half radius = length(offset);
-		
+
 		positionMS.xy = startPositionMS + lerp(normalWS.xy * radius * 2.0, offset.xy, 0.5) * 256 + ShadowDirection.xy * 128;
 
 		half shadowMapDepth = length(positionMS.xyz);
