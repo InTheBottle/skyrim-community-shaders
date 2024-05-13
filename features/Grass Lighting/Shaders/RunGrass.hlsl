@@ -370,8 +370,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 albedo = max(0, baseColor.xyz * input.VertexColor.xyz);
 
 	// Generated texture to simulate light transport.
-	float3 subsurfaceColor = lerp(RGBToLuminance(albedo.xyz), albedo.xyz, 2.0) * input.SphereNormal.w;
-	subsurfaceColor = pow(subsurfaceColor, 1.5);
+	float3 subsurfaceColor = pow(lerp(RGBToLuminance(albedo.xyz), albedo.xyz, 2.0), 1.5) * input.SphereNormal.w;
 
 	float3 sss = dirLightColor * sqrt(-dirLightAngle * 0.5 + 0.5);
 
