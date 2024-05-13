@@ -213,6 +213,13 @@ void Skylighting::CopyShadowData()
 		auto srv = shadowCameraData->srv.get();
 		context->PSSetShaderResources(40, 1, &srv);
 	}
+
+	ID3D11ShaderResourceView* srvs2[2]{
+		shadowView,
+		perShadow->srv.get()
+	};
+
+	context->PSSetShaderResources(80, 2, srvs2);
 }
 
 void Skylighting::Compute()
