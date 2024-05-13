@@ -227,12 +227,25 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct Main_RenderWorld_End_Decals
+		{
+			static void thunk(RE::BSShaderAccumulator* This, uint32_t RenderFlags)
+			{
+				GetSingleton()->ResetBlendStates();
+				GetSingleton()->EndDeferred();
+				// After this point, decals start rendering
+				func(This, RenderFlags);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install()
 		{
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
+			//stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x2F2, 0x2E1, 0x321));
 
 			logger::info("[Deferred] Installed hooks");
 		}
