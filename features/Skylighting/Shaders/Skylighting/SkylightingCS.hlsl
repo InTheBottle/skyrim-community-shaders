@@ -92,10 +92,11 @@ half3 DecodeNormal(half2 f)
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
-	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 	half roughness = 1.0 - normalGlossiness.z;
 
 	half rawDepth = DepthTexture[globalId.xy];
@@ -104,7 +105,7 @@ half3 DecodeNormal(half2 f)
 
 	PerGeometry sD = perShadow[0];
 
-	half4 positionMS = mul(sD.CameraViewProjInverse, positionCS);
+	half4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	half3 startPositionMS = positionMS;
@@ -184,10 +185,12 @@ half3 DecodeNormal(half2 f)
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
 	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
-	half3 normalWS = normalize(mul(InvViewMatrix[0], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
+	half roughness = 1.0 - normalGlossiness.z;
 
 	half rawDepth = DepthTexture[globalId.xy];
 
@@ -231,10 +234,13 @@ half3 DecodeNormal(half2 f)
 	};
 
 	uint sampleCount = 16;
-	half range = 256;
 
-	half skylighting = 0;
-	float upFactor = saturate(dot(normalize(ShadowDirection), float3(0, 0, -1)));
+	half2 skylighting = 0;
+
+	float3 V = normalize(positionMS.xyz);
+	float3 R = reflect(V, normalWS);
+
+	float2 weights = 0.0;
 
 	uint validSamples = 0;
 	[unroll] for (uint i = 0; i < sampleCount; i++)
@@ -243,7 +249,9 @@ half3 DecodeNormal(half2 f)
 		half shift = half(i) / half(sampleCount);
 		half radius = length(offset);
 
-		positionMS.xy = startPositionMS + lerp(normalWS.xy * radius * 2.0, offset.xy, 0.5) * 256 + ShadowDirection.xy * 128;
+		positionMS.xy = startPositionMS + offset.xy * 128 + ShadowDirection.xy * 128;
+
+		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
 		half shadowMapDepth = length(positionMS.xyz);
 
@@ -269,11 +277,21 @@ half3 DecodeNormal(half2 f)
 			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
 
 			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
-			skylighting += shadowMapValues;
+			
+			half3 H = normalize(-offsetDirection + V);
+			half NoH = dot(normalWS, H);
+			half a = NoH * roughness;
+			half k = roughness / (1.0 - NoH * NoH + a * a);
+			half ggx = k * k * (1.0 / PI);
+
+			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
+
+			skylighting += shadowMapValues * contributions;
+			weights += contributions;
 		}
 	}
 
-	skylighting /= half(sampleCount);
+	skylighting /= weights;
 
 	SkylightingTextureRW[globalId.xy] = lerp(saturate(skylighting), 1.0, fadeFactor);
 }
