@@ -1,8 +1,19 @@
-#include "Common/Constants.hlsli"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/LodLandscape.hlsli"
 #include "Common/Skinned.hlsli"
 #include "Common/VR.hlsli"
+
+struct PerGeometry
+{
+	float4 CameraDataShadow[4];
+};
+
+half GetLinearDepth(float depth, float4 cameraData)
+{
+	return (cameraData.w / (-depth * cameraData.z + cameraData.x));
+}
+
+StructuredBuffer<PerGeometry> perShadow : register(t40);
 
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
 #	define RENDER_SHADOWMASK_ANY
@@ -27,9 +38,6 @@ struct VS_INPUT
 	float4 BoneWeights : BLENDWEIGHT0;
 	float4 BoneIndices : BLENDINDICES0;
 #endif
-#if defined(VR)
-	uint InstanceID : SV_INSTANCEID;
-#endif  // VR
 };
 
 struct VS_OUTPUT
@@ -71,23 +79,13 @@ struct VS_OUTPUT
 	float Depth : TEXCOORD2;
 #	endif
 #endif
-#if defined(VR)
-	float ClipDistance : SV_ClipDistance0;  // o11
-	float CullDistance : SV_CullDistance0;  // p11
-	uint EyeIndex : EYEIDX0;
-#endif  // VR
 };
 
 #ifdef VSHADER
 cbuffer PerTechnique : register(b0)
 {
-#	if !defined(VR)
-	float4 HighDetailRange[1] : packoffset(c0);  // loaded cells center in xy, size in zw
-	float2 ParabolaParam : packoffset(c1);       // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
-#	else
-	float4 HighDetailRange[2] : packoffset(c0);  // loaded cells center in xy, size in zw
-	float2 ParabolaParam : packoffset(c2);       // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
-#	endif  // VR
+	float4 HighDetailRange : packoffset(c0);  // loaded cells center in xy, size in zw
+	float2 ParabolaParam : packoffset(c1);    // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
 };
 
 cbuffer PerMaterial : register(b1)
@@ -97,19 +95,11 @@ cbuffer PerMaterial : register(b1)
 
 cbuffer PerGeometry : register(b2)
 {
-#	if !defined(VR)
 	float4 ShadowFadeParam : packoffset(c0);
-	row_major float4x4 World[1] : packoffset(c1);
-	float4 EyePos[1] : packoffset(c5);
+	row_major float4x4 World : packoffset(c1);
+	float4 EyePos : packoffset(c5);
 	float4 WaterParams : packoffset(c6);
 	float4 TreeParams : packoffset(c7);
-#	else
-	float4 ShadowFadeParam : packoffset(c0);
-	row_major float4x4 World[2] : packoffset(c1);
-	float4 EyePos[2] : packoffset(c9);
-	float4 WaterParams : packoffset(c11);
-	float4 TreeParams : packoffset(c12);
-#	endif  // VR
 };
 
 float2 SmoothSaturate(float2 value)
@@ -132,7 +122,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(RENDER_SHADOWMASKDPB)
 	vsout.PositionCS.z = ShadowFadeParam.z;
 #		else
-	vsout.PositionCS.z = HighDetailRange[eyeIndex].x;
+	vsout.PositionCS.z = HighDetailRange.x;
 #		endif
 	vsout.PositionCS.w = 1;
 #	elif defined(STENCIL_ABOVE_WATER)
@@ -155,7 +145,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(LOD_LANDSCAPE)
-	positionMS = AdjustLodLandscapeVertexPositionMS(positionMS, World[eyeIndex], HighDetailRange[eyeIndex]);
+	positionMS = AdjustLodLandscapeVertexPositionMS(positionMS, World, HighDetailRange);
 #		endif
 
 #		if defined(SKINNED)
@@ -166,7 +156,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	positionCS = mul(CameraViewProj[eyeIndex], positionWS);
 #		else
-	precise float4x4 modelViewProj = mul(CameraViewProj[eyeIndex], World[eyeIndex]);
+	precise float4x4 modelViewProj = mul(CameraViewProj[eyeIndex], World);
 	positionCS = mul(modelViewProj, positionMS);
 #		endif
 
@@ -193,7 +183,7 @@ VS_OUTPUT main(VS_INPUT input)
 	normalMS = normalize(mul(normalMS, transpose(boneRSMatrix)));
 	normalVS = mul(CameraView[eyeIndex], float4(normalMS, 0)).xyz;
 #			else
-	normalVS = mul(mul(CameraView[eyeIndex], World[eyeIndex]), float4(normalMS, 0)).xyz;
+	normalVS = mul(mul(CameraView[eyeIndex], World), float4(normalMS, 0)).xyz;
 #			endif
 #			if defined(RENDER_NORMAL_CLAMP)
 	normalVS = max(min(normalVS, 0.1), -0.1);
@@ -218,12 +208,12 @@ VS_OUTPUT main(VS_INPUT input)
 	float falloff = 1;
 #				if defined(RENDER_NORMAL_FALLOFF)
 #					if defined(SKINNED)
-	falloff = dot(normalMS, normalize(EyePos[eyeIndex].xyz - positionWS.xyz));
+	falloff = dot(normalMS, normalize(EyePos.xyz - positionWS.xyz));
 #					else
-	falloff = dot(normalMS, normalize(EyePos[eyeIndex].xyz - positionMS.xyz));
+	falloff = dot(normalMS, normalize(EyePos.xyz - positionMS.xyz));
 #					endif
 #				endif
-	texCoord.w = EyePos[eyeIndex].w * falloff;
+	texCoord.w = EyePos.w * falloff;
 #			endif
 
 	vsout.TexCoord0 = texCoord;
@@ -266,13 +256,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #	endif
-#	ifdef VR
-	vsout.EyeIndex = eyeIndex;
-	VR_OUTPUT VRout = GetVRVSOutput(vsout.PositionCS, eyeIndex);
-	vsout.PositionCS = VRout.VRPosition;
-	vsout.ClipDistance.x = VRout.ClipDistance;
-	vsout.CullDistance.x = VRout.CullDistance;
-#	endif  // VR
+
 	return vsout;
 }
 #endif
@@ -325,39 +309,96 @@ cbuffer PerGeometry : register(b2)
 	float4 PropertyColor : packoffset(c1);
 	float4 AlphaTestRef : packoffset(c2);
 	float4 ShadowLightParam : packoffset(c3);  // Falloff in x, ShadowDistance squared in z
-#	if !defined(VR)
 	float4x3 FocusShadowMapProj[4] : packoffset(c4);
-#		if defined(RENDER_SHADOWMASK)
-	float4x3 ShadowMapProj[1][3] : packoffset(c16);  // 16, 19, 22
-#		elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
-	float4x4 ShadowMapProj[1][3] : packoffset(c16);
-#		endif
-#	else
-	float4 VRUnknown : packoffset(c4);  // used to multiply by identity matrix, see e.g., 4202499.ps.bin.hlsl
-										/*
-										r1.x = dot(cb2[4].xz, icb[r0.w+0].xz);
-										r1.x = r0.x * cb12[86].x + -r1.x;
-										r0.w = (int)r0.w + 1;
-										r0.w = (int)r0.w + -1;
-										r0.w = dot(cb2[4].yw, icb[r0.w+0].xz);
-										*/
-	float4x3 FocusShadowMapProj[4] : packoffset(c5);
-#		if defined(RENDER_SHADOWMASK)
-	float4x3 ShadowMapProj[2][3] : packoffset(c29);  // VR has a couple of offsets of 3, e.g., {29, 32, 35} and {38, 41, 44}, compare to Flat which does [16, 19, 22]
-#		elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
-	float4x4 ShadowMapProj[2][3] : packoffset(c29);
-#		endif
-#	endif  // VR
+#	if defined(RENDER_SHADOWMASK)
+	float4x3 ShadowMapProj[4] : packoffset(c16);
+#	elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
+	float4x4 ShadowMapProj : packoffset(c16);
+#	endif
 }
 
-#	if !defined(VR)
-cbuffer AlphaTestRefCB : register(b11)
+cbuffer AlphaTestRefBuffer : register(b11)
 {
-	float AlphaTestRefRS : packoffset(c0);
+	float GlobalAlphaTestRef : packoffset(c0);
 }
-#	endif  // !VR
 
-float GetPoissonDiskFilteredShadowVisibility(Texture2DArray<float4> tex, SamplerComparisonState samp, float sampleOffsetShift, float2 baseUv, float layerIndex, float compareValue, bool asymmetric)
+#	if defined(RENDER_SHADOWMASK)
+// Interleaved Gradient Noise
+// https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
+float quick_hash(float2 pos) {
+	const float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
+	return frac(magic.z * frac(dot(pos, magic.xy)));
+}
+
+#define M_PI 3.14159265359
+
+float GetPoissonDiskFilteredShadowVisibility(float2 screenPosition, Texture2DArray<float4> tex, SamplerComparisonState samp, float sampleOffsetShift, float2 baseUv, float layerIndex, float compareValue, bool asymmetric)
+{
+	float blocker_count = 0.0;
+	float blocker_average = 0.0;
+
+	float2x2 disk_rotation;
+	{
+		float r = quick_hash(screenPosition) * 2.0 * M_PI;
+		float sr = sin(r);
+		float cr = cos(r);
+		disk_rotation = float2x2(float2(cr, -sr), float2(sr, cr));
+	}
+	
+	float2 PoissonDisk[16] =
+	{
+		float2(-0.94201624, -0.39906216),
+		float2(0.94558609, -0.76890725),
+		float2(-0.094184101, -0.92938870),
+		float2(0.34495938, 0.29387760),
+		float2(-0.91588581, 0.45771432),
+		float2(-0.81544232, -0.87912464),
+		float2(-0.38277543, 0.27676845),
+		float2(0.97484398, 0.75648379),
+		float2(0.44323325, -0.97511554),
+		float2(0.53742981, -0.47373420),
+		float2(-0.26496911, -0.41893023),
+		float2(0.79197514, 0.19090188),
+		float2(-0.24188840, 0.99706507),
+		float2(-0.81409955, 0.91437590),
+		float2(0.19984126, 0.78641367),
+		float2(0.14383161, -0.14100790)
+	};
+
+	float tex_scale = 0.01;
+
+	for (uint i = 0; i < 16; i++) {
+		float2 suv = baseUv.xy + (mul(disk_rotation, PoissonDisk[i].xy)) * tex_scale;
+		float d = tex.SampleLevel(SampShadowMapSampler, float3(suv, layerIndex), 0).x;
+		if (d < compareValue) {
+			blocker_average += 1.0 / (1.0 - d);
+			blocker_count += 1.0;
+		}
+	}
+
+	if (blocker_count > 0.0) {
+		//blockers found, do soft shadow
+		blocker_average /= blocker_count;
+		float penumbra = ((1.0 / (1.0 - compareValue)) - blocker_average) / blocker_average;
+		tex_scale *= penumbra;
+
+		float s = 0.0;
+		for (uint i = 0; i < 16; i++) {
+			float2 suv = baseUv.xy + (mul(disk_rotation, PoissonDisk[i].xy)) * tex_scale;
+			s += tex.SampleCmpLevelZero(samp, float3(suv, layerIndex), compareValue).x;
+		}
+
+		return s / float(16);
+
+	} else {
+		//no blockers found, so no shadow
+		return 1.0;
+	}
+}
+
+#	else
+
+float GetPoissonDiskFilteredShadowVisibility(float2 screenPosition, Texture2DArray<float4> tex, SamplerComparisonState samp, float sampleOffsetShift, float2 baseUv, float layerIndex, float compareValue, bool asymmetric)
 {
 	const int SampleCount = 8;
 
@@ -1389,16 +1430,13 @@ float GetPoissonDiskFilteredShadowVisibility(Texture2DArray<float4> tex, Sampler
 	}
 	return visibility / (2 * SampleCount);
 }
-
+#	endif
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
 
-#	if !defined(VR)
-	uint eyeIndex = 0;
-#	else
-	uint eyeIndex = input.EyeIndex;
-#	endif  // !VR
+	uint eyeIndex = GetEyeIndexPS(input.PositionCS, VPOSOffset);
+
 #	if defined(ADDITIONAL_ALPHA_MASK)
 	uint2 alphaMask = input.PositionCS.xy;
 	alphaMask.x = ((alphaMask.x << 2) & 12);
@@ -1490,7 +1528,7 @@ PS_OUTPUT main(PS_INPUT input)
 	TexStencilSampler.GetDimensions(0, stencilDimensions.x, stencilDimensions.y, stencilDimensions.z);
 	stencilValue = TexStencilSampler.Load(float3(stencilDimensions.xy * depthUv, 0)).x;
 #			endif
-	depthUv = ConvertFromStereoUV(depthUv, eyeIndex);
+
 	float4 positionCS = float4(2 * float2(DynamicResolutionParams2.x * depthUv.x, -depthUv.y * DynamicResolutionParams2.y + 1) - 1, depth, 1);
 	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
@@ -1506,15 +1544,15 @@ PS_OUTPUT main(PS_INPUT input)
 
 #		if defined(RENDER_SHADOWMASK)
 	if (EndSplitDistances.z >= shadowMapDepth) {
-		float4x3 lightProjectionMatrix = ShadowMapProj[eyeIndex][0];
+		float4x3 lightProjectionMatrix = ShadowMapProj[0];
 		float shadowMapThreshold = AlphaTestRef.y;
 		float cascadeIndex = 0;
 		if (2.5 < EndSplitDistances.w && EndSplitDistances.y < shadowMapDepth) {
-			lightProjectionMatrix = ShadowMapProj[eyeIndex][2];
+			lightProjectionMatrix = ShadowMapProj[2];
 			shadowMapThreshold = AlphaTestRef.z;
 			cascadeIndex = 2;
 		} else if (EndSplitDistances.x < shadowMapDepth) {
-			lightProjectionMatrix = ShadowMapProj[eyeIndex][1];
+			lightProjectionMatrix = ShadowMapProj[1];
 			shadowMapThreshold = AlphaTestRef.z;
 			cascadeIndex = 1;
 		}
@@ -1531,13 +1569,13 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 		shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(positionLS.xy, cascadeIndex), positionLS.z - shadowMapThreshold).x;
 #			elif SHADOWFILTER == 3
-		shadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, positionLS.xy, cascadeIndex, positionLS.z - shadowMapThreshold, false);
+		shadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, positionLS.xy, cascadeIndex, positionLS.z - shadowMapThreshold, false);
 #			endif
 
 		if (cascadeIndex < 1 && StartSplitDistances.y < shadowMapDepth) {
 			float cascade1ShadowVisibility = 0;
 
-			float3 cascade1PositionLS = mul(transpose(ShadowMapProj[eyeIndex][1]), float4(positionMS.xyz, 1)).xyz;
+			float3 cascade1PositionLS = mul(transpose(ShadowMapProj[1]), float4(positionMS.xyz, 1)).xyz;
 
 #			if SHADOWFILTER == 0
 			float cascade1ShadowMapValue = TexShadowMapSampler.Sample(SampShadowMapSampler, float3(cascade1PositionLS.xy, 1)).x;
@@ -1547,7 +1585,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 			cascade1ShadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(cascade1PositionLS.xy, 1), cascade1PositionLS.z - AlphaTestRef.z).x;
 #			elif SHADOWFILTER == 3
-			cascade1ShadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, cascade1PositionLS.xy, 1, cascade1PositionLS.z - AlphaTestRef.z, false);
+			cascade1ShadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, cascade1PositionLS.xy, 1, cascade1PositionLS.z - AlphaTestRef.z, false);
 #			endif
 
 			float cascade1BlendFactor = smoothstep(0, 1, (shadowMapDepth - StartSplitDistances.y) / (EndSplitDistances.x - StartSplitDistances.y));
@@ -1562,7 +1600,7 @@ PS_OUTPUT main(PS_INPUT input)
 			float3 focusShadowMapUv = float3(focusShadowMapPosition.xy, StartSplitDistances.w + focusShadowIndex);
 			float focusShadowMapCompareValue = focusShadowMapPosition.z - 3 * shadowMapThreshold;
 #			if SHADOWFILTER == 3
-			float focusShadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexFocusShadowMapSamplerComp, SampFocusShadowMapSamplerComp, -0.5, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, false).x;
+			float focusShadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexFocusShadowMapSamplerComp, SampFocusShadowMapSamplerComp, -0.5, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, false).x;
 #			else
 			float focusShadowVisibility = TexFocusShadowMapSamplerComp.SampleCmpLevelZero(SampFocusShadowMapSamplerComp, focusShadowMapUv, focusShadowMapCompareValue).x;
 #			endif
@@ -1573,7 +1611,7 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowColor.xyzw = fadeFactor * (shadowVisibility - 1) + 1;
 	}
 #		elif defined(RENDER_SHADOWMASKSPOT)
-	float4 positionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
+	float4 positionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
 	positionLS.xyz /= positionLS.w;
 	float2 shadowMapUv = positionLS.xy * 0.5 + 0.5;
 	float shadowBaseVisibility = 0;
@@ -1585,7 +1623,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 	shadowBaseVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), positionLS.z - AlphaTestRef.y).x;
 #			elif SHADOWFILTER == 3
-	shadowBaseVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, positionLS.z - AlphaTestRef.y, false);
+	shadowBaseVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, positionLS.z - AlphaTestRef.y, false);
 #			endif
 	float shadowVisibilityFactor = pow(2 * length(0.5 * positionLS.xy), ShadowLightParam.x);
 	float shadowVisibility = shadowBaseVisibility - shadowVisibilityFactor * shadowBaseVisibility;
@@ -1604,14 +1642,14 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 		focusShadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, focusShadowMapUv, focusShadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-		focusShadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, false);
+		focusShadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, false);
 #			endif
 		shadowVisibility = min(shadowVisibility, lerp(1, focusShadowVisibility, FocusShadowFadeParam[focusShadowIndex]));
 	}
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKPB)
-	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
+	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
 
 	float shadowVisibility = 0;
 
@@ -1628,7 +1666,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 		shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), shadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-		shadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, shadowMapCompareValue, false);
+		shadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, shadowMapCompareValue, false);
 #			endif
 	} else {
 		shadowVisibility = 1;
@@ -1636,7 +1674,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKDPB)
-	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[eyeIndex][0]), float4(positionMS.xyz, 1));
+	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj), float4(positionMS.xyz, 1));
 	float3 positionLS = unadjustedPositionLS.xyz / unadjustedPositionLS.w;
 	bool lowerHalf = unadjustedPositionLS.z * 0.5 + 0.5 < 0;
 	float3 normalizedPositionLS = normalize(positionLS);
@@ -1656,7 +1694,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 	shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), shadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-	shadowVisibility = GetPoissonDiskFilteredShadowVisibility(TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, shadowMapCompareValue, true);
+	shadowVisibility = GetPoissonDiskFilteredShadowVisibility(input.PositionCS.xy, TexShadowMapSamplerComp, SampShadowMapSamplerComp, -1, shadowMapUv.xy, EndSplitDistances.x, shadowMapCompareValue, true);
 #			endif
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
@@ -1678,7 +1716,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		elif defined(RENDER_NORMAL_CLEAR) && !defined(DEBUG_COLOR)
 	testAlpha = 0;
 #		endif
-	if (-AlphaTestRefRS + testAlpha < 0) {
+	if (-GlobalAlphaTestRef + testAlpha < 0) {
 		discard;
 	}
 #	endif

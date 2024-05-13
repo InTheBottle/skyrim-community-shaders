@@ -46,14 +46,16 @@ void Skylighting::SetupResources()
 		perShadow->CreateUAV(uavDesc);
 
 		copyShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ShadowTest\\CopyShadowData.hlsl", {}, "cs_5_0");
-
+		
+		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		sbDesc.StructureByteStride = sizeof(ShadowCameraData);
 		sbDesc.ByteWidth = sizeof(ShadowCameraData) * numElements;
 		shadowCameraData = new Buffer(sbDesc);
 		srvDesc.Buffer.NumElements = numElements;
 		shadowCameraData->CreateSRV(srvDesc);
-		uavDesc.Buffer.NumElements = numElements;
-		shadowCameraData->CreateUAV(uavDesc);
 	}
 
 	GetSkylightingCS();
@@ -191,12 +193,26 @@ void Skylighting::CopyShadowData()
 		{
 			auto& camera = shadowDirLight->shadowmapDescriptors[i].camera;
 			data.CameraDataShadow[i] = Util::GetCameraData(camera.get());
+			//data.CameraDataShadow[i].x = shadowDirLight->lightDirection.x;
+			//data.CameraDataShadow[i].y = shadowDirLight->lightDirection.y;
+			//data.CameraDataShadow[i].z = shadowDirLight->lightDirection.z;
+			//data.CameraDataShadow[i].w = 0;
+
+			//data.CameraDataShadow[i].x = camera->GetRuntimeData2().viewFrustum.fLeft;
+			//data.CameraDataShadow[i].y = camera->GetRuntimeData2().viewFrustum.fRight;
+			//data.CameraDataShadow[i].z = camera->GetRuntimeData2().viewFrustum.fTop;
+			//data.CameraDataShadow[i].w = camera->GetRuntimeData2().viewFrustum.fBottom;
+
+
 		}
 		D3D11_MAPPED_SUBRESOURCE mapped;
 		DX::ThrowIfFailed(context->Map(shadowCameraData->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
 		size_t bytes = sizeof(ShadowCameraData);
 		memcpy_s(mapped.pData, bytes, &data, bytes);
 		context->Unmap(shadowCameraData->resource.get(), 0);
+		
+		auto srv = shadowCameraData->srv.get();
+		context->PSSetShaderResources(40, 1, &srv);
 	}
 }
 
