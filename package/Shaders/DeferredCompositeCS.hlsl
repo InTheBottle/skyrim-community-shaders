@@ -34,8 +34,13 @@ struct PerGeometry
 	float4 AlphaTestRef;
 	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
-	float4x3 ShadowMapProj[4];
-	float4x4 CameraViewProjInverse;
+#if !defined(VR)
+	float4x3 ShadowMapProj[1][3];
+	float4x4 CameraViewProjInverse[1];
+#else
+	float4x3 ShadowMapProj[2][3];
+	float4x4 CameraViewProjInverse[2];
+#endif  // VR
 };
 
 Texture2DArray<float4> TexShadowMapSampler : register(t10);
@@ -178,8 +183,8 @@ float InterleavedGradientNoise(float2 uv)
 	gi *= (rawDepth < 1.0);
 	ao = lerp(ao, 1.0, rawDepth == 1.0);
 
-	//	diffuseColor *= ao;
-	//	diffuseColor += gi;
+	diffuseColor *= ao;
+	diffuseColor += gi;
 
 	skylighting = lerp(skylighting, 1.0, 0.5);
 
