@@ -291,7 +291,6 @@ namespace Util
 			cameraData.y = a_camera->GetRuntimeData2().viewFrustum.fNear;
 			cameraData.z = a_camera->GetRuntimeData2().viewFrustum.fFar - a_camera->GetRuntimeData2().viewFrustum.fNear;
 			cameraData.w = a_camera->GetRuntimeData2().viewFrustum.fFar * a_camera->GetRuntimeData2().viewFrustum.fNear;
-			
 		}
 		return cameraData;
 	}

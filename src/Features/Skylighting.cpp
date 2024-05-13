@@ -189,8 +189,7 @@ void Skylighting::CopyShadowData()
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
 		ShadowCameraData data{};
-		for (uint i = 0; i < shadowDirLight->shadowMapCount; i++)
-		{
+		for (uint i = 0; i < shadowDirLight->shadowMapCount; i++) {
 			auto& camera = shadowDirLight->shadowmapDescriptors[i].camera;
 			data.CameraDataShadow[i] = Util::GetCameraData(camera.get());
 			//data.CameraDataShadow[i].x = shadowDirLight->lightDirection.x;
