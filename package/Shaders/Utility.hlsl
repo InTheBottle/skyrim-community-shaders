@@ -325,12 +325,13 @@ cbuffer AlphaTestRefBuffer : register(b11)
 #	if defined(RENDER_SHADOWMASK)
 // Interleaved Gradient Noise
 // https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
-float quick_hash(float2 pos) {
+float quick_hash(float2 pos)
+{
 	const float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
 	return frac(magic.z * frac(dot(pos, magic.xy)));
 }
 
-#define M_PI 3.14159265359
+#		define M_PI 3.14159265359
 
 float GetPoissonDiskFilteredShadowVisibility(float2 screenPosition, Texture2DArray<float4> tex, SamplerComparisonState samp, float sampleOffsetShift, float2 baseUv, float layerIndex, float compareValue, bool asymmetric)
 {
@@ -344,9 +345,8 @@ float GetPoissonDiskFilteredShadowVisibility(float2 screenPosition, Texture2DArr
 		float cr = cos(r);
 		disk_rotation = float2x2(float2(cr, -sr), float2(sr, cr));
 	}
-	
-	float2 PoissonDisk[16] =
-	{
+
+	float2 PoissonDisk[16] = {
 		float2(-0.94201624, -0.39906216),
 		float2(0.94558609, -0.76890725),
 		float2(-0.094184101, -0.92938870),
