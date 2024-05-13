@@ -217,7 +217,9 @@ decltype(&hk_BSShaderRenderTargets_Create) ptr_BSShaderRenderTargets_Create;
 
 void hk_BSShaderRenderTargets_Create()
 {
-	logger::info("bUse64bitsHDRRenderTarget is {}", RE::GetINISetting("bUse64bitsHDRRenderTarget:Display")->data.b ? "enabled" : "disabled");
+	RE::GetINISetting("bUse64bitsHDRRenderTarget:Display")->data.b = false;
+	logger::info("bUse64bitsHDRRenderTarget was disabled");
+
 	(ptr_BSShaderRenderTargets_Create)();
 	State::GetSingleton()->Setup();
 }
