@@ -24,15 +24,15 @@ SamplerState LinearSampler : register(s0);
 
 struct PerGeometry
 {
-	float4 VPOSOffset;					            
-	float4 ShadowSampleParam;   // fPoissonRadiusScale / iShadowMapResolution in z and w
-	float4 EndSplitDistances;   // cascade end distances int xyz, cascade count int z
-	float4 StartSplitDistances; // cascade start ditances int xyz, 4 int z
+	float4 VPOSOffset;
+	float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
+	float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
+	float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
 	float4 FocusShadowFadeParam;
-	float4 DebugColor;					      
-	float4 PropertyColor;					           
-	float4 AlphaTestRef;					          
-	float4 ShadowLightParam;   	// Falloff in x, ShadowDistance squared in z
+	float4 DebugColor;
+	float4 PropertyColor;
+	float4 AlphaTestRef;
+	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
 	float4x3 ShadowMapProj[4];
 	float4x4 CameraViewProjInverse;
@@ -107,8 +107,7 @@ half GetScreenDepth(half depth)
 				weight += attenuation;
 			}
 		}
-		if (weight > 0.0)
-		{
+		if (weight > 0.0) {
 			shadow /= weight;
 		} else {
 			shadow = ShadowMaskTexture[globalId.xy];
@@ -117,10 +116,10 @@ half GetScreenDepth(half depth)
 
 	half3 color = MainRW[globalId.xy].rgb;
 	color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz * shadow;
-	
+
 	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
-	
+
 	float skylighting = SkylightingTexture[globalId.xy];
 	skylighting *= saturate(dot(normalWS, float3(0, 0, 1)) * 0.5 + 0.5);
 
@@ -129,9 +128,9 @@ half GetScreenDepth(half depth)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
-float random (float2 uv)
+float random(float2 uv)
 {
-	return frac(sin(dot(uv,float2(12.9898,78.233)))*43758.5453123);
+	return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453123);
 }
 
 float InterleavedGradientNoise(float2 uv)
@@ -172,20 +171,20 @@ float InterleavedGradientNoise(float2 uv)
 	float skylighting = SkylightingTexture[globalId.xy];
 
 	half weight = 1.0;
-	
+
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
 	gi *= (rawDepth < 1.0);
 	ao = lerp(ao, 1.0, rawDepth == 1.0);
 
-//	diffuseColor *= ao;
-//	diffuseColor += gi;
+	//	diffuseColor *= ao;
+	//	diffuseColor += gi;
 
 	skylighting = lerp(skylighting, 1.0, 0.5);
 
 	diffuseColor += albedo * directionalAmbientColor * ao * skylighting * lerp(saturate(dot(normalWS, float3(0, 0, -1)) * 0.5 + 0.5), 1.0, 0.5);
-	
+
 	float3 giao = (skylighting * directionalAmbientColor * ao) + gi;
 
 	MainRW[globalId.xy] = half4(diffuseColor, 1.0);
@@ -221,7 +220,7 @@ float3 Lin2sRGB(float3 color)
 
 	half glossiness = normalGlossiness.z;
 	half3 color = sRGB2Lin(diffuseColor) + sRGB2Lin(specularColor);
-	
+
 	float skylighting = SkylightingTexture[globalId.xy].y;
 	half4 giAo = GITexture[globalId.xy];
 
@@ -231,8 +230,8 @@ float3 Lin2sRGB(float3 color)
 
 	PerGeometry sD = perShadow[0];
 
-    half4 positionMS = mul(InvViewMatrix[eyeIndex], positionCS);
-    positionMS.xyz = positionMS.xyz / positionMS.w;
+	half4 positionMS = mul(InvViewMatrix[eyeIndex], positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	float3 V = normalize(positionMS.xyz);
 	float3 R = reflect(V, normalWS);
