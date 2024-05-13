@@ -27,6 +27,7 @@ namespace Util
 	float TryGetWaterHeight(float offsetX, float offsetY);
 	void DumpSettingsOptions();
 	float4 GetCameraData();
+	float4 GetCameraData(RE::NiCamera* a_camera);
 
 	/**
 	 * Usage:

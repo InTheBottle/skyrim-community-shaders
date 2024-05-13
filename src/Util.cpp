@@ -283,6 +283,19 @@ namespace Util
 		return cameraData;
 	}
 
+	float4 GetCameraData(RE::NiCamera* a_camera)
+	{
+		float4 cameraData{};
+		if (a_camera) {
+			cameraData.x = a_camera->GetRuntimeData2().viewFrustum.fFar;
+			cameraData.y = a_camera->GetRuntimeData2().viewFrustum.fNear;
+			cameraData.z = a_camera->GetRuntimeData2().viewFrustum.fFar - a_camera->GetRuntimeData2().viewFrustum.fNear;
+			cameraData.w = a_camera->GetRuntimeData2().viewFrustum.fFar * a_camera->GetRuntimeData2().viewFrustum.fNear;
+			
+		}
+		return cameraData;
+	}
+
 	HoverTooltipWrapper::HoverTooltipWrapper()
 	{
 		hovered = ImGui::IsItemHovered();

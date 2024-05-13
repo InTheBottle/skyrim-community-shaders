@@ -82,6 +82,14 @@ public:
 
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
+
+	struct alignas(16) ShadowCameraData
+	{
+		float4 CameraDataShadow[4];
+	};
+
+	Buffer* shadowCameraData = nullptr;
+
 	void Bind();
 	void Compute();
 

@@ -46,6 +46,14 @@ void Skylighting::SetupResources()
 		perShadow->CreateUAV(uavDesc);
 
 		copyShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ShadowTest\\CopyShadowData.hlsl", {}, "cs_5_0");
+
+		sbDesc.StructureByteStride = sizeof(ShadowCameraData);
+		sbDesc.ByteWidth = sizeof(ShadowCameraData) * numElements;
+		shadowCameraData = new Buffer(sbDesc);
+		srvDesc.Buffer.NumElements = numElements;
+		shadowCameraData->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		shadowCameraData->CreateUAV(uavDesc);
 	}
 
 	GetSkylightingCS();
@@ -174,17 +182,23 @@ void Skylighting::CopyShadowData()
 	context->CSSetConstantBuffers(2, 1, buffers);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-}
 
-struct CAMERASTATE_RUNTIME_DATA
-{
-	RE::BSGraphics::ViewData camViewData; /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */
-	RE::NiPoint3 posAdjust;               /* 20 */
-	RE::NiPoint3 currentPosAdjust;        /* 38 */
-	RE::NiPoint3 previousPosAdjust;       /* 50 */
-	bool useJitter;                       /* 68 */
-	uint32_t numData;                     /* 6c */
-};
+	{
+		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
+		ShadowCameraData data{};
+		for (uint i = 0; i < shadowDirLight->shadowMapCount; i++)
+		{
+			auto& camera = shadowDirLight->shadowmapDescriptors[i].camera;
+			data.CameraDataShadow[i] = Util::GetCameraData(camera.get());
+		}
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		DX::ThrowIfFailed(context->Map(shadowCameraData->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+		size_t bytes = sizeof(ShadowCameraData);
+		memcpy_s(mapped.pData, bytes, &data, bytes);
+		context->Unmap(shadowCameraData->resource.get(), 0);
+	}
+}
 
 void Skylighting::Compute()
 {
