@@ -277,7 +277,7 @@ half3 DecodeNormal(half2 f)
 			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
 
 			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
-			
+
 			half3 H = normalize(-offsetDirection + V);
 			half NoH = dot(normalWS, H);
 			half a = NoH * roughness;
