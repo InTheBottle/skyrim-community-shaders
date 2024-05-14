@@ -1403,10 +1403,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	if ((shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) && (shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir)) {
 		dirLightColor *= shadowColor.xxx;
-#	if defined(DEFERRED) && (defined(BACK_LIGHTING) || defined(SOFT_LIGHTING) || defined(RIM_LIGHTING))
-		float skylightingSSS = SkylightingTexture.SampleLevel(SampShadowMaskSampler, screenUV, 0);
-		nsDirLightColor.xyz *= skylightingSSS;
-#	endif
 	}
 
 #	if !defined(DEFERRED) && defined(CPM_AVAILABLE) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
@@ -1417,11 +1413,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		if (shadowColor.x == 0)
 			dirLightIsLit = false;
 	}
-
-#		if defined(SCREEN_SPACE_SHADOWS)
-	if (dirLightSShadow == 0)
-		dirLightIsLit = false;
-#		endif  // SCREEN_SPACE_SHADOWS
 
 #		if defined(LANDSCAPE)
 	if (perPassParallax[0].EnableTerrainParallax && perPassParallax[0].EnableShadows)
