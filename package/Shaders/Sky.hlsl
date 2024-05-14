@@ -1,6 +1,6 @@
-#	if defined(DEFERRED)
+#if defined(DEFERRED)
 #	undef CLOUD_SHADOWS
-#	endif
+#endif
 
 struct VS_INPUT
 {
