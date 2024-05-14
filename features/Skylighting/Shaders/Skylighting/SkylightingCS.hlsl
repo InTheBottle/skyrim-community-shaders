@@ -141,7 +141,7 @@ half3 DecodeNormal(half2 f)
 
 	half3 V = normalize(positionMS.xyz);
 	half3 R = reflect(V, normalWS);
-	
+
 	bool fadeOut = length(startPositionMS) > 256;
 
 	half2 weights = 0.0;
