@@ -91,7 +91,7 @@ half3 DecodeNormal(half2 f)
 #if !defined(SHADOWMAP)
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
-	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -99,16 +99,16 @@ half3 DecodeNormal(half2 f)
 	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 	half roughness = 1.0 - normalGlossiness.z;
 
-	half rawDepth = DepthTexture[globalId.xy];
+	float rawDepth = DepthTexture[globalId.xy];
 
-	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
+	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
 	PerGeometry sD = perShadow[0];
 
-	half4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
+	float4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	half3 startPositionMS = positionMS;
+	float3 startPositionMS = positionMS;
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 * PI;
 
@@ -137,12 +137,14 @@ half3 DecodeNormal(half2 f)
 
 	half2 skylighting = 0;
 
-	half occlusionThreshold = mul(OcclusionViewProj, half4(positionMS.xyz, 1)).z;
+	float occlusionThreshold = mul(OcclusionViewProj, float4(positionMS.xyz, 1)).z;
 
-	float3 V = normalize(positionMS.xyz);
-	float3 R = reflect(V, normalWS);
+	half3 V = normalize(positionMS.xyz);
+	half3 R = reflect(V, normalWS);
+	
+	bool fadeOut = length(startPositionMS) > 256;
 
-	float2 weights = 0.0;
+	half2 weights = 0.0;
 
 	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
@@ -152,13 +154,13 @@ half3 DecodeNormal(half2 f)
 
 		positionMS.xy = startPositionMS + offset * 128;
 
-		half2 occlusionPosition = mul((half2x4)OcclusionViewProj, half4(positionMS.xyz, 1));
+		half2 occlusionPosition = mul((float2x4)OcclusionViewProj, float4(positionMS.xyz, 1));
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
 		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
-		if (occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) {
+		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
 
 			half3 H = normalize(-offsetDirection + V);
@@ -177,14 +179,22 @@ half3 DecodeNormal(half2 f)
 		}
 	}
 
-	skylighting /= weights;
+	if (weights.x > 0.0)
+		skylighting.x /= weights.x;
+	else
+		skylighting.x = 1.0;
+
+	if (weights.y > 0.0)
+		skylighting.y /= weights.y;
+	else
+		skylighting.y = 1.0;
 
 	SkylightingTextureRW[globalId.xy] = saturate(skylighting);
 }
 #else
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
-	half2 uv = half2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -192,9 +202,9 @@ half3 DecodeNormal(half2 f)
 	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
 	half roughness = 1.0 - normalGlossiness.z;
 
-	half rawDepth = DepthTexture[globalId.xy];
+	float rawDepth = DepthTexture[globalId.xy];
 
-	half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
+	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
 	PerGeometry sD = perShadow[0];
 
@@ -203,10 +213,10 @@ half3 DecodeNormal(half2 f)
 	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
 	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
-	half4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
+	float4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	half3 startPositionMS = positionMS;
+	float3 startPositionMS = positionMS;
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
 
@@ -237,8 +247,8 @@ half3 DecodeNormal(half2 f)
 
 	half2 skylighting = 0;
 
-	float3 V = normalize(positionMS.xyz);
-	float3 R = reflect(V, normalWS);
+	half3 V = normalize(positionMS.xyz);
+	half3 R = reflect(V, normalWS);
 
 	float2 weights = 0.0;
 
@@ -253,13 +263,13 @@ half3 DecodeNormal(half2 f)
 
 		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
-		half shadowMapDepth = length(positionMS.xyz);
+		float shadowMapDepth = length(positionMS.xyz);
 
 		[flatten] if (sD.EndSplitDistances.z > shadowMapDepth)
 		{
 			half cascadeIndex = 0;
-			half4x3 lightProjectionMatrix = sD.ShadowMapProj[eyeIndex][0];
-			half shadowMapThreshold = sD.AlphaTestRef.y;
+			float4x3 lightProjectionMatrix = sD.ShadowMapProj[eyeIndex][0];
+			float shadowMapThreshold = sD.AlphaTestRef.y;
 
 			[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
 			{
@@ -274,9 +284,9 @@ half3 DecodeNormal(half2 f)
 				cascadeIndex = 1;
 			}
 
-			half3 positionLS = mul(transpose(lightProjectionMatrix), half4(positionMS.xyz, 1)).xyz;
+			float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
 
-			float shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, half3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
+			half shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, float3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
 
 			half3 H = normalize(-offsetDirection + V);
 			half NoH = dot(normalWS, H);
@@ -291,7 +301,10 @@ half3 DecodeNormal(half2 f)
 		}
 	}
 
-	skylighting /= weights;
+	if (weights > 0.0)
+		skylighting /= weights;
+	else
+		skylighting = 1.0;
 
 	SkylightingTextureRW[globalId.xy] = lerp(saturate(skylighting), 1.0, fadeFactor);
 }
