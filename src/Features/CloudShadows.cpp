@@ -4,6 +4,7 @@
 
 #include "Deferred.h"
 #include "Util.h"
+#include <ShaderCache.h>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CloudShadows::Settings,
@@ -12,19 +13,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PlanetRadius,
 	EffectMix,
 	TransparencyPower)
-
-enum class SkyShaderTechniques
-{
-	SunOcclude = 0,
-	SunGlare = 1,
-	MoonAndStarsMask = 2,
-	Stars = 3,
-	Clouds = 4,
-	CloudsLerp = 5,
-	CloudsFade = 6,
-	Texture = 7,
-	Sky = 8,
-};
 
 void CloudShadows::DrawSettings()
 {
@@ -98,21 +86,8 @@ void CloudShadows::ModifySky(const RE::BSShader*, const uint32_t descriptor)
 	if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS)
 		return;
 
-	enum class SkyShaderTechniques
-	{
-		SunOcclude = 0,
-		SunGlare = 1,
-		MoonAndStarsMask = 2,
-		Stars = 3,
-		Clouds = 4,
-		CloudsLerp = 5,
-		CloudsFade = 6,
-		Texture = 7,
-		Sky = 8,
-	};
-
-	auto tech_enum = static_cast<SkyShaderTechniques>(descriptor);
-	if (tech_enum == SkyShaderTechniques::Clouds || tech_enum == SkyShaderTechniques::CloudsLerp || tech_enum == SkyShaderTechniques::CloudsFade) {
+	auto tech_enum = static_cast<SIE::ShaderCache::SkyShaderTechniques>(descriptor);
+	if (tech_enum == SIE::ShaderCache::SkyShaderTechniques::Clouds || tech_enum == SIE::ShaderCache::SkyShaderTechniques::CloudsLerp || tech_enum == SIE::ShaderCache::SkyShaderTechniques::CloudsFade) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 		auto& context = State::GetSingleton()->context;
 
