@@ -141,6 +141,8 @@ void Deferred::SetupResources()
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 		// Masks
 		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Additional Masks
+		SetupRenderTarget(MASKS2, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R8G8B8A8_UNORM);
 	}
 
 	{
@@ -402,7 +404,7 @@ void Deferred::StartDeferred()
 		SPECULAR,
 		REFLECTANCE,
 		MASKS,
-		forwardRenderTargets[3]  // Improved snow shader
+		MASKS2
 	};
 
 	for (uint i = 2; i < 8; i++) {
@@ -443,9 +445,11 @@ void Deferred::DeferredPasses()
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
 	auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
+	auto masks2 = renderer->GetRuntimeData().renderTargets[MASKS2];
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
+	auto snow = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[3]];
 
 	// Only render directional shadows if the game has a directional shadow caster
 	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
@@ -484,19 +488,20 @@ void Deferred::DeferredPasses()
 	}
 
 	{
-		ID3D11ShaderResourceView* srvs[7]{
+		ID3D11ShaderResourceView* srvs[8]{
 			specular.SRV,
 			albedo.SRV,
 			reflectance.SRV,
 			normalRoughness.SRV,
 			shadowMask.SRV,
 			depth.depthSRV,
-			masks.SRV
+			masks.SRV,
+			masks2.SRV
 		};
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+		ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetSamplers(0, 1, &linearSampler);
@@ -521,7 +526,7 @@ void Deferred::DeferredPasses()
 
 	{
 		{
-			ID3D11ShaderResourceView* srvs[8]{
+			ID3D11ShaderResourceView* srvs[9]{
 				specular.SRV,
 				albedo.SRV,
 				reflectance.SRV,
@@ -529,12 +534,13 @@ void Deferred::DeferredPasses()
 				shadowMask.SRV,
 				depth.depthSRV,
 				masks.SRV,
+				masks2.SRV,
 				giTexture->srv.get(),
 			};
 
 			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-			ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+			ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 			context->CSSetSamplers(0, 1, &linearSampler);
@@ -558,7 +564,7 @@ void Deferred::DeferredPasses()
 
 	{
 		{
-			ID3D11ShaderResourceView* srvs[8]{
+			ID3D11ShaderResourceView* srvs[9]{
 				specular.SRV,
 				albedo.SRV,
 				reflectance.SRV,
@@ -566,12 +572,13 @@ void Deferred::DeferredPasses()
 				shadowMask.SRV,
 				depth.depthSRV,
 				masks.SRV,
+				masks2.SRV,
 				giTexture->srv.get(),
 			};
 
 			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-			ID3D11UnorderedAccessView* uavs[2]{ main.UAV, normals.UAV };
+			ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 			context->CSSetSamplers(0, 1, &linearSampler);
@@ -589,10 +596,10 @@ void Deferred::DeferredPasses()
 		}
 	}
 
-	ID3D11ShaderResourceView* views[8]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* views[9]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-	ID3D11UnorderedAccessView* uavs[2]{ nullptr, nullptr };
+	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 	ID3D11Buffer* buffer = nullptr;

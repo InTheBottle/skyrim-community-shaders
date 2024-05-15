@@ -10,12 +10,14 @@ Texture2D<unorm half3> NormalRoughnessTexture : register(t3);
 Texture2D<unorm half> ShadowMaskTexture : register(t4);
 Texture2D<unorm half> DepthTexture : register(t5);
 Texture2D<unorm half3> MasksTexture : register(t6);
-Texture2D<unorm half4> GITexture : register(t7);
+Texture2D<unorm half3> Masks2Texture : register(t7);
+Texture2D<unorm half4> GITexture : register(t8);
 
 Texture2D<unorm half2> SkylightingTexture : register(t10);
 
 RWTexture2D<half4> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
+RWTexture2D<half2> SnowParametersRW : register(u2);
 
 TextureCube<unorm half3> EnvTexture : register(t12);
 TextureCube<unorm half3> ReflectionTexture : register(t13);
@@ -74,7 +76,7 @@ half GetScreenDepth(half depth)
 	half3 masks = MasksTexture[globalId.xy];
 
 	half3 color = MainRW[globalId.xy].rgb;
-	//color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz;
+	color += albedo * lerp(max(0, NdotL), 1.0, masks.z) * DirLightColor.xyz;
 
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
@@ -127,8 +129,9 @@ half GetScreenDepth(half depth)
 
 	float skylighting = SkylightingTexture[globalId.xy];
 	skylighting *= saturate(dot(normalWS, float3(0, 0, 1)) * 0.5 + 0.5);
+	half3 masks2 = Masks2Texture[globalId.xy];
 
-	color += albedo * directionalAmbientColor * skylighting;
+	color += albedo * directionalAmbientColor * skylighting * (1.0 - masks2.zzz);
 
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
@@ -226,7 +229,7 @@ float3 Lin2sRGB(float3 color)
 	half glossiness = normalGlossiness.z;
 	half3 color = sRGB2Lin(diffuseColor) + sRGB2Lin(specularColor);
 
-	float skylighting = SkylightingTexture[globalId.xy].y;
+	half2 skylighting = SkylightingTexture[globalId.xy];
 	half4 giAo = GITexture[globalId.xy];
 
 	half rawDepth = DepthTexture[globalId.xy];
@@ -250,7 +253,7 @@ float3 Lin2sRGB(float3 color)
 	float3 specularIrradiance2 = ReflectionTexture.SampleLevel(LinearSampler, R, level).xyz;
 	specularIrradiance2 = sRGB2Lin(specularIrradiance2);
 
-	color += reflectance * lerp(specularIrradiance, specularIrradiance2, skylighting * giAo.w) * giAo.w;
+	color += reflectance * lerp(specularIrradiance, specularIrradiance2, skylighting.y * giAo.w) * giAo.w;
 
 	color = Lin2sRGB(color);
 
@@ -268,6 +271,9 @@ float3 Lin2sRGB(float3 color)
 	}
 #endif
 
-	MainRW[globalId.xy] = half4(color.xyz, 1.0);
+	half2 snowParamaters = Masks2Texture[globalId.xy];
+
+	MainRW[globalId.xy] = half4(color, 1.0);
 	NormalTAAMaskSpecularMaskRW[globalId.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
+	SnowParametersRW[globalId.xy] = snowParamaters * lerp(skylighting.x, 1.0, 0.5);
 }
