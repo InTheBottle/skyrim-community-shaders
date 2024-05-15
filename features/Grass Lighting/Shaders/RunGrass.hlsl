@@ -431,7 +431,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	diffuseColor += lightsDiffuseColor;
 
 	diffuseColor *= albedo;
-	diffuseColor += sss * subsurfaceColor * SubsurfaceScatteringAmount;
+	diffuseColor += max(0, sss * subsurfaceColor * SubsurfaceScatteringAmount);
 
 	specularColor += lightsSpecularColor;
 	specularColor *= specColor.w * SpecularStrength;
