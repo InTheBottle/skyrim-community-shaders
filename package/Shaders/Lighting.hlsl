@@ -1411,8 +1411,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	if defined(CPM_AVAILABLE) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	if ((shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) && (shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir)) {
-		if (shadowColor.x > 0.0 && dirLightAngle > 0.0)
-		{
+		if (shadowColor.x > 0.0 && dirLightAngle > 0.0) {
 			float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 			float parallaxShadow = 1.0;
 #		if defined(LANDSCAPE)
@@ -1426,12 +1425,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 				parallaxShadow = GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality);
 #		endif  // LANDSCAPE
 #		if defined(DEFERRED)
-		psout.Parameters.z = 1.0 - parallaxShadow;
+			psout.Parameters.z = 1.0 - parallaxShadow;
 #		endif
-		dirLightColor *= parallaxShadow;
+			dirLightColor *= parallaxShadow;
 		}
 	}
-#	endif      // defined(CPM_AVAILABLE) && (defined (SKINNED) || !defined \
+#	endif  // defined(CPM_AVAILABLE) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
 
 	float3 diffuseColor = 0.0.xxx;
