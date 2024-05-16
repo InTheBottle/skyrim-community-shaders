@@ -196,22 +196,6 @@ void Deferred::SetupResources()
 			giTexture->CreateUAV(uavDesc);
 		}
 	}
-
-	{
-		auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
-		D3D11_TEXTURE2D_DESC texDesc{};
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-
-		precipitationOcclusion.texture->GetDesc(&texDesc);
-		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
-		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
-
-		occlusionTexture = new Texture2D(texDesc);
-		occlusionTexture->CreateSRV(srvDesc);
-		occlusionTexture->CreateDSV(dsvDesc);
-	}
 }
 
 void Deferred::Reset()

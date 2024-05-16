@@ -83,115 +83,10 @@ public:
 
 	Texture2D* giTexture = nullptr;  // RGB - GI/IL, A - AO
 
-	struct BSParticleShaderRainEmitter
-	{
-		void* vftable_BSParticleShaderRainEmitter_0;
-		char _pad_8[4056];
-	};
-
-	static void Precipitation_SetupMask(RE::Precipitation* a_This)
-	{
-		using func_t = decltype(&Precipitation_SetupMask);
-		REL::Relocation<func_t> func{ REL::RelocationID(25641, 26183) };
-		func(a_This);
-	}
-
-	static void Precipitation_RenderMask(RE::Precipitation* a_This, BSParticleShaderRainEmitter* a_emitter)
-	{
-		using func_t = decltype(&Precipitation_RenderMask);
-		REL::Relocation<func_t> func{ REL::RelocationID(25642, 26184) };
-		func(a_This, a_emitter);
-	}
-
 	void UpdateConstantBuffer();
-
-	Texture2D* occlusionTexture = nullptr;
-
-	bool doOcclusion = true;
 
 	struct Hooks
 	{
-		struct Main_Precipitation_RenderOcclusion
-		{
-			static void thunk()
-			{
-				State::GetSingleton()->BeginPerfEvent("PRECIPITATION MASK");
-				State::GetSingleton()->SetPerfMarker("PRECIPITATION MASK");
-
-				static bool doPrecip = false;
-
-				auto sky = RE::Sky::GetSingleton();
-				auto precip = sky->precip;
-
-				if (Deferred::GetSingleton()->doOcclusion) {
-					if (doPrecip) {
-						doPrecip = false;
-
-						auto precipObject = precip->currentPrecip;
-						if (!precipObject) {
-							precipObject = precip->lastPrecip;
-						}
-						if (precipObject) {
-							Precipitation_SetupMask(precip);
-							Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
-							auto effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-							auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
-							auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-							auto rain = (BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-
-							Precipitation_RenderMask(precip, rain);
-						}
-
-					} else {
-						doPrecip = true;
-
-						auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-						auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-						RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
-
-						precipitation.depthSRV = Deferred::GetSingleton()->occlusionTexture->srv.get();
-						precipitation.texture = Deferred::GetSingleton()->occlusionTexture->resource.get();
-						precipitation.views[0] = Deferred::GetSingleton()->occlusionTexture->dsv.get();
-
-						static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
-						float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
-
-						static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 401648).address());
-						RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
-
-						Skylighting::GetSingleton()->inOcclusion = true;
-						PrecipitationShaderCubeSize = Skylighting::GetSingleton()->occlusionDistance;
-
-						float originaLastCubeSize = precip->lastCubeSize;
-						precip->lastCubeSize = PrecipitationShaderCubeSize;
-
-						PrecipitationShaderDirection = { 0, 0, -1 };
-
-						Precipitation_SetupMask(precip);
-						Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
-
-						BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-						Precipitation_RenderMask(precip, rain);
-						Skylighting::GetSingleton()->inOcclusion = false;
-						RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
-						Skylighting::GetSingleton()->viewProjMat = cube->occlusionProjection;
-
-						cube = nullptr;
-						delete rain;
-
-						PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
-						precip->lastCubeSize = originaLastCubeSize;
-
-						PrecipitationShaderDirection = originalParticleShaderDirection;
-
-						precipitation = precipitationCopy;
-					}
-				}
-				State::GetSingleton()->EndPerfEvent();
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
 		struct Main_RenderWorld
 		{
 			static void thunk(bool a1)
@@ -241,7 +136,6 @@ public:
 
 		static void Install()
 		{
-			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));

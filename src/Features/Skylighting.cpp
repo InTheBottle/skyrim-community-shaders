@@ -5,7 +5,8 @@
 
 void Skylighting::DrawSettings()
 {
-	ImGui::Checkbox("Do occlusion", &Deferred::GetSingleton()->doOcclusion);
+	ImGui::Checkbox("Do occlusion", &GetSingleton()->doOcclusion);
+	ImGui::Checkbox("Render trees", &renderTrees);
 
 	ImGui::SliderFloat("Bound Size", &boundSize, 0, 512, "%.2f");
 	ImGui::SliderFloat("Distance", &occlusionDistance, 0, 20000);
@@ -50,8 +51,9 @@ void Skylighting::SetupResources()
 
 	GetSkylightingCS();
 
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
 	{
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
@@ -63,13 +65,33 @@ void Skylighting::SetupResources()
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
 
-		texDesc.Format = DXGI_FORMAT_R16G16_UNORM;
+		texDesc.Format = DXGI_FORMAT_R8G8_UNORM;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
 		skylightingTexture = new Texture2D(texDesc);
 		skylightingTexture->CreateSRV(srvDesc);
 		skylightingTexture->CreateUAV(uavDesc);
+	}
+
+	{
+		auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+
+		precipitationOcclusion.texture->GetDesc(&texDesc);
+		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
+		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+
+		occlusionTexture = new Texture2D(texDesc);
+		occlusionTexture->CreateSRV(srvDesc);
+		occlusionTexture->CreateDSV(dsvDesc);
+
+		occlusionTranslucentTexture = new Texture2D(texDesc);
+		occlusionTranslucentTexture->CreateSRV(srvDesc);
+		occlusionTranslucentTexture->CreateDSV(dsvDesc);
 	}
 
 	{
@@ -105,6 +127,7 @@ void Skylighting::SetupResources()
 
 void Skylighting::Reset()
 {
+	translucent = false;
 }
 
 void Skylighting::Load(json& o_json)
@@ -176,16 +199,6 @@ void Skylighting::CopyShadowData()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-struct CAMERASTATE_RUNTIME_DATA
-{
-	RE::BSGraphics::ViewData camViewData; /* 08 VR is BSTArray, Each array has 2 elements (one for each eye?) */
-	RE::NiPoint3 posAdjust;               /* 20 */
-	RE::NiPoint3 currentPosAdjust;        /* 38 */
-	RE::NiPoint3 previousPosAdjust;       /* 50 */
-	bool useJitter;                       /* 68 */
-	uint32_t numData;                     /* 6c */
-};
-
 void Skylighting::Compute()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -231,16 +244,17 @@ void Skylighting::Compute()
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
-	ID3D11ShaderResourceView* srvs[6]{
+	ID3D11ShaderResourceView* srvs[7]{
 		depth.depthSRV,
 		shadowView,
 		perShadow->srv.get(),
 		noiseView,
-		Deferred::GetSingleton()->occlusionTexture->srv.get(),
+		occlusionTexture->srv.get(),
+		occlusionTranslucentTexture->srv.get(),
 		normalRoughness.SRV
 	};
 
-	context->CSSetShaderResources(0, 6, srvs);
+	context->CSSetShaderResources(0, 7, srvs);
 
 	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -264,8 +278,9 @@ void Skylighting::Compute()
 	srvs[3] = nullptr;
 	srvs[4] = nullptr;
 	srvs[5] = nullptr;
+	srvs[6] = nullptr;
 
-	context->CSSetShaderResources(0, 6, srvs);
+	context->CSSetShaderResources(0, 7, srvs);
 
 	uavs[0] = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -278,6 +293,50 @@ void Skylighting::Compute()
 	context->CSSetSamplers(0, 2, samplers);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void Skylighting::EnableTranslucentDepth()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+	precipitation.depthSRV = occlusionTranslucentTexture->srv.get();
+	precipitation.texture = occlusionTranslucentTexture->resource.get();
+	precipitation.views[0] = occlusionTranslucentTexture->dsv.get();
+
+	auto& state = State::GetSingleton()->shadowState;
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+}
+
+void Skylighting::DisableTranslucentDepth()
+{
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+	precipitation.depthSRV = occlusionTexture->srv.get();
+	precipitation.texture = occlusionTexture->resource.get();
+	precipitation.views[0] = occlusionTexture->dsv.get();
+
+	auto& state = State::GetSingleton()->shadowState;
+	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+}
+
+void Skylighting::UpdateDepthStencilView(RE::BSRenderPass* a_pass)
+{
+	if (inOcclusion) {
+		auto currentTranslucent = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
+		if (translucent != currentTranslucent) {
+			translucent = currentTranslucent;
+			if (translucent)
+			{
+				EnableTranslucentDepth();
+			} else {
+				DisableTranslucentDepth();
+			}
+		}
+	}
 }
 
 void Skylighting::Bind()
