@@ -1397,8 +1397,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		normalizedDirLightDirectionWS = normalize(mul(input.World[eyeIndex], float4(DirLightDirection.xyz, 0)));
 #	endif
 
-	float3 nsDirLightColor = dirLightColor;
-
 	if ((shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) && (shaderDescriptors[0].PixelShaderDescriptor & _ShadowDir)) {
 		dirLightColor *= shadowColor.xxx;
 	}
@@ -1446,15 +1444,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 #	if defined(SOFT_LIGHTING)
-	lightsDiffuseColor += nsDirLightColor.xyz * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
+	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
 #	endif
 
 #	if defined(RIM_LIGHTING)
-	lightsDiffuseColor += nsDirLightColor.xyz * GetRimLightMultiplier(DirLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz;
+	lightsDiffuseColor += dirLightColor * GetRimLightMultiplier(DirLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz;
 #	endif
 
 #	if defined(BACK_LIGHTING)
-	lightsDiffuseColor += nsDirLightColor.xyz * (saturate(-dirLightAngle) * backLightColor.xyz);
+	lightsDiffuseColor += dirLightColor * saturate(-dirLightAngle) * backLightColor.xyz;
 #	endif
 
 	if (useSnowSpecular && useSnowDecalSpecular) {
@@ -1600,8 +1598,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 		float3 lightColor = PointLightColor[lightIndex].xyz * intensityMultiplier;
 
-		float3 nsLightColor = lightColor;
-
 		if (shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) {
 			if (lightIndex < numShadowLights) {
 				lightColor *= shadowColor[ShadowLightMaskSelect[lightIndex]];
@@ -1614,15 +1610,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		float3 lightDiffuseColor = lightColor * saturate(lightAngle.xxx);
 
 #			if defined(SOFT_LIGHTING)
-		lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(modelNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
+		lightDiffuseColor += lightColor * GetSoftLightMultiplier(lightAngle) * rimSoftLightColor.xyz;
 #			endif  // SOFT_LIGHTING
 
 #			if defined(RIM_LIGHTING)
-		lightDiffuseColor += nsLightColor * GetRimLightMultiplier(normalizedLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz;
+		lightDiffuseColor += lightColor * GetRimLightMultiplier(normalizedLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz;
 #			endif  // RIM_LIGHTING
 
 #			if defined(BACK_LIGHTING)
-		lightDiffuseColor += (saturate(-lightAngle) * backLightColor.xyz) * nsLightColor;
+		lightDiffuseColor += lightColor * saturate(-lightAngle) * backLightColor.xyz;
 #			endif  // BACK_LIGHTING
 
 #			if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
@@ -1669,6 +1665,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 		float3 lightColor = light.color.xyz * intensityMultiplier;
+		float contactShadow = 1.0;
 
 		float shadowComponent = 1.0;
 		if (shaderDescriptors[0].PixelShaderDescriptor & _DefShadow) {
@@ -1678,7 +1675,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 			}
 		}
 
-		float3 nsLightColor = lightColor;
 		float3 normalizedLightDirection = normalize(lightDirection);
 		float lightAngle = dot(worldSpaceNormal.xyz, normalizedLightDirection.xyz);
 
@@ -1688,19 +1684,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 			float contactShadow = ContactShadows(viewPosition, screenUV, screenNoise, normalizedLightDirectionVS, light.radius, light.firstPersonShadow, eyeIndex);
 			[flatten] if (light.firstPersonShadow)
 			{
-				lightColor *= contactShadow;
+				contactShadow = contactShadow;
 			}
 			else
 			{
 				float shadowIntensityFactor = saturate(dot(worldSpaceNormal, normalizedLightDirection.xyz) * PI);
-				lightColor *= lerp(lerp(1.0, contactShadow, shadowIntensityFactor), 1.0, !frontFace * 0.2);
+				contactShadow = lerp(lerp(1.0, contactShadow, shadowIntensityFactor), 1.0, !frontFace * 0.2);
 			}
 		}
 
 #			if defined(CPM_AVAILABLE)
 		if (perPassParallax[0].EnableShadows && shadowComponent != 0.0 && lightAngle > 0.0) {
 			float3 lightDirectionTS = normalize(mul(normalizedLightDirection, tbn).xyz);
-
 #				if defined(PARALLAX)
 			[branch] if (perPassParallax[0].EnableParallax)
 				lightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, lightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality);
@@ -1714,18 +1709,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		}
 #			endif
 
-		float3 lightDiffuseColor = lightColor * saturate(lightAngle.xxx);
+		float3 lightDiffuseColor = lightColor * contactShadow * saturate(lightAngle.xxx);
 
 #			if defined(SOFT_LIGHTING)
-		lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(worldSpaceNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
+		lightDiffuseColor += lightColor * GetSoftLightMultiplier(lightAngle) * rimSoftLightColor.xyz;
 #			endif
 
 #			if defined(RIM_LIGHTING)
-		lightDiffuseColor += nsLightColor * GetRimLightMultiplier(normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz) * rimSoftLightColor.xyz;
+		lightDiffuseColor += lightColor * GetRimLightMultiplier(normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz) * rimSoftLightColor.xyz;
 #			endif
 
 #			if defined(BACK_LIGHTING)
-		lightDiffuseColor += (saturate(-lightAngle) * backLightColor.xyz) * nsLightColor;
+		lightDiffuseColor += lightColor * saturate(-lightAngle) * backLightColor.xyz;
 #			endif
 
 #			if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
