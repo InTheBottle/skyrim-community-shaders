@@ -54,7 +54,6 @@ void Skylighting::SetupResources()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	{
-
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -329,8 +328,7 @@ void Skylighting::UpdateDepthStencilView(RE::BSRenderPass* a_pass)
 		auto currentTranslucent = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
 		if (translucent != currentTranslucent) {
 			translucent = currentTranslucent;
-			if (translucent)
-			{
+			if (translucent) {
 				EnableTranslucentDepth();
 			} else {
 				DisableTranslucentDepth();
