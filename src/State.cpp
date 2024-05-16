@@ -15,49 +15,13 @@
 
 #include "VariableRateShading.h"
 
-enum class UtilityShaderFlags : uint64_t
-{
-	Vc = 1 << 0,
-	Texture = 1 << 1,
-	Skinned = 1 << 2,
-	Normals = 1 << 3,
-	BinormalTangent = 1 << 4,
-	AlphaTest = 1 << 7,
-	LodLandscape = 1 << 8,
-	RenderNormal = 1 << 9,
-	RenderNormalFalloff = 1 << 10,
-	RenderNormalClamp = 1 << 11,
-	RenderNormalClear = 1 << 12,
-	RenderDepth = 1 << 13,
-	RenderShadowmap = 1 << 14,
-	RenderShadowmapClamped = 1 << 15,
-	GrayscaleToAlpha = 1 << 15,
-	RenderShadowmapPb = 1 << 16,
-	AdditionalAlphaMask = 1 << 16,
-	DepthWriteDecals = 1 << 17,
-	DebugShadowSplit = 1 << 18,
-	DebugColor = 1 << 19,
-	GrayscaleMask = 1 << 20,
-	RenderShadowmask = 1 << 21,
-	RenderShadowmaskSpot = 1 << 22,
-	RenderShadowmaskPb = 1 << 23,
-	RenderShadowmaskDpb = 1 << 24,
-	RenderBaseTexture = 1 << 25,
-	TreeAnim = 1 << 26,
-	LodObject = 1 << 27,
-	LocalMapFogOfWar = 1 << 28,
-	OpaqueEffect = 1 << 29,
-};
-
-#include "VariableRateShading.h"
-
 void State::Draw()
 {
 	Deferred::GetSingleton()->UpdatePerms();
 	if (currentShader && updateShader) {
 		auto type = currentShader->shaderType.get();
 		if (type == RE::BSShader::Type::Utility) {
-			if (currentPixelDescriptor & static_cast<uint32_t>(UtilityShaderFlags::RenderShadowmask)) {
+			if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
 				Skylighting::GetSingleton()->CopyShadowData();
 			}
 		}
