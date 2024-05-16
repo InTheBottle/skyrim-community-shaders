@@ -42,10 +42,8 @@ public:
 	void SetupSingleEyeVRS(int eye, int width, int height);
 	void UpdateViews(bool a_enable);
 
-
 	struct Hooks
 	{
-
 		struct BSUtilityShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
@@ -58,7 +56,7 @@ public:
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
-		
+
 		struct BSLightingShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)

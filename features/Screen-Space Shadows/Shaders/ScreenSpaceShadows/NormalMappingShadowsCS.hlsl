@@ -40,9 +40,9 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 }
 
 [numthreads(8, 8, 1)] void main(uint3 globalId
-								  : SV_DispatchThreadID, uint3 localId
-								  : SV_GroupThreadID, uint3 groupId
-								  : SV_GroupID) {
+								: SV_DispatchThreadID, uint3 localId
+								: SV_GroupThreadID, uint3 groupId
+								: SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim;
 
 	half3 normalVS = DecodeNormal(NormalRoughnessTexture[globalId.xy].xy);
