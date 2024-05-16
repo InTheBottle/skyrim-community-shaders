@@ -56,9 +56,9 @@ float GetScreenDepth(float depth)
 }
 
 [numthreads(8, 8, 1)] void DirectionalPass(uint3 globalId
-											 : SV_DispatchThreadID, uint3 localId
-											 : SV_GroupThreadID, uint3 groupId
-											 : SV_GroupID) {
+										   : SV_DispatchThreadID, uint3 localId
+										   : SV_GroupThreadID, uint3 groupId
+										   : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -82,9 +82,9 @@ float GetScreenDepth(float depth)
 };
 
 [numthreads(8, 8, 1)] void DirectionalShadowPass(uint3 globalId
-												   : SV_DispatchThreadID, uint3 localId
-												   : SV_GroupThreadID, uint3 groupId
-												   : SV_GroupID) {
+												 : SV_DispatchThreadID, uint3 localId
+												 : SV_GroupThreadID, uint3 groupId
+												 : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -153,9 +153,9 @@ float InterleavedGradientNoise(float2 uv)
 }
 
 [numthreads(8, 8, 1)] void AmbientCompositePass(uint3 globalId
-												  : SV_DispatchThreadID, uint3 localId
-												  : SV_GroupThreadID, uint3 groupId
-												  : SV_GroupID) {
+												: SV_DispatchThreadID, uint3 localId
+												: SV_GroupThreadID, uint3 groupId
+												: SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -209,9 +209,9 @@ float3 Lin2sRGB(float3 color)
 }
 
 [numthreads(8, 8, 1)] void MainCompositePass(uint3 globalId
-											   : SV_DispatchThreadID, uint3 localId
-											   : SV_GroupThreadID, uint3 groupId
-											   : SV_GroupID) {
+											 : SV_DispatchThreadID, uint3 localId
+											 : SV_GroupThreadID, uint3 groupId
+											 : SV_GroupID) {
 	half2 uv = half2(globalId.xy + 0.5) * RcpBufferDim.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
