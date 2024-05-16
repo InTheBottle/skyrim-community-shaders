@@ -50,12 +50,12 @@ StructuredBuffer<PerGeometry> perShadow : register(t11);
 
 // #	define DEBUG
 
-half GetScreenDepth(half depth)
+float GetScreenDepth(float depth)
 {
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-[numthreads(32, 32, 1)] void DirectionalPass(uint3 globalId
+[numthreads(8, 8, 1)] void DirectionalPass(uint3 globalId
 											 : SV_DispatchThreadID, uint3 localId
 											 : SV_GroupThreadID, uint3 groupId
 											 : SV_GroupID) {
@@ -81,7 +81,7 @@ half GetScreenDepth(half depth)
 	MainRW[globalId.xy] = half4(color.xyz, 1.0);
 };
 
-[numthreads(32, 32, 1)] void DirectionalShadowPass(uint3 globalId
+[numthreads(8, 8, 1)] void DirectionalShadowPass(uint3 globalId
 												   : SV_DispatchThreadID, uint3 localId
 												   : SV_GroupThreadID, uint3 groupId
 												   : SV_GroupID) {
@@ -108,7 +108,7 @@ half GetScreenDepth(half depth)
 		for (half i = -1.5; i < 1.5; i++) {
 			for (half k = -1.5; k < 1.5; k++) {
 				half2 offset = half2(i, k) * RcpBufferDim.xy;
-				half sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
+				float sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, uv + offset, 0));
 				half attenuation = 1.0 - saturate(abs(sampleDepth - depth) * 0.1);
 				shadow += ShadowMaskTexture.SampleLevel(LinearSampler, uv + offset, 0) * attenuation;
 				weight += attenuation;
@@ -133,7 +133,7 @@ half GetScreenDepth(half depth)
 
 	color += albedo * directionalAmbientColor * skylighting * (1.0 - masks2.zzz);
 
-	MainRW[globalId.xy] = half4(color.xyz, 1.0);
+	MainRW[globalId.xy] = half4(color, 1.0);
 };
 
 float random(float2 uv)
@@ -152,7 +152,7 @@ float InterleavedGradientNoise(float2 uv)
 	return frac(magic.z * frac(dot(uv, magic.xy)));
 }
 
-[numthreads(32, 32, 1)] void AmbientCompositePass(uint3 globalId
+[numthreads(8, 8, 1)] void AmbientCompositePass(uint3 globalId
 												  : SV_DispatchThreadID, uint3 localId
 												  : SV_GroupThreadID, uint3 groupId
 												  : SV_GroupID) {
@@ -208,7 +208,7 @@ float3 Lin2sRGB(float3 color)
 	return color > 0.0031308 ? 1.055 * pow(color, 1.0 / 2.4) - 0.055 : 12.92 * color;
 }
 
-[numthreads(32, 32, 1)] void MainCompositePass(uint3 globalId
+[numthreads(8, 8, 1)] void MainCompositePass(uint3 globalId
 											   : SV_DispatchThreadID, uint3 localId
 											   : SV_GroupThreadID, uint3 groupId
 											   : SV_GroupID) {

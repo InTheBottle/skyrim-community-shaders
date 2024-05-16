@@ -39,7 +39,7 @@ half2 ViewToUV(half3 position, bool is_position, uint a_eyeIndex)
 	return (uv.xy / uv.w) * half2(0.5f, -0.5f) + 0.5f;
 }
 
-[numthreads(32, 32, 1)] void main(uint3 globalId
+[numthreads(8, 8, 1)] void main(uint3 globalId
 								  : SV_DispatchThreadID, uint3 localId
 								  : SV_GroupThreadID, uint3 groupId
 								  : SV_GroupID) {
