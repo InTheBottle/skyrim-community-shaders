@@ -153,40 +153,39 @@ half3 DecodeNormal(half2 f)
 	half2 weights = 0.0;
 
 	//for (uint index = 0; index < 8; index++){
-		for (uint i = 0; i < sampleCount; i++)
-		{
-			uint index = (i + (blueNoise * 8)) % 8;
-			half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
-			float3 difference = EyePosition.xyz - captureData[index].EyePositionOld.xyz;
+	for (uint i = 0; i < sampleCount; i++) {
+		uint index = (i + (blueNoise * 8)) % 8;
+		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
+		float3 difference = EyePosition.xyz - captureData[index].EyePositionOld.xyz;
 
-			positionMS.xyz = startPositionMS + difference;
-			positionMS.xy += offset * 32;
+		positionMS.xyz = startPositionMS + difference;
+		positionMS.xy += offset * 32;
 
-			half3 occlusionPosition = mul(captureData[index].Transform, float4(positionMS.xyz, 1));
-			occlusionPosition.y = -occlusionPosition.y;
-			half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
+		half3 occlusionPosition = mul(captureData[index].Transform, float4(positionMS.xyz, 1));
+		occlusionPosition.y = -occlusionPosition.y;
+		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
-			half3 offsetDirection = normalize(half3(offset.xy, 0));
+		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
-			if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
-				half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, float3(occlusionUV, index), occlusionPosition.z - (1e-2 * 0.05));
+		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
+			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, float3(occlusionUV, index), occlusionPosition.z - (1e-2 * 0.05));
 
-				half3 H = normalize(captureData[index].Direction.xyz + V);
-				half NoH = dot(normalWS, H);
-				half a = NoH * roughness;
-				half k = roughness / (1.0 - NoH * NoH + a * a);
-				half ggx = k * k * (1.0 / PI);
+			half3 H = normalize(captureData[index].Direction.xyz + V);
+			half NoH = dot(normalWS, H);
+			half a = NoH * roughness;
+			half k = roughness / (1.0 - NoH * NoH + a * a);
+			half ggx = k * k * (1.0 / PI);
 
-				half2 contributions = half2(dot(normalWS.xyz, -captureData[index].Direction.xyz) * 0.5 + 0.5, ggx);
-				
-				skylighting += shadowMapValues * contributions;
-				weights += contributions;
-			} else {
-				skylighting++;
-				weights++;
-			}
+			half2 contributions = half2(dot(normalWS.xyz, -captureData[index].Direction.xyz) * 0.5 + 0.5, ggx);
+
+			skylighting += shadowMapValues * contributions;
+			weights += contributions;
+		} else {
+			skylighting++;
+			weights++;
 		}
-//	}
+	}
+	//	}
 
 	if (weights.x > 0.0)
 		skylighting.x /= weights.x;

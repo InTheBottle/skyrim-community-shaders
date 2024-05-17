@@ -245,8 +245,7 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
-		for (uint i = 0; i < 8; i++)
-		{
+		for (uint i = 0; i < 8; i++) {
 			data.captureData[i] = captureDataCache[i];
 		}
 
@@ -359,7 +358,7 @@ void Skylighting::UpdateDepthStencilView(RE::BSRenderPass*)
 		GET_INSTANCE_MEMBER(stateUpdateFlags, state)
 		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
-	/*	auto currentTranslucent = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
+		/*	auto currentTranslucent = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
 		if (translucent != currentTranslucent) {
 			translucent = currentTranslucent;
 			if (translucent) {
