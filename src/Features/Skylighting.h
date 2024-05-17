@@ -34,7 +34,7 @@ public:
 	virtual void RestoreDefaultSettings();
 
 	REX::W32::XMFLOAT4X4 viewProjMat;
-	float occlusionDistance = 10000;
+	float occlusionDistance = 8192;
 	bool renderTrees = false;
 
 	ID3D11ComputeShader* skylightingCS = nullptr;
@@ -42,20 +42,31 @@ public:
 
 	ID3D11SamplerState* comparisonSampler;
 
+	struct CaptureData
+	{
+		REX::W32::XMFLOAT4X4 Transform;
+		float4 Direction;
+		float4 EyePosition;
+	};
+
+	CaptureData captureDataCache[8]{};
+
 	struct alignas(16) PerFrameCB
 	{
-		REX::W32::XMFLOAT4X4 viewProjMat;
+		CaptureData captureData[8];
 		float4 ShadowDirection;
 		float4 BufferDim;
 		float4 DynamicRes;
 		float4 CameraData;
 		uint FrameCount;
-		uint pad0[3];
+		float3 EyePosition;
 	};
 
 	ConstantBuffer* perFrameCB = nullptr;
 
 	virtual void ClearShaderCache() override;
+
+
 
 	struct alignas(16) PerGeometry
 	{
@@ -85,7 +96,14 @@ public:
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
+	Texture2D* occlusionTextureTemp = nullptr;
+
 	Texture2D* occlusionTranslucentTexture = nullptr;
+
+	ID3D11DepthStencilView* depthStencilViews[8];
+	ID3D11DepthStencilView* depthStencilViewsTemp[8];
+
+	float directionScale = 1;
 
 	bool translucent = false;
 
@@ -112,6 +130,8 @@ public:
 		REL::Relocation<func_t> func{ REL::RelocationID(25642, 26184) };
 		func(a_This, a_emitter);
 	}
+
+
 
 	void Bind();
 	void Compute();
@@ -294,7 +314,7 @@ public:
 		uint64_t unk08;          // 08
 	};
 
-	float boundSize = 64;
+	float boundSize = 128;
 
 	class BSBatchRenderer
 	{
@@ -334,6 +354,7 @@ public:
 	};
 
 	bool inOcclusion = false;
+	RE::NiPoint3 eyePosition{};
 
 	struct BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl
 	{
@@ -386,9 +407,13 @@ public:
 
 			auto sky = RE::Sky::GetSingleton();
 			auto precip = sky->precip;
+		
+			auto& state = State::GetSingleton()->shadowState;
+			GetSingleton()->eyePosition = state->GetRuntimeData().posAdjust.getEye();
+
 
 			if (GetSingleton()->doOcclusion) {
-				if (doPrecip) {
+				{
 					doPrecip = false;
 
 					auto precipObject = precip->currentPrecip;
@@ -406,19 +431,23 @@ public:
 						Precipitation_RenderMask(precip, rain);
 					}
 
-				} else {
+				} 
+			
+			
+				{
 					doPrecip = true;
 
 					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 					GetSingleton()->precipitationCopy = precipitation;
 
-					auto& context = State::GetSingleton()->context;
-					context->ClearDepthStencilView(GetSingleton()->occlusionTranslucentTexture->dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+					auto viewport = RE::BSGraphics::State::GetSingleton();
+
+					uint index = viewport->uiFrameCount % 8;
 
 					precipitation.depthSRV = GetSingleton()->occlusionTexture->srv.get();
 					precipitation.texture = GetSingleton()->occlusionTexture->resource.get();
-					precipitation.views[0] = GetSingleton()->occlusionTexture->dsv.get();
+					precipitation.views[0] = GetSingleton()->depthStencilViews[index];
 
 					static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
 					float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
@@ -432,7 +461,21 @@ public:
 					float originaLastCubeSize = precip->lastCubeSize;
 					precip->lastCubeSize = PrecipitationShaderCubeSize;
 
-					PrecipitationShaderDirection = { 0, 0, -1 };
+					float3 PoissonDisk[8] = {
+						float3(-0.4706069f, -0.4427112f, +0.6461146f),
+						float3(-0.9057375f, +0.3003471f, +0.9542373f),
+						float3(-0.3487388f, +0.4037880f, +0.5335386f),
+						float3(+0.1023042f, +0.6439373f, +0.6520134f),
+						float3(+0.5699277f, +0.3513750f, +0.6695386f),
+						float3(+0.2939128f, -0.1131226f, +0.3149309f),
+						float3(+0.7836658f, -0.4208784f, +0.8895339f),
+						float3(+0.1564120f, -0.8198990f, +0.8346850f)
+					};
+
+					float3 PrecipitationShaderDirectionF = { PoissonDisk[index].x, PoissonDisk[index].y, -GetSingleton()->directionScale };
+					PrecipitationShaderDirectionF.Normalize();
+					
+					PrecipitationShaderDirection = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z };
 
 					Precipitation_SetupMask(precip);
 					Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
@@ -441,7 +484,11 @@ public:
 					Precipitation_RenderMask(precip, rain);
 					GetSingleton()->inOcclusion = false;
 					RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
-					GetSingleton()->viewProjMat = cube->occlusionProjection;
+
+					GetSingleton()->captureDataCache[index].Direction = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z, 0 };
+					GetSingleton()->captureDataCache[index].Transform = cube->occlusionProjection;
+
+					GetSingleton()->captureDataCache[index].EyePosition = { GetSingleton()->eyePosition.x, GetSingleton()->eyePosition.y, GetSingleton()->eyePosition.z, 0 };
 
 					cube = nullptr;
 					delete rain;
@@ -476,7 +523,7 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
-			stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
+		//	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 		}
 	};
 
