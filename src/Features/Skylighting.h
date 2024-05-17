@@ -66,8 +66,6 @@ public:
 
 	virtual void ClearShaderCache() override;
 
-
-
 	struct alignas(16) PerGeometry
 	{
 		float4 VPOSOffset;
@@ -130,8 +128,6 @@ public:
 		REL::Relocation<func_t> func{ REL::RelocationID(25642, 26184) };
 		func(a_This, a_emitter);
 	}
-
-
 
 	void Bind();
 	void Compute();
@@ -407,10 +403,9 @@ public:
 
 			auto sky = RE::Sky::GetSingleton();
 			auto precip = sky->precip;
-		
+
 			auto& state = State::GetSingleton()->shadowState;
 			GetSingleton()->eyePosition = state->GetRuntimeData().posAdjust.getEye();
-
 
 			if (GetSingleton()->doOcclusion) {
 				{
@@ -430,10 +425,8 @@ public:
 
 						Precipitation_RenderMask(precip, rain);
 					}
+				}
 
-				} 
-			
-			
 				{
 					doPrecip = true;
 
@@ -474,7 +467,7 @@ public:
 
 					float3 PrecipitationShaderDirectionF = { PoissonDisk[index].x, PoissonDisk[index].y, -GetSingleton()->directionScale };
 					PrecipitationShaderDirectionF.Normalize();
-					
+
 					PrecipitationShaderDirection = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z };
 
 					Precipitation_SetupMask(precip);
@@ -523,7 +516,7 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
-		//	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
+			//	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 		}
 	};
 
