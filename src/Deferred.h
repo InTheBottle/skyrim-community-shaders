@@ -22,20 +22,17 @@ public:
 		return &singleton;
 	}
 
-	void DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode);
-
-	void AlphaBlendStateSetMode(uint32_t a_mode);
-	void AlphaBlendStateSetAlphaToCoverage(uint32_t a_value);
-	void AlphaBlendStateSetWriteMode(uint32_t a_value);
-
 	void SetupResources();
-	void Reset();
-
 	void StartDeferred();
 	void OverrideBlendStates();
 	void ResetBlendStates();
 	void DeferredPasses();
 	void EndDeferred();
+	void UpdateConstantBuffer();
+
+	void ClearShaderCache();
+	ID3D11ComputeShader* GetComputeAmbientComposite();
+	ID3D11ComputeShader* GetComputeMainComposite();
 
 	ID3D11BlendState* deferredBlendStates[7];
 	ID3D11BlendState* forwardBlendStates[7];
@@ -46,32 +43,13 @@ public:
 	ID3D11ComputeShader* ambientCompositeCS = nullptr;
 	ID3D11ComputeShader* mainCompositeCS = nullptr;
 
-	std::unordered_set<std::string> perms;
-	void UpdatePerms();
-
-	void ClearShaderCache();
-	ID3D11ComputeShader* GetComputeAmbientComposite();
-	ID3D11ComputeShader* GetComputeMainComposite();
-	ID3D11ComputeShader* GetComputeDirectionalShadow();
-	ID3D11ComputeShader* GetComputeDirectional();
-
 	bool inWorld = false;
 	bool deferredPass = false;
 
 	struct alignas(16) DeferredCB
 	{
-		float4 CamPosAdjust[2];
-		float4 DirLightDirectionVS[2];
-		float4 DirLightColor;
+		float4 BufferDim;
 		float4 CameraData;
-		float2 BufferDim;
-		float2 RcpBufferDim;
-		DirectX::XMFLOAT4X4 ViewMatrix[2];
-		DirectX::XMFLOAT4X4 ProjMatrix[2];
-		DirectX::XMFLOAT4X4 ViewProjMatrix[2];
-		DirectX::XMFLOAT4X4 InvViewMatrix[2];
-		DirectX::XMFLOAT4X4 InvProjMatrix[2];
-		DirectX::XMFLOAT4X4 InvViewProjMatrix[2];
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		uint FrameCount;
 		uint pad0[3];
@@ -80,10 +58,6 @@ public:
 	ConstantBuffer* deferredCB = nullptr;
 
 	ID3D11SamplerState* linearSampler = nullptr;
-
-	Texture2D* giTexture = nullptr;  // RGB - GI/IL, A - AO
-
-	void UpdateConstantBuffer();
 
 	struct Hooks
 	{

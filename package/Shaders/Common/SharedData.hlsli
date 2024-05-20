@@ -3,17 +3,18 @@
 
 #if defined(PSHADER)
 
-struct LightingData
+cbuffer SharedData : register(b5)
 {
-	float WaterHeight[25];
-	bool Reflections;
+	row_major float3x4 DirectionalAmbientShared;
+	float4 DirLightDirectionShared;
+	float4 DirLightColorShared;
 	float4 CameraData;
-	float2 BufferDim;
+	float4 BufferDim;
 	float Timer;
-	bool Opaque;
+	uint pad0b4[3];
+	float WaterHeight[25];
+	uint pad1b4[3];
 };
-
-StructuredBuffer<LightingData> lightingData : register(t126);
 
 Texture2D<float4> TexDepthSampler : register(t20);
 
@@ -22,12 +23,12 @@ float GetDepth(float2 uv, uint a_eyeIndex = 0)
 {
 	uv = ConvertToStereoUV(uv, a_eyeIndex);
 	uv = GetDynamicResolutionAdjustedScreenPosition(uv);
-	return TexDepthSampler.Load(int3(uv * lightingData[0].BufferDim, 0)).x;
+	return TexDepthSampler.Load(int3(uv * BufferDim, 0)).x;
 }
 
 float GetScreenDepth(float depth)
 {
-	return (lightingData[0].CameraData.w / (-depth * lightingData[0].CameraData.z + lightingData[0].CameraData.x));
+	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
 float GetScreenDepth(float2 uv, uint a_eyeIndex = 0)
@@ -51,7 +52,7 @@ float GetWaterHeight(float3 worldPosition)
 	float waterHeight = -2147483648;                                   // lowest 32-bit integer
 
 	[flatten] if (cellInt.x < 5 && cellInt.x >= 0 && cellInt.y < 5 && cellInt.y >= 0)
-		waterHeight = lightingData[0].WaterHeight[waterTile];
+		waterHeight = WaterHeight[waterTile];
 	return waterHeight;
 }
 

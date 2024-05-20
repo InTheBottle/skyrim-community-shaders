@@ -1,6 +1,9 @@
 #include "Deferred.h"
+
 #include "State.h"
 #include "Util.h"
+#include "ShaderCache.h"
+
 #include <Features/CloudShadows.h>
 #include <Features/DynamicCubemaps.h>
 #include <Features/ScreenSpaceGI.h>
@@ -8,60 +11,6 @@
 #include <Features/Skylighting.h>
 #include <Features/SubsurfaceScattering.h>
 #include <Features/TerrainOcclusion.h>
-#include <ShaderCache.h>
-#include <VariableRateShading.h>
-
-void Deferred::DepthStencilStateSetDepthMode(RE::BSGraphics::DepthStencilDepthMode a_mode)
-{
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(depthStencilDepthMode, state)
-	GET_INSTANCE_MEMBER(depthStencilDepthModePrevious, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-
-	if (depthStencilDepthMode != a_mode) {
-		depthStencilDepthMode = a_mode;
-		if (depthStencilDepthModePrevious != a_mode)
-			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
-		else
-			stateUpdateFlags.reset(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
-	}
-}
-
-void Deferred::AlphaBlendStateSetMode(uint32_t a_mode)
-{
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(alphaBlendMode, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-
-	if (alphaBlendMode != a_mode) {
-		alphaBlendMode = a_mode;
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-	}
-}
-
-void Deferred::AlphaBlendStateSetAlphaToCoverage(uint32_t a_value)
-{
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-
-	if (alphaBlendAlphaToCoverage != a_value) {
-		alphaBlendAlphaToCoverage = a_value;
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-	}
-}
-
-void Deferred::AlphaBlendStateSetWriteMode(uint32_t a_value)
-{
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-
-	if (alphaBlendWriteMode != a_value) {
-		alphaBlendWriteMode = a_value;
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
-	}
-}
 
 struct DepthStates
 {
@@ -162,115 +111,29 @@ void Deferred::SetupResources()
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
 	}
-
-	{
-		D3D11_TEXTURE2D_DESC texDesc;
-		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		mainTex.texture->GetDesc(&texDesc);
-
-		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = {
-				.MostDetailedMip = 0,
-				.MipLevels = 1 }
-		};
-		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 }
-		};
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 }
-		};
-
-		{
-			giTexture = new Texture2D(texDesc);
-			giTexture->CreateSRV(srvDesc);
-			giTexture->CreateRTV(rtvDesc);
-			giTexture->CreateUAV(uavDesc);
-		}
-	}
-}
-
-void Deferred::Reset()
-{
 }
 
 void Deferred::UpdateConstantBuffer()
 {
-	auto state = State::GetSingleton();
-	auto viewport = RE::BSGraphics::State::GetSingleton();
-
 	DeferredCB data{};
 
-	auto& shadowState = State::GetSingleton()->shadowState;
+	auto state = State::GetSingleton();
 
-	if (REL::Module::IsVR()) {
-		auto posAdjust = shadowState->GetVRRuntimeData().posAdjust.getEye(0);
-		data.CamPosAdjust[0] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
-		posAdjust = shadowState->GetVRRuntimeData().posAdjust.getEye(1);
-		data.CamPosAdjust[1] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
+	data.BufferDim.x = state->screenWidth;
+	data.BufferDim.y = state->screenHeight;
+	data.BufferDim.z = 1.0f / data.BufferDim.x;
+	data.BufferDim.w = 1.0f / data.BufferDim.y;
 
-		data.ViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat;
-		data.ViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat;
-		data.ProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat;
-		data.ProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat;
-		data.ViewProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewProjMat;
-		data.ViewProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewProjMat;
-		data.InvViewMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).viewMat.Invert();
-		data.InvViewMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).viewMat.Invert();
-		data.InvProjMatrix[0] = shadowState->GetVRRuntimeData().cameraData.getEye(0).projMat.Invert();
-		data.InvProjMatrix[1] = shadowState->GetVRRuntimeData().cameraData.getEye(1).projMat.Invert();
-		data.InvViewProjMatrix[0] = data.InvViewMatrix[0] * data.InvProjMatrix[0];
-		data.InvViewProjMatrix[1] = data.InvViewMatrix[1] * data.InvProjMatrix[1];
-	} else {
-		auto posAdjust = shadowState->GetRuntimeData().posAdjust.getEye(0);
-		data.CamPosAdjust[0] = { posAdjust.x, posAdjust.y, posAdjust.z, 0 };
-		data.ViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat;
-		data.ProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat;
-		data.ViewProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewProjMat;
-		data.InvViewMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).viewMat.Invert();
-		data.InvProjMatrix[0] = shadowState->GetRuntimeData().cameraData.getEye(0).projMat.Invert();
-		data.InvViewProjMatrix[0] = data.InvViewMatrix[0] * data.InvProjMatrix[0];
-	}
-
-	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
-	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
-
-	data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
-
-	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	data.DirLightColor *= !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
-
-	auto& direction = dirLight->GetWorldDirection();
-	float4 position{ -direction.x, -direction.y, -direction.z, 0.0f };
-
-	data.DirLightDirectionVS[0] = float4::Transform(position, data.ViewMatrix[0]);
-	data.DirLightDirectionVS[0].Normalize();
-
-	data.DirLightDirectionVS[1] = float4::Transform(position, data.ViewMatrix[1]);
-	data.DirLightDirectionVS[1].Normalize();
+	data.CameraData = Util::GetCameraData();
 
 	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
 	RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
 	Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
 
-	data.BufferDim.x = state->screenWidth;
-	data.BufferDim.y = state->screenHeight;
-
-	data.RcpBufferDim.x = 1.0f / State::GetSingleton()->screenWidth;
-	data.RcpBufferDim.y = 1.0f / State::GetSingleton()->screenHeight;
+	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 
 	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-	data.FrameCount = useTAA ? viewport->uiFrameCount : 0;
-
-	data.CameraData = Util::GetCameraData();
+	data.FrameCount = useTAA ? RE::BSGraphics::State::GetSingleton()->uiFrameCount: 0;
 
 	deferredCB->Update(data);
 }
@@ -284,6 +147,8 @@ void Deferred::StartDeferred()
 
 	if (!shaderCache.IsEnabled())
 		return;
+
+	State::GetSingleton()->UpdateSharedData();
 
 	static bool setup = false;
 	if (!setup) {
@@ -413,121 +278,34 @@ void Deferred::DeferredPasses()
 	{
 		auto buffer = deferredCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
+
+		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
+		context->CSSetConstantBuffers(12, 1, perFrame.get());
 	}
 
 	Skylighting::GetSingleton()->Bind();
 
-	{
-		FLOAT clr[4] = { 0., 0., 0., 1. };
-		context->ClearUnorderedAccessViewFloat(giTexture->uav.get(), clr);
-	}
-
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
-	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
-	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto shadowMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kSHADOW_MASK];
-	auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
 	auto masks2 = renderer->GetRuntimeData().renderTargets[MASKS2];
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 	auto snow = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[3]];
 
-	// Only render directional shadows if the game has a directional shadow caster
-	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-	auto shadowDirLight = (RE::BSShadowLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
-	bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
-
-	if (dirShadow) {
-		if (ScreenSpaceShadows::GetSingleton()->loaded) {
-			ScreenSpaceShadows::GetSingleton()->DrawShadows();
-		}
-
-		if (TerrainOcclusion::GetSingleton()->loaded) {
-			TerrainOcclusion::GetSingleton()->DrawTerrainOcclusion();
-		}
-
-		if (CloudShadows::GetSingleton()->loaded) {
-			CloudShadows::GetSingleton()->DrawShadows();
-		}
-
-		if (Skylighting::GetSingleton()->loaded) {
-			ID3D11ShaderResourceView* srvs[1]{
-				Skylighting::GetSingleton()->skylightingTexture->srv.get(),
-			};
-
-			context->CSSetShaderResources(10, ARRAYSIZE(srvs), srvs);
-		}
-
-		if (DynamicCubemaps::GetSingleton()->loaded) {
-			ID3D11ShaderResourceView* srvs[2]{
-				DynamicCubemaps::GetSingleton()->envTexture->srv.get(),
-				DynamicCubemaps::GetSingleton()->envReflectionsTexture->srv.get(),
-			};
-
-			context->CSSetShaderResources(12, ARRAYSIZE(srvs), srvs);
-		}
-	}
-
-	{
-		ID3D11ShaderResourceView* srvs[8]{
-			specular.SRV,
-			albedo.SRV,
-			reflectance.SRV,
-			normalRoughness.SRV,
-			shadowMask.SRV,
-			depth.depthSRV,
-			masks.SRV,
-			masks2.SRV
-		};
-
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-
-		ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		context->CSSetSamplers(0, 1, &linearSampler);
-
-		auto shader = dirShadow ? GetComputeDirectionalShadow() : GetComputeDirectional();
-		context->CSSetShader(shader, nullptr, 0);
-
-		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
-		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-	}
-
-	// Features that require full diffuse lighting should be put here
-
-	if (ScreenSpaceGI::GetSingleton()->loaded) {
-		ScreenSpaceGI::GetSingleton()->DrawSSGI(giTexture);
-	}
-
+	// Ambient Composite
 	{
 		{
-			ID3D11ShaderResourceView* srvs[9]{
-				specular.SRV,
+			ID3D11ShaderResourceView* srvs[2]{
 				albedo.SRV,
-				reflectance.SRV,
-				normalRoughness.SRV,
-				shadowMask.SRV,
-				depth.depthSRV,
-				masks.SRV,
-				masks2.SRV,
-				giTexture->srv.get(),
+				normalRoughness.SRV
 			};
 
 			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 			ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->CSSetSamplers(0, 1, &linearSampler);
 
 			auto shader = GetComputeAmbientComposite();
 			context->CSSetShader(shader, nullptr, 0);
@@ -542,30 +320,20 @@ void Deferred::DeferredPasses()
 		}
 	}
 
-	if (SubsurfaceScattering::GetSingleton()->loaded) {
-		SubsurfaceScattering::GetSingleton()->DrawSSSWrapper(false);
-	}
-
+	// Deferred Composite
 	{
 		{
-			ID3D11ShaderResourceView* srvs[9]{
+			ID3D11ShaderResourceView* srvs[4]{
 				specular.SRV,
 				albedo.SRV,
-				reflectance.SRV,
 				normalRoughness.SRV,
-				shadowMask.SRV,
-				depth.depthSRV,
-				masks.SRV,
-				masks2.SRV,
-				giTexture->srv.get(),
+				masks2.SRV
 			};
 
 			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 			ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->CSSetSamplers(0, 1, &linearSampler);
 
 			auto shader = GetComputeMainComposite();
 			context->CSSetShader(shader, nullptr, 0);
@@ -580,16 +348,19 @@ void Deferred::DeferredPasses()
 		}
 	}
 
-	ID3D11ShaderResourceView* views[9]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+	// Clear
+	{
+		ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	ID3D11Buffer* buffer = nullptr;
-	context->CSSetConstantBuffers(0, 1, &buffer);
+		ID3D11Buffer* buffer = nullptr;
+		context->CSSetConstantBuffers(0, 1, &buffer);
 
-	context->CSSetShader(nullptr, nullptr, 0);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 }
 
 void Deferred::EndDeferred()
@@ -750,31 +521,8 @@ void Deferred::ResetBlendStates()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 }
 
-void Deferred::UpdatePerms()
-{
-	if (deferredPass) {
-		auto& state = State::GetSingleton()->shadowState;
-		GET_INSTANCE_MEMBER(alphaBlendMode, state)
-		GET_INSTANCE_MEMBER(alphaBlendAlphaToCoverage, state)
-		GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
-		GET_INSTANCE_MEMBER(alphaBlendModeExtra, state)
-
-		std::string comboStr = std::format("{} {} {} {}", alphaBlendMode, alphaBlendAlphaToCoverage, alphaBlendWriteMode, alphaBlendModeExtra);
-
-		perms.insert(comboStr);
-	}
-}
-
 void Deferred::ClearShaderCache()
 {
-	if (directionalShadowCS) {
-		directionalShadowCS->Release();
-		directionalShadowCS = nullptr;
-	}
-	if (directionalCS) {
-		directionalCS->Release();
-		directionalCS = nullptr;
-	}
 	if (ambientCompositeCS) {
 		ambientCompositeCS->Release();
 		ambientCompositeCS = nullptr;
@@ -785,29 +533,11 @@ void Deferred::ClearShaderCache()
 	}
 }
 
-ID3D11ComputeShader* Deferred::GetComputeDirectionalShadow()
-{
-	if (!directionalShadowCS) {
-		logger::debug("Compiling DeferredCompositeCS DirectionalShadowPass");
-		directionalShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalShadowPass");
-	}
-	return directionalShadowCS;
-}
-
-ID3D11ComputeShader* Deferred::GetComputeDirectional()
-{
-	if (!directionalCS) {
-		logger::debug("Compiling DeferredCompositeCS DirectionalPass");
-		directionalCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "DirectionalPass");
-	}
-	return directionalCS;
-}
-
 ID3D11ComputeShader* Deferred::GetComputeAmbientComposite()
 {
 	if (!ambientCompositeCS) {
-		logger::debug("Compiling DeferredCompositeCS AmbientCompositePass");
-		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "AmbientCompositePass");
+		logger::debug("Compiling AmbientCompositeCS");
+		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\AmbientCompositeCS.hlsl", {}, "cs_5_0");
 	}
 	return ambientCompositeCS;
 }
@@ -815,8 +545,8 @@ ID3D11ComputeShader* Deferred::GetComputeAmbientComposite()
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 {
 	if (!mainCompositeCS) {
-		logger::debug("Compiling DeferredCompositeCS MainCompositePass");
-		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0", "MainCompositePass");
+		logger::debug("Compiling DeferredCompositeCS");
+		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0");
 	}
 	return mainCompositeCS;
 }

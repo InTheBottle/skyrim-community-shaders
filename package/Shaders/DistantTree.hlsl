@@ -3,6 +3,7 @@
 #include "Common/GBuffer.hlsli"
 #include "Common/MotionBlur.hlsl"
 #include "Common/VR.hlsli"
+#include "Common/SharedData.hlsli"
 
 struct VS_INPUT
 {
@@ -189,14 +190,12 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	float4 baseColor = TexDiffuse.Sample(SampDiffuse, input.TexCoord.xy);
 
-#		if defined(DO_ALPHA_TEST)
 	if ((baseColor.w - AlphaTestRefRS) < 0) {
 		discard;
 	}
-#		endif  // DO_ALPHA_TEST
 
 #		if defined(DEFERRED)
-	psout.Diffuse.xyz = 0;
+	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5;
 	psout.Diffuse.w = 1;
 
 	psout.MotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
@@ -211,7 +210,15 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Albedo = float4(baseColor.xyz * 0.5, 1);
 	psout.Masks = float4(0, 0, 1, 0);
 #		else
-	psout.Diffuse = float4((input.TexCoord.zzz * DiffuseColor.xyz + AmbientColor.xyz) * baseColor.xyz, 1.0);
+	float3 ddx = ddx_coarse(input.WorldPosition);
+	float3 ddy = ddy_coarse(input.WorldPosition);
+	float3 normal = normalize(cross(ddx, ddy));
+	
+	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
+
+	float3 color = DirLightColorShared.xyz * baseColor.xyz * 0.5;
+	color += baseColor.xyz * 0.5 * directionalAmbientColor;
+	psout.Diffuse = float4(color, 1.0);
 #		endif  // DEFERRED
 #	endif      // RENDER_DEPTH
 

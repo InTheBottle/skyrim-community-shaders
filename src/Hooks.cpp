@@ -2,11 +2,9 @@
 
 #include <detours/Detours.h>
 
-#include "Deferred.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
-#include "VariableRateShading.h"
 
 #include "ShaderTools/BSShaderHooks.h"
 
@@ -108,6 +106,8 @@ void hk_BSShader_LoadShaders(RE::BSShader* shader, std::uintptr_t stream)
 			auto pixelShaderDescriptor = entry->id;
 			State::GetSingleton()->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 			shaderCache.GetPixelShader(*shader, pixelShaderDescriptor);
+			State::GetSingleton()->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
+			shaderCache.GetPixelShader(*shader, pixelShaderDescriptor);
 		}
 	}
 	BSShaderHooks::hk_LoadShaders((REX::BSShader*)shader, stream);
@@ -124,7 +124,6 @@ bool hk_BSShader_BeginTechnique(RE::BSShader* shader, uint32_t vertexDescriptor,
 	state->currentVertexDescriptor = vertexDescriptor;
 	state->currentPixelDescriptor = pixelDescriptor;
 	state->updateShader = true;
-
 	return (ptr_BSShader_BeginTechnique)(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 }
 
@@ -290,56 +289,6 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct BSImagespaceShaderISSAOCompositeSAO_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			State::GetSingleton()->DrawDeferred();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSImagespaceShaderISSAOCompositeFog_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			State::GetSingleton()->DrawDeferred();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSImagespaceShaderISSAOCompositeSAOFog_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			State::GetSingleton()->DrawDeferred();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSImagespaceShaderHDRTonemapBlendCinematic_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			State::GetSingleton()->DrawPreProcess();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSImagespaceShaderHDRTonemapBlendCinematicFade_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			State::GetSingleton()->DrawPreProcess();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct WndProcHandler_Hook
 	{
 		static LRESULT thunk(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM a_lParam)
@@ -434,15 +383,6 @@ namespace Hooks
 		logger::info("Hooking BSGraphics::Renderer::InitD3D");
 		stl::write_thunk_call<BSGraphics_Renderer_Init_InitD3D>(REL::RelocationID(75595, 77226).address() + REL::Relocate(0x50, 0x2BC));
 
-		logger::info("Hooking deferred passes");
-		stl::write_vfunc<0x2, BSImagespaceShaderISSAOCompositeSAO_SetupTechnique>(RE::VTABLE_BSImagespaceShaderISSAOCompositeSAO[0]);
-		stl::write_vfunc<0x2, BSImagespaceShaderISSAOCompositeFog_SetupTechnique>(RE::VTABLE_BSImagespaceShaderISSAOCompositeFog[0]);
-		stl::write_vfunc<0x2, BSImagespaceShaderISSAOCompositeSAOFog_SetupTechnique>(RE::VTABLE_BSImagespaceShaderISSAOCompositeSAOFog[0]);
-
-		logger::info("Hooking preprocess passes");
-		stl::write_vfunc<0x2, BSImagespaceShaderHDRTonemapBlendCinematic_SetupTechnique>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematic[0]);
-		stl::write_vfunc<0x2, BSImagespaceShaderHDRTonemapBlendCinematicFade_SetupTechnique>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematicFade[0]);
-
 		logger::info("Hooking WndProcHandler");
 		stl::write_thunk_call_6<RegisterClassA_Hook>(REL::VariantID(75591, 77226, 0xDC4B90).address() + REL::VariantOffset(0x8E, 0x15C, 0x99).offset());
 
@@ -458,7 +398,7 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_Normals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x458, 0x45B, 0x5B0));
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		if (!REL::Module::IsVR())
-			stl::write_thunk_call<CreateRenderTarget_Snow>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x406, 0x402));
+			stl::write_thunk_call<CreateRenderTarget_Snow>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x406, 0x409));
 		stl::write_thunk_call<CreateRenderTarget_ShadowMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x555, 0x554, 0x6b9));
 	}
 }

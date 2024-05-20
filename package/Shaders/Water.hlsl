@@ -6,7 +6,7 @@
 
 #undef SKYLIGHTING
 
-#include "Common/LightingData.hlsl"
+#include "Common/SharedData.hlsli"
 
 struct VS_INPUT
 {
@@ -287,13 +287,13 @@ cbuffer PerTechnique : register(b0)
 #	if !defined(VR)
 	float4 VPOSOffset : packoffset(c0);    // inverse main render target width and height in xy, 0 in zw
 	float4 PosAdjust[1] : packoffset(c1);  // inverse framebuffer range in w
-	float4 CameraData : packoffset(c2);
+	float4 CameraDataWater : packoffset(c2);
 	float4 SunDir : packoffset(c3);
 	float4 SunColor : packoffset(c4);
 #	else
 	float4 VPOSOffset : packoffset(c0);    // inverse main render target width and height in xy, 0 in zw
 	float4 PosAdjust[2] : packoffset(c1);  // inverse framebuffer range in w
-	float4 CameraData : packoffset(c3);
+	float4 CameraDataWater : packoffset(c3);
 	float4 SunDir : packoffset(c4);
 	float4 SunColor : packoffset(c5);
 #	endif
@@ -337,7 +337,7 @@ cbuffer PerGeometry : register(b2)
 #	ifdef VR
 float GetStencil(float2 uv)
 {
-	return DepthTex.Load(int3(uv * lightingData[0].BufferDim * DynamicResolutionParams1.xy, 0)).g;
+	return DepthTex.Load(int3(uv * BufferDim * DynamicResolutionParams1.xy, 0)).g;
 }
 
 /**
@@ -530,11 +530,11 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 	float distanceFactor, float refractionsDepthFactor, uint a_eyeIndex = 0)
 {
 	float4 dynamicCubemap = 0.0;
-	if (shaderDescriptors[0].PixelShaderDescriptor & _Reflections) {
+	if (PixelShaderDescriptor & _Reflections) {
 		float3 finalSsrReflectionColor = 0.0.xxx;
 		float ssrFraction = 0;
 		float3 reflectionColor = 0;
-		if (shaderDescriptors[0].PixelShaderDescriptor & _Cubemap) {
+		if (PixelShaderDescriptor & _Cubemap) {
 			float3 cubemapUV = reflect(viewDirection, WaterParams.y * normal + float3(0, 0, 1 - WaterParams.y));
 #		if defined(DYNAMIC_CUBEMAPS)
 			dynamicCubemap = specularTexture.SampleLevel(CubeMapSampler, cubemapUV, 0);
@@ -558,7 +558,7 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 		}
 
 #		if !defined(LOD) && NUM_SPECULAR_LIGHTS == 0 && !defined(VR)
-		if (shaderDescriptors[0].PixelShaderDescriptor & _Cubemap) {
+		if (PixelShaderDescriptor & _Cubemap) {
 			float2 ssrReflectionUv = GetDynamicResolutionAdjustedScreenPosition((DynamicResolutionParams2.xy * input.HPosition.xy) * SSRParams.zw + SSRParams2.x * normal.xy);
 			float4 ssrReflectionColor1 = SSRReflectionTex.Sample(SSRReflectionSampler, ssrReflectionUv);
 			float4 ssrReflectionColor2 = RawSSRReflectionTex.Sample(RawSSRReflectionSampler, ssrReflectionUv);
@@ -592,7 +592,7 @@ float3 GetLdotN(float3 normal)
 #		if defined(UNDERWATER)
 	return 1;
 #		else
-	if (shaderDescriptors[0].PixelShaderDescriptor & _Interior)
+	if (PixelShaderDescriptor & _Interior)
 		return 1;
 	return saturate(dot(SunDir.xyz, normal));
 #		endif
@@ -688,7 +688,7 @@ float3 GetSunColor(float3 normal, float3 viewDirection)
 #		if defined(UNDERWATER)
 	return 0.0.xxx;
 #		else
-	if (shaderDescriptors[0].PixelShaderDescriptor & _Interior)
+	if (PixelShaderDescriptor & _Interior)
 		return 0.0.xxx;
 
 	float3 reflectionDirection = reflect(viewDirection, normal);

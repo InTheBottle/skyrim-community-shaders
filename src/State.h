@@ -41,8 +41,6 @@ public:
 	};
 
 	void Draw();
-	void DrawDeferred();
-	void DrawPreProcess();
 	void Reset();
 	void Setup();
 
@@ -90,7 +88,7 @@ public:
 	void ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_targetIndex, RE::BSGraphics::RenderTargetProperties* a_properties);
 
 	void SetupResources();
-	void ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor);
+	void ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred = false);
 
 	void BeginPerfEvent(std::string_view title);
 	void EndPerfEvent();
@@ -98,33 +96,34 @@ public:
 
 	bool extendedFrameAnnotations = false;
 
-	struct PerShader
-	{
-		uint VertexShaderDescriptor;
-		uint PixelShaderDescriptor;
-	};
-
 	uint lastVertexDescriptor = 0;
 	uint lastPixelDescriptor = 0;
 
-	std::unique_ptr<Buffer> shaderDataBuffer = nullptr;
+	void UpdateSharedData();
 
-	void UpdateSharedData(const RE::BSShader* shader, const uint32_t descriptor);
-
-	bool lightingDataRequiresUpdate = false;
-
-	struct LightingData
+	struct alignas(16) PermutationCB
 	{
-		float WaterHeight[25];
-		uint Reflections;
-		float4 CameraData;
-		float2 BufferDim;
-		float Timer;
+		uint VertexShaderDescriptor;
+		uint PixelShaderDescriptor;
+		uint pad0[2];
 	};
 
-	LightingData lightingData{};
+	ConstantBuffer* permutationCB = nullptr;
 
-	std::unique_ptr<Buffer> lightingDataBuffer = nullptr;
+	struct alignas(16) SharedDataCB
+	{
+		DirectX::XMFLOAT3X4 DirectionalAmbient;
+		float4 DirLightDirection;
+		float4 DirLightColor;
+		float4 CameraData;
+		float4 BufferDim;
+		float Timer;
+		uint pad0[3];
+		float WaterHeight[25];
+		uint pad1[3];
+	};
+
+	ConstantBuffer* sharedDataCB = nullptr;
 
 	// Skyrim constants
 	bool isVR = false;
