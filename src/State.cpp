@@ -25,7 +25,8 @@ void State::Draw()
 				if (enabledClasses[type - 1]) {
 					ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
 
-					RE::BSGraphics::VertexShader* vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);;
+					RE::BSGraphics::VertexShader* vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);
+					;
 					RE::BSGraphics::PixelShader* pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
 
 					if (vertexShader && pixelShader) {
@@ -331,7 +332,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 			PermutationCB data{};
 			data.VertexShaderDescriptor = a_vertexDescriptor;
 			data.PixelShaderDescriptor = a_pixelDescriptor;
-			
+
 			permutationCB->Update(data);
 
 			lastVertexDescriptor = a_vertexDescriptor;
@@ -480,7 +481,7 @@ void State::UpdateSharedData()
 	}
 
 	sharedDataCB->Update(data);
-	
+
 	ID3D11Buffer* buffers[2] = { permutationCB->CB(), sharedDataCB->CB() };
 	context->PSSetConstantBuffers(4, 2, buffers);
 
