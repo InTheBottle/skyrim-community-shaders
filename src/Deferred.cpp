@@ -4,14 +4,6 @@
 #include "State.h"
 #include "Util.h"
 
-#include <Features/CloudShadows.h>
-#include <Features/DynamicCubemaps.h>
-#include <Features/ScreenSpaceGI.h>
-#include <Features/ScreenSpaceShadows.h>
-#include <Features/Skylighting.h>
-#include <Features/SubsurfaceScattering.h>
-#include <Features/TerrainOcclusion.h>
-
 struct DepthStates
 {
 	ID3D11DepthStencilState* a[6][40];

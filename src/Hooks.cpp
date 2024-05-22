@@ -123,17 +123,19 @@ bool hk_BSShader_BeginTechnique(RE::BSShader* shader, uint32_t vertexDescriptor,
 
 	state->updateShader = true;
 	state->currentShader = shader;
+
 	state->currentVertexDescriptor = vertexDescriptor;
 	state->currentPixelDescriptor = pixelDescriptor;
+
 	state->modifiedVertexDescriptor = vertexDescriptor;
 	state->modifiedPixelDescriptor = pixelDescriptor;
+
 	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 
 	auto ret = (ptr_BSShader_BeginTechnique)(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 	
 	state->lastModifiedVertexDescriptor = state->modifiedVertexDescriptor;
 	state->lastModifiedPixelDescriptor = state->modifiedPixelDescriptor;
-	state->lastShaderType = shader->shaderType.get();
 
 	return ret;
 }

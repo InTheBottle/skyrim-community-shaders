@@ -96,7 +96,6 @@ public:
 
 	bool extendedFrameAnnotations = false;
 
-	RE::BSShader::Type lastShaderType;
 	uint lastVertexDescriptor = 0;
 	uint lastPixelDescriptor = 0;
 	uint modifiedVertexDescriptor = 0;
