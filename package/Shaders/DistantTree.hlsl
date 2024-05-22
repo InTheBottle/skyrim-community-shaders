@@ -2,8 +2,8 @@
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
 #include "Common/MotionBlur.hlsl"
-#include "Common/VR.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 struct VS_INPUT
 {
@@ -213,7 +213,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition);
 	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = normalize(cross(ddx, ddy));
-	
+
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 
 	float3 color = DirLightColorShared.xyz * baseColor.xyz * 0.5;

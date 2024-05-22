@@ -477,7 +477,7 @@ void State::UpdateSharedData()
 	}
 
 	sharedDataCB->Update(data);
-	
+
 	ID3D11Buffer* buffers[2] = { permutationCB->CB(), sharedDataCB->CB() };
 	context->PSSetConstantBuffers(4, 2, buffers);
 

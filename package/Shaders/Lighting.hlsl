@@ -1,10 +1,10 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
-#include "Common/SharedData.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/MotionBlur.hlsl"
 #include "Common/Permutation.hlsl"
+#include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
 
 #define PI 3.1415927
@@ -957,7 +957,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
-	
+
 	float3 viewDirection = normalize(input.ViewVector.xyz);
 	float3 worldSpaceViewDirection = -normalize(input.WorldPosition.xyz);
 
@@ -1745,8 +1745,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	TexEnvSampler.GetDimensions(envSize.x, envSize.y);
 
 	bool dynamicCubemap = false;
-	if (envMask != 0 && envSize.x == 1)
-	{
+	if (envMask != 0 && envSize.x == 1) {
 		dynamicCubemap = true;
 		envColorBase = TexEnvSampler.SampleLevel(SampEnvSampler, float3(1.0, 0.0, 0.0), 0);
 		if (envColorBase.a < 1.0) {
@@ -2024,10 +2023,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
-	
-#if defined(SNOW)
+
+#		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
-#endif
+#		endif
 
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
