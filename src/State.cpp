@@ -23,15 +23,19 @@ void State::Draw()
 			VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 			if (type > 0 && type < RE::BSShader::Type::Total) {
 				if (enabledClasses[type - 1]) {
-					ModifyShaderLookup(*currentShader, currentVertexDescriptor, currentPixelDescriptor);
 
-					RE::BSGraphics::VertexShader* vertexShader = shaderCache.GetVertexShader(*currentShader, currentVertexDescriptor);;
-					RE::BSGraphics::PixelShader* pixelShader = shaderCache.GetPixelShader(*currentShader, currentPixelDescriptor);
+					// Only check against non-shader bits
+					currentPixelDescriptor &= ~modifiedPixelDescriptor;			
+					if (currentPixelDescriptor != lastPixelDescriptor) {
+						PermutationCB data{};
+						data.VertexShaderDescriptor = currentVertexDescriptor;
+						data.PixelShaderDescriptor = currentPixelDescriptor;
 
-					if (vertexShader && pixelShader) {
-						context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
-						context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
-					}
+						permutationCB->Update(data);
+
+						lastVertexDescriptor = currentVertexDescriptor;
+						lastPixelDescriptor = currentPixelDescriptor;
+					}		
 
 					if (IsDeveloperMode()) {
 						BeginPerfEvent(std::format("Draw: CS {}::{:x}", magic_enum::enum_name(currentShader->shaderType.get()), currentPixelDescriptor));
@@ -53,6 +57,10 @@ void State::Reset()
 	if (!RE::UI::GetSingleton()->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
 	VariableRateShading::GetSingleton()->UpdateVRS();
+	lastModifiedPixelDescriptor = 0;
+	lastModifiedVertexDescriptor = 0;
+	lastPixelDescriptor = 0;
+	lastVertexDescriptor = 0;
 }
 
 void State::Setup()
@@ -327,17 +335,6 @@ void State::SetupResources()
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
 {
 	if (a_shader.shaderType.get() != RE::BSShader::Type::Utility && a_shader.shaderType.get() != RE::BSShader::Type::ImageSpace) {
-		if (a_vertexDescriptor != lastVertexDescriptor || a_pixelDescriptor != lastPixelDescriptor) {
-			PermutationCB data{};
-			data.VertexShaderDescriptor = a_vertexDescriptor;
-			data.PixelShaderDescriptor = a_pixelDescriptor;
-			
-			permutationCB->Update(data);
-
-			lastVertexDescriptor = a_vertexDescriptor;
-			lastPixelDescriptor = a_pixelDescriptor;
-		}
-
 		switch (a_shader.shaderType.get()) {
 		case RE::BSShader::Type::Lighting:
 			{

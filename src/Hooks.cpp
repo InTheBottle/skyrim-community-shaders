@@ -120,11 +120,22 @@ decltype(&hk_BSShader_BeginTechnique) ptr_BSShader_BeginTechnique;
 bool hk_BSShader_BeginTechnique(RE::BSShader* shader, uint32_t vertexDescriptor, uint32_t pixelDescriptor, bool skipPixelShader)
 {
 	auto state = State::GetSingleton();
+
+	state->updateShader = true;
 	state->currentShader = shader;
 	state->currentVertexDescriptor = vertexDescriptor;
 	state->currentPixelDescriptor = pixelDescriptor;
-	state->updateShader = true;
-	return (ptr_BSShader_BeginTechnique)(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
+	state->modifiedVertexDescriptor = vertexDescriptor;
+	state->modifiedPixelDescriptor = pixelDescriptor;
+	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
+
+	auto ret = (ptr_BSShader_BeginTechnique)(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
+	
+	state->lastModifiedVertexDescriptor = state->modifiedVertexDescriptor;
+	state->lastModifiedPixelDescriptor = state->modifiedPixelDescriptor;
+	state->lastShaderType = shader->shaderType.get();
+
+	return ret;
 }
 
 decltype(&IDXGISwapChain::Present) ptr_IDXGISwapChain_Present;
@@ -366,6 +377,64 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct BSShader__BeginTechnique_SetVertexShader
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::BSGraphics::VertexShader* a_vertexShader)
+		{
+			func(This, a_vertexShader); // TODO: Remove original call
+			auto& shaderCache = SIE::ShaderCache::Instance();
+			if (shaderCache.IsEnabled()) {
+				auto state = State::GetSingleton();
+				auto currentShader = state->currentShader;
+				auto type = currentShader->shaderType.get();
+				if (type > 0 && type < RE::BSShader::Type::Total) {
+					if (state->enabledClasses[type - 1]) {
+						RE::BSGraphics::VertexShader* vertexShader = shaderCache.GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
+						if (vertexShader) {
+							state->context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+							auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+							shadowState->GetRuntimeData().currentVertexShader = a_vertexShader;
+							return;
+						}
+					} 
+				}
+			}
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSShader__BeginTechnique_SetPixelShader
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::BSGraphics::PixelShader* a_pixelShader)
+		{
+			auto& shaderCache = SIE::ShaderCache::Instance();
+			if (shaderCache.IsEnabled()) {
+				auto state = State::GetSingleton();
+				auto currentShader = state->currentShader;
+				auto type = currentShader->shaderType.get();
+				if (type > 0 && type < RE::BSShader::Type::Total) {
+					if (state->enabledClasses[type - 1]) {
+						if (state->lastModifiedPixelDescriptor != state->modifiedPixelDescriptor) {
+							RE::BSGraphics::PixelShader* pixelShader = shaderCache.GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
+							if (pixelShader) {
+								state->context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+								auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+								shadowState->GetRuntimeData().currentPixelShader = a_pixelShader;
+								return;
+							}
+						} else {
+							auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+							shadowState->GetRuntimeData().currentPixelShader = a_pixelShader;
+							return;
+						}
+					}
+				}
+			}
+			func(This, a_pixelShader);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	void Install()
 	{
 		SKSE::AllocTrampoline(14);
@@ -377,6 +446,10 @@ namespace Hooks
 		*(uintptr_t*)&ptr_BSShader_LoadShaders = Detours::X64::DetourFunction(REL::RelocationID(101339, 108326).address(), (uintptr_t)&hk_BSShader_LoadShaders);
 		logger::info("Hooking BSShader::BeginTechnique");
 		*(uintptr_t*)&ptr_BSShader_BeginTechnique = Detours::X64::DetourFunction(REL::RelocationID(101341, 108328).address(), (uintptr_t)&hk_BSShader_BeginTechnique);
+		
+		stl::write_thunk_call<BSShader__BeginTechnique_SetVertexShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xC3, 0x3F3, 0x548));
+		stl::write_thunk_call<BSShader__BeginTechnique_SetPixelShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xD7, 0x3F3, 0x548));
+
 		logger::info("Hooking BSGraphics::SetDirtyStates");
 		*(uintptr_t*)&ptr_BSGraphics_SetDirtyStates = Detours::X64::DetourFunction(REL::RelocationID(75580, 77386).address(), (uintptr_t)&hk_BSGraphics_SetDirtyStates);
 
