@@ -133,7 +133,7 @@ bool hk_BSShader_BeginTechnique(RE::BSShader* shader, uint32_t vertexDescriptor,
 	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 
 	auto ret = (ptr_BSShader_BeginTechnique)(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
-	
+
 	state->lastModifiedVertexDescriptor = state->modifiedVertexDescriptor;
 	state->lastModifiedPixelDescriptor = state->modifiedPixelDescriptor;
 
@@ -383,7 +383,7 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::BSGraphics::VertexShader* a_vertexShader)
 		{
-			func(This, a_vertexShader); // TODO: Remove original call
+			func(This, a_vertexShader);  // TODO: Remove original call
 			auto& shaderCache = SIE::ShaderCache::Instance();
 			if (shaderCache.IsEnabled()) {
 				auto state = State::GetSingleton();
@@ -398,7 +398,7 @@ namespace Hooks
 							shadowState->GetRuntimeData().currentVertexShader = a_vertexShader;
 							return;
 						}
-					} 
+					}
 				}
 			}
 		}
@@ -448,7 +448,7 @@ namespace Hooks
 		*(uintptr_t*)&ptr_BSShader_LoadShaders = Detours::X64::DetourFunction(REL::RelocationID(101339, 108326).address(), (uintptr_t)&hk_BSShader_LoadShaders);
 		logger::info("Hooking BSShader::BeginTechnique");
 		*(uintptr_t*)&ptr_BSShader_BeginTechnique = Detours::X64::DetourFunction(REL::RelocationID(101341, 108328).address(), (uintptr_t)&hk_BSShader_BeginTechnique);
-		
+
 		stl::write_thunk_call<BSShader__BeginTechnique_SetVertexShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xC3, 0x3F3, 0x548));
 		stl::write_thunk_call<BSShader__BeginTechnique_SetPixelShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xD7, 0x3F3, 0x548));
 
