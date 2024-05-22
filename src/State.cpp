@@ -23,9 +23,8 @@ void State::Draw()
 			VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 			if (type > 0 && type < RE::BSShader::Type::Total) {
 				if (enabledClasses[type - 1]) {
-
 					// Only check against non-shader bits
-					currentPixelDescriptor &= ~modifiedPixelDescriptor;			
+					currentPixelDescriptor &= ~modifiedPixelDescriptor;
 					if (currentPixelDescriptor != lastPixelDescriptor) {
 						PermutationCB data{};
 						data.VertexShaderDescriptor = currentVertexDescriptor;
@@ -35,7 +34,7 @@ void State::Draw()
 
 						lastVertexDescriptor = currentVertexDescriptor;
 						lastPixelDescriptor = currentPixelDescriptor;
-					}		
+					}
 
 					if (IsDeveloperMode()) {
 						BeginPerfEvent(std::format("Draw: CS {}::{:x}", magic_enum::enum_name(currentShader->shaderType.get()), currentPixelDescriptor));
