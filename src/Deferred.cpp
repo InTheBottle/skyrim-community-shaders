@@ -332,8 +332,7 @@ void Deferred::DeferredPasses()
 	}
 
 	auto sss = SubsurfaceScattering::GetSingleton();
-	if (sss->loaded)
-	{
+	if (sss->loaded) {
 		sss->DrawSSSWrapper(false);
 	}
 

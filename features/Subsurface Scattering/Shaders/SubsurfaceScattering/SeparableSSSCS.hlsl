@@ -14,16 +14,17 @@ cbuffer PerFrameSSS : register(b1)
 	float SSSS_FOVY;
 };
 
-#include "../Common/Constants.hlsli"
 #include "../Common/Color.hlsl"
+#include "../Common/Constants.hlsli"
 #include "../Common/DeferredShared.hlsli"
 
 #include "SeparableSSS.hlsli"
 
-[numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 DTid
+								: SV_DispatchThreadID) {
 	float2 texCoord = (DTid.xy + 0.5) * BufferDim.zw;
-	
-#	if defined(HORIZONTAL)
+
+#if defined(HORIZONTAL)
 
 	float sssAmount = MaskTexture[DTid.xy].x;
 	bool humanProfile = MaskTexture[DTid.xy].y == sssAmount;
@@ -31,7 +32,7 @@ cbuffer PerFrameSSS : register(b1)
 	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(1.0, 0.0), sssAmount, humanProfile);
 	SSSRW[DTid.xy] = max(0, color);
 
-#	else
+#else
 
 	float sssAmount = MaskTexture[DTid.xy].x;
 	bool humanProfile = MaskTexture[DTid.xy].y == sssAmount;
