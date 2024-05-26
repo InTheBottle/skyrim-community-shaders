@@ -54,17 +54,16 @@ public:
 	ConstantBuffer* blurCB = nullptr;
 	BlurCB blurCBData{};
 
-	struct alignas(16) PerPass
+	struct PerPass
 	{
-		uint ValidMaterial;
 		uint IsBeastRace;
-		uint pad0[2];
 	};
 
 	std::unique_ptr<Buffer> perPass = nullptr;
 
 	bool validMaterial = true;
 	bool updateKernels = true;
+	bool validMaterials = false;
 
 	Texture2D* blurHorizontalTemp = nullptr;
 
@@ -89,9 +88,7 @@ public:
 	float3 Profile(DiffusionProfile& a_profile, float r);
 	void CalculateKernel(DiffusionProfile& a_profile, Kernel& kernel);
 
-	void DrawSSSWrapper(bool a_firstPerson);
-
-	void DrawSSS(bool a_firstPerson);
+	void DrawSSS();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
 
@@ -106,20 +103,10 @@ public:
 
 	void BSLightingShader_SetupSkin(RE::BSRenderPass* Pass);
 
-	void Bind();
+	virtual void Prepass() override;
 
 	struct Hooks
 	{
-		struct Main_RenderWorld_Start
-		{
-			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
-			{
-				GetSingleton()->Bind();
-				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
 		struct BSLightingShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
@@ -132,7 +119,6 @@ public:
 
 		static void Install()
 		{
-			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 			logger::info("[SSS] Installed hooks");
 		}

@@ -215,7 +215,7 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetConstantBuffers(1, 1, &buffer);
 }
 
-void ScreenSpaceShadows::ZPrepass()
+void ScreenSpaceShadows::Prepass()
 {
 	auto context = State::GetSingleton()->context;
 

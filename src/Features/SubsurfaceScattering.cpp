@@ -156,67 +156,13 @@ void SubsurfaceScattering::CalculateKernel(DiffusionProfile& a_profile, Kernel& 
 	}
 }
 
-void SubsurfaceScattering::DrawSSSWrapper(bool a_firstPerson)
+void SubsurfaceScattering::DrawSSS()
 {
-	if (!SIE::ShaderCache::Instance().IsEnabled())
+	if (!validMaterials)
 		return;
 
-	State::GetSingleton()->BeginPerfEvent(std::format("DrawSSS: {}", GetShortName()));
+	validMaterials = false;
 
-	auto& context = State::GetSingleton()->context;
-
-	ID3D11ShaderResourceView* srvs[8];
-	context->PSGetShaderResources(0, 8, srvs);
-
-	ID3D11ShaderResourceView* srvsCS[8];
-	context->CSGetShaderResources(0, 8, srvsCS);
-
-	ID3D11UnorderedAccessView* uavsCS[8];
-	context->CSGetUnorderedAccessViews(0, 8, uavsCS);
-
-	ID3D11UnorderedAccessView* nullUavs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
-
-	ID3D11ShaderResourceView* nullSrvs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->PSSetShaderResources(0, 8, nullSrvs);
-	context->CSSetShaderResources(0, 8, nullSrvs);
-
-	ID3D11RenderTargetView* views[8];
-	ID3D11DepthStencilView* dsv;
-	context->OMGetRenderTargets(8, views, &dsv);
-
-	ID3D11RenderTargetView* nullViews[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	ID3D11DepthStencilView* nullDsv = nullptr;
-	context->OMSetRenderTargets(8, nullViews, nullDsv);
-
-	DrawSSS(a_firstPerson);
-
-	context->PSSetShaderResources(0, 8, srvs);
-	context->CSSetShaderResources(0, 8, srvsCS);
-	context->CSSetUnorderedAccessViews(0, 8, uavsCS, nullptr);
-	context->OMSetRenderTargets(8, views, dsv);
-
-	for (int i = 0; i < 8; i++) {
-		if (srvs[i])
-			srvs[i]->Release();
-		if (srvsCS[i])
-			srvsCS[i]->Release();
-	}
-
-	for (int i = 0; i < 8; i++) {
-		if (views[i])
-			views[i]->Release();
-	}
-
-	if (dsv)
-		dsv->Release();
-
-	validMaterial = false;
-	State::GetSingleton()->EndPerfEvent();
-}
-
-void SubsurfaceScattering::DrawSSS(bool a_firstPerson)
-{
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	float resolutionX = blurHorizontalTemp->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
@@ -244,7 +190,10 @@ void SubsurfaceScattering::DrawSSS(bool a_firstPerson)
 
 		auto main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-		auto mask = renderer->GetRuntimeData().renderTargets[a_firstPerson ? normalsMode : MASKS];
+		auto mask = renderer->GetRuntimeData().renderTargets[MASKS];
+
+		ID3D11UnorderedAccessView* uav = blurHorizontalTemp->uav.get();
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
 		ID3D11ShaderResourceView* views[3];
 		views[0] = main.SRV;
@@ -253,12 +202,8 @@ void SubsurfaceScattering::DrawSSS(bool a_firstPerson)
 
 		context->CSSetShaderResources(0, 3, views);
 
-		ID3D11UnorderedAccessView* uav = blurHorizontalTemp->uav.get();
-
 		// Horizontal pass to temporary texture
 		{
-			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-
 			auto shader = GetComputeShaderHorizontalBlur();
 			context->CSSetShader(shader, nullptr, 0);
 
@@ -420,40 +365,42 @@ void SubsurfaceScattering::PostPostLoad()
 
 void SubsurfaceScattering::BSLightingShader_SetupSkin(RE::BSRenderPass* a_pass)
 {
-	if (a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFace, RE::BSShaderProperty::EShaderPropertyFlag::kFaceGenRGBTint)) {
-		bool isBeastRace = true;
+	if (Deferred::GetSingleton()->deferredPass) {
+		if (a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFace, RE::BSShaderProperty::EShaderPropertyFlag::kFaceGenRGBTint)) {
+			bool isBeastRace = true;
 
-		auto geometry = a_pass->geometry;
-		if (auto userData = geometry->GetUserData()) {
-			if (auto actor = userData->As<RE::Actor>()) {
-				if (auto race = actor->GetRace()) {
-					static auto isBeastRaceForm = RE::TESForm::LookupByEditorID("IsBeastRace")->As<RE::BGSKeyword>();
-					isBeastRace = race->HasKeyword(isBeastRaceForm);
+			auto geometry = a_pass->geometry;
+			if (auto userData = geometry->GetUserData()) {
+				if (auto actor = userData->As<RE::Actor>()) {
+					if (auto race = actor->GetRace()) {
+						static auto isBeastRaceForm = RE::TESForm::LookupByEditorID("IsBeastRace")->As<RE::BGSKeyword>();
+						isBeastRace = race->HasKeyword(isBeastRaceForm);
+					}
 				}
 			}
-		}
 
-		static PerPass perPassData{};
+			validMaterials = true;
 
-		if (perPassData.ValidMaterial != (uint)validMaterial || perPassData.IsBeastRace != (uint)isBeastRace) {
-			perPassData.ValidMaterial = validMaterial;
-			perPassData.IsBeastRace = isBeastRace;
+			static PerPass perPassData{};
 
-			auto& context = State::GetSingleton()->context;
+			if (perPassData.IsBeastRace != (uint)isBeastRace) {
+				perPassData.IsBeastRace = isBeastRace;
 
-			D3D11_MAPPED_SUBRESOURCE mapped;
-			DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-			size_t bytes = sizeof(PerPass);
-			memcpy_s(mapped.pData, bytes, &perPassData, bytes);
-			context->Unmap(perPass->resource.get(), 0);
+				auto& context = State::GetSingleton()->context;
+
+				D3D11_MAPPED_SUBRESOURCE mapped;
+				DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+				size_t bytes = sizeof(PerPass);
+				memcpy_s(mapped.pData, bytes, &perPassData, bytes);
+				context->Unmap(perPass->resource.get(), 0);
+			}
 		}
 	}
 }
 
-void SubsurfaceScattering::Bind()
+void SubsurfaceScattering::Prepass()
 {
 	auto& context = State::GetSingleton()->context;
 	ID3D11ShaderResourceView* view = perPass->srv.get();
 	context->PSSetShaderResources(36, 1, &view);
-	validMaterial = true;
 }

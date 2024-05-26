@@ -132,7 +132,7 @@ void Deferred::UpdateConstantBuffer()
 	deferredCB->Update(data);
 }
 
-void Deferred::ZPrepassPasses()
+void Deferred::PrepassPasses()
 {
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
@@ -144,7 +144,7 @@ void Deferred::ZPrepassPasses()
 
 	for (auto* feature : Feature::GetFeatureList()) {
 		if (feature->loaded) {
-			feature->ZPrepass();
+			feature->Prepass();
 		}
 	}
 }
@@ -276,7 +276,7 @@ void Deferred::StartDeferred()
 
 	deferredPass = true;
 
-	ZPrepassPasses();
+	PrepassPasses();
 }
 
 void Deferred::DeferredPasses()
@@ -333,9 +333,7 @@ void Deferred::DeferredPasses()
 
 	auto sss = SubsurfaceScattering::GetSingleton();
 	if (sss->loaded)
-	{
-		sss->DrawSSSWrapper(false);
-	}
+		sss->DrawSSS();
 
 	// Deferred Composite
 	{

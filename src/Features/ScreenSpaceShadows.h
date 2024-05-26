@@ -65,7 +65,7 @@ struct ScreenSpaceShadows : Feature
 
 	virtual void Draw(const RE::BSShader*, const uint32_t){};
 
-	virtual void ZPrepass() override;
+	virtual void Prepass() override;
 
 	virtual void Load(json& o_json);
 	virtual void Save(json& o_json);
