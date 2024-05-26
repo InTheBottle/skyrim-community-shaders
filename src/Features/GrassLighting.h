@@ -24,7 +24,7 @@ struct GrassLighting : Feature
 	};
 
 	Settings settings;
-	
+
 	virtual void SetupResources(){};
 
 	virtual void DrawSettings();

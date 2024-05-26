@@ -308,49 +308,51 @@ void Deferred::DeferredPasses()
 	// Ambient Composite
 	{
 		ID3D11ShaderResourceView* srvs[2]{
-											albedo.SRV,
-											normalRoughness.SRV };
+			albedo.SRV,
+			normalRoughness.SRV
+		};
 
-	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	auto shader = GetComputeAmbientComposite();
-	context->CSSetShader(shader, nullptr, 0);
+		auto shader = GetComputeAmbientComposite();
+		context->CSSetShader(shader, nullptr, 0);
 
-	float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-	float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
-	uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
-	uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
 
-	context->Dispatch(dispatchX, dispatchY, 1);
+		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
 	// Deferred Composite
 	{
-		ID3D11ShaderResourceView * srvs[4]{
-										 specular.SRV,
-										 albedo.SRV,
-										 normalRoughness.SRV,
-										 masks2.SRV };
+		ID3D11ShaderResourceView* srvs[4]{
+			specular.SRV,
+			albedo.SRV,
+			normalRoughness.SRV,
+			masks2.SRV
+		};
 
-	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	auto shader = GetComputeMainComposite();
-	context->CSSetShader(shader, nullptr, 0);
+		auto shader = GetComputeMainComposite();
+		context->CSSetShader(shader, nullptr, 0);
 
-	float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-	float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+		float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
 
-	uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
-	uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
+		uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
 
-	context->Dispatch(dispatchX, dispatchY, 1);
+		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
 	// Clear
