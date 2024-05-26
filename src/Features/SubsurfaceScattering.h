@@ -47,12 +47,8 @@ public:
 		Kernel HumanKernel;
 		float4 BaseProfile;
 		float4 HumanProfile;
-		float4 CameraData;
-		float2 BufferDim;
-		float2 RcpBufferDim;
-		uint FrameCount;
 		float SSSS_FOVY;
-		uint pad[2];
+		uint pad[3];
 	};
 
 	ConstantBuffer* blurCB = nullptr;
@@ -68,14 +64,12 @@ public:
 	std::unique_ptr<Buffer> perPass = nullptr;
 
 	bool validMaterial = true;
+	bool updateKernels = true;
 
 	Texture2D* blurHorizontalTemp = nullptr;
 
 	ID3D11ComputeShader* horizontalSSBlur = nullptr;
 	ID3D11ComputeShader* verticalSSBlur = nullptr;
-	ID3D11ComputeShader* horizontalSSBlurFP = nullptr;
-	ID3D11ComputeShader* verticalSSBlurFP = nullptr;
-	ID3D11ComputeShader* clearBuffer = nullptr;
 
 	RE::RENDER_TARGET normalsMode = RE::RENDER_TARGET::kNONE;
 
@@ -107,13 +101,8 @@ public:
 	virtual void ClearShaderCache();
 	ID3D11ComputeShader* GetComputeShaderHorizontalBlur();
 	ID3D11ComputeShader* GetComputeShaderVerticalBlur();
-	ID3D11ComputeShader* GetComputeShaderHorizontalBlurFP();
-	ID3D11ComputeShader* GetComputeShaderVerticalBlurFP();
-	ID3D11ComputeShader* GetComputeShaderClearBuffer();
 
 	virtual void PostPostLoad() override;
-
-	void OverrideFirstPersonRenderTargets();
 
 	void BSLightingShader_SetupSkin(RE::BSRenderPass* Pass);
 
@@ -131,26 +120,6 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct Main_RenderFirstPersonView_Start
-		{
-			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
-			{
-				GetSingleton()->OverrideFirstPersonRenderTargets();
-				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
-		struct Main_RenderFirstPersonView_End
-		{
-			static void thunk(RE::BSBatchRenderer* This, uint32_t StartRange, uint32_t EndRanges, uint32_t RenderFlags, int GeometryGroup)
-			{
-				GetSingleton()->DrawSSSWrapper(true);
-				func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
 		struct BSLightingShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
@@ -164,10 +133,6 @@ public:
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
-			//if (!REL::Module::IsVR()) {
-			//	stl::write_thunk_call<Main_RenderFirstPersonView_Start>(REL::RelocationID(99943, 106588).address() + REL::Relocate(0x70, 0x66));
-			//	stl::write_thunk_call<Main_RenderFirstPersonView_End>(REL::RelocationID(99943, 106588).address() + REL::Relocate(0x49C, 0x47E, 0x4fc));
-			//}
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 			logger::info("[SSS] Installed hooks");
 		}

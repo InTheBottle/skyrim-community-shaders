@@ -4,6 +4,8 @@
 #include "State.h"
 #include "Util.h"
 
+#include "Features/SubsurfaceScattering.h"
+
 struct DepthStates
 {
 	ID3D11DepthStencilState* a[6][40];
@@ -327,6 +329,12 @@ void Deferred::DeferredPasses()
 		uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
 
 		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	auto sss = SubsurfaceScattering::GetSingleton();
+	if (sss->loaded)
+	{
+		sss->DrawSSSWrapper(false);
 	}
 
 	// Deferred Composite
