@@ -224,7 +224,7 @@ void ScreenSpaceShadows::ZPrepass()
 
 	if (bendSettings.Enable)
 		DrawShadows();
-	
+
 	auto view = screenSpaceShadowsTexture->srv.get();
 	context->PSSetShaderResources(17, 1, &view);
 }
@@ -295,6 +295,5 @@ void ScreenSpaceShadows::SetupResources()
 		screenSpaceShadowsTexture = new Texture2D(texDesc);
 		screenSpaceShadowsTexture->CreateSRV(srvDesc);
 		screenSpaceShadowsTexture->CreateUAV(uavDesc);
-
 	}
 }

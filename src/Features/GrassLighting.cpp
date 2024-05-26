@@ -10,7 +10,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	OverrideComplexGrassSettings,
 	BasicGrassBrightness)
 
-
 void GrassLighting::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("Complex Grass", ImGuiTreeNodeFlags_DefaultOpen)) {

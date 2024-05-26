@@ -1,8 +1,8 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
-#include "Common/SharedData.hlsli"
 #include "Common/MotionBlur.hlsl"
+#include "Common/SharedData.hlsli"
 
 #define GRASS
 
@@ -358,7 +358,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 diffuseColor = 0;
 	float3 specularColor = 0;
-
 
 	float3 lightsDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirShadow;
 	float3 lightsSpecularColor = 0;
