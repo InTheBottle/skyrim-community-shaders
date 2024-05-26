@@ -242,10 +242,10 @@ void DynamicCubemaps::UpdateCubemapCapture()
 	static float3 cameraPreviousPosAdjust = { 0, 0, 0 };
 	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust;
 
-	auto& state = State::GetSingleton()->shadowState;
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 	auto eyePosition = !REL::Module::IsVR() ?
-	                       state->GetRuntimeData().posAdjust.getEye(0) :
-	                       state->GetVRRuntimeData().posAdjust.getEye(0);
+	                       shadowState->GetRuntimeData().posAdjust.getEye(0) :
+	                       shadowState->GetVRRuntimeData().posAdjust.getEye(0);
 
 	cameraPreviousPosAdjust = { eyePosition.x, eyePosition.y, eyePosition.z };
 
@@ -406,7 +406,7 @@ void DynamicCubemaps::Draw(const RE::BSShader* shader, const uint32_t)
 {
 	if (shader->shaderType.get() == RE::BSShader::Type::Lighting || shader->shaderType.get() == RE::BSShader::Type::Water) {
 		// During world cubemap generation we cannot use the cubemap
-		auto& shadowState = State::GetSingleton()->shadowState;
+		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 		GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
 

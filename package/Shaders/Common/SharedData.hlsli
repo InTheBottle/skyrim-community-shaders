@@ -16,6 +16,16 @@ cbuffer SharedData : register(b5)
 	uint pad1b4[3];
 };
 
+cbuffer FeatureData : register(b6)
+{
+	float Glossiness;
+	float SpecularStrength;
+	float SubsurfaceScatteringAmount;
+	bool OverrideComplexGrassSettings;
+	float BasicGrassBrightness;
+	uint pad2b4[3];
+};
+
 Texture2D<float4> TexDepthSampler : register(t20);
 
 // Get a raw depth from the depth buffer. [0,1] in uv space

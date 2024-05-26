@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
+#include <FeatureBuffer.h>
+
 class State
 {
 public:
@@ -128,6 +130,7 @@ public:
 	};
 
 	ConstantBuffer* sharedDataCB = nullptr;
+	ConstantBuffer* featureDataCB = nullptr;
 
 	// Skyrim constants
 	bool isVR = false;
@@ -135,7 +138,6 @@ public:
 	float screenHeight = 0;
 	ID3D11DeviceContext* context = nullptr;
 	ID3D11Device* device = nullptr;
-	RE::BSGraphics::RendererShadowState* shadowState = nullptr;
 
 private:
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;

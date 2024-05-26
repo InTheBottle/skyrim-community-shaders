@@ -30,6 +30,8 @@ public:
 	void EndDeferred();
 	void UpdateConstantBuffer();
 
+	void ZPrepassPasses();
+
 	void ClearShaderCache();
 	ID3D11ComputeShader* GetComputeAmbientComposite();
 	ID3D11ComputeShader* GetComputeMainComposite();

@@ -135,7 +135,7 @@ static bool GetShapeBound(RE::bhkNiCollisionObject* Colliedobj, RE::NiPoint3& ce
 
 void GrassCollision::UpdateCollisions()
 {
-	auto& state = State::GetSingleton()->shadowState;
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	auto frameCount = RE::BSGraphics::State::GetSingleton()->uiFrameCount;
 
@@ -182,9 +182,9 @@ void GrassCollision::UpdateCollisions()
 						RE::NiPoint3 eyePosition{};
 						for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
 							if (!REL::Module::IsVR()) {
-								eyePosition = state->GetRuntimeData().posAdjust.getEye();
+								eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
 							} else
-								eyePosition = state->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
+								eyePosition = shadowState->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
 							data.centre[eyeIndex].x = centerPos.x - eyePosition.x;
 							data.centre[eyeIndex].y = centerPos.y - eyePosition.y;
 							data.centre[eyeIndex].z = centerPos.z - eyePosition.z;
@@ -248,16 +248,16 @@ void GrassCollision::ModifyGrass(const RE::BSShader*, const uint32_t)
 		PerFrame perFrameData{};
 		ZeroMemory(&perFrameData, sizeof(perFrameData));
 
-		auto& state = State::GetSingleton()->shadowState;
+		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 		auto& shaderState = RE::BSShaderManager::State::GetSingleton();
 
 		auto bound = shaderState.cachedPlayerBound;
 		RE::NiPoint3 eyePosition{};
 		for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
 			if (!REL::Module::IsVR()) {
-				eyePosition = state->GetRuntimeData().posAdjust.getEye();
+				eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
 			} else
-				eyePosition = state->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
+				eyePosition = shadowState->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
 			perFrameData.boundCentre[eyeIndex].x = bound.center.x - eyePosition.x;
 			perFrameData.boundCentre[eyeIndex].y = bound.center.y - eyePosition.y;
 			perFrameData.boundCentre[eyeIndex].z = bound.center.z - eyePosition.z;

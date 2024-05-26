@@ -240,7 +240,7 @@ namespace Util
 
 	float TryGetWaterHeight(float offsetX, float offsetY)
 	{
-		if (auto& shadowState = State::GetSingleton()->shadowState) {
+		if (auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton()) {
 			if (auto tes = RE::TES::GetSingleton()) {
 				auto position = !REL::Module::IsVR() ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
 				position.x += offsetX;

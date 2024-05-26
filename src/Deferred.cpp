@@ -130,6 +130,23 @@ void Deferred::UpdateConstantBuffer()
 	deferredCB->Update(data);
 }
 
+void Deferred::ZPrepassPasses()
+{
+	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->loaded) {
+			feature->ZPrepass();
+		}
+	}
+}
+
 void Deferred::StartDeferred()
 {
 	if (!inWorld)
@@ -227,10 +244,10 @@ void Deferred::StartDeferred()
 		setup = true;
 	}
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(renderTargets, state)
-	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 	// Backup original render targets
 	for (uint i = 0; i < 4; i++) {
@@ -256,6 +273,8 @@ void Deferred::StartDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	deferredPass = true;
+
+	ZPrepassPasses();
 }
 
 void Deferred::DeferredPasses()
@@ -288,9 +307,9 @@ void Deferred::DeferredPasses()
 
 	// Ambient Composite
 	{
-		{ ID3D11ShaderResourceView * srvs[2]{
-										 albedo.SRV,
-										 normalRoughness.SRV };
+		ID3D11ShaderResourceView* srvs[2]{
+											albedo.SRV,
+											normalRoughness.SRV };
 
 	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
@@ -307,48 +326,46 @@ void Deferred::DeferredPasses()
 	uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
 
 	context->Dispatch(dispatchX, dispatchY, 1);
-}
-}
+	}
 
-// Deferred Composite
-{
-	{ ID3D11ShaderResourceView * srvs[4]{
-									 specular.SRV,
-									 albedo.SRV,
-									 normalRoughness.SRV,
-									 masks2.SRV };
+	// Deferred Composite
+	{
+		ID3D11ShaderResourceView * srvs[4]{
+										 specular.SRV,
+										 albedo.SRV,
+										 normalRoughness.SRV,
+										 masks2.SRV };
 
-context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
-context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-auto shader = GetComputeMainComposite();
-context->CSSetShader(shader, nullptr, 0);
-
-float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-
-uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
-uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
-
-context->Dispatch(dispatchX, dispatchY, 1);
-}
-}
-
-// Clear
-{
-	ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-	ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
+	ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	ID3D11Buffer* buffer = nullptr;
-	context->CSSetConstantBuffers(0, 1, &buffer);
+	auto shader = GetComputeMainComposite();
+	context->CSSetShader(shader, nullptr, 0);
 
-	context->CSSetShader(nullptr, nullptr, 0);
-}
+	float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
+	float resolutionY = state->screenHeight * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+
+	uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
+	uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	// Clear
+	{
+		ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11Buffer* buffer = nullptr;
+		context->CSSetConstantBuffers(0, 1, &buffer);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 }
 
 void Deferred::EndDeferred()
@@ -363,9 +380,9 @@ void Deferred::EndDeferred()
 	if (!shaderCache.IsEnabled())
 		return;
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(renderTargets, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 	// Do not render to our targets past this point
 	for (uint i = 0; i < 4; i++) {
@@ -373,7 +390,7 @@ void Deferred::EndDeferred()
 	}
 
 	for (uint i = 4; i < 8; i++) {
-		state->GetRuntimeData().renderTargets[i] = RE::RENDER_TARGET::kNONE;
+		shadowState->GetRuntimeData().renderTargets[i] = RE::RENDER_TARGET::kNONE;
 	}
 
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
@@ -484,8 +501,8 @@ void Deferred::OverrideBlendStates()
 	blendStates->a[2][0][11][0] = deferredBlendStates[5];
 	blendStates->a[3][0][11][0] = deferredBlendStates[6];
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 }
@@ -503,8 +520,8 @@ void Deferred::ResetBlendStates()
 	blendStates->a[2][0][11][0] = forwardBlendStates[5];
 	blendStates->a[3][0][11][0] = forwardBlendStates[6];
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 }

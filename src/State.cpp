@@ -316,6 +316,7 @@ void State::SetupResources()
 
 	permutationCB = new ConstantBuffer(ConstantBufferDesc<PermutationCB>());
 	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
+	featureDataCB = new ConstantBuffer(ConstantBufferDesc<FeatureBuffer>());
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
@@ -327,7 +328,6 @@ void State::SetupResources()
 	screenHeight = (float)texDesc.Height;
 	context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
 	device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
-	shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 }
 
@@ -444,41 +444,51 @@ void State::SetPerfMarker(std::string_view title)
 
 void State::UpdateSharedData()
 {
-	SharedDataCB data{};
+	{
+		SharedDataCB data{};
 
-	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
-	RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
-	Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
+		auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
+		RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
+		Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
 
-	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
+		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+		auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
 
-	data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
+		data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
 
-	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	data.DirLightColor *= !isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+		data.DirLightColor *= !isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
 
-	auto& direction = dirLight->GetWorldDirection();
-	data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };
-	data.DirLightDirection.Normalize();
+		auto& direction = dirLight->GetWorldDirection();
+		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };
+		data.DirLightDirection.Normalize();
 
-	data.CameraData = Util::GetCameraData();
-	data.BufferDim = { screenWidth, screenHeight };
-	data.Timer = timer;
+		data.CameraData = Util::GetCameraData();
+		data.BufferDim = { screenWidth, screenHeight };
+		data.Timer = timer;
 
-	auto posAdjust = !isVR ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
+		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+		auto posAdjust = !isVR ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
 
-	for (int i = -2; i <= 2; i++) {
-		for (int k = -2; k <= 2; k++) {
-			int waterTile = (i + 2) + ((k + 2) * 5);
-			data.WaterHeight[waterTile] = Util::TryGetWaterHeight((float)i * 4096.0f, (float)k * 4096.0f) - posAdjust.z;
+		for (int i = -2; i <= 2; i++) {
+			for (int k = -2; k <= 2; k++) {
+				int waterTile = (i + 2) + ((k + 2) * 5);
+				data.WaterHeight[waterTile] = Util::TryGetWaterHeight((float)i * 4096.0f, (float)k * 4096.0f) - posAdjust.z;
+			}
 		}
+
+		sharedDataCB->Update(data);
 	}
 
-	sharedDataCB->Update(data);
+	{
+		FeatureBuffer data{};
+		data.grassLightingSettings = GrassLighting::GetSingleton()->settings;
 
-	ID3D11Buffer* buffers[2] = { permutationCB->CB(), sharedDataCB->CB() };
-	context->PSSetConstantBuffers(4, 2, buffers);
+		featureDataCB->Update(data);
+	}
+
+	ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
+	context->PSSetConstantBuffers(4, 3, buffers);
 
 	auto depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
 	context->PSSetShaderResources(20, 1, &depth);

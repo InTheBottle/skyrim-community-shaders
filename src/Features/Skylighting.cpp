@@ -303,8 +303,8 @@ void Skylighting::EnableTranslucentDepth()
 	precipitation.texture = occlusionTranslucentTexture->resource.get();
 	precipitation.views[0] = occlusionTranslucentTexture->dsv.get();
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 }
 
@@ -317,8 +317,8 @@ void Skylighting::DisableTranslucentDepth()
 	precipitation.texture = occlusionTexture->resource.get();
 	precipitation.views[0] = occlusionTexture->dsv.get();
 
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 }
 

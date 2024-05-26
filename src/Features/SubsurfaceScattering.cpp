@@ -233,7 +233,7 @@ void SubsurfaceScattering::DrawSSS(bool a_firstPerson)
 		                                   imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
 		blurCBData.FrameCount = viewport->uiFrameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
 
-		auto& shadowState = State::GetSingleton()->shadowState;
+		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 		auto cameraData = !REL::Module::IsVR() ? shadowState->GetRuntimeData().cameraData.getEye() :
 		                                         shadowState->GetVRRuntimeData().cameraData.getEye();
 
@@ -312,8 +312,8 @@ void SubsurfaceScattering::Draw(const RE::BSShader* a_shader, const uint32_t)
 {
 	if (a_shader->shaderType.get() == RE::BSShader::Type::Lighting) {
 		if (normalsMode == RE::RENDER_TARGET::kNONE) {
-			auto& state = State::GetSingleton()->shadowState;
-			GET_INSTANCE_MEMBER(renderTargets, state)
+			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+			GET_INSTANCE_MEMBER(renderTargets, shadowState)
 			normalsMode = renderTargets[2];
 		}
 	}
@@ -468,13 +468,13 @@ void SubsurfaceScattering::PostPostLoad()
 
 void SubsurfaceScattering::OverrideFirstPersonRenderTargets()
 {
-	auto& state = State::GetSingleton()->shadowState;
-	GET_INSTANCE_MEMBER(renderTargets, state)
-	GET_INSTANCE_MEMBER(setRenderTargetMode, state)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-	GET_INSTANCE_MEMBER(alphaBlendMode, state)
-	GET_INSTANCE_MEMBER(alphaBlendModeExtra, state)
-	GET_INSTANCE_MEMBER(alphaBlendWriteMode, state)
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+	GET_INSTANCE_MEMBER(alphaBlendMode, shadowState)
+	GET_INSTANCE_MEMBER(alphaBlendModeExtra, shadowState)
+	GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
 
 	renderTargets[2] = normalsMode;
 

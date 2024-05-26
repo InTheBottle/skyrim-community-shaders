@@ -79,7 +79,7 @@ void CloudShadows::ModifySky(const RE::BSShader*, const uint32_t descriptor)
 	if (!settings.EnableCloudShadows)
 		return;
 
-	auto& shadowState = State::GetSingleton()->shadowState;
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
 
@@ -126,7 +126,7 @@ void CloudShadows::DrawShadows()
 		!RE::Sky::GetSingleton()->currentClimate)
 		return;
 
-	auto& shadowState = State::GetSingleton()->shadowState;
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
 

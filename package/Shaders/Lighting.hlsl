@@ -1,10 +1,10 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
+#include "Common/SharedData.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/MotionBlur.hlsl"
 #include "Common/Permutation.hlsl"
-#include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
 
 #define PI 3.1415927
@@ -893,7 +893,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	endif
 
 #	if defined(SCREEN_SPACE_SHADOWS)
-#		include "ScreenSpaceShadows/ShadowsPS.hlsli"
+#		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
 #	endif
 
 #	if defined(WATER_BLENDING)
@@ -957,7 +957,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
-
+	
 	float3 viewDirection = normalize(input.ViewVector.xyz);
 	float3 worldSpaceViewDirection = -normalize(input.WorldPosition.xyz);
 
@@ -1368,11 +1368,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		normalizedDirLightDirectionWS = normalize(mul(input.World[eyeIndex], float4(DirLightDirection.xyz, 0)));
 #	endif
 
+	float dirLightAngle = dot(modelNormal.xyz, DirLightDirection.xyz);
+
+	float dirShadow = 1.0;
+
 	if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir)) {
-		dirLightColor *= shadowColor.xxx;
+		dirLightColor *= shadowColor.x;
+#	if defined(SCREEN_SPACE_SHADOWS)
+		if (shadowColor.x > 0.0 && dirLightAngle > 0.0)
+			dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
+#	endif
 	}
 
-	float dirLightAngle = dot(modelNormal.xyz, DirLightDirection.xyz);
 
 #	if defined(CPM_AVAILABLE) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir)) {
@@ -1401,7 +1408,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsDiffuseColor = 0.0.xxx;
 	float3 lightsSpecularColor = 0.0.xxx;
 
-	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle.xxx);
+	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirShadow;
 
 #	if defined(SOFT_LIGHTING)
 	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
@@ -1745,7 +1752,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	TexEnvSampler.GetDimensions(envSize.x, envSize.y);
 
 	bool dynamicCubemap = false;
-	if (envMask != 0 && envSize.x == 1) {
+	if (envMask != 0 && envSize.x == 1)
+	{
 		dynamicCubemap = true;
 		envColorBase = TexEnvSampler.SampleLevel(SampEnvSampler, float3(1.0, 0.0, 0.0), 0);
 		if (envColorBase.a < 1.0) {
@@ -1983,7 +1991,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
 	}
 #	else
-	psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
+	psout.Diffuse.xyz = color.xyz ;
 #	endif  // defined(LIGHT_LIMIT_FIX)
 
 #	if defined(SNOW)
@@ -2023,10 +2031,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
-
-#		if defined(SNOW)
+	
+#if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
-#		endif
+#endif
 
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
