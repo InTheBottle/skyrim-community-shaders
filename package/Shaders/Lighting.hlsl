@@ -1,10 +1,10 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
-#include "Common/SharedData.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/MotionBlur.hlsl"
 #include "Common/Permutation.hlsl"
+#include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
 
 #define PI 3.1415927
@@ -1382,26 +1382,26 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
-		if (dirLightAngle > 0.0) {
-			bool inShadow = false;
-			[flatten] if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir))
-				[flatten] if (shadowColor.x == 0 || dirShadow == 0)
-					inShadow = true;
-			
-			if (!inShadow){
-				float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
+	if (dirLightAngle > 0.0) {
+		bool inShadow = false;
+		[flatten] if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir))
+			[flatten] if (shadowColor.x == 0 || dirShadow == 0)
+				inShadow = true;
+
+		if (!inShadow) {
+			float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
-				if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
-					dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, terrainUVs, mipLevel, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+			if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
+				dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, terrainUVs, mipLevel, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #		elif defined(PARALLAX)
-				if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
-					dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
+			if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
+				dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
 #		elif defined(ENVMAP)
-				if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
-					dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
+			if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
+				dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
 #		endif  // LANDSCAPE
-			}	
 		}
+	}
 #	endif  // defined(EMAT) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
 
@@ -1751,8 +1751,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	TexEnvSampler.GetDimensions(envSize.x, envSize.y);
 
 	bool dynamicCubemap = false;
-	if (envMask != 0 && envSize.x == 1)
-	{
+	if (envMask != 0 && envSize.x == 1) {
 		dynamicCubemap = true;
 		envColorBase = TexEnvSampler.SampleLevel(SampEnvSampler, float3(1.0, 0.0, 0.0), 0);
 		if (envColorBase.a < 1.0) {
@@ -1990,7 +1989,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
 	}
 #	else
-	psout.Diffuse.xyz = color.xyz ;
+	psout.Diffuse.xyz = color.xyz;
 #	endif  // defined(LIGHT_LIMIT_FIX)
 
 #	if defined(SNOW)
@@ -2023,10 +2022,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
-	
-#if defined(SNOW)
+
+#		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
-#endif
+#		endif
 
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);

@@ -50,14 +50,14 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 	float2 output;
 	if (nearBlendToFar < 1.0) {
 		uint numSteps;
-		
-#	if defined(LANDSCAPE)
+
+#if defined(LANDSCAPE)
 		numSteps = uint((32 * (1.0 - nearBlendToFar) * sqrt(saturate(blend))) + 0.5);
 		numSteps = clamp((numSteps + 3) & ~0x03, 4, 32);
-#	else
+#else
 		numSteps = uint((32 * (1.0 - nearBlendToFar)) + 0.5);
 		numSteps = clamp((numSteps + 3) & ~0x03, 4, 32);
-#	endif
+#endif
 
 		mipLevel--;
 
@@ -122,17 +122,20 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 		float denominator = delta2 - delta1;
 
 		float parallaxAmount = 0.0;
-		[flatten] if (denominator == 0.0) {
+		[flatten] if (denominator == 0.0)
+		{
 			parallaxAmount = 0.0;
-		} else {
+		}
+		else
+		{
 			parallaxAmount = (pt1.x * delta2 - pt2.x * delta1) / denominator;
 		}
 
 		float offset = (1.0 - parallaxAmount) * -maxHeight + minHeight;
 		pixelOffset = lerp(parallaxAmount, 0.5, nearBlendToFar);
 		return output = lerp(viewDirTS.xy * offset + coords.xy, coords, nearBlendToFar);
-	} 
-	
+	}
+
 	pixelOffset = 0.5;
 	return coords;
 }
@@ -142,14 +145,15 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 // Cheap method of creating shadows using height for a given light source
 float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, float sh0, Texture2D<float4> tex, SamplerState texSampler, uint channel, float quality, float noise)
 {
-	[branch] if (quality > 0.0) {
-        float2 rayDir = L.xy * 0.1 / L.z;
+	[branch] if (quality > 0.0)
+	{
+		float2 rayDir = L.xy * 0.1 / L.z;
 		float4 multipliers = 1.0 / ((float4(4, 3, 2, 1) * 2) + noise);
 		float4 sh;
 		sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel)[channel];
 		sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel)[channel];
 		sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel)[channel];
-		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];	
+		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];
 		return 1.0 - saturate(dot(sh - sh0 - multipliers > 0.0, 1.0)) * 0.75 * quality;
 	}
 	return 1.0;
@@ -161,18 +165,18 @@ float GetParallaxSoftShadowMultiplierTerrain(float2 coords, float mipLevel, floa
 	sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel).w;
 	sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel).w;
 	sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel).w;
-	sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel).w;	
+	sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel).w;
 	return 1.0 - saturate(dot(sh - sh0 - multipliers > 0.0, 1.0)) * 0.75;
 }
 
 #if defined(LANDSCAPE)
 float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords[6], float mipLevel[6], float3 L, float sh0[6], float quality, float noise)
-{    
+{
 	float2 rayDir = L.xy * 0.1 / L.z;
 	float4 multipliers = 1.0 / ((float4(4, 3, 2, 1) * 2) + noise);
 
 	float occlusion = 0.0;
-	if (quality > 0.0){
+	if (quality > 0.0) {
 		if (input.LandBlendWeights1.x > 0.0)
 			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[0], mipLevel[0], sh0[0], TexColorSampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights1.x;
 		if (input.LandBlendWeights1.y > 0.0)
