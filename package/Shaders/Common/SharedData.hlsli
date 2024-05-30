@@ -11,9 +11,18 @@ cbuffer SharedData : register(b5)
 	float4 CameraData;
 	float4 BufferDim;
 	float Timer;
-	uint pad0b4[3];
+	uint FrameCount;
+	uint pad0b4[2];
 	float WaterHeight[25];
 	uint pad1b4[3];
+};
+
+struct CPMSettings
+{
+	bool EnableComplexMaterial;
+	bool EnableParallax;
+	bool EnableTerrainParallax;
+	bool EnableShadows;
 };
 
 cbuffer FeatureData : register(b6)
@@ -23,7 +32,7 @@ cbuffer FeatureData : register(b6)
 	float SubsurfaceScatteringAmount;
 	bool OverrideComplexGrassSettings;
 	float BasicGrassBrightness;
-	uint pad2b4[3];
+	CPMSettings extendedMaterialSettings;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);
@@ -64,6 +73,18 @@ float GetWaterHeight(float3 worldPosition)
 	[flatten] if (cellInt.x < 5 && cellInt.x >= 0 && cellInt.y < 5 && cellInt.y >= 0)
 		waterHeight = WaterHeight[waterTile];
 	return waterHeight;
+}
+
+// Derived from the interleaved gradient function from Jimenez 2014 http://goo.gl/eomGso
+float InterleavedGradientNoise(float2 uv)
+{
+	// Temporal factor
+	float frameStep = float(FrameCount % 16) * 0.0625f;
+	uv.x += frameStep * 4.7526;
+	uv.y += frameStep * 3.1914;
+
+	float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
+	return frac(magic.z * frac(dot(uv, magic.xy)));
 }
 
 #endif

@@ -124,7 +124,8 @@ public:
 		float4 CameraData;
 		float4 BufferDim;
 		float Timer;
-		uint pad0[3];
+		uint FrameCount;
+		uint pad0[2];
 		float WaterHeight[25];
 		uint pad1[3];
 	};
