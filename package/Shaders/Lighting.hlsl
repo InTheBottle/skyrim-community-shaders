@@ -1061,16 +1061,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif  // EMAT
 #	endif      // LANDSCAPE
 
-#		if defined(SPARKLE)
-#			if defined(VR)
+#	if defined(SPARKLE)
+#		if defined(VR)
 	diffuseUv = ProjectedUVParams2.yy * (input.TexCoord0.zw + (uv - uvOriginal));
-#			else
-	diffuseUv = ProjectedUVParams2.yy * (triplanarUv + (uv - uvOriginal));
-#			endif  // VR
 #		else
+	diffuseUv = ProjectedUVParams2.yy * (triplanarUv + (uv - uvOriginal));
+#		endif  // VR
+#	else
 	diffuseUv = uv;
-#		endif  // SPARKLE
-
+#	endif  // SPARKLE
 
 	float4 baseColor = 0;
 	float4 normal = 0;
