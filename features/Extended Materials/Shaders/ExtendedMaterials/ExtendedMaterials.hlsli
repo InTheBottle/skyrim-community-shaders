@@ -141,17 +141,20 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 		float denominator = delta2 - delta1;
 
 		float parallaxAmount = 0.0;
-		[flatten] if (denominator == 0.0) {
+		[flatten] if (denominator == 0.0)
+		{
 			parallaxAmount = 0.0;
-		} else {
+		}
+		else
+		{
 			parallaxAmount = (pt1.x * delta2 - pt2.x * delta1) / denominator;
 		}
 
 		float offset = (1.0 - parallaxAmount) * -maxHeight + minHeight;
 		pixelOffset = lerp(parallaxAmount, 0.5, nearBlendToFar);
 		return output = lerp(viewDirTS.xy * offset + coords.xy, coords, nearBlendToFar);
-	} 
-	
+	}
+
 	pixelOffset = 0.5;
 	return coords;
 }

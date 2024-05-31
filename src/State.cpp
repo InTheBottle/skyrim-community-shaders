@@ -466,14 +466,14 @@ void State::UpdateSharedData()
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = { screenWidth, screenHeight };
 		data.Timer = timer;
-		
+
 		auto viewport = RE::BSGraphics::State::GetSingleton();
 
 		auto bTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled :
-			                                imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+		                                   imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
 
 		data.FrameCount = viewport->uiFrameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
-		
+
 		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 		auto posAdjust = !isVR ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
 

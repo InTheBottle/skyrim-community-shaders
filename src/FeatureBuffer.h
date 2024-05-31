@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Features/GrassLighting.h"
 #include "Features/ExtendedMaterials.h"
+#include "Features/GrassLighting.h"
 
 struct alignas(16) FeatureBuffer
 {
