@@ -25,41 +25,52 @@ float GetMipLevel(float2 coords, Texture2D<float4> tex)
 	// Compute the current mip level  (* 0.5 is effectively computing a square root before )
 	float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
 
-	mipLevel++;  // Adjust scaling
-
-#if !defined(PARALLAX)
+#	if !defined(PARALLAX)
 	mipLevel++;
-#endif
+#	endif
+
 	return mipLevel;
 }
 
+#	if defined(LANDSCAPE)
+
+float GetTerrainHeight(PS_INPUT input, float2 coords, float mipLevels[6])
+{
+	float height = 0.0;
+	if (input.LandBlendWeights1.x > 0.0)
+		height = TexColorSampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[0]).w * input.LandBlendWeights1.x;
+	if (input.LandBlendWeights1.y > 0.0)
+		height += TexLandColor2Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[1]).w * input.LandBlendWeights1.y;
+	if (input.LandBlendWeights1.z > 0.0)
+		height += TexLandColor3Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[2]).w * input.LandBlendWeights1.z;
+	if (input.LandBlendWeights1.w > 0.0)
+		height += TexLandColor4Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[3]).w * input.LandBlendWeights1.w;
+	if (input.LandBlendWeights2.x > 0.0)
+		height += TexLandColor5Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[4]).w * input.LandBlendWeights2.x;
+	if (input.LandBlendWeights2.y > 0.0)
+		height += TexLandColor6Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[5]).w * input.LandBlendWeights2.y;
+	return height;
+}
+#	endif
+
 #if defined(LANDSCAPE)
-float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, Texture2D<float4> tex, SamplerState texSampler, uint channel, float blend, out float pixelOffset)
+float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, out float pixelOffset)
 #else
 float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, Texture2D<float4> tex, SamplerState texSampler, uint channel, out float pixelOffset)
 #endif
 {
 	float3 viewDirTS = normalize(mul(tbn, viewDir));
-	viewDirTS.xy /= viewDirTS.z * 0.5 + 0.5;
+	viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3; // Fix for objects at extreme viewing angles
 
-	float nearBlendToFar = saturate(distance / 4096.0);
+	float nearBlendToFar = saturate(distance / 2048.0);
 
 	float maxHeight = 0.1;
 	float minHeight = maxHeight * 0.5;
 
 	float2 output;
 	if (nearBlendToFar < 1.0) {
-		uint numSteps;
-		
-#	if defined(LANDSCAPE)
-		numSteps = uint((32 * (1.0 - nearBlendToFar) * sqrt(saturate(blend))) + 0.5);
-		numSteps = clamp((numSteps + 3) & ~0x03, 4, 32);
-#	else
-		numSteps = uint((32 * (1.0 - nearBlendToFar)) + 0.5);
-		numSteps = clamp((numSteps + 3) & ~0x03, 4, 32);
-#	endif
-
-		mipLevel--;
+		uint numSteps = uint((24 * (1.0 - nearBlendToFar)) + 0.5);
+		numSteps = clamp((numSteps + 3) & ~0x03, 4, 24);
 
 		float stepSize = rcp(numSteps);
 
@@ -79,11 +90,19 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 			currentOffset[1] = prevOffset.xyxy - float4(3, 3, 4, 4) * offsetPerStep.xyxy;
 			float4 currentBound = prevBound.xxxx - float4(1, 2, 3, 4) * stepSize;
 
+#	if defined(LANDSCAPE)
+			float4 currHeight;
+			currHeight.x = GetTerrainHeight(input, currentOffset[0].xy, mipLevels);
+			currHeight.y = GetTerrainHeight(input, currentOffset[0].zw, mipLevels);
+			currHeight.z = GetTerrainHeight(input, currentOffset[1].xy, mipLevels);
+			currHeight.w = GetTerrainHeight(input, currentOffset[1].zw, mipLevels);
+#	else
 			float4 currHeight;
 			currHeight.x = tex.SampleLevel(texSampler, currentOffset[0].xy, mipLevel)[channel];
 			currHeight.y = tex.SampleLevel(texSampler, currentOffset[0].zw, mipLevel)[channel];
 			currHeight.z = tex.SampleLevel(texSampler, currentOffset[1].xy, mipLevel)[channel];
 			currHeight.w = tex.SampleLevel(texSampler, currentOffset[1].zw, mipLevel)[channel];
+#	endif
 
 			bool4 testResult = currHeight >= currentBound;
 			[branch] if (any(testResult))
@@ -143,49 +162,31 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, float sh0, Texture2D<float4> tex, SamplerState texSampler, uint channel, float quality, float noise)
 {
 	[branch] if (quality > 0.0) {
-        float2 rayDir = L.xy * 0.1 / L.z;
-		float4 multipliers = 1.0 / ((float4(4, 3, 2, 1) * 2) + noise);
+        float2 rayDir = L.xy * 0.1 ;
+		float4 multipliers = rcp((float4(4, 3, 2, 1) + noise));
 		float4 sh;
 		sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel)[channel];
 		sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel)[channel];
 		sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel)[channel];
 		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];	
-		return 1.0 - saturate(dot(sh - sh0 - multipliers > 0.0, 1.0)) * 0.75 * quality;
+		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0) * 2) * quality;
 	}
 	return 1.0;
 }
 
-float GetParallaxSoftShadowMultiplierTerrain(float2 coords, float mipLevel, float sh0, Texture2D<float4> tex, SamplerState texSampler, float2 rayDir, float4 multipliers)
-{
-	float4 sh;
-	sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel).w;
-	sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel).w;
-	sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel).w;
-	sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel).w;	
-	return 1.0 - saturate(dot(sh - sh0 - multipliers > 0.0, 1.0)) * 0.75;
-}
-
 #if defined(LANDSCAPE)
-float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords[6], float mipLevel[6], float3 L, float sh0[6], float quality, float noise)
+float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords, float mipLevel[6], float3 L, float sh0, float quality, float noise)
 {    
-	float2 rayDir = L.xy * 0.1 / L.z;
-	float4 multipliers = 1.0 / ((float4(4, 3, 2, 1) * 2) + noise);
-
-	float occlusion = 0.0;
 	if (quality > 0.0){
-		if (input.LandBlendWeights1.x > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[0], mipLevel[0], sh0[0], TexColorSampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights1.x;
-		if (input.LandBlendWeights1.y > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[1], mipLevel[1], sh0[1], TexLandColor2Sampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights1.y;
-		if (input.LandBlendWeights1.z > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[2], mipLevel[2], sh0[2], TexLandColor3Sampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights1.z;
-		if (input.LandBlendWeights1.w > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[3], mipLevel[3], sh0[3], TexLandColor4Sampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights1.w;
-		if (input.LandBlendWeights2.x > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[4], mipLevel[4], sh0[4], TexLandColor5Sampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights2.x;
-		if (input.LandBlendWeights2.y > 0.0)
-			occlusion += GetParallaxSoftShadowMultiplierTerrain(coords[5], mipLevel[5], sh0[5], TexLandColor6Sampler, SampTerrainParallaxSampler, rayDir, multipliers) * input.LandBlendWeights2.y;
+		float2 rayDir = L.xy * 0.1;	
+		float4 multipliers = rcp((float4(4, 3, 2, 1) + noise));
+		float4 sh;
+		sh.x = GetTerrainHeight(input, coords + rayDir * multipliers.x, mipLevel);
+		sh.y = GetTerrainHeight(input, coords + rayDir * multipliers.y, mipLevel);
+		sh.z = GetTerrainHeight(input, coords + rayDir * multipliers.z, mipLevel);
+		sh.w = GetTerrainHeight(input, coords + rayDir * multipliers.w, mipLevel);
+		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0) * 2) * quality;
 	}
-	return lerp(1.0, saturate(occlusion), quality);  // Blend weights seem to go greater than 1.0 sometimes
+	return 1.0;
 }
 #endif

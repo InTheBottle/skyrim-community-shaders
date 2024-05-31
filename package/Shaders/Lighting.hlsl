@@ -966,13 +966,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float2 uvOriginal = uv;
 
 #	if defined(EMAT)
-	float parallaxShadowQuality = sqrt(1.0 - saturate(viewPosition.z / 4096.0));
+	float parallaxShadowQuality = sqrt(1.0 - saturate(viewPosition.z / 2048.0));
 #	endif
 
 #	if defined(LANDSCAPE)
-	float mipLevel[6];
-	float sh0[6];
-	float pixelOffset[6];
+	float mipLevels[6];
+	float sh0;
+	float pixelOffset;
 #	else
 	float mipLevel;
 	float sh0;
@@ -1032,17 +1032,34 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	diffuseUv = ProjectedUVParams2.yy * input.TexCoord0.zw;
 #	endif  // SPARKLE
 
-#	if defined(EMAT)
-#		if defined(LANDSCAPE)
-	float2 terrainUVs[6];
-	if (extendedMaterialSettings.EnableTerrainParallax && input.LandBlendWeights1.x > 0.0) {
-		mipLevel[0] = GetMipLevel(uv, TexColorSampler);
-		uv = GetParallaxCoords(viewPosition.z, uv, mipLevel[0], viewDirection, tbnTr, TexColorSampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights1.x, pixelOffset[0]);
-		terrainUVs[0] = uv;
+#	if defined(LANDSCAPE)
+	// Normalize blend weights
+	float landBlendWeights = 0.0;
+	landBlendWeights += input.LandBlendWeights1.x;
+	landBlendWeights += input.LandBlendWeights1.y;
+	landBlendWeights += input.LandBlendWeights1.z;
+	landBlendWeights += input.LandBlendWeights1.w;
+	landBlendWeights += input.LandBlendWeights2.x;
+	landBlendWeights += input.LandBlendWeights2.y;
+	input.LandBlendWeights1.x /= landBlendWeights;
+	input.LandBlendWeights1.y /= landBlendWeights;
+	input.LandBlendWeights1.z /= landBlendWeights;
+	input.LandBlendWeights1.w /= landBlendWeights;
+	input.LandBlendWeights1.x /= landBlendWeights;
+#		if defined(EMAT)
+	if (extendedMaterialSettings.EnableTerrainParallax) {
+		mipLevels[0] = GetMipLevel(uv, TexColorSampler);
+		mipLevels[1] = GetMipLevel(uv, TexLandColor2Sampler);
+		mipLevels[2] = GetMipLevel(uv, TexLandColor3Sampler);
+		mipLevels[3] = GetMipLevel(uv, TexLandColor4Sampler);
+		mipLevels[4] = GetMipLevel(uv, TexLandColor5Sampler);
+		mipLevels[5] = GetMipLevel(uv, TexLandColor6Sampler);
+		uv = GetParallaxCoords(input, viewPosition.z, uv, mipLevels, viewDirection, tbnTr, pixelOffset);
 		if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-			sh0[0] = TexColorSampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[0]).w;
+			sh0 = GetTerrainHeight(input, uv, mipLevels);
 	}
-#		endif  // LANDSCAPE
+#		endif  // EMAT
+#	endif      // LANDSCAPE
 
 #		if defined(SPARKLE)
 #			if defined(VR)
@@ -1053,7 +1070,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		else
 	diffuseUv = uv;
 #		endif  // SPARKLE
-#	endif      // EMAT
+
 
 	float4 baseColor = 0;
 	float4 normal = 0;
@@ -1130,15 +1147,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif  // SNOW
 
 	if (input.LandBlendWeights1.y > 0.0) {
-#		if defined(EMAT)
-		if (extendedMaterialSettings.EnableTerrainParallax) {
-			mipLevel[1] = GetMipLevel(uvOriginal, TexLandColor2Sampler);
-			uv = GetParallaxCoords(viewPosition.z, uvOriginal, mipLevel[1], viewDirection, tbnTr, TexLandColor2Sampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights1.y, pixelOffset[1]);
-			terrainUVs[1] = uv;
-			if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-				sh0[1] = TexLandColor2Sampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[1]).w;
-		}
-#		endif  // EMAT
 		float4 landColor2 = TexLandColor2Sampler.Sample(SampLandColor2Sampler, uv);
 		float landSnowMask2 = GetLandSnowMaskValue(landColor2.w);
 		baseColor += input.LandBlendWeights1.yyyy * landColor2;
@@ -1152,15 +1160,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	if (input.LandBlendWeights1.z > 0.0) {
-#		if defined(EMAT)
-		if (extendedMaterialSettings.EnableTerrainParallax) {
-			mipLevel[2] = GetMipLevel(uvOriginal, TexLandColor3Sampler);
-			uv = GetParallaxCoords(viewPosition.z, uvOriginal, mipLevel[2], viewDirection, tbnTr, TexLandColor3Sampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights1.z, pixelOffset[2]);
-			terrainUVs[2] = uv;
-			if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-				sh0[2] = TexLandColor3Sampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[2]).w;
-		}
-#		endif  // EMAT
 		float4 landColor3 = TexLandColor3Sampler.Sample(SampLandColor3Sampler, uv);
 		float landSnowMask3 = GetLandSnowMaskValue(landColor3.w);
 		baseColor += input.LandBlendWeights1.zzzz * landColor3;
@@ -1174,15 +1173,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	if (input.LandBlendWeights1.w > 0.0) {
-#		if defined(EMAT)
-		if (extendedMaterialSettings.EnableTerrainParallax) {
-			mipLevel[3] = GetMipLevel(uvOriginal, TexLandColor4Sampler);
-			uv = GetParallaxCoords(viewPosition.z, uvOriginal, mipLevel[3], viewDirection, tbnTr, TexLandColor4Sampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights1.w, pixelOffset[3]);
-			terrainUVs[3] = uv;
-			if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-				sh0[3] = TexLandColor4Sampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[3]).w;
-		}
-#		endif  // EMAT
 		float4 landColor4 = TexLandColor4Sampler.Sample(SampLandColor4Sampler, uv);
 		float landSnowMask4 = GetLandSnowMaskValue(landColor4.w);
 		baseColor += input.LandBlendWeights1.wwww * landColor4;
@@ -1196,15 +1186,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	if (input.LandBlendWeights2.x > 0.0) {
-#		if defined(EMAT)
-		if (extendedMaterialSettings.EnableTerrainParallax) {
-			mipLevel[4] = GetMipLevel(uvOriginal, TexLandColor5Sampler);
-			uv = GetParallaxCoords(viewPosition.z, uvOriginal, mipLevel[4], viewDirection, tbnTr, TexLandColor5Sampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights2.x, pixelOffset[4]);
-			terrainUVs[4] = uv;
-			if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-				sh0[4] = TexLandColor5Sampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[4]).w;
-		}
-#		endif  // EMAT
 		float4 landColor5 = TexLandColor5Sampler.Sample(SampLandColor5Sampler, uv);
 		float landSnowMask5 = GetLandSnowMaskValue(landColor5.w);
 		baseColor += input.LandBlendWeights2.xxxx * landColor5;
@@ -1218,15 +1199,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	if (input.LandBlendWeights2.y > 0.0) {
-#		if defined(EMAT)
-		if (extendedMaterialSettings.EnableTerrainParallax) {
-			mipLevel[5] = GetMipLevel(uvOriginal, TexLandColor6Sampler);
-			uv = GetParallaxCoords(viewPosition.z, uvOriginal, mipLevel[5], viewDirection, tbnTr, TexLandColor6Sampler, SampTerrainParallaxSampler, 3, input.LandBlendWeights2.y, pixelOffset[5]);
-			terrainUVs[5] = uv;
-			if (extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0f)
-				sh0[5] = TexLandColor6Sampler.SampleLevel(SampTerrainParallaxSampler, uv, mipLevel[5]).w;
-		}
-#		endif  // EMAT
 		float4 landColor6 = TexLandColor6Sampler.Sample(SampLandColor6Sampler, uv);
 		float landSnowMask6 = GetLandSnowMaskValue(landColor6.w);
 		baseColor += input.LandBlendWeights2.yyyy * landColor6;
@@ -1392,7 +1364,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 				float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
 				if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
-					dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, terrainUVs, mipLevel, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+					dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #		elif defined(PARALLAX)
 				if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
 					dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
