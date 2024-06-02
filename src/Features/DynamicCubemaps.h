@@ -20,8 +20,6 @@ public:
 		return &singleton;
 	}
 
-	bool renderedScreenCamera = false;
-
 	// Specular irradiance
 
 	ID3D11SamplerState* computeSampler = nullptr;
@@ -91,6 +89,8 @@ public:
 
 	void UpdateCubemap();
 
+	void Bind();
+
 	virtual inline std::string GetName() { return "Dynamic Cubemaps"; }
 	virtual inline std::string GetShortName() { return "DynamicCubemaps"; }
 	inline std::string_view GetShaderDefineName() override { return "DYNAMIC_CUBEMAPS"; }
@@ -131,7 +131,7 @@ public:
 
 	void UpdateCubemapCapture();
 
-	virtual void DrawDeferred();
+	virtual void Prepass() override;
 
 	void Inferrence(bool a_reflections);
 

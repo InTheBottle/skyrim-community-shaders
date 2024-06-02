@@ -1,4 +1,4 @@
-cbuffer PerFrameDeferredShared : register(b0)
+cbuffer PerFrameDeferredShared : register(b11)
 {
 	float4 BufferDim;
 	float4 CameraData;

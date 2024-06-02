@@ -5,6 +5,7 @@
 #include "Util.h"
 
 #include "Features/SubsurfaceScattering.h"
+#include "Features/DynamicCubemaps.h"
 
 struct DepthStates
 {
@@ -289,11 +290,10 @@ void Deferred::DeferredPasses()
 	UpdateConstantBuffer();
 
 	{
-		auto buffer = deferredCB->CB();
-		context->CSSetConstantBuffers(0, 1, &buffer);
-
 		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
-		context->CSSetConstantBuffers(12, 1, perFrame.get());
+		ID3D11Buffer* buffers[2] = { deferredCB->CB(), *perFrame.get() };
+
+		context->CSSetConstantBuffers(11, 2, buffers);
 	}
 
 	Skylighting::GetSingleton()->Bind();
@@ -307,6 +307,13 @@ void Deferred::DeferredPasses()
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 	auto snow = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[3]];
 
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
+
+	bool interior = true;
+	if (auto sky = RE::Sky::GetSingleton())
+		interior = sky->mode.get() != RE::Sky::Mode::kFull;
+
 	// Ambient Composite
 	{
 		ID3D11ShaderResourceView* srvs[2]{
@@ -319,7 +326,7 @@ void Deferred::DeferredPasses()
 		ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		auto shader = GetComputeAmbientComposite();
+		auto shader = interior ? GetComputeAmbientCompositeInterior() : GetComputeAmbientComposite();
 		context->CSSetShader(shader, nullptr, 0);
 
 		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
@@ -334,22 +341,33 @@ void Deferred::DeferredPasses()
 	auto sss = SubsurfaceScattering::GetSingleton();
 	if (sss->loaded)
 		sss->DrawSSS();
+	
+	auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
+	if (dynamicCubemaps->loaded)
+		dynamicCubemaps->UpdateCubemap();
 
 	// Deferred Composite
 	{
-		ID3D11ShaderResourceView* srvs[4]{
+		ID3D11ShaderResourceView* srvs[9]{
 			specular.SRV,
 			albedo.SRV,
 			normalRoughness.SRV,
-			masks2.SRV
+			masks2.SRV,
+			dynamicCubemaps->loaded ? depth.depthSRV : nullptr,
+			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
+			dynamicCubemaps->loaded ? dynamicCubemaps->envTexture->srv.get() : nullptr,
+			dynamicCubemaps->loaded ? dynamicCubemaps->envReflectionsTexture->srv.get() : nullptr,
 		};
+
+		if (dynamicCubemaps->loaded)
+			context->CSSetSamplers(0, 1, &linearSampler);
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, snow.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		auto shader = GetComputeMainComposite();
+		auto shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite();
 		context->CSSetShader(shader, nullptr, 0);
 
 		float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
@@ -550,16 +568,56 @@ ID3D11ComputeShader* Deferred::GetComputeAmbientComposite()
 {
 	if (!ambientCompositeCS) {
 		logger::debug("Compiling AmbientCompositeCS");
-		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\AmbientCompositeCS.hlsl", {}, "cs_5_0");
+
+		std::vector<std::pair<const char*, const char*>> defines;
+
+		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\AmbientCompositeCS.hlsl", defines, "cs_5_0");
 	}
 	return ambientCompositeCS;
+}
+
+ID3D11ComputeShader* Deferred::GetComputeAmbientCompositeInterior()
+{
+	if (!ambientCompositeInteriorCS) {
+		logger::debug("Compiling AmbientCompositeCS INTERIOR");
+
+		std::vector<std::pair<const char*, const char*>> defines;
+		defines.push_back({ "INTERIOR", nullptr });
+
+		ambientCompositeInteriorCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\AmbientCompositeCS.hlsl", defines, "cs_5_0");
+	}
+	return ambientCompositeInteriorCS;
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 {
 	if (!mainCompositeCS) {
 		logger::debug("Compiling DeferredCompositeCS");
-		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", {}, "cs_5_0");
+
+		std::vector<std::pair<const char*, const char*>> defines;
+
+		auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
+		if (dynamicCubemaps->loaded)
+			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
+
+		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}
 	return mainCompositeCS;
+}
+
+ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
+{
+	if (!mainCompositeInteriorCS) {
+		logger::debug("Compiling DeferredCompositeCS INTERIOR");
+
+		std::vector<std::pair<const char*, const char*>> defines;
+		defines.push_back({ "INTERIOR", nullptr });
+
+		auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
+		if (dynamicCubemaps->loaded)
+			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
+
+		mainCompositeInteriorCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
+	}
+	return mainCompositeInteriorCS;
 }

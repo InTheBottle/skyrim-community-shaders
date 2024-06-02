@@ -3,6 +3,7 @@
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/Color.hlsl"
 
 Texture2D<half3> SpecularTexture : register(t0);
 Texture2D<unorm half3> AlbedoTexture : register(t1);
@@ -13,10 +14,16 @@ RWTexture2D<half3> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 RWTexture2D<half2> SnowParametersRW : register(u2);
 
-// #	define DEBUG
+#	if defined(DYNAMIC_CUBEMAPS)
+	Texture2D<unorm float> DepthTexture : register(t4);
+	Texture2D<unorm half3> ReflectanceTexture : register(t5);
+	TextureCube<half3> EnvTexture : register(t6);
+	TextureCube<half3> EnvReflectionsTexture : register(t7);
 
-[numthreads(8, 8, 1)] void main(uint3 dispatchID
-								: SV_DispatchThreadID) {
+	SamplerState LinearSampler : register(s0);
+#	endif
+
+[numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
 	half2 uv = half2(dispatchID.xy + 0.5) * BufferDim.zw;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -31,7 +38,53 @@ RWTexture2D<half2> SnowParametersRW : register(u2);
 	half glossiness = normalGlossiness.z;
 	half3 color = diffuseColor + specularColor;
 
-#if defined(DEBUG)
+#	if defined(DYNAMIC_CUBEMAPS)
+
+	half3 reflectance = ReflectanceTexture[dispatchID.xy];
+
+	if (reflectance.x > 0.0 || reflectance.y > 0.0 || reflectance.z > 0.0)
+	{
+		half3 normalWS = normalize(mul(CameraViewInverse[eyeIndex], half4(normalVS, 0)));
+
+		color = sRGB2Lin(color);
+
+		half depth = DepthTexture[dispatchID.xy];
+
+		half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
+		positionCS = mul(CameraViewInverse[eyeIndex], positionCS);
+		positionCS.xyz = positionCS.xyz / positionCS.w;
+
+		half3 positionWS = positionCS;
+
+		float3 V = normalize(positionWS);
+		float3 R = reflect(V, normalWS);
+
+		float roughness = 1.0 - glossiness;
+		float level = roughness * 9.0;
+
+#	if defined(INTERIOR)
+
+		float3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
+		specularIrradiance = sRGB2Lin(specularIrradiance);
+
+		color += reflectance * specularIrradiance;
+
+#	else
+
+		float3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
+		specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
+		
+		color += reflectance * specularIrradianceReflections;
+
+#	endif
+
+		color = Lin2sRGB(color);
+	}
+
+#	endif
+
+#	if defined(DEBUG)
+
 	half2 texCoord = half2(dispatchID.xy) / BufferDim.xy;
 
 	if (texCoord.x < 0.5 && texCoord.y < 0.5) {
@@ -43,7 +96,8 @@ RWTexture2D<half2> SnowParametersRW : register(u2);
 	} else {
 		color = glossiness;
 	}
-#endif
+
+#	endif
 
 	MainRW[dispatchID.xy] = color;
 	NormalTAAMaskSpecularMaskRW[dispatchID.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);

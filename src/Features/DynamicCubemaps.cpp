@@ -259,7 +259,7 @@ void DynamicCubemaps::UpdateCubemapCapture()
 	context->CSSetSamplers(0, 1, &computeSampler);
 
 	context->CSSetShader(GetComputeShaderUpdate(), nullptr, 0);
-	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 32.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 32.0f), 6);
+	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
 
 	uavs[0] = nullptr;
 	uavs[1] = nullptr;
@@ -278,19 +278,6 @@ void DynamicCubemaps::UpdateCubemapCapture()
 
 	ID3D11SamplerState* nullSampler = { nullptr };
 	context->CSSetSamplers(0, 1, &nullSampler);
-}
-
-void DynamicCubemaps::DrawDeferred()
-{
-	auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
-
-	if (shadowSceneNode == accumulator->GetRuntimeData().activeShadowSceneNode) {
-		if (nextTask == NextTask::kCapture) {
-			UpdateCubemapCapture();
-			nextTask = NextTask::kInferrence;
-		}
-	}
 }
 
 void DynamicCubemaps::Inferrence(bool a_reflections)
@@ -314,7 +301,7 @@ void DynamicCubemaps::Inferrence(bool a_reflections)
 
 	context->CSSetShader(a_reflections ? GetComputeShaderInferrenceReflections() : GetComputeShaderInferrence(), nullptr, 0);
 
-	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 32.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 32.0f), 6);
+	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
 
 	srvs[0] = nullptr;
 	srvs[1] = nullptr;
@@ -358,7 +345,7 @@ void DynamicCubemaps::Irradiance(bool a_reflections)
 		std::uint32_t size = std::max(envTexture->desc.Width, envTexture->desc.Height);
 
 		for (std::uint32_t level = 1; level < MIPLEVELS; level++, size /= 2) {
-			const UINT numGroups = (UINT)std::max(1u, size / 32);
+			const UINT numGroups = (UINT)std::max(1u, size / 8);
 
 			const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
 			spmapCB->Update(spmapConstants);
@@ -399,41 +386,47 @@ void DynamicCubemaps::UpdateCubemap()
 	} else if (nextTask == NextTask::kIrradiance2) {
 		nextTask = NextTask::kCapture;
 		Irradiance(true);
+	} else if (nextTask == NextTask::kCapture) {
+		UpdateCubemapCapture();
+		nextTask = NextTask::kInferrence;
 	}
 }
 
-void DynamicCubemaps::Draw(const RE::BSShader* shader, const uint32_t)
+void DynamicCubemaps::Bind()
 {
-	if (shader->shaderType.get() == RE::BSShader::Type::Lighting || shader->shaderType.get() == RE::BSShader::Type::Water) {
-		// During world cubemap generation we cannot use the cubemap
-		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	auto& context = State::GetSingleton()->context;
 
-		GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
+	ID3D11ShaderResourceView* views[2];
+	views[0] = envTexture->srv.get();
+	views[1] = enableCreator ? perFrameCreator->srv.get() : nullptr;
+	context->PSSetShaderResources(64, 2, views);
+}
 
-		if (cubeMapRenderTarget != RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS && !renderedScreenCamera) {
-			UpdateCubemap();
-			renderedScreenCamera = true;
+void DynamicCubemaps::Prepass()
+{
+	auto& context = State::GetSingleton()->context;
 
-			auto& context = State::GetSingleton()->context;
+	if (enableCreator) {
+		CreatorSettingsCB data{};
+		data.Enabled = true;
+		data.CubemapColor = cubemapColor;
 
-			if (enableCreator) {
-				CreatorSettingsCB data{};
-				data.Enabled = true;
-				data.CubemapColor = cubemapColor;
-
-				D3D11_MAPPED_SUBRESOURCE mapped;
-				DX::ThrowIfFailed(context->Map(perFrameCreator->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-				size_t bytes = sizeof(CreatorSettingsCB);
-				memcpy_s(mapped.pData, bytes, &data, bytes);
-				context->Unmap(perFrameCreator->resource.get(), 0);
-			}
-
-			ID3D11ShaderResourceView* views[2];
-			views[0] = envTexture->srv.get();
-			views[1] = enableCreator ? perFrameCreator->srv.get() : nullptr;
-			context->PSSetShaderResources(64, 2, views);
-		}
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		DX::ThrowIfFailed(context->Map(perFrameCreator->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+		size_t bytes = sizeof(CreatorSettingsCB);
+		memcpy_s(mapped.pData, bytes, &data, bytes);
+		context->Unmap(perFrameCreator->resource.get(), 0);
 	}
+
+	ID3D11ShaderResourceView* views[2];
+	views[0] = nullptr;
+	views[1] = enableCreator ? perFrameCreator->srv.get() : nullptr;
+	context->PSSetShaderResources(64, 2, views);
+}
+
+
+void DynamicCubemaps::Draw(const RE::BSShader*, const uint32_t)
+{
 }
 
 void DynamicCubemaps::SetupResources()
@@ -567,9 +560,7 @@ void DynamicCubemaps::Reset()
 		activeReflections = false;
 
 	auto setting = RE::GetINISetting("fCubeMapRefreshRate:Water");
-	setting->data.f = activeReflections ? 0 : FLT_MAX;
-
-	renderedScreenCamera = false;
+	setting->data.f = activeReflections ? 1 : FLT_MAX;
 }
 
 void DynamicCubemaps::Load(json& o_json)
