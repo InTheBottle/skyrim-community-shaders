@@ -153,7 +153,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 }
 
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
-								  : SV_DispatchThreadID) {
+								: SV_DispatchThreadID) {
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
 	float3 viewDirection = WorldToView(captureDirection, false);
 	float2 uv = ViewToUV(viewDirection, false);

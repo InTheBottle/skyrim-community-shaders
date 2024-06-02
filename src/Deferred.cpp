@@ -4,8 +4,8 @@
 #include "State.h"
 #include "Util.h"
 
-#include "Features/SubsurfaceScattering.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/SubsurfaceScattering.h"
 
 struct DepthStates
 {
@@ -341,7 +341,7 @@ void Deferred::DeferredPasses()
 	auto sss = SubsurfaceScattering::GetSingleton();
 	if (sss->loaded)
 		sss->DrawSSS();
-	
+
 	auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
 	if (dynamicCubemaps->loaded)
 		dynamicCubemaps->UpdateCubemap();
