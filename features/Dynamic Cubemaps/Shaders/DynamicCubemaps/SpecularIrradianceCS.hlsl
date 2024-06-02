@@ -129,7 +129,7 @@ float3 Lin2sRGB(float3 color)
 }
 
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
-								  : SV_DispatchThreadID) {
+								: SV_DispatchThreadID) {
 	// Make sure we won't write past output when computing higher mipmap levels.
 	uint outputWidth, outputHeight, outputDepth;
 	outputTexture.GetDimensions(outputWidth, outputHeight, outputDepth);

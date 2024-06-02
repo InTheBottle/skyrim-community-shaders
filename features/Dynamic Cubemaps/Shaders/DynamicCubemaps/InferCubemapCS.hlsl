@@ -55,7 +55,7 @@ float3 Lin2sRGB(float3 color)
 }
 
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
-								  : SV_DispatchThreadID) {
+								: SV_DispatchThreadID) {
 	float3 uv = GetSamplingVector(ThreadID, EnvInferredTexture);
 	float4 color = EnvCaptureTexture.SampleLevel(LinearSampler, uv, 0);
 

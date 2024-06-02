@@ -424,7 +424,6 @@ void DynamicCubemaps::Prepass()
 	context->PSSetShaderResources(64, 2, views);
 }
 
-
 void DynamicCubemaps::Draw(const RE::BSShader*, const uint32_t)
 {
 }
