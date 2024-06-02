@@ -172,7 +172,7 @@ float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, f
 		sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel)[channel];
 		sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel)[channel];
 		sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel)[channel];
-		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];	
+		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];
 		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality;
 	}
 	return 1.0;
