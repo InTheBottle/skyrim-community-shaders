@@ -392,7 +392,7 @@ void DynamicCubemaps::UpdateCubemap()
 	}
 }
 
-void DynamicCubemaps::Bind()
+void DynamicCubemaps::PostDeferred()
 {
 	auto& context = State::GetSingleton()->context;
 

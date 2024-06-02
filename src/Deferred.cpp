@@ -392,6 +392,9 @@ void Deferred::DeferredPasses()
 
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
+
+	if (dynamicCubemaps->loaded)
+		dynamicCubemaps->PostDeferred();
 }
 
 void Deferred::EndDeferred()

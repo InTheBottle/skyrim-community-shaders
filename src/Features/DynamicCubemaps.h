@@ -89,7 +89,7 @@ public:
 
 	void UpdateCubemap();
 
-	void Bind();
+	void PostDeferred();
 
 	virtual inline std::string GetName() { return "Dynamic Cubemaps"; }
 	virtual inline std::string GetShortName() { return "DynamicCubemaps"; }
