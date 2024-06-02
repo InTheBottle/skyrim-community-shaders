@@ -1342,25 +1342,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 	float dirLightAngle = dot(modelNormal.xyz, DirLightDirection.xyz);
-
-	float dirShadow = 1.0;
-
+	
 	if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir)) {
 		dirLightColor *= shadowColor.x;
-#	if defined(SCREEN_SPACE_SHADOWS)
-		if (shadowColor.x > 0.0 && dirLightAngle > 0.0)
-			dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
-#	endif
 	}
+	
+	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) || dirLightAngle <= 0.0;
+
+#	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
+	float dirShadow = 1.0;
+	if (!inDirShadow){
+		dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
+		inDirShadow = inDirShadow || dirShadow == 0.0;
+	}
+#	endif
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
-	if (dirLightAngle > 0.0) {
-		bool inShadow = false;
-		[flatten] if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir))
-			[flatten] if (shadowColor.x == 0 || dirShadow == 0)
-				inShadow = true;
-
-		if (!inShadow) {
+		if (!inDirShadow) {
 			float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
 			if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
@@ -1372,8 +1370,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 			if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
 				dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
 #		endif  // LANDSCAPE
-		}
-	}
+			}	
 #	endif  // defined(EMAT) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
 
@@ -1383,7 +1380,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsDiffuseColor = 0.0.xxx;
 	float3 lightsSpecularColor = 0.0.xxx;
 
+#	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirShadow;
+#	else
+	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle);
+#	endif
 
 #	if defined(SOFT_LIGHTING)
 	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
