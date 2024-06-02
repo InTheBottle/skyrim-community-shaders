@@ -1,8 +1,8 @@
 #include "Common/Color.hlsl"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
-#include "Common/SharedData.hlsli"
 #include "Common/MotionBlur.hlsl"
+#include "Common/SharedData.hlsli"
 
 #define GRASS
 
@@ -335,7 +335,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		normal = -normal;
 
 	normal = normalize(lerp(normal, normalize(input.SphereNormal.xyz), input.SphereNormal.w));
-	
+
 	if (complex) {
 		float3 normalColor = TransformNormal(specColor.xyz);
 		// world-space -> tangent-space -> world-space.
@@ -365,7 +365,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 albedo = max(0, baseColor.xyz * input.VertexColor.xyz);
 
 	float3 subsurfaceColor = lerp(RGBToLuminance(albedo.xyz), albedo.xyz, 2.0) * input.SphereNormal.w;
-	
+
 	float3 sss = dirLightColor * saturate(-dirLightAngle) * lerp(dirShadow, 1.0, 0.5);
 
 	if (complex)

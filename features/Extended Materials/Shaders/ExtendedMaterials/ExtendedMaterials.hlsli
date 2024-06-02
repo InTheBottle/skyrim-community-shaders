@@ -25,14 +25,14 @@ float GetMipLevel(float2 coords, Texture2D<float4> tex)
 	// Compute the current mip level  (* 0.5 is effectively computing a square root before )
 	float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
 
-#	if !defined(PARALLAX)
+#if !defined(PARALLAX)
 	mipLevel++;
-#	endif
+#endif
 
 	return mipLevel;
 }
 
-#	if defined(LANDSCAPE)
+#if defined(LANDSCAPE)
 
 float GetTerrainHeight(PS_INPUT input, float2 coords, float mipLevels[6])
 {
@@ -51,7 +51,7 @@ float GetTerrainHeight(PS_INPUT input, float2 coords, float mipLevels[6])
 		height += TexLandColor6Sampler.SampleLevel(SampTerrainParallaxSampler, coords, mipLevels[5]).w * input.LandBlendWeights2.y;
 	return height;
 }
-#	endif
+#endif
 
 #if defined(LANDSCAPE)
 float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, out float pixelOffset)
@@ -60,7 +60,7 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 #endif
 {
 	float3 viewDirTS = normalize(mul(tbn, viewDir));
-	viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3; // Fix for objects at extreme viewing angles
+	viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3;  // Fix for objects at extreme viewing angles
 
 	float nearBlendToFar = saturate(distance / 2048.0);
 
@@ -90,19 +90,19 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 			currentOffset[1] = prevOffset.xyxy - float4(3, 3, 4, 4) * offsetPerStep.xyxy;
 			float4 currentBound = prevBound.xxxx - float4(1, 2, 3, 4) * stepSize;
 
-#	if defined(LANDSCAPE)
+#if defined(LANDSCAPE)
 			float4 currHeight;
 			currHeight.x = GetTerrainHeight(input, currentOffset[0].xy, mipLevels);
 			currHeight.y = GetTerrainHeight(input, currentOffset[0].zw, mipLevels);
 			currHeight.z = GetTerrainHeight(input, currentOffset[1].xy, mipLevels);
 			currHeight.w = GetTerrainHeight(input, currentOffset[1].zw, mipLevels);
-#	else
+#else
 			float4 currHeight;
 			currHeight.x = tex.SampleLevel(texSampler, currentOffset[0].xy, mipLevel)[channel];
 			currHeight.y = tex.SampleLevel(texSampler, currentOffset[0].zw, mipLevel)[channel];
 			currHeight.z = tex.SampleLevel(texSampler, currentOffset[1].xy, mipLevel)[channel];
 			currHeight.w = tex.SampleLevel(texSampler, currentOffset[1].zw, mipLevel)[channel];
-#	endif
+#endif
 
 			bool4 testResult = currHeight >= currentBound;
 			[branch] if (any(testResult))
@@ -164,8 +164,9 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 // Cheap method of creating shadows using height for a given light source
 float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, float sh0, Texture2D<float4> tex, SamplerState texSampler, uint channel, float quality, float noise)
 {
-	[branch] if (quality > 0.0) {
-        float2 rayDir = L.xy * 0.1 ;
+	[branch] if (quality > 0.0)
+	{
+		float2 rayDir = L.xy * 0.1;
 		float4 multipliers = rcp((float4(4, 3, 2, 1) + noise));
 		float4 sh;
 		sh.x = tex.SampleLevel(texSampler, coords + rayDir * multipliers.x, mipLevel)[channel];
@@ -179,9 +180,9 @@ float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, f
 
 #if defined(LANDSCAPE)
 float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords, float mipLevel[6], float3 L, float sh0, float quality, float noise)
-{    
-	if (quality > 0.0){
-		float2 rayDir = L.xy * 0.1;	
+{
+	if (quality > 0.0) {
+		float2 rayDir = L.xy * 0.1;
 		float4 multipliers = rcp((float4(4, 3, 2, 1) + noise));
 		float4 sh;
 		sh.x = GetTerrainHeight(input, coords + rayDir * multipliers.x, mipLevel);
