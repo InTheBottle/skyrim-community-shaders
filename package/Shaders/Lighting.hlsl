@@ -1341,35 +1341,35 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 	float dirLightAngle = dot(modelNormal.xyz, DirLightDirection.xyz);
-	
+
 	if ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir)) {
 		dirLightColor *= shadowColor.x;
 	}
-	
+
 	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) || dirLightAngle <= 0.0;
 
 #	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 	float dirShadow = 1.0;
-	if (!inDirShadow){
+	if (!inDirShadow) {
 		dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
 		inDirShadow = inDirShadow || dirShadow == 0.0;
 	}
 #	endif
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
-		if (!inDirShadow) {
-			float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
+	if (!inDirShadow) {
+		float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
-			if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
-				dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+		if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
+			dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #		elif defined(PARALLAX)
-			if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
-				dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
+		if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
+			dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
 #		elif defined(ENVMAP)
-			if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
-				dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
+		if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
+			dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
 #		endif  // LANDSCAPE
-			}	
+	}
 #	endif  // defined(EMAT) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
 
