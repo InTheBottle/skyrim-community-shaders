@@ -1,8 +1,8 @@
 #pragma once
 
+#include "Features/DynamicCubemaps.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/GrassLighting.h"
-#include "Features/DynamicCubemaps.h"
 
 struct alignas(16) FeatureBuffer
 {
