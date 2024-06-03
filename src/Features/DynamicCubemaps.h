@@ -2,7 +2,6 @@
 
 #include "Buffer.h"
 #include "Feature.h"
-#include "State.h"
 
 class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
@@ -75,17 +74,14 @@ public:
 
 	// Editor window
 
-	bool enableCreator = false;
-	float4 cubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
-
-	struct alignas(16) CreatorSettingsCB
+	struct Settings
 	{
-		uint Enabled;
-		uint pad0[3];
-		float4 CubemapColor;
+		uint Enabled = false;
+		uint pad0[3]{};
+		float4 CubemapColor{1.0f, 1.0f, 1.0f, 0.0f};
 	};
 
-	std::unique_ptr<Buffer> perFrameCreator = nullptr;
+	Settings settings;
 
 	void UpdateCubemap();
 

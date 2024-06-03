@@ -491,6 +491,7 @@ void State::UpdateSharedData()
 		FeatureBuffer data{};
 		data.grassLightingSettings = GrassLighting::GetSingleton()->settings;
 		data.extendedMaterialSettings = ExtendedMaterials::GetSingleton()->settings;
+		data.cubemapCreatorSettings = DynamicCubemaps::GetSingleton()->settings;
 
 		featureDataCB->Update(data);
 	}

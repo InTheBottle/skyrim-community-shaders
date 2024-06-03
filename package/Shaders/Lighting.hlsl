@@ -1736,10 +1736,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 #			if defined(CREATOR)
-	if (perFrameCreator[0].Enabled) {
+	if (cubemapCreatorSettings.Enabled) {
 		dynamicCubemap = true;
-		F0 = sRGB2Lin(perFrameCreator[0].CubemapColor.rgb) + sRGB2Lin(baseColor.xyz);
-		envRoughness = perFrameCreator[0].CubemapColor.a;
+		F0 = sRGB2Lin(cubemapCreatorSettings.CubemapColor.rgb) + sRGB2Lin(baseColor.xyz);
+		envRoughness = cubemapCreatorSettings.CubemapColor.a;
 	}
 #			endif
 

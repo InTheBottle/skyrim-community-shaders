@@ -25,6 +25,12 @@ struct CPMSettings
 	bool EnableShadows;
 };
 
+struct CubemapCreatorSettings
+{
+	uint Enabled;
+	float4 CubemapColor;
+};
+
 cbuffer FeatureData : register(b6)
 {
 	float Glossiness;
@@ -33,6 +39,7 @@ cbuffer FeatureData : register(b6)
 	bool OverrideComplexGrassSettings;
 	float BasicGrassBrightness;
 	CPMSettings extendedMaterialSettings;
+	CubemapCreatorSettings cubemapCreatorSettings;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);

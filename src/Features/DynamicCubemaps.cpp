@@ -1,6 +1,7 @@
 #include "DynamicCubemaps.h"
 
 #include "Util.h"
+#include "State.h"
 
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
@@ -39,10 +40,10 @@ void DynamicCubemaps::DrawSettings()
 
 		if (ImGui::TreeNodeEx("Dynamic Cubemap Creator", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Text("You must enable creator mode by adding the shader define CREATOR");
-			ImGui::Checkbox("Enable Creator", &enableCreator);
-			if (enableCreator) {
-				ImGui::ColorEdit3("Color", (float*)&cubemapColor);
-				ImGui::SliderFloat("Roughness", &cubemapColor.w, 0.0f, 1.0f, "%.2f");
+			ImGui::Checkbox("Enable Creator", (bool*)&settings.Enabled);
+			if (settings.Enabled) {
+				ImGui::ColorEdit3("Color", (float*)&settings.CubemapColor);
+				ImGui::SliderFloat("Roughness", &settings.CubemapColor.w, 0.0f, 1.0f, "%.2f");
 				if (ImGui::Button("Export")) {
 					auto& device = State::GetSingleton()->device;
 					auto& context = State::GetSingleton()->context;
@@ -67,10 +68,10 @@ void DynamicCubemaps::DrawSettings()
 
 					static PixelData colorPixel{};
 
-					colorPixel = { (uint8_t)((cubemapColor.x * 255.0f) + 0.5f),
-						(uint8_t)((cubemapColor.y * 255.0f) + 0.5f),
-						(uint8_t)((cubemapColor.z * 255.0f) + 0.5f),
-						std::min((uint8_t)254u, (uint8_t)((cubemapColor.w * 255.0f) + 0.5f)) };
+					colorPixel = { (uint8_t)((settings.CubemapColor.x * 255.0f) + 0.5f),
+						(uint8_t)((settings.CubemapColor.y * 255.0f) + 0.5f),
+						(uint8_t)((settings.CubemapColor.z * 255.0f) + 0.5f),
+						std::min((uint8_t)254u, (uint8_t)((settings.CubemapColor.w * 255.0f) + 0.5f)) };
 
 					static PixelData emptyPixel{};
 
@@ -90,7 +91,7 @@ void DynamicCubemaps::DrawSettings()
 					DirectX::ScratchImage image;
 					DX::ThrowIfFailed(CaptureTexture(device, context, tempTexture, image));
 
-					std::string filename = std::format("Data\\Textures\\DynamicCubemaps\\{:.2f}{:.2f}{:.2f}R{:.2f}.dds", cubemapColor.x, cubemapColor.y, cubemapColor.z, cubemapColor.w);
+					std::string filename = std::format("Data\\Textures\\DynamicCubemaps\\{:.2f}{:.2f}{:.2f}R{:.2f}.dds", settings.CubemapColor.x, settings.CubemapColor.y, settings.CubemapColor.z, settings.CubemapColor.w);
 
 					std::wstring wfilename = std::wstring(filename.begin(), filename.end());
 					DX::ThrowIfFailed(SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::DDS_FLAGS::DDS_FLAGS_NONE, wfilename.c_str()));
@@ -396,32 +397,12 @@ void DynamicCubemaps::PostDeferred()
 {
 	auto& context = State::GetSingleton()->context;
 
-	ID3D11ShaderResourceView* views[2];
-	views[0] = envTexture->srv.get();
-	views[1] = enableCreator ? perFrameCreator->srv.get() : nullptr;
-	context->PSSetShaderResources(64, 2, views);
+	ID3D11ShaderResourceView* view = envTexture->srv.get();
+	context->PSSetShaderResources(64, 1, &view);
 }
 
 void DynamicCubemaps::Prepass()
 {
-	auto& context = State::GetSingleton()->context;
-
-	if (enableCreator) {
-		CreatorSettingsCB data{};
-		data.Enabled = true;
-		data.CubemapColor = cubemapColor;
-
-		D3D11_MAPPED_SUBRESOURCE mapped;
-		DX::ThrowIfFailed(context->Map(perFrameCreator->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-		size_t bytes = sizeof(CreatorSettingsCB);
-		memcpy_s(mapped.pData, bytes, &data, bytes);
-		context->Unmap(perFrameCreator->resource.get(), 0);
-	}
-
-	ID3D11ShaderResourceView* views[2];
-	views[0] = nullptr;
-	views[1] = enableCreator ? perFrameCreator->srv.get() : nullptr;
-	context->PSSetShaderResources(64, 2, views);
 }
 
 void DynamicCubemaps::Draw(const RE::BSShader*, const uint32_t)
@@ -526,24 +507,6 @@ void DynamicCubemaps::SetupResources()
 			uavDesc.Texture2DArray.MipSlice = level;
 			DX::ThrowIfFailed(device->CreateUnorderedAccessView(envReflectionsTexture->resource.get(), &uavDesc, &uavReflectionsArray[level - 1]));
 		}
-	}
-
-	{
-		D3D11_BUFFER_DESC sbDesc{};
-		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
-		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		sbDesc.StructureByteStride = sizeof(CreatorSettingsCB);
-		sbDesc.ByteWidth = sizeof(CreatorSettingsCB);
-		perFrameCreator = std::make_unique<Buffer>(sbDesc);
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		srvDesc.Buffer.FirstElement = 0;
-		srvDesc.Buffer.NumElements = 1;
-		perFrameCreator->CreateSRV(srvDesc);
 	}
 
 	{
