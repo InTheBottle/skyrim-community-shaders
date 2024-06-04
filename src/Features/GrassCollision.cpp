@@ -5,8 +5,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GrassCollision::Settings,
-	EnableGrassCollision
-)
+	EnableGrassCollision)
 
 void GrassCollision::DrawSettings()
 {
@@ -138,7 +137,7 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 			auto position = actor->GetPosition();
 			if (cameraPosition.GetDistance(position) > 1024)  // Check against distance
 				continue;
-			
+
 			activeActorCount++;
 			RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 				RE::NiPoint3 centerPos;
@@ -148,7 +147,7 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 					CollisionData data{};
 					RE::NiPoint3 eyePosition{};
 					for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
-						if (!REL::Module::IsVR()) 
+						if (!REL::Module::IsVR())
 							eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
 						else
 							eyePosition = shadowState->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
@@ -190,7 +189,6 @@ void GrassCollision::Update()
 	ID3D11Buffer* buffers[1];
 	buffers[0] = perFrame->CB();
 	context->VSSetConstantBuffers(5, ARRAYSIZE(buffers), buffers);
-	
 }
 
 void GrassCollision::Load(json& o_json)

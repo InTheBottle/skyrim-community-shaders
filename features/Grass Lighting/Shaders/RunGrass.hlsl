@@ -353,10 +353,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float dirShadow = 1.0;
 
-#	if defined(SCREEN_SPACE_SHADOWS)
+#		if defined(SCREEN_SPACE_SHADOWS)
 	if (shadowColor.x > 0.0)
 		dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
-#	endif
+#		endif
 
 	float3 diffuseColor = 0;
 	float3 specularColor = 0;
