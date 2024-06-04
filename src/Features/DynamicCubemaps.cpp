@@ -1,7 +1,7 @@
 #include "DynamicCubemaps.h"
 
-#include "Util.h"
 #include "State.h"
+#include "Util.h"
 
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
