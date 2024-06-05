@@ -1065,7 +1065,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		if defined(VR)
 	diffuseUv = ProjectedUVParams2.yy * (input.TexCoord0.zw + (uv - uvOriginal));
 #		else
-	diffuseUv = ProjectedUVParams2.yy * (triplanarUv + (uv - uvOriginal));
+	diffuseUv = ProjectedUVParams2.yy * (input.TexCoord0.zw + (uv - uvOriginal));
 #		endif  // VR
 #	else
 	diffuseUv = uv;
