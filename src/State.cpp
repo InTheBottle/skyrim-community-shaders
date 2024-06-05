@@ -316,7 +316,8 @@ void State::SetupResources()
 
 	permutationCB = new ConstantBuffer(ConstantBufferDesc<PermutationCB>());
 	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
-	featureDataCB = new ConstantBuffer(ConstantBufferDesc<FeatureBuffer>());
+	auto [_, size] = GetFeatureBufferData();
+	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
@@ -488,12 +489,16 @@ void State::UpdateSharedData()
 	}
 
 	{
-		FeatureBuffer data{};
-		data.grassLightingSettings = GrassLighting::GetSingleton()->settings;
-		data.extendedMaterialSettings = ExtendedMaterials::GetSingleton()->settings;
-		data.cubemapCreatorSettings = DynamicCubemaps::GetSingleton()->settings;
+		// FeatureBuffer data{};
+		// data.grassLightingSettings = GrassLighting::GetSingleton()->settings;
+		// data.extendedMaterialSettings = ExtendedMaterials::GetSingleton()->settings;
+		// data.cubemapCreatorSettings = DynamicCubemaps::GetSingleton()->settings;
 
-		featureDataCB->Update(data);
+		auto [data, size] = GetFeatureBufferData();
+
+		featureDataCB->Update(data, size);
+
+		delete[] data;
 	}
 
 	ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };

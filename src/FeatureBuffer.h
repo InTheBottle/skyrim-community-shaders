@@ -1,12 +1,19 @@
 #pragma once
 
-#include "Features/DynamicCubemaps.h"
-#include "Features/ExtendedMaterials.h"
-#include "Features/GrassLighting.h"
-
-struct alignas(16) FeatureBuffer
+template <class... Ts>
+std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 {
-	GrassLighting::Settings grassLightingSettings{};
-	ExtendedMaterials::Settings extendedMaterialSettings{};
-	DynamicCubemaps::Settings cubemapCreatorSettings{};
-};
+	size_t totalSize = (... + sizeof(Ts));
+	auto data = new unsigned char[totalSize];
+	size_t offset = 0;
+
+	([&] {
+		*((decltype(feat_datas)*)(data + offset)) = feat_datas;
+		offset += sizeof(decltype(feat_datas));
+	}(),
+		...);
+
+	return std::make_pair(data, totalSize);
+}
+
+std::pair<unsigned char*, size_t> GetFeatureBufferData();
