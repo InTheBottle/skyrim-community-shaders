@@ -158,6 +158,10 @@ const static float DepthOffsets[16] = {
 	0.333333343
 };
 
+#	if defined(SCREEN_SPACE_SHADOWS)
+#		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -195,7 +199,17 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 
 #		if defined(DEFERRED)
+	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
+	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
+
+#			if defined(SCREEN_SPACE_SHADOWS)
+	float dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
+	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5 * lerp(1.0, dirShadow, 0.8);
+#			else
 	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5;
+
+#			endif
+
 	psout.Diffuse.w = 1;
 
 	psout.MotionVector = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
@@ -213,7 +227,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition);
 	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = normalize(cross(ddx, ddy));
-
+	
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 
 	float3 color = DirLightColorShared.xyz * baseColor.xyz * 0.5;
