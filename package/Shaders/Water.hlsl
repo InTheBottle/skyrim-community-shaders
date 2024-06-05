@@ -616,19 +616,16 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 
 #		if defined(WATER_CAUSTICS)
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
+	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
 #		else
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
+	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
 #		endif
 {
 #		if defined(REFRACTIONS)
-	float4 refractionNormal = mul(transpose(TextureProj[a_eyeIndex]),
-		float4((VarAmounts.w * refractionsDepthFactor).xx * normal.xy + input.MPosition.xy,
-			input.MPosition.z, 1));
+	float4 refractionNormal = mul(transpose(TextureProj[a_eyeIndex]), float4((VarAmounts.w * refractionsDepthFactor).xx * normal.xy + input.MPosition.xy, input.MPosition.z, 1));
 
-	float2 refractionUvRaw =
-		float2(refractionNormal.x, refractionNormal.w - refractionNormal.y) / refractionNormal.ww;
+	float2 refractionUvRaw = float2(refractionNormal.x, refractionNormal.w - refractionNormal.y) / refractionNormal.ww;
 	refractionUvRaw = ConvertToStereoUV(refractionUvRaw, a_eyeIndex);  // need to convert here for VR due to refractionNormal values
 
 	float2 screenPosition = DynamicResolutionParams1.xy * (DynamicResolutionParams2.xy * input.HPosition.xy);
@@ -642,12 +639,12 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	float3 refractionDepthAdjustedViewDirection = -viewDirection * refractionDepthMul;
 	float refractionViewSurfaceAngle = dot(refractionDepthAdjustedViewDirection, ReflectPlane[a_eyeIndex].xyz);
 
-	float refractionPlaneMul =
-		sign(refractionViewSurfaceAngle) * (1 - ReflectPlane[a_eyeIndex].w / refractionViewSurfaceAngle);
+	float refractionPlaneMul = sign(refractionViewSurfaceAngle) * (1 - ReflectPlane[a_eyeIndex].w / refractionViewSurfaceAngle);
 
 	if (refractionPlaneMul < 0) {
-		refractionUvRaw =
-			DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
+		refractionUvRaw = DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
+	} else {
+		distanceMul = saturate(refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
 	}
 #			endif
 
@@ -667,8 +664,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 #			if defined(UNDERWATER)
 	float refractionMul = 0;
 #			else
-	float refractionMul =
-		1 - pow(saturate((-distanceMul.x * FogParam.z + FogParam.z) / FogParam.w), FogNearColor.w);
+	float refractionMul = 1 - pow(saturate((-distanceMul.x * FogParam.z + FogParam.z) / FogParam.w), FogNearColor.w);
 #			endif
 
 #			if defined(WATER_CAUSTICS)
@@ -803,6 +799,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			else
 	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition, scatter, transmittance);
 #			endif
+	depthControl = DepthControl * (distanceMul - 1) + 1;
 
 	float3 specularLighting = 0;
 
