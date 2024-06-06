@@ -27,7 +27,6 @@ cbuffer PerWaterType : register(b7)
 	uint pad0water;
 	float3 DeepColorNoWeather;
 	uint pad1water;
-
 };
 
 float3 GetShadow(float3 positionWS)
