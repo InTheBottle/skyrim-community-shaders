@@ -40,6 +40,8 @@ cbuffer FeatureData : register(b6)
 	float BasicGrassBrightness;
 	CPMSettings extendedMaterialSettings;
 	CubemapCreatorSettings cubemapCreatorSettings;
+	float scatterCoeffMult;
+	float absorpCoeffMult;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);

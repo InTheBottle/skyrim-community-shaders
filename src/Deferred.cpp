@@ -106,6 +106,84 @@ void Deferred::SetupResources()
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &linearSampler));
 	}
+
+	{
+		D3D11_BUFFER_DESC sbDesc{};
+		sbDesc.Usage = D3D11_USAGE_DEFAULT;
+		sbDesc.CPUAccessFlags = 0;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.Flags = 0;
+
+		std::uint32_t numElements = 1;
+
+		sbDesc.StructureByteStride = sizeof(PerGeometry);
+		sbDesc.ByteWidth = sizeof(PerGeometry) * numElements;
+		perShadow = new Buffer(sbDesc);
+		srvDesc.Buffer.NumElements = numElements;
+		perShadow->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		perShadow->CreateUAV(uavDesc);
+
+		copyShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ShadowTest\\CopyShadowData.hlsl", {}, "cs_5_0");
+	}
+
+	{
+		waterCB = new ConstantBuffer(ConstantBufferDesc<WaterCB>());
+	}
+}
+
+void Deferred::CopyShadowData()
+{
+	auto& context = State::GetSingleton()->context;
+
+	ID3D11UnorderedAccessView* uavs[1]{ perShadow->uav.get() };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	ID3D11Buffer* buffers[1];
+	context->PSGetConstantBuffers(2, 1, buffers);
+	context->CSSetConstantBuffers(0, 1, buffers);
+
+	context->PSGetConstantBuffers(12, 1, buffers);
+	context->CSSetConstantBuffers(1, 1, buffers);
+
+	context->PSGetConstantBuffers(0, 1, buffers);
+	context->CSSetConstantBuffers(2, 1, buffers);
+
+	context->PSGetShaderResources(4, 1, &shadowView);
+
+	context->CSSetShader(copyShadowCS, nullptr, 0);
+
+	context->Dispatch(1, 1, 1);
+
+	uavs[0] = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	buffers[0] = nullptr;
+	context->CSSetConstantBuffers(0, 1, buffers);
+	context->CSSetConstantBuffers(1, 1, buffers);
+	context->CSSetConstantBuffers(2, 1, buffers);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+
+	{
+		ID3D11ShaderResourceView* srvs[2]{
+			shadowView,
+			perShadow->srv.get(),
+		};
+
+		context->PSSetShaderResources(25, ARRAYSIZE(srvs), srvs);
+	}
 }
 
 void Deferred::UpdateConstantBuffer()
@@ -402,8 +480,6 @@ void Deferred::EndDeferred()
 	if (!inWorld)
 		return;
 
-	inWorld = false;
-
 	auto& shaderCache = SIE::ShaderCache::Instance();
 
 	if (!shaderCache.IsEnabled())
@@ -422,7 +498,7 @@ void Deferred::EndDeferred()
 		shadowState->GetRuntimeData().renderTargets[i] = RE::RENDER_TARGET::kNONE;
 	}
 
-	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	auto& context = State::GetSingleton()->context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	DeferredPasses();  // Perform deferred passes and composite forward buffers
@@ -430,6 +506,11 @@ void Deferred::EndDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	deferredPass = false;
+
+	{
+		ID3D11Buffer* buffer = waterCB->CB();
+		context->PSSetConstantBuffers(7, 1, &buffer);
+	}
 }
 
 void Deferred::OverrideBlendStates()
@@ -623,4 +704,12 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 		mainCompositeInteriorCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}
 	return mainCompositeInteriorCS;
+}
+
+void Deferred::UpdateWaterMaterial(RE::BSWaterShaderMaterial* a_material)
+{
+	WaterCB updateData{};
+	updateData.ShallowColor = { a_material->shallowWaterColor.red, a_material->shallowWaterColor.green, a_material->shallowWaterColor.blue };
+	updateData.DeepColor = { a_material->deepWaterColor.red, a_material->deepWaterColor.green, a_material->deepWaterColor.blue };
+	waterCB->Update(updateData);
 }

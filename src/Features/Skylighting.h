@@ -57,28 +57,7 @@ public:
 
 	virtual void ClearShaderCache() override;
 
-	struct alignas(16) PerGeometry
-	{
-		float4 VPOSOffset;
-		float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
-		float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
-		float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
-		float4 FocusShadowFadeParam;
-		float4 DebugColor;
-		float4 PropertyColor;
-		float4 AlphaTestRef;
-		float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
-		DirectX::XMFLOAT4X3 FocusShadowMapProj[4];
-		DirectX::XMFLOAT4X3 ShadowMapProj[4];
-		DirectX::XMFLOAT4X4 CameraViewProjInverse;
-	};
-
-	ID3D11ComputeShader* copyShadowCS = nullptr;
-
 	void CopyShadowData();
-
-	Buffer* perShadow = nullptr;
-	ID3D11ShaderResourceView* shadowView = nullptr;
 
 	Texture2D* skylightingTexture = nullptr;
 

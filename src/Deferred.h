@@ -23,6 +23,7 @@ public:
 	}
 
 	void SetupResources();
+	void CopyShadowData();
 	void StartDeferred();
 	void OverrideBlendStates();
 	void ResetBlendStates();
@@ -65,6 +66,38 @@ public:
 
 	ID3D11SamplerState* linearSampler = nullptr;
 
+	struct alignas(16) PerGeometry
+	{
+		float4 VPOSOffset;
+		float4 ShadowSampleParam;    // fPoissonRadiusScale / iShadowMapResolution in z and w
+		float4 EndSplitDistances;    // cascade end distances int xyz, cascade count int z
+		float4 StartSplitDistances;  // cascade start ditances int xyz, 4 int z
+		float4 FocusShadowFadeParam;
+		float4 DebugColor;
+		float4 PropertyColor;
+		float4 AlphaTestRef;
+		float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
+		DirectX::XMFLOAT4X3 FocusShadowMapProj[4];
+		DirectX::XMFLOAT4X3 ShadowMapProj[4];
+		DirectX::XMFLOAT4X4 CameraViewProjInverse;
+	};
+
+	ID3D11ComputeShader* copyShadowCS = nullptr;
+	Buffer* perShadow = nullptr;
+	ID3D11ShaderResourceView* shadowView = nullptr;
+
+	struct alignas(16) WaterCB
+	{
+		float3 ShallowColor;
+		uint pad0;
+		float3 DeepColor;
+		uint pad1;
+	};
+
+	ConstantBuffer* waterCB = nullptr;
+
+	void UpdateWaterMaterial(RE::BSWaterShaderMaterial* a_material);
+
 	struct Hooks
 	{
 		struct Main_RenderWorld
@@ -73,6 +106,8 @@ public:
 			{
 				GetSingleton()->inWorld = true;
 				func(a1);
+				GetSingleton()->inWorld = false;
+
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -114,12 +149,23 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct BSWaterShader_SetupMaterial
+		{
+			static void thunk(RE::BSShader* This, RE::BSWaterShaderMaterial* a_material)
+			{
+				GetSingleton()->UpdateWaterMaterial(a_material);
+				func(This, a_material);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 			//stl::write_thunk_call<Main_RenderWorld_End>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x2F2, 0x2E1, 0x321));
+			stl::write_vfunc<0x4, BSWaterShader_SetupMaterial>(RE::VTABLE_BSWaterShader[0]);
 
 			logger::info("[Deferred] Installed hooks");
 		}

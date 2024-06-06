@@ -18,37 +18,6 @@ void Skylighting::Draw(const RE::BSShader*, const uint32_t)
 
 void Skylighting::SetupResources()
 {
-	{
-		D3D11_BUFFER_DESC sbDesc{};
-		sbDesc.Usage = D3D11_USAGE_DEFAULT;
-		sbDesc.CPUAccessFlags = 0;
-		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		srvDesc.Buffer.FirstElement = 0;
-
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
-		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
-		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-		uavDesc.Buffer.FirstElement = 0;
-		uavDesc.Buffer.Flags = 0;
-
-		std::uint32_t numElements = 1;
-
-		sbDesc.StructureByteStride = sizeof(PerGeometry);
-		sbDesc.ByteWidth = sizeof(PerGeometry) * numElements;
-		perShadow = new Buffer(sbDesc);
-		srvDesc.Buffer.NumElements = numElements;
-		perShadow->CreateSRV(srvDesc);
-		uavDesc.Buffer.NumElements = numElements;
-		perShadow->CreateUAV(uavDesc);
-
-		copyShadowCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ShadowTest\\CopyShadowData.hlsl", {}, "cs_5_0");
-	}
-
 	GetSkylightingCS();
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -159,45 +128,6 @@ void Skylighting::ClearShaderCache()
 	}
 }
 
-void Skylighting::CopyShadowData()
-{
-	if (!loaded)
-		return;
-
-	auto& context = State::GetSingleton()->context;
-
-	ID3D11UnorderedAccessView* uavs[1]{ perShadow->uav.get() };
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-	ID3D11Buffer* buffers[1];
-	context->PSGetConstantBuffers(2, 1, buffers);
-	context->CSSetConstantBuffers(0, 1, buffers);
-
-	context->PSGetConstantBuffers(12, 1, buffers);
-	context->CSSetConstantBuffers(1, 1, buffers);
-
-	context->PSGetConstantBuffers(0, 1, buffers);
-	context->CSSetConstantBuffers(2, 1, buffers);
-
-	context->PSGetShaderResources(4, 1, &shadowView);
-
-	context->CSSetSamplers(0, 1, &Deferred::GetSingleton()->linearSampler);
-
-	context->CSSetShader(copyShadowCS, nullptr, 0);
-
-	context->Dispatch(1, 1, 1);
-
-	uavs[0] = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-	buffers[0] = nullptr;
-	context->CSSetConstantBuffers(0, 1, buffers);
-	context->CSSetConstantBuffers(1, 1, buffers);
-	context->CSSetConstantBuffers(2, 1, buffers);
-
-	context->CSSetShader(nullptr, nullptr, 0);
-}
-
 void Skylighting::Compute()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -245,8 +175,8 @@ void Skylighting::Compute()
 
 	ID3D11ShaderResourceView* srvs[7]{
 		depth.depthSRV,
-		shadowView,
-		perShadow->srv.get(),
+		Deferred::GetSingleton()->shadowView,
+		Deferred::GetSingleton()->perShadow->srv.get(),
 		noiseView,
 		occlusionTexture->srv.get(),
 		occlusionTranslucentTexture->srv.get(),
@@ -389,12 +319,4 @@ void Skylighting::Bind()
 
 	if (dsv)
 		dsv->Release();
-
-	ID3D11ShaderResourceView* srvs2[3]{
-		shadowView,
-		perShadow->srv.get(),
-		skylightingTexture->srv.get()
-	};
-
-	context->PSSetShaderResources(80, 3, srvs2);
 }
