@@ -38,7 +38,7 @@ public:
 
 	virtual void DrawSettings();
 
-	virtual void Draw(const RE::BSShader*, const uint32_t ){};
+	virtual void Draw(const RE::BSShader*, const uint32_t){};
 
 	virtual void Prepass() override;
 
