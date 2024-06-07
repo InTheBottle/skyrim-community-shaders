@@ -115,7 +115,7 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 	};
 
 	for (uint i = 0; i < nSteps; ++i) {
-		float t = saturate(i  * step);
+		float t = saturate(i * step);
 
 		float shadow = 0;
 		{
