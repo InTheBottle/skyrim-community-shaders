@@ -1330,7 +1330,37 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	baseColor.xyz = GetWorldMapBaseColor(rawBaseColor.xyz, baseColor.xyz, texProjTmp);
 #	endif  // WORLD_MAP
 
+	float3 worldSpaceNormal = modelNormal;
+
+#	if !defined(DRAW_IN_WORLDSPACE)
+	[flatten] if (!input.WorldSpace)
+		worldSpaceNormal = normalize(mul(input.World[eyeIndex], float4(worldSpaceNormal, 0)));
+#	endif
+
+	float3 screenSpaceNormal = normalize(WorldToView(worldSpaceNormal, false, eyeIndex));
+
+#	if !defined(MODELSPACENORMALS)
+	float3 vertexNormal = tbnTr[2];
+	float3 worldSpaceVertexNormal = vertexNormal;
+
+#		if !defined(DRAW_IN_WORLDSPACE)
+	[flatten] if (!input.WorldSpace)
+		worldSpaceVertexNormal = normalize(mul(input.World[eyeIndex], float4(worldSpaceVertexNormal, 0)));
+#		endif
+#	else
+	float3 worldSpaceVertexNormal = worldSpaceNormal;
+#	endif
+
+	float4 waterData = GetWaterData(input.WorldPosition.xyz);
+	float waterHeight = waterData.w;
+
 	float3 dirLightColor = DirLightColor.xyz;
+
+#	if defined(WATER_CAUSTICS)
+	if (perPassWaterCaustics[0].EnableWaterCaustics)
+		dirLightColor *= ComputeWaterCaustics(waterData, input.WorldPosition.xyz, worldSpaceNormal);
+#	endif
+
 	float selfShadowFactor = 1.0f;
 
 	float3 normalizedDirLightDirectionWS = DirLightDirection;
@@ -1409,30 +1439,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	lightsDiffuseColor += dirDiffuseColor;
 
-	float3 worldSpaceNormal = modelNormal;
-
-#	if !defined(DRAW_IN_WORLDSPACE)
-	[flatten] if (!input.WorldSpace)
-		worldSpaceNormal = normalize(mul(input.World[eyeIndex], float4(worldSpaceNormal, 0)));
-#	endif
-
-	float3 screenSpaceNormal = normalize(WorldToView(worldSpaceNormal, false, eyeIndex));
-
-#	if !defined(MODELSPACENORMALS)
-	float3 vertexNormal = tbnTr[2];
-	float3 worldSpaceVertexNormal = vertexNormal;
-
-#		if !defined(DRAW_IN_WORLDSPACE)
-	[flatten] if (!input.WorldSpace)
-		worldSpaceVertexNormal = normalize(mul(input.World[eyeIndex], float4(worldSpaceVertexNormal, 0)));
-#		endif
-#	else
-	float3 worldSpaceVertexNormal = worldSpaceNormal;
-#	endif
-
 	float porosity = 1.0;
 
-	float waterHeight = GetWaterHeight(input.WorldPosition.xyz);
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, viewPosition.z);
 
 #	if defined(WETNESS_EFFECTS)
@@ -1866,11 +1874,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	if defined(WETNESS_EFFECTS)
 	color.xyz += wetnessSpecular * wetnessGlossinessSpecular;
-#	endif
-
-#	if defined(WATER_CAUSTICS)
-	if (perPassWaterCaustics[0].EnableWaterCaustics)
-		color.xyz *= ComputeWaterCaustics(waterHeight, input.WorldPosition.xyz, worldSpaceNormal);
 #	endif
 
 	color.xyz = Lin2sRGB(color.xyz);

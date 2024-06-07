@@ -5,7 +5,7 @@
 
 cbuffer SharedData : register(b5)
 {
-	float4 WaterHeight[25];
+	float4 WaterData[25];
 	row_major float3x4 DirectionalAmbientShared;
 	float4 DirLightDirectionShared;
 	float4 DirLightColorShared;
@@ -64,7 +64,7 @@ float GetScreenDepth(float2 uv, uint a_eyeIndex = 0)
 	return GetScreenDepth(depth);
 }
 
-float GetWaterHeight(float3 worldPosition)
+float4 GetWaterData(float3 worldPosition)
 {
 	float2 cellF = (((worldPosition.xy + CameraPosAdjust[0].xy)) / 4096.0) + 64.0;  // always positive
 	int2 cellInt;
@@ -76,11 +76,12 @@ float GetWaterHeight(float3 worldPosition)
 	cellInt = round(cellF);
 
 	uint waterTile = (uint)clamp(cellInt.x + (cellInt.y * 5), 0, 24);  // remap xy to 0-24
-	float waterHeight = -2147483648;                                   // lowest 32-bit integer
+
+	float4 waterData = float4(1.0, 1.0, 1.0, -2147483648);
 
 	[flatten] if (cellInt.x < 5 && cellInt.x >= 0 && cellInt.y < 5 && cellInt.y >= 0)
-		waterHeight = WaterHeight[waterTile].x;
-	return waterHeight;
+		waterData = WaterData[waterTile];
+	return waterData;
 }
 
 // Derived from the interleaved gradient function from Jimenez 2014 http://goo.gl/eomGso

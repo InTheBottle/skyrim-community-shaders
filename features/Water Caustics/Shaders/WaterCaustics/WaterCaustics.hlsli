@@ -32,9 +32,9 @@ float3 ComputeWaterCaustics(float2 uv)
 	return caustics;
 }
 
-float3 ComputeWaterCaustics(float waterHeight, float3 worldPosition, float3 worldSpaceNormal)
+float3 ComputeWaterCaustics(float4 waterData, float3 worldPosition, float3 worldSpaceNormal)
 {
-	float causticsDistToWater = waterHeight - worldPosition.z;
+	float causticsDistToWater = waterData.w - worldPosition.z;
 	float shoreFactorCaustics = saturate(causticsDistToWater / 64.0);
 	float upAmount = worldSpaceNormal.z * 0.5 + 0.5;
 
@@ -67,6 +67,7 @@ float3 ComputeWaterCaustics(float waterHeight, float3 worldPosition, float3 worl
 
 		float3 caustics = lerp(causticsLow, causticsHigh, causticsFade);
 		caustics = lerp(causticsLow, caustics, upAmount);
+		
 		return lerp(1.0, caustics, shoreFactorCaustics * upAmount);
 	}
 

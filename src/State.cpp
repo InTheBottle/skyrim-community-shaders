@@ -479,13 +479,10 @@ void State::UpdateSharedData()
 
 		data.FrameCount = viewport->uiFrameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
 
-		auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-		auto posAdjust = !isVR ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
-
 		for (int i = -2; i <= 2; i++) {
 			for (int k = -2; k <= 2; k++) {
 				int waterTile = (i + 2) + ((k + 2) * 5);
-				data.WaterHeight[waterTile].x = Util::TryGetWaterHeight((float)i * 4096.0f, (float)k * 4096.0f) - posAdjust.z;
+				data.WaterData[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
 			}
 		}
 

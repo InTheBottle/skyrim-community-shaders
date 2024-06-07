@@ -118,7 +118,7 @@ public:
 
 	struct alignas(16) SharedDataCB
 	{
-		float4 WaterHeight[25];
+		float4 WaterData[25];
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		float4 DirLightDirection;
 		float4 DirLightColor;
