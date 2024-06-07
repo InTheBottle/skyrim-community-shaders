@@ -107,7 +107,6 @@ public:
 				GetSingleton()->inWorld = true;
 				func(a1);
 				GetSingleton()->inWorld = false;
-
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;
