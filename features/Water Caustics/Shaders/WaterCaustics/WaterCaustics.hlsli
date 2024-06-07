@@ -20,7 +20,7 @@ float3 SampleCaustics(float2 uv)
 
 float3 ComputeWaterCaustics(float2 uv)
 {
-	float2 causticsUV = uv * 5.0;
+	float2 causticsUV = uv * 10.0;
 
 	float2 causticsUV1 = PanCausticsUV(causticsUV, 0.5 * 0.2, 1.0);
 	float2 causticsUV2 = PanCausticsUV(causticsUV, 1.0 * 0.2, -0.5);
@@ -41,7 +41,8 @@ float3 ComputeWaterCaustics(float4 waterData, float3 worldPosition, float3 world
 
 	float causticsAmount = shoreFactorCaustics * upAmount;
 
-	if (causticsAmount > 0.0) {
+	if (causticsAmount > 0.0)
+	{
 		float causticsFade = 1.0 - saturate(causticsDistToWater / 1024.0);
 		causticsFade *= causticsFade;
 

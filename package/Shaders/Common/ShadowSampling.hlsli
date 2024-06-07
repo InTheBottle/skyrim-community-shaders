@@ -77,6 +77,11 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 	startPosWS += worldDir * step * noise;
 
+	float3 worldDirNorm = normalize(worldDir);
+
+	float distRatio = abs(SunDir.z / worldDirNorm.z);
+	float2 causticsUVShift = (worldDirNorm + SunDir / distRatio).xy * length(worldDir);
+
 	noise = noise * 2.0 * M_PI;
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
@@ -145,6 +150,11 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 			float4 depths = TexShadowMapSampler.GatherRed(LinearSampler, half3(samplePositionLS.xy, cascadeIndex), 0);
 
 			shadow = dot(depths > deltaZ, 0.25);
+
+			#	if defined(WATER_CAUSTICS)
+				float2 causticsUV = frac((startPosWS.xy + PosAdjust[0].xy + causticsUVShift * t) * 5e-4);
+				shadow *= ComputeWaterCaustics(causticsUV);
+			#	endif
 		}
 		vl += shadow;
 	}
