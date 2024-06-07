@@ -245,16 +245,13 @@ namespace Util
 				auto position = !REL::Module::IsVR() ? shadowState->GetRuntimeData().posAdjust.getEye() : shadowState->GetVRRuntimeData().posAdjust.getEye();
 				position.x += offsetX;
 				position.y += offsetY;
-				if (auto cell = tes->GetCell(position))
-				{
+				if (auto cell = tes->GetCell(position)) {
 					float4 data = float4(1.0f, 1.0f, 1.0f, -FLT_MAX);
 
 					bool extraCellWater = false;
 
-					if (auto extraCellWaterType = cell->extraList.GetByType<RE::ExtraCellWaterType>())
-					{
-						if (auto water = extraCellWaterType->water)
-						{
+					if (auto extraCellWaterType = cell->extraList.GetByType<RE::ExtraCellWaterType>()) {
+						if (auto water = extraCellWaterType->water) {
 							{
 								data = { float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
 									float(water->data.deepWaterColor.green) + float(water->data.shallowWaterColor.green),
@@ -272,12 +269,9 @@ namespace Util
 						}
 					}
 
-					if (!extraCellWater)
-					{
-						if (auto worldSpace = tes->worldSpace)
-						{
-							if (auto water = worldSpace->worldWater)
-							{
+					if (!extraCellWater) {
+						if (auto worldSpace = tes->worldSpace) {
+							if (auto water = worldSpace->worldWater) {
 								data = { float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
 									float(water->data.deepWaterColor.green) + float(water->data.shallowWaterColor.green),
 									float(water->data.deepWaterColor.blue) + float(water->data.shallowWaterColor.blue) };
@@ -293,8 +287,7 @@ namespace Util
 						}
 					}
 
-					if (auto sky = RE::Sky::GetSingleton())
-					{
+					if (auto sky = RE::Sky::GetSingleton()) {
 						auto& color = sky->skyColor[RE::TESWeather::ColorTypes::kWaterMultiplier];
 						data.x *= color.red;
 						data.y *= color.green;

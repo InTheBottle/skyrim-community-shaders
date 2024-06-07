@@ -41,8 +41,7 @@ float3 ComputeWaterCaustics(float4 waterData, float3 worldPosition, float3 world
 
 	float causticsAmount = shoreFactorCaustics * upAmount;
 
-	if (causticsAmount > 0.0)
-	{
+	if (causticsAmount > 0.0) {
 		float causticsFade = 1.0 - saturate(causticsDistToWater / 1024.0);
 		causticsFade *= causticsFade;
 
@@ -68,7 +67,7 @@ float3 ComputeWaterCaustics(float4 waterData, float3 worldPosition, float3 world
 
 		float3 caustics = lerp(causticsLow, causticsHigh, causticsFade);
 		caustics = lerp(causticsLow, caustics, upAmount);
-		
+
 		return lerp(1.0, caustics, shoreFactorCaustics * upAmount);
 	}
 
