@@ -372,7 +372,7 @@ float calculateDepthMultfromUV(float2 a_uv, float a_depth, uint a_eyeIndex = 0)
 #		include "WaterCaustics/WaterCaustics.hlsli"
 #	endif
 
-#include "Common/ShadowSampling.hlsli"
+#	include "Common/ShadowSampling.hlsli"
 
 #	if defined(SIMPLE) || defined(UNDERWATER) || defined(LOD) || defined(SPECULAR)
 #		if defined(FLOWMAP)
@@ -571,7 +571,6 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 #			include "Skylighting/Skylighting.hlsli"
 #		endif
 
-
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition)
 {
@@ -732,7 +731,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 specularColor = GetWaterSpecularColor(input, normal, viewDirection, distanceFactor, depthControl.y, eyeIndex);
 	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition);
-	
+
 	depthControl = DepthControl * (distanceMul - 1) + 1;
 
 	float3 specularLighting = 0;

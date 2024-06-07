@@ -43,7 +43,6 @@ void WaterCaustics::SetupResources()
 	perPass->CreateSRV(srvDesc);
 }
 
-
 void WaterCaustics::Prepass()
 {
 	auto& context = State::GetSingleton()->context;

@@ -14,7 +14,8 @@ float2 PanCausticsUV(float2 uv, float speed, float tiling)
 
 float3 SampleCaustics(float2 uv)
 {
-	return WaterCaustics.Sample(SampColorSampler, uv).r;;
+	return WaterCaustics.Sample(SampColorSampler, uv).r;
+	;
 }
 
 float3 ComputeWaterCaustics(float2 uv)
@@ -40,8 +41,7 @@ float3 ComputeWaterCaustics(float4 waterData, float3 worldPosition, float3 world
 
 	float causticsAmount = shoreFactorCaustics * upAmount;
 
-	if (causticsAmount > 0.0)
-	{
+	if (causticsAmount > 0.0) {
 		float causticsFade = 1.0 - saturate(causticsDistToWater / 1024.0);
 		causticsFade *= causticsFade;
 
