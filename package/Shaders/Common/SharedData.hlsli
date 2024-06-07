@@ -5,6 +5,7 @@
 
 cbuffer SharedData : register(b5)
 {
+	float4 WaterHeight[25];
 	row_major float3x4 DirectionalAmbientShared;
 	float4 DirLightDirectionShared;
 	float4 DirLightColorShared;
@@ -13,8 +14,6 @@ cbuffer SharedData : register(b5)
 	float Timer;
 	uint FrameCount;
 	uint pad0b4[2];
-	float WaterHeight[25];
-	uint pad1b4[3];
 };
 
 struct CPMSettings
@@ -80,7 +79,7 @@ float GetWaterHeight(float3 worldPosition)
 	float waterHeight = -2147483648;                                   // lowest 32-bit integer
 
 	[flatten] if (cellInt.x < 5 && cellInt.x >= 0 && cellInt.y < 5 && cellInt.y >= 0)
-		waterHeight = WaterHeight[waterTile];
+		waterHeight = WaterHeight[waterTile].x;
 	return waterHeight;
 }
 

@@ -485,7 +485,7 @@ void State::UpdateSharedData()
 		for (int i = -2; i <= 2; i++) {
 			for (int k = -2; k <= 2; k++) {
 				int waterTile = (i + 2) + ((k + 2) * 5);
-				data.WaterHeight[waterTile] = Util::TryGetWaterHeight((float)i * 4096.0f, (float)k * 4096.0f) - posAdjust.z;
+				data.WaterHeight[waterTile].x = Util::TryGetWaterHeight((float)i * 4096.0f, (float)k * 4096.0f) - posAdjust.z;
 			}
 		}
 

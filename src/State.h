@@ -118,6 +118,7 @@ public:
 
 	struct alignas(16) SharedDataCB
 	{
+		float4 WaterHeight[25];
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		float4 DirLightDirection;
 		float4 DirLightColor;
@@ -126,8 +127,6 @@ public:
 		float Timer;
 		uint FrameCount;
 		uint pad0[2];
-		float WaterHeight[25];
-		uint pad1[3];
 	};
 
 	ConstantBuffer* sharedDataCB = nullptr;
