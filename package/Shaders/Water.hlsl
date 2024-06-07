@@ -619,10 +619,10 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 
 #		if defined(WATER_CAUSTICS)
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
+	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 caustics, uint a_eyeIndex, float3 viewPosition)
 #		else
 float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
-	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition, inout float3 scatter, inout float3 transmittance)
+	inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint a_eyeIndex, float3 viewPosition)
 #		endif
 {
 #		if defined(REFRACTIONS)
@@ -659,7 +659,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	float3 refractionDiffuseColor = lerp(ShallowColor.xyz, DeepColor.xyz, distanceMul.y);
 
-	float vl = GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition);
+	float vl = GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition) * (1.0 + saturate(dot(viewDirection, SunDir.xyz)));
 
 #			if defined(UNDERWATER)
 	float refractionMul = 0;
@@ -792,12 +792,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 specularColor = GetWaterSpecularColor(input, normal, viewDirection, distanceFactor, depthControl.y, eyeIndex);
 
-	float3 scatter = 0;
-	float3 transmittance = 1;
 #			if defined(WATER_CAUSTICS)
-	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, caustics, eyeIndex, viewPosition, scatter, transmittance);
+	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, caustics, eyeIndex, viewPosition);
 #			else
-	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition, scatter, transmittance);
+	float3 diffuseColor = GetWaterDiffuseColor(input, normal, viewDirection, distanceMul, depthControl.y, fresnel, eyeIndex, viewPosition);
 #			endif
 	depthControl = DepthControl * (distanceMul - 1) + 1;
 
@@ -842,8 +840,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float specularFraction = lerp(1, fresnel * depthControl.x, distanceFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
-
-	finalColorPreFog += scatter;
 
 	float3 finalColor = lerp(finalColorPreFog, input.FogParam.xyz, input.FogParam.w);
 #			endif
