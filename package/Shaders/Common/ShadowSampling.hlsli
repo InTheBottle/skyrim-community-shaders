@@ -66,17 +66,6 @@ float3 GetShadow(float3 positionWS)
 	return shadow;
 }
 
-float phaseHenyeyGreenstein(float cosTheta, float g)
-{
-	static const float scale = .25 / 3.1415926535;
-	const float g2 = g * g;
-
-	float num = (1.0 - g2);
-	float denom = pow(abs(1.0 + g2 - 2.0 * g * cosTheta), 1.5);
-
-	return scale * num / denom;
-}
-
 float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 {
 	const static uint nSteps = 16;
@@ -85,6 +74,10 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 	float3 worldDir = endPosWS - startPosWS;
 
 	float noise = InterleavedGradientNoise(screenPosition) * 2.0 * M_PI;
+
+	startPosWS += worldDir * step * noise;
+
+	noise = noise * 2.0 * M_PI;
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
 	PerGeometry sD = perShadow[0];
@@ -120,7 +113,6 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 		float shadow = 0;
 		{
 			float3 samplePositionWS = startPosWS + worldDir * t;
-			samplePositionWS.xy += mul(PoissonDisk[i], rotationMatrix) * 16;
 
 			float shadowMapDepth = length(samplePositionWS.xyz);
 
@@ -128,20 +120,25 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 			half4x3 lightProjectionMatrix = sD.ShadowMapProj[0];
 			half shadowMapThreshold = sD.AlphaTestRef.y;
 
+			half shadowRange = sD.EndSplitDistances.x;
+
 			[flatten] if (2.5 < sD.EndSplitDistances.w && sD.EndSplitDistances.y < shadowMapDepth)
 			{
 				lightProjectionMatrix = sD.ShadowMapProj[2];
 				shadowMapThreshold = sD.AlphaTestRef.z;
 				cascadeIndex = 2;
+				shadowRange = sD.EndSplitDistances.z - sD.EndSplitDistances.y;
 			}
 			else if (sD.EndSplitDistances.x < shadowMapDepth)
 			{
 				lightProjectionMatrix = sD.ShadowMapProj[1];
 				shadowMapThreshold = sD.AlphaTestRef.z;
 				cascadeIndex = 1;
+				shadowRange = sD.EndSplitDistances.y - sD.EndSplitDistances.x;
 			}
 
 			half3 samplePositionLS = mul(transpose(lightProjectionMatrix), half4(samplePositionWS.xyz, 1)).xyz;
+			samplePositionLS.xy += 8.0 * mul(PoissonDisk[i], rotationMatrix) / shadowRange;
 
 			float deltaZ = samplePositionLS.z - shadowMapThreshold;
 
