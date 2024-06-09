@@ -162,6 +162,10 @@ const static float DepthOffsets[16] = {
 #		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
 #	endif
 
+#	if defined(TERRA_OCC)
+#		include "TerrainOcclusion/TerrainOcclusion.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -202,13 +206,20 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
 
-#			if defined(SCREEN_SPACE_SHADOWS)
-	float dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
-	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5 * lerp(1.0, dirShadow, 0.8);
-#			else
-	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5;
+	float dirShadow = 1;
 
+#			if defined(SCREEN_SPACE_SHADOWS)
+	dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
 #			endif
+
+#			if defined(TERRA_OCC)
+	float terrainShadow = 1;
+	float terrainAo = 1;
+	GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampDiffuse, terrainShadow, terrainAo);
+	dirShadow = min(dirShadow, terrainShadow);
+#			endif
+
+	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5 * lerp(1.0, dirShadow, 0.8);
 
 	psout.Diffuse.w = 1;
 

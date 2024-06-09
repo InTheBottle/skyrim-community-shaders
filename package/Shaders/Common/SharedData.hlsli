@@ -1,3 +1,6 @@
+#ifndef SHARED_DATA
+#define SHARED_DATA
+
 #include "Common/Constants.hlsli"
 #include "Common/VR.hlsli"
 
@@ -16,6 +19,17 @@ cbuffer SharedData : register(b5)
 	uint pad0b4[2];
 };
 
+struct GrassLightingSettings
+{
+	float Glossiness;
+	float SpecularStrength;
+	float SubsurfaceScatteringAmount;
+	bool OverrideComplexGrassSettings;
+
+	float BasicGrassBrightness;
+	float3 pad;
+};
+
 struct CPMSettings
 {
 	bool EnableComplexMaterial;
@@ -27,20 +41,41 @@ struct CPMSettings
 struct CubemapCreatorSettings
 {
 	uint Enabled;
+	float3 pad0;
+
 	float4 CubemapColor;
+
+	float scatterCoeffMult;
+	float absorpCoeffMult;
+	float2 pad1;
+};
+
+struct TerraOccSettings
+{
+	uint EnableTerrainShadow;
+	uint EnableTerrainAO;
+	float HeightBias;
+	float ShadowSofteningRadiusAngle;
+
+	float2 ZRange;
+	float2 ShadowFadeDistance;
+
+	float AOMix;
+	float3 Scale;
+
+	float AOPower;
+	float3 InvScale;
+
+	float AOFadeOutHeightRcp;
+	float3 Offset;
 };
 
 cbuffer FeatureData : register(b6)
 {
-	float Glossiness;
-	float SpecularStrength;
-	float SubsurfaceScatteringAmount;
-	bool OverrideComplexGrassSettings;
-	float BasicGrassBrightness;
+	GrassLightingSettings grassLightingSettings;
 	CPMSettings extendedMaterialSettings;
 	CubemapCreatorSettings cubemapCreatorSettings;
-	float scatterCoeffMult;
-	float absorpCoeffMult;
+	TerraOccSettings terraOccSettings;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);
@@ -95,5 +130,7 @@ float InterleavedGradientNoise(float2 uv)
 	float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
 	return frac(magic.z * frac(dot(uv, magic.xy)));
 }
+
+#endif
 
 #endif

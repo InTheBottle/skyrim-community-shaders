@@ -931,6 +931,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		endif
 #	endif
 
+#	if defined(TERRA_OCC)
+#		include "TerrainOcclusion/TerrainOcclusion.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -1378,13 +1382,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) || dirLightAngle <= 0.0;
 
-#	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 	float dirShadow = 1.0;
 	if (!inDirShadow) {
+#	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 		dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
-		inDirShadow = inDirShadow || dirShadow == 0.0;
-	}
 #	endif
+
+#	if defined(TERRA_OCC)
+		float terrainShadow = 1;
+		float terrainAo = 1;
+		GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampColorSampler, terrainShadow, terrainAo);
+		dirShadow = min(dirShadow, terrainShadow);
+#	endif
+	}
+	inDirShadow = inDirShadow || dirShadow == 0.0;
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	if (!inDirShadow) {
@@ -1409,11 +1420,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsDiffuseColor = 0.0.xxx;
 	float3 lightsSpecularColor = 0.0.xxx;
 
-#	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirShadow;
-#	else
-	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle);
-#	endif
 
 #	if defined(SOFT_LIGHTING)
 	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
