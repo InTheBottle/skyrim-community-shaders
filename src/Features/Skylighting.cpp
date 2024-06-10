@@ -140,25 +140,8 @@ void Skylighting::Compute()
 
 	{
 		PerFrameCB data{};
+		data.OcclusionViewProj = viewProjMat;
 
-		data.BufferDim.x = state->screenWidth;
-		data.BufferDim.y = state->screenHeight;
-		data.BufferDim.z = 1.0f / data.BufferDim.x;
-		data.BufferDim.w = 1.0f / data.BufferDim.y;
-
-		data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-		data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
-		data.DynamicRes.z = 1.0f / data.DynamicRes.x;
-		data.DynamicRes.w = 1.0f / data.DynamicRes.y;
-
-		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-
-		auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-		data.FrameCount = useTAA || state->upscalerLoaded ? viewport->uiFrameCount : 0;
-
-		data.CameraData = Util::GetCameraData();
-
-		data.viewProjMat = viewProjMat;
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
 		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
@@ -189,7 +172,7 @@ void Skylighting::Compute()
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	auto buffer = perFrameCB->CB();
-	context->CSSetConstantBuffers(1, 1, &buffer);
+	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
 	context->CSSetSamplers(0, 2, samplers);
@@ -215,7 +198,7 @@ void Skylighting::Compute()
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	buffer = nullptr;
-	context->CSSetConstantBuffers(1, 1, &buffer);
+	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	samplers[0] = nullptr;
 	samplers[1] = nullptr;

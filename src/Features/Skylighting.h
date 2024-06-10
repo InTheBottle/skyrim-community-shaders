@@ -44,20 +44,13 @@ public:
 
 	struct alignas(16) PerFrameCB
 	{
-		REX::W32::XMFLOAT4X4 viewProjMat;
+		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 ShadowDirection;
-		float4 BufferDim;
-		float4 DynamicRes;
-		float4 CameraData;
-		uint FrameCount;
-		uint pad0[3];
 	};
 
 	ConstantBuffer* perFrameCB = nullptr;
 
 	virtual void ClearShaderCache() override;
-
-	void CopyShadowData();
 
 	Texture2D* skylightingTexture = nullptr;
 

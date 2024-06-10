@@ -392,11 +392,18 @@ void Deferred::DeferredPasses()
 	if (auto sky = RE::Sky::GetSingleton())
 		interior = sky->mode.get() != RE::Sky::Mode::kFull;
 
+	auto skylighting = Skylighting::GetSingleton();
+
+	if (skylighting->loaded)
+		skylighting->Compute();
+
 	// Ambient Composite
 	{
-		ID3D11ShaderResourceView* srvs[2]{
+		ID3D11ShaderResourceView* srvs[3]
+		{
 			albedo.SRV,
-			normalRoughness.SRV
+			normalRoughness.SRV,
+			skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
 		};
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
@@ -435,6 +442,7 @@ void Deferred::DeferredPasses()
 			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envTexture->srv.get() : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envReflectionsTexture->srv.get() : nullptr,
+			dynamicCubemaps->loaded && skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
 		};
 
 		if (dynamicCubemaps->loaded)
@@ -459,7 +467,7 @@ void Deferred::DeferredPasses()
 
 	// Clear
 	{
-		ID3D11ShaderResourceView* views[4]{ nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* views[9]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
@@ -655,6 +663,10 @@ ID3D11ComputeShader* Deferred::GetComputeAmbientComposite()
 
 		std::vector<std::pair<const char*, const char*>> defines;
 
+		auto skylighting = Skylighting::GetSingleton();
+		if (skylighting->loaded)
+			defines.push_back({ "SKYLIGHTING", nullptr });
+
 		ambientCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\AmbientCompositeCS.hlsl", defines, "cs_5_0");
 	}
 	return ambientCompositeCS;
@@ -683,6 +695,10 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
 		if (dynamicCubemaps->loaded)
 			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
+		
+		auto skylighting = Skylighting::GetSingleton();
+		if (skylighting->loaded)
+			defines.push_back({ "SKYLIGHTING", nullptr });
 
 		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}

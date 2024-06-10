@@ -14,14 +14,18 @@ RWTexture2D<half3> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 RWTexture2D<half2> SnowParametersRW : register(u2);
 
-#if defined(DYNAMIC_CUBEMAPS)
+#	if defined(DYNAMIC_CUBEMAPS)
 Texture2D<unorm float> DepthTexture : register(t4);
 Texture2D<unorm half3> ReflectanceTexture : register(t5);
 TextureCube<half3> EnvTexture : register(t6);
 TextureCube<half3> EnvReflectionsTexture : register(t7);
 
 SamplerState LinearSampler : register(s0);
-#endif
+#	endif
+
+#	if defined(DYNAMIC_CUBEMAPS)
+Texture2D<unorm half2> SkylightingTexture : register(t8);
+#	endif
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
 								: SV_DispatchThreadID) {
@@ -56,26 +60,32 @@ SamplerState LinearSampler : register(s0);
 
 		half3 positionWS = positionCS;
 
-		float3 V = normalize(positionWS);
-		float3 R = reflect(V, normalWS);
+		half3 V = normalize(positionWS);
+		half3 R = reflect(V, normalWS);
 
-		float roughness = 1.0 - glossiness;
-		float level = roughness * 9.0;
+		half roughness = 1.0 - glossiness;
+		half level = roughness * 9.0;
 
 #	if defined(INTERIOR)
-
-		float3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
+		half3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
 		specularIrradiance = sRGB2Lin(specularIrradiance);
 
 		color += reflectance * specularIrradiance;
+#	elif defined(SKYLIGHTING)
+		half skylightingSpecular = SkylightingTexture[dispatchID.xy].y;
 
+		half3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
+		specularIrradiance = sRGB2Lin(specularIrradiance);
+
+		half3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
+		specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
+
+		color += reflectance * lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular);
 #	else
-
-		float3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
+		half3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
 		specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
 
 		color += reflectance * specularIrradianceReflections;
-
 #	endif
 
 		color = Lin2sRGB(color);

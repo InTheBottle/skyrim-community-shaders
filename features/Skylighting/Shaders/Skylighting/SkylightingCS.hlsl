@@ -1,3 +1,6 @@
+#include "../Common/DeferredShared.hlsli"
+#include "../Common/FrameBuffer.hlsl"
+#include "../Common/GBuffer.hlsli"
 #include "../Common/VR.hlsli"
 
 Texture2D<unorm float> DepthTexture : register(t0);
@@ -16,10 +19,10 @@ struct PerGeometry
 	float4x3 FocusShadowMapProj[4];
 #if !defined(VR)
 	float4x3 ShadowMapProj[1][3];
-	float4x4 CameraViewProjInverse[1];
+	float4x4 CameraViewProjInverse2[1];
 #else
 	float4x3 ShadowMapProj[2][3];
-	float4x4 CameraViewProjInverse[2];
+	float4x4 CameraViewProjInverse2[2];
 #endif  // VR
 };
 
@@ -32,15 +35,10 @@ Texture2D<unorm half3> NormalRoughnessTexture : register(t6);
 
 RWTexture2D<unorm half2> SkylightingTextureRW : register(u0);
 
-cbuffer PerFrame : register(b1)
+cbuffer PerFrame : register(b0)
 {
 	row_major float4x4 OcclusionViewProj;
 	float4 ShadowDirection;
-	float4 BufferDim;
-	float4 DynamicRes;
-	float4 CameraData;
-	uint FrameCount;
-	uint pad0[3];
 };
 
 SamplerState LinearSampler : register(s0);
@@ -56,56 +54,25 @@ half GetScreenDepth(half depth)
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-cbuffer PerFrameDeferredShared : register(b0)
-{
-	float4 CamPosAdjust[2];
-	float4 DirLightDirectionVS[2];
-	float4 DirLightColor;
-	float4 CameraData2;
-	float2 BufferDim2;
-	float2 RcpBufferDim;
-	float4x4 ViewMatrix[2];
-	float4x4 ProjMatrix[2];
-	float4x4 ViewProjMatrix[2];
-	float4x4 InvViewMatrix[2];
-	float4x4 InvProjMatrix[2];
-	float4x4 InvViewProjMatrix[2];
-	row_major float3x4 DirectionalAmbient;
-	uint FrameCount2;
-	uint pad02[3];
-};
-
-half3 DecodeNormal(half2 f)
-{
-	f = f * 2.0 - 1.0;
-	// https://twitter.com/Stubbesaurus/status/937994790553227264
-	half3 n = half3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-	half t = saturate(-n.z);
-	n.xy += n.xy >= 0.0 ? -t : t;
-	return -normalize(n);
-}
-
 //#define SHADOWMAP
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
-	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
-	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(CameraViewInverse[eyeIndex], half4(normalVS, 0)));
 	half roughness = 1.0 - normalGlossiness.z;
 
 	float rawDepth = DepthTexture[globalId.xy];
 
 	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
 
-	PerGeometry sD = perShadow[0];
-
-	float4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
+	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	float3 startPositionMS = positionMS;
@@ -180,15 +147,7 @@ half3 DecodeNormal(half2 f)
 		}
 	}
 
-	if (weights.x > 0.0)
-		skylighting.x /= weights.x;
-	else
-		skylighting.x = 1.0;
-
-	if (weights.y > 0.0)
-		skylighting.y /= weights.y;
-	else
-		skylighting.y = 1.0;
+	skylighting.xy /= weights.xy;
 
 	weights = 0.0;
 	half2 skylightingTranslucent = 0;
@@ -227,17 +186,9 @@ half3 DecodeNormal(half2 f)
 		}
 	}
 
-	if (weights.x > 0.0)
-		skylightingTranslucent.x /= weights.x;
-	else
-		skylightingTranslucent.x = 1.0;
+	skylightingTranslucent.xy /= weights.xy;
 
-	if (weights.y > 0.0)
-		skylightingTranslucent.y /= weights.y;
-	else
-		skylightingTranslucent.y = 1.0;
-
-	skylighting = min(skylighting, lerp(skylightingTranslucent, 1.0, 0.0));
+	skylighting = min(skylighting, lerp(0.5, 1.0, skylightingTranslucent));
 
 	SkylightingTextureRW[globalId.xy] = saturate(skylighting);
 }
@@ -249,7 +200,7 @@ half3 DecodeNormal(half2 f)
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
-	half3 normalWS = normalize(mul(InvViewMatrix[eyeIndex], half4(normalVS, 0)));
+	half3 normalWS = normalize(mul(CameraViewInverse[eyeIndex], half4(normalVS, 0)));
 	half roughness = 1.0 - normalGlossiness.z;
 
 	float rawDepth = DepthTexture[globalId.xy];

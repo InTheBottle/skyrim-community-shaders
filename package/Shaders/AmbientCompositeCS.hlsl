@@ -6,6 +6,10 @@
 Texture2D<unorm half3> AlbedoTexture : register(t0);
 Texture2D<unorm half3> NormalRoughnessTexture : register(t1);
 
+#	if defined(SKYLIGHTING)
+Texture2D<unorm half2> SkylightingTexture : register(t2);
+#	endif
+
 RWTexture2D<half3> MainRW : register(u0);
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
@@ -23,7 +27,12 @@ RWTexture2D<half3> MainRW : register(u0);
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 
+#	if defined(SKYLIGHTING)
+	half skylightingDiffuse = lerp(0.25, 1.0, SkylightingTexture[dispatchID.xy].x);
+	diffuseColor += albedo * directionalAmbientColor * skylightingDiffuse;
+#	else
 	diffuseColor += albedo * directionalAmbientColor;
+#	endif
 
 	MainRW[dispatchID.xy] = diffuseColor;
 };
