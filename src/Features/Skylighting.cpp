@@ -3,13 +3,23 @@
 #include <Deferred.h>
 #include <Util.h>
 
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	Skylighting::Settings,
+	EnableSkylighting,
+	HeightSkylighting,
+	AmbientDiffuseBlend,
+	AmbientMult,
+	SkyMult)
+
 void Skylighting::DrawSettings()
 {
-	ImGui::Checkbox("Do occlusion", &GetSingleton()->doOcclusion);
-	ImGui::Checkbox("Render trees", &renderTrees);
-
-	ImGui::SliderFloat("Bound Size", &boundSize, 0, 512, "%.2f");
-	ImGui::SliderFloat("Distance", &occlusionDistance, 0, 20000);
+	ImGui::Checkbox("Enable Skylighting", &settings.EnableSkylighting);
+	ImGui::Checkbox("Enable Height Map Rendering", &settings.HeightSkylighting);
+	ImGui::SliderFloat("Ambient Diffuse Blend", &settings.AmbientDiffuseBlend, 0, 1, "%.2f");
+	//ImGui::SliderFloat("Specular Blend", &settings.AmbientSpecularBlend, 0, 1, "%.2f");
+	ImGui::SliderFloat("Ambient Mult", &settings.AmbientMult, 0, 1, "%.2f");
+	ImGui::SliderFloat("Sky Mult", &settings.SkyMult, 0, 1, "%.2f");
 }
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
@@ -19,6 +29,7 @@ void Skylighting::Draw(const RE::BSShader*, const uint32_t)
 void Skylighting::SetupResources()
 {
 	GetSkylightingCS();
+	GetSkylightingShadowMapCS();
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
@@ -33,7 +44,7 @@ void Skylighting::SetupResources()
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
 
-		texDesc.Format = DXGI_FORMAT_R8G8_UNORM;
+		texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
@@ -56,10 +67,6 @@ void Skylighting::SetupResources()
 		occlusionTexture = new Texture2D(texDesc);
 		occlusionTexture->CreateSRV(srvDesc);
 		occlusionTexture->CreateDSV(dsvDesc);
-
-		occlusionTranslucentTexture = new Texture2D(texDesc);
-		occlusionTranslucentTexture->CreateSRV(srvDesc);
-		occlusionTranslucentTexture->CreateDSV(dsvDesc);
 	}
 
 	{
@@ -95,20 +102,24 @@ void Skylighting::SetupResources()
 
 void Skylighting::Reset()
 {
-	translucent = false;
 }
 
 void Skylighting::Load(json& o_json)
 {
+	if (o_json[GetName()].is_object())
+		settings = o_json[GetName()];
+
 	Feature::Load(o_json);
 }
 
-void Skylighting::Save(json&)
+void Skylighting::Save(json& o_json)
 {
+	o_json[GetName()] = settings;
 }
 
 void Skylighting::RestoreDefaultSettings()
 {
+	settings = {};
 }
 
 ID3D11ComputeShader* Skylighting::GetSkylightingCS()
@@ -120,19 +131,40 @@ ID3D11ComputeShader* Skylighting::GetSkylightingCS()
 	return skylightingCS;
 }
 
+ID3D11ComputeShader* Skylighting::GetSkylightingShadowMapCS()
+{
+	if (!skylightingShadowMapCS) {
+		logger::debug("Compiling SkylightingCS SHADOWMAP");
+		skylightingShadowMapCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Skylighting\\SkylightingCS.hlsl", { { "SHADOWMAP", nullptr } }, "cs_5_0");
+	}
+	return skylightingShadowMapCS;
+}
+
 void Skylighting::ClearShaderCache()
 {
 	if (skylightingCS) {
 		skylightingCS->Release();
 		skylightingCS = nullptr;
 	}
+	if (skylightingShadowMapCS) {
+		skylightingShadowMapCS->Release();
+		skylightingShadowMapCS = nullptr;
+	}
 }
 
 void Skylighting::Compute()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto state = State::GetSingleton();
 	auto& context = state->context;
+
+	if (!settings.EnableSkylighting) {
+		float clear[4] = { 1, 1, 1, 1 };
+		context->ClearUnorderedAccessViewFloat(GetSingleton()->skylightingTexture->uav.get(), clear);
+		return;
+	}
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	float resolutionX = state->screenWidth * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
@@ -141,6 +173,8 @@ void Skylighting::Compute()
 	{
 		PerFrameCB data{};
 		data.OcclusionViewProj = viewProjMat;
+			
+		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult};
 
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
@@ -156,17 +190,16 @@ void Skylighting::Compute()
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
-	ID3D11ShaderResourceView* srvs[7]{
+	ID3D11ShaderResourceView* srvs[6]{
 		depth.depthSRV,
 		Deferred::GetSingleton()->shadowView,
 		Deferred::GetSingleton()->perShadow->srv.get(),
 		noiseView,
 		occlusionTexture->srv.get(),
-		occlusionTranslucentTexture->srv.get(),
 		normalRoughness.SRV
 	};
 
-	context->CSSetShaderResources(0, 7, srvs);
+	context->CSSetShaderResources(0, 6, srvs);
 
 	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -177,7 +210,7 @@ void Skylighting::Compute()
 	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
 	context->CSSetSamplers(0, 2, samplers);
 
-	context->CSSetShader(GetSkylightingCS(), nullptr, 0);
+	context->CSSetShader(settings.HeightSkylighting ? GetSkylightingCS() : GetSkylightingShadowMapCS(), nullptr, 0);
 
 	uint32_t dispatchX = (uint32_t)std::ceil(resolutionX / 8.0f);
 	uint32_t dispatchY = (uint32_t)std::ceil(resolutionY / 8.0f);
@@ -190,9 +223,8 @@ void Skylighting::Compute()
 	srvs[3] = nullptr;
 	srvs[4] = nullptr;
 	srvs[5] = nullptr;
-	srvs[6] = nullptr;
 
-	context->CSSetShaderResources(0, 7, srvs);
+	context->CSSetShaderResources(0, 6, srvs);
 
 	uavs[0] = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -205,101 +237,4 @@ void Skylighting::Compute()
 	context->CSSetSamplers(0, 2, samplers);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-}
-
-void Skylighting::EnableTranslucentDepth()
-{
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
-	precipitation.depthSRV = occlusionTranslucentTexture->srv.get();
-	precipitation.texture = occlusionTranslucentTexture->resource.get();
-	precipitation.views[0] = occlusionTranslucentTexture->dsv.get();
-
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
-	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-}
-
-void Skylighting::DisableTranslucentDepth()
-{
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
-	precipitation.depthSRV = occlusionTexture->srv.get();
-	precipitation.texture = occlusionTexture->resource.get();
-	precipitation.views[0] = occlusionTexture->dsv.get();
-
-	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
-	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-}
-
-void Skylighting::UpdateDepthStencilView(RE::BSRenderPass* a_pass)
-{
-	if (inOcclusion) {
-		auto currentTranslucent = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
-		if (translucent != currentTranslucent) {
-			translucent = currentTranslucent;
-			if (translucent) {
-				EnableTranslucentDepth();
-			} else {
-				DisableTranslucentDepth();
-			}
-		}
-	}
-}
-
-void Skylighting::Bind()
-{
-	if (!loaded)
-		return;
-
-	auto& context = State::GetSingleton()->context;
-
-	ID3D11ShaderResourceView* srvs[8];
-	context->PSGetShaderResources(0, 8, srvs);
-
-	ID3D11ShaderResourceView* srvsCS[8];
-	context->CSGetShaderResources(0, 8, srvsCS);
-
-	ID3D11UnorderedAccessView* uavsCS[8];
-	context->CSGetUnorderedAccessViews(0, 8, uavsCS);
-
-	ID3D11UnorderedAccessView* nullUavs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
-
-	ID3D11ShaderResourceView* nullSrvs[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	context->PSSetShaderResources(0, 8, nullSrvs);
-	context->CSSetShaderResources(0, 8, nullSrvs);
-
-	ID3D11RenderTargetView* views[8];
-	ID3D11DepthStencilView* dsv;
-	context->OMGetRenderTargets(8, views, &dsv);
-
-	ID3D11RenderTargetView* nullViews[8] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-	ID3D11DepthStencilView* nullDsv = nullptr;
-	context->OMSetRenderTargets(8, nullViews, nullDsv);
-
-	Compute();
-
-	context->PSSetShaderResources(0, 8, srvs);
-	context->CSSetShaderResources(0, 8, srvsCS);
-	context->CSSetUnorderedAccessViews(0, 8, uavsCS, nullptr);
-	context->OMSetRenderTargets(8, views, dsv);
-
-	for (int i = 0; i < 8; i++) {
-		if (srvs[i])
-			srvs[i]->Release();
-		if (srvsCS[i])
-			srvsCS[i]->Release();
-	}
-
-	for (int i = 0; i < 8; i++) {
-		if (views[i])
-			views[i]->Release();
-	}
-
-	if (dsv)
-		dsv->Release();
 }

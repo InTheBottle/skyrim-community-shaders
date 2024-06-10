@@ -374,8 +374,6 @@ void Deferred::DeferredPasses()
 		context->CSSetConstantBuffers(11, 2, buffers);
 	}
 
-	Skylighting::GetSingleton()->Bind();
-
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];

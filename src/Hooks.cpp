@@ -437,6 +437,19 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct CreateDepthStencil_PrecipitationMask
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, uint32_t a_target, RE::BSGraphics::DepthStencilTargetProperties* a_properties)
+		{
+			a_properties->height = 256;
+			a_properties->width = 256;
+			a_properties->use16BitsDepth = true;
+			a_properties->stencil = false;
+			func(This, a_target, a_properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	void Install()
 	{
 		SKSE::AllocTrampoline(14);
@@ -475,5 +488,7 @@ namespace Hooks
 		if (!REL::Module::IsVR())
 			stl::write_thunk_call<CreateRenderTarget_Snow>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x406, 0x409));
 		stl::write_thunk_call<CreateRenderTarget_ShadowMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x555, 0x554, 0x6b9));
+
+		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x554, 0x6b9));
 	}
 }

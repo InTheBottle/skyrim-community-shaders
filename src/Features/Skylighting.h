@@ -35,10 +35,11 @@ public:
 
 	REX::W32::XMFLOAT4X4 viewProjMat;
 	float occlusionDistance = 10000;
-	bool renderTrees = false;
 
 	ID3D11ComputeShader* skylightingCS = nullptr;
+	ID3D11ComputeShader* skylightingShadowMapCS = nullptr;
 	ID3D11ComputeShader* GetSkylightingCS();
+	ID3D11ComputeShader* GetSkylightingShadowMapCS();
 
 	ID3D11SamplerState* comparisonSampler;
 
@@ -46,7 +47,20 @@ public:
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 ShadowDirection;
+		float4 Parameters;
 	};
+
+	struct Settings
+	{
+		bool EnableSkylighting = true;
+		bool HeightSkylighting = true;
+		float AmbientDiffuseBlend = 0.5;
+		float AmbientSpecularBlend = 0.0;
+		float AmbientMult = 1.0;
+		float SkyMult = 1.0;
+	};
+
+	Settings settings;
 
 	ConstantBuffer* perFrameCB = nullptr;
 
@@ -57,13 +71,6 @@ public:
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
-	Texture2D* occlusionTranslucentTexture = nullptr;
-
-	bool translucent = false;
-
-	RE::BSGraphics::DepthStencilData precipitationCopy;
-
-	bool doOcclusion = true;
 
 	struct BSParticleShaderRainEmitter
 	{
@@ -85,14 +92,7 @@ public:
 		func(a_This, a_emitter);
 	}
 
-	void Bind();
 	void Compute();
-
-	void EnableTranslucentDepth();
-
-	void DisableTranslucentDepth();
-
-	void UpdateDepthStencilView(RE::BSRenderPass* a_pass);
 
 	enum class ShaderTechnique
 	{
@@ -320,15 +320,11 @@ public:
 			auto* precipitationOcclusionMapRenderPassList = reinterpret_cast<RenderPassArray*>(&property->unk0C8);
 
 			precipitationOcclusionMapRenderPassList->Clear();
-			if (GetSingleton()->inOcclusion && !GetSingleton()->renderTrees) {
-				if (property->flags.any(kSkinned) && property->flags.none(kTreeAnim))
-					return precipitationOcclusionMapRenderPassList;
-			} else {
-				if (property->flags.any(kSkinned))
-					return precipitationOcclusionMapRenderPassList;
-			}
 
-			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting) && !(property->flags.any(kSkinned) && property->flags.none(kTreeAnim))) {
+			if (!GetSingleton()->inOcclusion && property->flags.any(kSkinned, kTreeAnim))
+				return precipitationOcclusionMapRenderPassList;
+
+			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting)){
 				if (geometry->worldBound.radius > GetSingleton()->boundSize) {
 					stl::enumeration<BSUtilityShader::Flags> technique;
 					technique.set(RenderDepth);
@@ -359,7 +355,7 @@ public:
 			auto sky = RE::Sky::GetSingleton();
 			auto precip = sky->precip;
 
-			if (GetSingleton()->doOcclusion) {
+			if (GetSingleton()->settings.EnableSkylighting && GetSingleton()->settings.HeightSkylighting) {
 				if (doPrecip) {
 					doPrecip = false;
 
@@ -383,10 +379,7 @@ public:
 
 					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-					GetSingleton()->precipitationCopy = precipitation;
-
-					auto& context = State::GetSingleton()->context;
-					context->ClearDepthStencilView(GetSingleton()->occlusionTranslucentTexture->dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+					RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
 
 					precipitation.depthSRV = GetSingleton()->occlusionTexture->srv.get();
 					precipitation.texture = GetSingleton()->occlusionTexture->resource.get();
@@ -423,20 +416,12 @@ public:
 
 					PrecipitationShaderDirection = originalParticleShaderDirection;
 
-					precipitation = GetSingleton()->precipitationCopy;
+					precipitation = precipitationCopy;
 				}
+			} else {
+				func();
 			}
 			State::GetSingleton()->EndPerfEvent();
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSUtilityShader_SetupGeometry
-	{
-		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
-		{
-			GetSingleton()->UpdateDepthStencilView(Pass);
-			func(This, Pass, RenderFlags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -448,7 +433,6 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
-			stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 		}
 	};
 

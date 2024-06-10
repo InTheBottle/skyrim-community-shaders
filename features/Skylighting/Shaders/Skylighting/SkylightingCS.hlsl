@@ -30,15 +30,15 @@ Texture2DArray<unorm float> TexShadowMapSampler : register(t1);
 StructuredBuffer<PerGeometry> perShadow : register(t2);
 Texture2DArray<float4> BlueNoise : register(t3);
 Texture2D<unorm float> OcclusionMapSampler : register(t4);
-Texture2D<unorm float> OcclusionMapTranslucentSampler : register(t5);
-Texture2D<unorm half3> NormalRoughnessTexture : register(t6);
+Texture2D<unorm half3> NormalRoughnessTexture : register(t5);
 
-RWTexture2D<unorm half2> SkylightingTextureRW : register(u0);
+RWTexture2D<half2> SkylightingTextureRW : register(u0);
 
 cbuffer PerFrame : register(b0)
 {
 	row_major float4x4 OcclusionViewProj;
 	float4 ShadowDirection;
+	float4 Parameters;
 };
 
 SamplerState LinearSampler : register(s0);
@@ -54,12 +54,10 @@ half GetScreenDepth(half depth)
 	return (CameraData.w / (-depth * CameraData.z + CameraData.x));
 }
 
-//#define SHADOWMAP
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
-[numthreads(8, 8, 1)] void main(uint3 globalId
-								: SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -102,16 +100,15 @@ half GetScreenDepth(half depth)
 
 	uint sampleCount = 16;
 
-	half2 skylighting = 0;
-
 	float occlusionThreshold = mul(OcclusionViewProj, float4(positionMS.xyz, 1)).z;
 
 	half3 V = normalize(positionMS.xyz);
 	half3 R = reflect(V, normalWS);
 
 	bool fadeOut = length(startPositionMS) > 256;
-
-	half2 weights = 0.0;
+	
+	half3 skylighting = 0;
+	half3 weights = 0.0;
 
 	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
@@ -129,7 +126,6 @@ half GetScreenDepth(half depth)
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
-			half shadowMapTranslucentValues = OcclusionMapTranslucentSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
 
 			half3 H = normalize(-offsetDirection + V);
 			half NoH = dot(normalWS, H);
@@ -137,7 +133,9 @@ half GetScreenDepth(half depth)
 			half k = roughness / (1.0 - NoH * NoH + a * a);
 			half ggx = k * k * (1.0 / PI);
 
-			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
+			half NDotL = dot(normalWS.xyz, offsetDirection.xyz);
+
+			half3 contributions = half3(saturate(NDotL), ggx, NDotL * 0.5 + 0.5);
 
 			skylighting += shadowMapValues * contributions;
 			weights += contributions;
@@ -147,55 +145,21 @@ half GetScreenDepth(half depth)
 		}
 	}
 
-	skylighting.xy /= weights.xy;
+	if (weights.x > 0.0)
+		skylighting.x /= weights.x;
+	if (weights.y > 0.0)
+		skylighting.y /= weights.y;
+	if (weights.z > 0.0)
+		skylighting.z /= weights.z;
 
-	weights = 0.0;
-	half2 skylightingTranslucent = 0;
+	skylighting.x = lerp(skylighting.z, 1.0, Parameters.x) * Parameters.z + skylighting.x * saturate(dot(normalWS, float3(0, 0, 1))) * Parameters.w;
+	skylighting.y = saturate(skylighting.y);
 
-	[unroll] for (uint i = 0; i < sampleCount; i++)
-	{
-		half2 offset = mul(PoissonDisk[i].xy, rotationMatrix);
-		half shift = half(i) / half(sampleCount);
-		half radius = length(offset);
-
-		positionMS.xy = startPositionMS + offset * 256;
-
-		half2 occlusionPosition = mul((float2x4)OcclusionViewProj, float4(positionMS.xyz, 1));
-		occlusionPosition.y = -occlusionPosition.y;
-		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
-
-		half3 offsetDirection = normalize(half3(offset.xy, 0));
-
-		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
-			half shadowMapValues = OcclusionMapTranslucentSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
-			half shadowMapTranslucentValues = OcclusionMapTranslucentSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
-
-			half3 H = normalize(-offsetDirection + V);
-			half NoH = dot(normalWS, H);
-			half a = NoH * roughness;
-			half k = roughness / (1.0 - NoH * NoH + a * a);
-			half ggx = k * k * (1.0 / PI);
-
-			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
-
-			skylightingTranslucent += shadowMapValues * contributions;
-			weights += contributions;
-		} else {
-			skylightingTranslucent++;
-			weights++;
-		}
-	}
-
-	skylightingTranslucent.xy /= weights.xy;
-
-	skylighting = min(skylighting, lerp(0.5, 1.0, skylightingTranslucent));
-
-	SkylightingTextureRW[globalId.xy] = saturate(skylighting);
+	SkylightingTextureRW[globalId.xy] = skylighting.xy;
 }
 #else
-[numthreads(8, 8, 1)] void main(uint3 globalId
-								: SV_DispatchThreadID) {
-	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicRes.zw;
+[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half3 normalGlossiness = NormalRoughnessTexture[globalId.xy];
@@ -214,7 +178,7 @@ half GetScreenDepth(half depth)
 	sD.EndSplitDistances.z = GetScreenDepth(sD.EndSplitDistances.z);
 	sD.EndSplitDistances.w = GetScreenDepth(sD.EndSplitDistances.w);
 
-	float4 positionMS = mul(sD.CameraViewProjInverse[eyeIndex], positionCS);
+	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	float3 startPositionMS = positionMS;
@@ -246,12 +210,11 @@ half GetScreenDepth(half depth)
 
 	uint sampleCount = 16;
 
-	half2 skylighting = 0;
-
 	half3 V = normalize(positionMS.xyz);
 	half3 R = reflect(V, normalWS);
 
-	float2 weights = 0.0;
+	half3 skylighting = 0;
+	half3 weights = 0.0;
 
 	uint validSamples = 0;
 	[unroll] for (uint i = 0; i < sampleCount; i++)
@@ -260,7 +223,7 @@ half GetScreenDepth(half depth)
 		half shift = half(i) / half(sampleCount);
 		half radius = length(offset);
 
-		positionMS.xy = startPositionMS + offset.xy * 128 + ShadowDirection.xy * 128;
+		positionMS.xy = startPositionMS + offset.xy * 128 + length(offset.xy) * ShadowDirection.xy * 128;
 
 		half3 offsetDirection = normalize(half3(offset.xy, 0));
 
@@ -294,19 +257,28 @@ half GetScreenDepth(half depth)
 			half a = NoH * roughness;
 			half k = roughness / (1.0 - NoH * NoH + a * a);
 			half ggx = k * k * (1.0 / PI);
+			
+			half NDotL = dot(normalWS.xyz, offsetDirection.xyz);
 
-			half2 contributions = half2(dot(normalWS.xyz, offsetDirection.xyz) * 0.5 + 0.5, ggx);
+			half3 contributions = half3(saturate(NDotL), ggx, NDotL * 0.5 + 0.5);
 
 			skylighting += shadowMapValues * contributions;
 			weights += contributions;
 		}
 	}
 
-	if (weights > 0.0)
-		skylighting /= weights;
-	else
-		skylighting = 1.0;
+	if (weights.x > 0.0)
+		skylighting.x /= weights.x;
+	if (weights.y > 0.0)
+		skylighting.y /= weights.y;
+	if (weights.z > 0.0)
+		skylighting.z /= weights.z;
 
-	SkylightingTextureRW[globalId.xy] = lerp(saturate(skylighting), 1.0, fadeFactor);
+	skylighting.x = lerp(skylighting.z, 1.0, Parameters.x) * Parameters.z + skylighting.x * saturate(dot(normalWS, float3(0, 0, 1))) * Parameters.w;
+	skylighting.y = saturate(skylighting.y);
+
+	skylighting = lerp(1.0, skylighting, pow(saturate(dot(float3(0, 0, -1), ShadowDirection.xyz)), 0.25));
+
+	SkylightingTextureRW[globalId.xy] = lerp(skylighting.xy, 1.0, fadeFactor);
 }
 #endif
