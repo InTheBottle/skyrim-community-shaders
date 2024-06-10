@@ -399,8 +399,7 @@ void Deferred::DeferredPasses()
 
 	// Ambient Composite
 	{
-		ID3D11ShaderResourceView* srvs[3]
-		{
+		ID3D11ShaderResourceView* srvs[3]{
 			albedo.SRV,
 			normalRoughness.SRV,
 			skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
@@ -695,7 +694,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		auto dynamicCubemaps = DynamicCubemaps::GetSingleton();
 		if (dynamicCubemaps->loaded)
 			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
-		
+
 		auto skylighting = Skylighting::GetSingleton();
 		if (skylighting->loaded)
 			defines.push_back({ "SKYLIGHTING", nullptr });

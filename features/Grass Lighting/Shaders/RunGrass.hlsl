@@ -358,15 +358,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float dirShadow = 1.0;
 
-	if (shadowColor.x > 0.0 && dirLightAngle > 0.0)
-	{
+	if (shadowColor.x > 0.0 && dirLightAngle > 0.0) {
 #		if defined(SCREEN_SPACE_SHADOWS)
 		dirShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #		endif
 
 #		if defined(TERRA_OCC)
-		if (dirShadow > 0.0)
-		{
+		if (dirShadow > 0.0) {
 			float terrainShadow = 1;
 			float terrainAo = 1;
 			GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampBaseSampler, terrainShadow, terrainAo);
