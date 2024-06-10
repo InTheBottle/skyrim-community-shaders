@@ -3,7 +3,6 @@
 #include <Deferred.h>
 #include <Util.h>
 
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	EnableSkylighting,
@@ -173,8 +172,8 @@ void Skylighting::Compute()
 	{
 		PerFrameCB data{};
 		data.OcclusionViewProj = viewProjMat;
-			
-		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult};
+
+		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult };
 
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;

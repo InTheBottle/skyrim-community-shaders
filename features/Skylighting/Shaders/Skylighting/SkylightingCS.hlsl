@@ -57,7 +57,8 @@ half GetScreenDepth(half depth)
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -106,7 +107,7 @@ half GetScreenDepth(half depth)
 	half3 R = reflect(V, normalWS);
 
 	bool fadeOut = length(startPositionMS) > 256;
-	
+
 	half3 skylighting = 0;
 	half3 weights = 0.0;
 
@@ -158,7 +159,8 @@ half GetScreenDepth(half depth)
 	SkylightingTextureRW[globalId.xy] = skylighting.xy;
 }
 #else
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -257,7 +259,7 @@ half GetScreenDepth(half depth)
 			half a = NoH * roughness;
 			half k = roughness / (1.0 - NoH * NoH + a * a);
 			half ggx = k * k * (1.0 / PI);
-			
+
 			half NDotL = dot(normalWS.xyz, offsetDirection.xyz);
 
 			half3 contributions = half3(saturate(NDotL), ggx, NDotL * 0.5 + 0.5);

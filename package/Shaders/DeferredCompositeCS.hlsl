@@ -14,18 +14,18 @@ RWTexture2D<half3> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 RWTexture2D<half2> SnowParametersRW : register(u2);
 
-#	if defined(DYNAMIC_CUBEMAPS)
+#if defined(DYNAMIC_CUBEMAPS)
 Texture2D<unorm float> DepthTexture : register(t4);
 Texture2D<unorm half3> ReflectanceTexture : register(t5);
 TextureCube<half3> EnvTexture : register(t6);
 TextureCube<half3> EnvReflectionsTexture : register(t7);
 
 SamplerState LinearSampler : register(s0);
-#	endif
+#endif
 
-#	if defined(SKYLIGHTING)
+#if defined(SKYLIGHTING)
 Texture2D<half2> SkylightingTexture : register(t8);
-#	endif
+#endif
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
 								: SV_DispatchThreadID) {
