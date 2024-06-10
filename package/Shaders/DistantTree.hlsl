@@ -205,11 +205,12 @@ PS_OUTPUT main(PS_INPUT input)
 #		if defined(DEFERRED)
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
+	float screenNoise = InterleavedGradientNoise(screenUV * BufferDim);
 
 	float dirShadow = 1;
 
 #			if defined(SCREEN_SPACE_SHADOWS)
-	dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
+	dirShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #			endif
 
 #			if defined(TERRA_OCC)

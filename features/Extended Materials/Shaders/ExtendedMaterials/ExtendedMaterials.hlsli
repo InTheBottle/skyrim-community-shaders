@@ -54,9 +54,9 @@ float GetTerrainHeight(PS_INPUT input, float2 coords, float mipLevels[6])
 #endif
 
 #if defined(LANDSCAPE)
-float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, out float pixelOffset)
+float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, float noise, out float pixelOffset)
 #else
-float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, Texture2D<float4> tex, SamplerState texSampler, uint channel, out float pixelOffset)
+float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, float noise, Texture2D<float4> tex, SamplerState texSampler, uint channel, out float pixelOffset)
 #endif
 {
 	float3 viewDirTS = normalize(mul(tbn, viewDir));
@@ -82,6 +82,9 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 
 		float2 pt1 = 0;
 		float2 pt2 = 0;
+
+		prevOffset -= noise * offsetPerStep;
+		prevBound -= noise * stepSize;
 
 		[loop] while (numSteps > 0)
 		{

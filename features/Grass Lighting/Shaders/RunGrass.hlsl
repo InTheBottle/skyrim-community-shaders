@@ -333,6 +333,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
+	float screenNoise = InterleavedGradientNoise(screenUV * BufferDim);
 
 	// Swaps direction of the backfaces otherwise they seem to get lit from the wrong direction.
 	if (!frontFace)
@@ -357,17 +358,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float dirShadow = 1.0;
 
+	if (shadowColor.x > 0.0 && dirLightAngle > 0.0)
+	{
 #		if defined(SCREEN_SPACE_SHADOWS)
-	if (shadowColor.x > 0.0)
-		dirShadow = GetScreenSpaceShadow(screenUV, viewPosition, eyeIndex);
+		dirShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #		endif
 
 #		if defined(TERRA_OCC)
-	float terrainShadow = 1;
-	float terrainAo = 1;
-	GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampBaseSampler, terrainShadow, terrainAo);
-	dirShadow = min(dirShadow, terrainShadow);
+		if (dirShadow > 0.0)
+		{
+			float terrainShadow = 1;
+			float terrainAo = 1;
+			GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampBaseSampler, terrainShadow, terrainAo);
+			dirShadow = min(dirShadow, terrainShadow);
+		}
 #		endif
+	}
 
 	float3 diffuseColor = 0;
 	float3 specularColor = 0;
@@ -377,9 +383,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 albedo = max(0, baseColor.xyz * input.VertexColor.xyz);
 
-	float3 subsurfaceColor = lerp(RGBToLuminance(albedo.xyz), albedo.xyz, 2.0) * input.SphereNormal.w;
+	float3 subsurfaceColor = lerp(RGBToLuminance(albedo.xyz), albedo.xyz, 2.0) * input.SphereNormal.w * 2.0;
 
-	float3 sss = dirLightColor * saturate(-dirLightAngle) * lerp(dirShadow, 1.0, 0.5);
+	float3 sss = dirLightColor * saturate(-dirLightAngle);
 
 	if (complex)
 		lightsSpecularColor += GetLightSpecularInput(DirLightDirection, viewDirection, normal, dirLightColor, grassLightingSettings.Glossiness);
@@ -393,7 +399,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		if (lightCount) {
 			uint lightOffset = lightGrid[clusterIndex].offset;
 
-			float screenNoise = InterleavedGradientNoise(screenUV * lightingData[0].BufferDim);
 			float shadowQualityScale = saturate(1.0 - (((float)lightCount * (float)lightCount) / 128.0));
 
 			[loop] for (uint i = 0; i < lightCount; i++)
