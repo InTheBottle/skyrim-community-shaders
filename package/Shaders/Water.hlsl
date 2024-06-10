@@ -608,8 +608,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	float3 refractionDiffuseColor = lerp(ShallowColor.xyz, DeepColor.xyz, distanceMul.y);
 
-	if (!(PixelShaderDescriptor & _Interior))
-	{
+	if (!(PixelShaderDescriptor & _Interior)) {
 		float vl = GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition) * (dot(viewDirection, SunDir.xyz) * 0.5 + 0.5);
 
 		float3 refractionDiffuseColorSkylight = refractionDiffuseColor * vl * SunColor.xyz * SunDir.w;
