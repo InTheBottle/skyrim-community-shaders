@@ -57,7 +57,8 @@ half GetScreenDepth(half depth)
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -158,7 +159,8 @@ half GetScreenDepth(half depth)
 	SkylightingTextureRW[globalId.xy] = skylighting.xy;
 }
 #else
-[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId
+								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
