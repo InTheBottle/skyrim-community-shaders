@@ -436,8 +436,6 @@ void TerrainOcclusion::UpdateShadow()
 	uint height = texNormalisedHeight->desc.Height;
 
 	// only update direction at the start of each cycle
-	static float2 cachedDirLightPxDir;
-	static float2 cachedDirLightDZRange;
 	static uint edgePxCoord;
 	static int signDir;
 	static uint maxUpdates;
@@ -459,16 +457,16 @@ void TerrainOcclusion::UpdateShadow()
 			stepMult = 1.f / abs(dirLightPxDir.x);
 			edgePxCoord = dirLightPxDir.x > 0 ? 0 : (width - 1);
 			signDir = dirLightPxDir.x > 0 ? 1 : -1;
-			maxUpdates = ((width - 1) >> 10) + 1;
+			maxUpdates = ((width - 1) >> 6) + 1;
 		} else {
 			stepMult = 1.f / abs(dirLightPxDir.y);
 			edgePxCoord = dirLightPxDir.y > 0 ? 0 : height - 1;
 			signDir = dirLightPxDir.y > 0 ? 1 : -1;
-			maxUpdates = ((height - 1) >> 10) + 1;
+			maxUpdates = ((height - 1) >> 6) + 1;
 		}
 		dirLightPxDir *= stepMult;
 
-		cachedDirLightPxDir = { dirLightPxDir.x, dirLightPxDir.y };
+		shadowUpdateCBData.LightPxDir = { dirLightPxDir.x, dirLightPxDir.y };
 
 		// soft shadow angles
 		float lenUV = float2{ dirLightDir.x, dirLightDir.y }.Length();
@@ -476,15 +474,12 @@ void TerrainOcclusion::UpdateShadow()
 		float upperAngle = std::max(0.f, dirLightAngle - settings.ShadowSofteningRadiusAngle);
 		float lowerAngle = std::min(RE::NI_HALF_PI - 1e-2f, dirLightAngle + settings.ShadowSofteningRadiusAngle);
 
-		cachedDirLightDZRange = -(lenUV / invScale.z * stepMult) * float2{ std::tan(upperAngle), std::tan(lowerAngle) };
+		shadowUpdateCBData.LightDeltaZ = -(lenUV / invScale.z * stepMult) * float2{ std::tan(upperAngle), std::tan(lowerAngle) };
 	}
 
-	shadowUpdateCBData = {
-		.LightPxDir = cachedDirLightPxDir,
-		.LightDeltaZ = cachedDirLightDZRange,
-		.StartPxCoord = edgePxCoord + signDir * shadowUpdateIdx * 1024u,
-		.PxSize = { 1.f / texNormalisedHeight->desc.Width, 1.f / texNormalisedHeight->desc.Height }
-	};
+	shadowUpdateCBData.StartPxCoord = edgePxCoord + signDir * shadowUpdateIdx * 64u;
+	shadowUpdateCBData.PxSize = { 1.f / texNormalisedHeight->desc.Width, 1.f / texNormalisedHeight->desc.Height };
+
 	shadowUpdateCB->Update(shadowUpdateCBData);
 
 	shadowUpdateIdx = (shadowUpdateIdx + 1) % maxUpdates;
@@ -507,7 +502,7 @@ void TerrainOcclusion::UpdateShadow()
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(newer.uavs), newer.uavs, nullptr);
 	context->CSSetConstantBuffers(1, 1, &newer.buffer);
 	context->CSSetShader(shadowUpdateProgram.get(), nullptr, 0);
-	context->Dispatch(abs(cachedDirLightPxDir.x) >= abs(cachedDirLightPxDir.y) ? height : width, 1, 1);
+	context->Dispatch(abs(shadowUpdateCBData.LightPxDir.x) >= abs(shadowUpdateCBData.LightPxDir.y) ? height : width, 1, 1);
 
 	/* ---- RESTORE ---- */
 	context->CSSetShaderResources(0, ARRAYSIZE(old.srvs), old.srvs);

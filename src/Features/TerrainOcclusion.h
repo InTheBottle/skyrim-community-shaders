@@ -22,8 +22,6 @@ struct TerrainOcclusion : public Feature
 		       type == RE::BSShader::Type::Water;
 	};
 
-	uint shadowUpdateIdx = 0;
-
 	struct Settings
 	{
 		uint EnableTerrainShadow = true;
@@ -43,6 +41,7 @@ struct TerrainOcclusion : public Feature
 	} settings;
 
 	bool needPrecompute = false;
+	uint shadowUpdateIdx = 0;
 
 	struct HeightMapMetadata
 	{
