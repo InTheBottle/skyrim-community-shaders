@@ -4,8 +4,6 @@
 
 #define WATER
 
-#undef SKYLIGHTING
-
 #include "Common/SharedData.hlsli"
 
 struct VS_INPUT
@@ -611,8 +609,12 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	if (!(PixelShaderDescriptor & _Interior)) {
 		float vl = GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition) * (dot(viewDirection, SunDir.xyz) * 0.5 + 0.5);
 
-		float3 refractionDiffuseColorSkylight = refractionDiffuseColor * vl * SunColor.xyz * SunDir.w;
-		refractionDiffuseColor += refractionDiffuseColorSkylight;
+		float3 refractionDiffuseColorSunlight = refractionDiffuseColor * vl * SunColor.xyz * SunDir.w;	
+#	if defined(SKYLIGHTING)		
+		float3 refractionDiffuseColorSkylight = refractionDiffuseColor * GetVLSkylighting(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition);
+		refractionDiffuseColor = refractionDiffuseColorSkylight;
+#	endif
+		refractionDiffuseColor += refractionDiffuseColorSunlight;
 	}
 
 #			if defined(UNDERWATER)

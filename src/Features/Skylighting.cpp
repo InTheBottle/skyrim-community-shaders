@@ -237,3 +237,35 @@ void Skylighting::Compute()
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }
+
+void Skylighting::Bind()
+{
+	auto state = State::GetSingleton();
+	auto& context = state->context;
+
+	{
+		PerFrameCB data{};
+		data.OcclusionViewProj = viewProjMat;
+
+		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult };
+
+		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
+		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
+
+		if (dirShadow) {
+			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
+		}
+
+		perFrameCB->Update(data);
+	}
+
+	auto buffer = perFrameCB->CB();
+	context->PSSetConstantBuffers(8, 1, &buffer);
+
+	ID3D11ShaderResourceView* srvs[1]{
+		occlusionTexture->srv.get()
+	};
+
+	context->PSSetShaderResources(29, 1, srvs);
+}
