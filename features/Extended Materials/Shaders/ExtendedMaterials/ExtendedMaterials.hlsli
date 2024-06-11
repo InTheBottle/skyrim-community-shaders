@@ -83,9 +83,6 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 		float2 pt1 = 0;
 		float2 pt2 = 0;
 
-		prevOffset -= noise * offsetPerStep;
-		prevBound -= noise * stepSize;
-
 		[loop] while (numSteps > 0)
 		{
 			float4 currentOffset[2];
