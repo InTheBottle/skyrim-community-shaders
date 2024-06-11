@@ -73,7 +73,7 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 	float3 worldDir = endPosWS - startPosWS;
 
-	float noise = InterleavedGradientNoise(screenPosition) * 2.0 * M_PI;
+	float noise = InterleavedGradientNoise(screenPosition);
 
 	startPosWS += worldDir * step * noise;
 
@@ -138,12 +138,12 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 			shadow = dot(depths > deltaZ, 0.25);
 
-#	if defined(WATER_CAUSTICS)
-			if (perPassWaterCaustics[0].EnableWaterCaustics) {
-				float2 causticsUV = frac((startPosWS.xy + PosAdjust[0].xy + causticsUVShift * t) * 5e-4);
-				shadow *= ComputeWaterCaustics(causticsUV);
-			}
-#	endif
+// #	if defined(WATER_CAUSTICS)
+// 			if (perPassWaterCaustics[0].EnableWaterCaustics) {
+// 				float2 causticsUV = frac((startPosWS.xy + PosAdjust[0].xy + causticsUVShift * t) * 5e-4);
+// 				shadow *= ComputeWaterCaustics(causticsUV);
+// 			}
+// #	endif
 		}
 		vl += shadow;
 	}
