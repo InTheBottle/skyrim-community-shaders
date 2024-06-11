@@ -57,8 +57,7 @@ half GetScreenDepth(half depth)
 #define PI 3.1415927
 
 #if !defined(SHADOWMAP)
-[numthreads(8, 8, 1)] void main(uint3 globalId
-								: SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
@@ -123,7 +122,7 @@ half GetScreenDepth(half depth)
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
-		half3 offsetDirection = normalize(half3(offset.xy, 0));
+		half3 offsetDirection = normalize(half3(offset.xy, radius * radius));
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
@@ -159,8 +158,7 @@ half GetScreenDepth(half depth)
 	SkylightingTextureRW[globalId.xy] = skylighting.xy;
 }
 #else
-[numthreads(8, 8, 1)] void main(uint3 globalId
-								: SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void main(uint3 globalId : SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
