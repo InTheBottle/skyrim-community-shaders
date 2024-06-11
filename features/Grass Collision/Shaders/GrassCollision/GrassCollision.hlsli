@@ -26,7 +26,7 @@ float3 GetDisplacedPosition(float3 position, float alpha, uint eyeIndex = 0)
 			displacement.z -= length(shift.xy);
 		}
 
-		return displacement * alpha * 2.0;
+		return displacement * alpha;
 	}
 
 	return 0.0;
