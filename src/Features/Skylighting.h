@@ -34,7 +34,6 @@ public:
 	virtual void RestoreDefaultSettings();
 
 	REX::W32::XMFLOAT4X4 viewProjMat;
-	float occlusionDistance = 10000;
 
 	ID3D11ComputeShader* skylightingCS = nullptr;
 	ID3D11ComputeShader* skylightingShadowMapCS = nullptr;
@@ -58,6 +57,9 @@ public:
 		float AmbientSpecularBlend = 0.0;
 		float AmbientMult = 1.0;
 		float SkyMult = 1.0;
+		float MinimumBound = 128;
+		bool RenderTrees = false;
+		float RenderDistance = 10000;
 	};
 
 	Settings settings;
@@ -266,8 +268,6 @@ public:
 		uint64_t unk08;          // 08
 	};
 
-	float boundSize = 64;
-
 	class BSBatchRenderer
 	{
 	public:
@@ -329,8 +329,11 @@ public:
 			if (property->flags.any(kSkinned) && !property->flags.any(kTreeAnim))
 				return precipitationOcclusionMapRenderPassList;
 
+			if (!GetSingleton()->settings.RenderTrees && property->flags.any(kTreeAnim))
+				return precipitationOcclusionMapRenderPassList;
+
 			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting)) {
-				if (geometry->worldBound.radius > GetSingleton()->boundSize) {
+				if (geometry->worldBound.radius > GetSingleton()->settings.MinimumBound) {
 					stl::enumeration<BSUtilityShader::Flags> technique;
 					technique.set(RenderDepth);
 
@@ -397,7 +400,7 @@ public:
 					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
 
 					GetSingleton()->inOcclusion = true;
-					PrecipitationShaderCubeSize = GetSingleton()->occlusionDistance;
+					PrecipitationShaderCubeSize = GetSingleton()->settings.RenderDistance;
 
 					float originaLastCubeSize = precip->lastCubeSize;
 					precip->lastCubeSize = PrecipitationShaderCubeSize;

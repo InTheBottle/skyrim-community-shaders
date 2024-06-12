@@ -9,7 +9,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HeightSkylighting,
 	AmbientDiffuseBlend,
 	AmbientMult,
-	SkyMult)
+	SkyMult,
+	MinimumBound,
+	RenderTrees,
+	RenderDistance)
 
 void Skylighting::DrawSettings()
 {
@@ -19,6 +22,9 @@ void Skylighting::DrawSettings()
 	//ImGui::SliderFloat("Specular Blend", &settings.AmbientSpecularBlend, 0, 1, "%.2f");
 	ImGui::SliderFloat("Ambient Mult", &settings.AmbientMult, 0, 1, "%.2f");
 	ImGui::SliderFloat("Sky Mult", &settings.SkyMult, 0, 1, "%.2f");
+	ImGui::SliderFloat("Minimum Bound", &settings.MinimumBound, 1, 256, "%.0f");
+	ImGui::Checkbox("Render Trees", &settings.RenderTrees);
+	ImGui::SliderFloat("Render Distance", &settings.RenderDistance, 5000, 20000, "%.0f");
 }
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
