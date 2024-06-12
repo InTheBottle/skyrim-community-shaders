@@ -19,7 +19,7 @@ void Skylighting::DrawSettings()
 	ImGui::Checkbox("Enable Skylighting", &settings.EnableSkylighting);
 	ImGui::Checkbox("Enable Height Map Rendering", &settings.HeightSkylighting);
 	ImGui::SliderFloat("Ambient Diffuse Blend", &settings.AmbientDiffuseBlend, 0, 1, "%.2f");
-	//ImGui::SliderFloat("Specular Blend", &settings.AmbientSpecularBlend, 0, 1, "%.2f");
+	ImGui::SliderFloat("Directional Pow", &settings.DirectionalPow, 1, 10, "%.0f");
 	ImGui::SliderFloat("Ambient Mult", &settings.AmbientMult, 0, 1, "%.2f");
 	ImGui::SliderFloat("Sky Mult", &settings.SkyMult, 0, 1, "%.2f");
 	ImGui::SliderFloat("Minimum Bound", &settings.MinimumBound, 1, 256, "%.0f");
@@ -179,7 +179,7 @@ void Skylighting::Compute()
 		PerFrameCB data{};
 		data.OcclusionViewProj = viewProjMat;
 
-		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult };
+		data.Parameters = { settings.AmbientDiffuseBlend, settings.DirectionalPow, settings.AmbientMult, settings.SkyMult };
 
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
@@ -253,7 +253,7 @@ void Skylighting::Bind()
 		PerFrameCB data{};
 		data.OcclusionViewProj = viewProjMat;
 
-		data.Parameters = { settings.AmbientDiffuseBlend, settings.AmbientSpecularBlend, settings.AmbientMult, settings.SkyMult };
+		data.Parameters = { settings.AmbientDiffuseBlend, settings.DirectionalPow, settings.AmbientMult, settings.SkyMult };
 
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;

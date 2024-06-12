@@ -54,7 +54,7 @@ public:
 		bool EnableSkylighting = true;
 		bool HeightSkylighting = true;
 		float AmbientDiffuseBlend = 0.5;
-		float AmbientSpecularBlend = 0.0;
+		float DirectionalPow = 5.0;
 		float AmbientMult = 1.0;
 		float SkyMult = 1.0;
 		float MinimumBound = 128;

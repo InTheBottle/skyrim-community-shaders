@@ -106,8 +106,8 @@ half GetScreenDepth(half depth)
 	half3 V = normalize(positionMS.xyz);
 	half3 R = reflect(V, normalWS);
 
-	bool fadeOut = length(startPositionMS) > 256;
-
+	bool fadeOut = length(startPositionMS) > 1024;
+	
 	half3 skylighting = 0;
 	half3 weights = 0.0;
 
@@ -123,7 +123,7 @@ half GetScreenDepth(half depth)
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
-		half3 offsetDirection = normalize(half3(offset.xy, radius * radius));
+		half3 offsetDirection = normalize(half3(offset.xy, pow(1.0 - (radius * 0.5), Parameters.y)));
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
 			half shadowMapValues = OcclusionMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, occlusionUV, occlusionThreshold - (1e-2 * 0.05 * radius));
@@ -227,7 +227,7 @@ half GetScreenDepth(half depth)
 
 		positionMS.xy = startPositionMS + offset.xy * 128 + length(offset.xy) * ShadowDirection.xy * 128;
 
-		half3 offsetDirection = normalize(half3(offset.xy, 0));
+		half3 offsetDirection = normalize(half3(offset.xy, pow(1.0 - (radius * 0.5), Parameters.y)));
 
 		float shadowMapDepth = length(positionMS.xyz);
 
