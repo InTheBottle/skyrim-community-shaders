@@ -67,7 +67,6 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 	float maxHeight = 0.1;
 	float minHeight = maxHeight * 0.5;
 
-	float2 output;
 	if (nearBlendToFar < 1.0) {
 		uint numSteps = uint((32 * (1.0 - nearBlendToFar)) + 0.5);
 		numSteps = clamp((numSteps + 3) & ~0x03, 4, 32);
@@ -150,9 +149,11 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 			parallaxAmount = (pt1.x * delta2 - pt2.x * delta1) / denominator;
 		}
 
+		nearBlendToFar *= nearBlendToFar;
+
 		float offset = (1.0 - parallaxAmount) * -maxHeight + minHeight;
 		pixelOffset = lerp(parallaxAmount, 0.5, nearBlendToFar);
-		return output = lerp(viewDirTS.xy * offset + coords.xy, coords, nearBlendToFar);
+		return lerp(viewDirTS.xy * offset + coords.xy, coords, nearBlendToFar);
 	}
 
 	pixelOffset = 0.5;
