@@ -93,6 +93,25 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 	float vl = 0;
 
+	half2 PoissonDisk[16] = {
+		half2(-0.94201624, -0.39906216),
+		half2(0.94558609, -0.76890725),
+		half2(-0.094184101, -0.92938870),
+		half2(0.34495938, 0.29387760),
+		half2(-0.91588581, 0.45771432),
+		half2(-0.81544232, -0.87912464),
+		half2(-0.38277543, 0.27676845),
+		half2(0.97484398, 0.75648379),
+		half2(0.44323325, -0.97511554),
+		half2(0.53742981, -0.47373420),
+		half2(-0.26496911, -0.41893023),
+		half2(0.79197514, 0.19090188),
+		half2(-0.24188840, 0.99706507),
+		half2(-0.81409955, 0.91437590),
+		half2(0.19984126, 0.78641367),
+		half2(0.14383161, -0.14100790)
+	};
+
 	for (uint i = 0; i < nSteps; ++i) {
 		float t = saturate(i * step);
 
@@ -125,25 +144,14 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 			half3 samplePositionLS = mul(transpose(lightProjectionMatrix), half4(samplePositionWS.xyz, 1)).xyz;
 
-			float2 sampleNoise = frac(noise + i * 0.38196601125);
-			float r = sqrt(sampleNoise.x);
-			float theta = 2 * M_PI * sampleNoise.y;
-			float2 samplePositionLSOffset;
-			sincos(theta, samplePositionLSOffset.y, samplePositionLSOffset.x);
-			samplePositionLS.xy += 8.0 * samplePositionLSOffset * r / shadowRange;
+			half2 offset = mul(PoissonDisk[(float(i) + noise) % 16].xy, rotationMatrix);
+			samplePositionLS.xy += 8.0 * offset / shadowRange;
 
 			float deltaZ = samplePositionLS.z - shadowMapThreshold;
 
 			float4 depths = TexShadowMapSampler.GatherRed(LinearSampler, half3(samplePositionLS.xy, cascadeIndex), 0);
 
 			shadow = dot(depths > deltaZ, 0.25);
-
-// #	if defined(WATER_CAUSTICS)
-// 			if (perPassWaterCaustics[0].EnableWaterCaustics) {
-// 				float2 causticsUV = frac((startPosWS.xy + PosAdjust[0].xy + causticsUVShift * t) * 5e-4);
-// 				shadow *= ComputeWaterCaustics(causticsUV);
-// 			}
-// #	endif
 		}
 		vl += shadow;
 	}
