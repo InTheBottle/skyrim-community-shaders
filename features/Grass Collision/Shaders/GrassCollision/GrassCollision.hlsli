@@ -7,7 +7,6 @@ cbuffer GrassCollisionPerFrame : register(b5)
 {
 	CollisionData collisionData[256];
 	uint numCollisions;
-	uint pad0[3];
 }
 
 float3 GetDisplacedPosition(float3 position, float alpha, uint eyeIndex = 0)
@@ -22,7 +21,7 @@ float3 GetDisplacedPosition(float3 position, float alpha, uint eyeIndex = 0)
 			float power = 1.0 - saturate(dist / collisionData[i].centre[0].w);
 			float3 direction = worldPosition - collisionData[i].centre[eyeIndex];
 			float3 shift = power * direction;
-			displacement += power;
+			displacement += shift;
 			displacement.z -= length(shift.xy);
 		}
 
