@@ -326,6 +326,9 @@ public:
 			if (!GetSingleton()->inOcclusion && property->flags.any(kSkinned, kTreeAnim))
 				return precipitationOcclusionMapRenderPassList;
 
+			if (property->flags.any(kSkinned) && !property->flags.any(kTreeAnim))
+				return precipitationOcclusionMapRenderPassList;
+
 			if (property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal, kAnisotropicLighting)) {
 				if (geometry->worldBound.radius > GetSingleton()->boundSize) {
 					stl::enumeration<BSUtilityShader::Flags> technique;
