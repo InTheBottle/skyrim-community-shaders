@@ -107,7 +107,7 @@ half GetScreenDepth(half depth)
 	half3 R = reflect(V, normalWS);
 
 	bool fadeOut = length(startPositionMS) > 1024;
-	
+
 	half3 skylighting = 0;
 	half3 weights = 0.0;
 
