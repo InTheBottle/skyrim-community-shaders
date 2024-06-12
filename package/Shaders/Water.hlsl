@@ -614,7 +614,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 #	if defined(SKYLIGHTING)		
 		float3 refractionDiffuseColorSkylight = refractionDiffuseColor * lerp(GetVLSkylighting(input.WPosition.xyz, refractionWorldPosition.xyz, screenPosition), 1.0, 0.25);
 		refractionDiffuseColor = refractionDiffuseColorSkylight;
-#	endif
+#			endif
 		refractionDiffuseColor += refractionDiffuseColorSunlight;
 	}
 

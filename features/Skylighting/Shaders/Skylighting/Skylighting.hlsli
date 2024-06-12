@@ -18,9 +18,9 @@ float GetVLSkylighting(float3 startPosWS, float3 endPosWS, float2 screenPosition
 	float noise = InterleavedGradientNoise(screenPosition);
 
 	startPosWS += worldDir * step * noise;
-	
+
 	float noise2 = noise * 2.0 * M_PI;
-	
+
 	half2x2 rotationMatrix = half2x2(cos(noise2), sin(noise2), -sin(noise2), cos(noise2));
 
 	float vl = 0;
@@ -50,7 +50,7 @@ float GetVLSkylighting(float3 startPosWS, float3 endPosWS, float2 screenPosition
 		float shadow = 0;
 		{
 			float3 samplePositionWS = startPosWS + worldDir * t;
-	
+
 			half2 offset = mul(PoissonDisk[(float(i) + noise) % 16].xy, rotationMatrix);
 			samplePositionWS.xy += offset * 128;
 
