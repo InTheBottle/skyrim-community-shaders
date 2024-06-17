@@ -523,9 +523,6 @@ void DynamicCubemaps::Reset()
 		activeReflections = sky->mode.get() == RE::Sky::Mode::kFull;
 	else
 		activeReflections = false;
-
-	auto setting = RE::GetINISetting("fCubeMapRefreshRate:Water");
-	setting->data.f = activeReflections ? 1 : FLT_MAX;
 }
 
 void DynamicCubemaps::Load(json& o_json)
