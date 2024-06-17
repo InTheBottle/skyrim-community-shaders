@@ -1,4 +1,6 @@
-#include "Common/Color.hlsl"
+#	if defined(CLOUD_SHADOWS)
+#		include "CloudShadows/CloudShadows.hlsli"
+#	endif
 
 struct PerGeometry
 {
@@ -63,6 +65,13 @@ float3 GetShadow(float3 positionWS)
 
 	float shadow = dot(depths > deltaZ, 0.25);
 
+#	if defined(CLOUD_SHADOWS)	
+	if (shadow > 0.0)
+	{
+		shadow *= GetCloudShadowMult(positionWS, LinearSampler);
+	}
+#	endif
+
 	return shadow;
 }
 
@@ -76,11 +85,6 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 	float noise = InterleavedGradientNoise(screenPosition);
 
 	startPosWS += worldDir * step * noise;
-
-	float3 worldDirNorm = normalize(worldDir);
-
-	float distRatio = abs(SunDir.z / worldDirNorm.z);
-	float2 causticsUVShift = (worldDirNorm + SunDir / distRatio).xy * length(worldDir);
 
 	noise = noise * 2.0 * M_PI;
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
@@ -152,6 +156,26 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 			float4 depths = TexShadowMapSampler.GatherRed(LinearSampler, half3(samplePositionLS.xy, cascadeIndex), 0);
 
 			shadow = dot(depths > deltaZ, 0.25);
+
+#		if defined(TERRA_OCC)
+			if (shadow > 0.0)
+			{
+				float terrainShadow = 1;
+				float terrainAo = 1;
+				GetTerrainOcclusion(samplePositionWS + CameraPosAdjust[0], length(samplePositionWS), LinearSampler, terrainShadow, terrainAo);
+				shadow *= terrainShadow;
+			}
+#		endif
+
+#		if defined(CLOUD_SHADOWS)	
+			if (shadow > 0.0)
+			{
+				shadow *= GetCloudShadowMult(samplePositionWS, LinearSampler);
+			}
+#		endif
+
+		shadow *= (dot(normalize(samplePositionWS.xyz), DirLightDirectionShared.xyz) * 0.5 + 0.5);
+
 		}
 		vl += shadow;
 	}

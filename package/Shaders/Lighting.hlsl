@@ -935,6 +935,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "TerrainOcclusion/TerrainOcclusion.hlsli"
 #	endif
 
+#	if defined(CLOUD_SHADOWS)
+#		include "CloudShadows/CloudShadows.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -1382,37 +1386,47 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) || dirLightAngle <= 0.0;
 
+	float dirDetailShadow = 1.0;
 	float dirShadow = 1.0;
 	if (!inDirShadow) {
 #	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
-		dirShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
+		dirDetailShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #	endif
-
-#	if defined(TERRA_OCC)
-		float terrainShadow = 1;
-		float terrainAo = 1;
-		GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampColorSampler, terrainShadow, terrainAo);
-		dirShadow = min(dirShadow, terrainShadow);
-#	endif
-	}
-	inDirShadow = inDirShadow || dirShadow == 0.0;
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	if (!inDirShadow) {
 		float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
 		if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
-			dirLightColor *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+			dirDetailShadow *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #		elif defined(PARALLAX)
 		if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
-			dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
+			dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
 #		elif defined(ENVMAP)
 		if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
-			dirLightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
+			dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
 #		endif  // LANDSCAPE
 	}
 #	endif  // defined(EMAT) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
+
+#	if defined(TERRA_OCC)
+		float terrainShadow = 1;
+		float terrainAo = 1;
+		GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampColorSampler, terrainShadow, terrainAo);
+		dirShadow *= terrainShadow;
+		inDirShadow = inDirShadow || dirShadow == 0.0;
+#	endif
+	}
+
+#	if defined(CLOUD_SHADOWS)	
+	if (!inDirShadow) 
+	{
+		dirShadow *= GetCloudShadowMult(input.WorldPosition, SampColorSampler);
+	}	
+#	endif
+
+	dirLightColor *= dirShadow;
 
 	float3 diffuseColor = 0.0.xxx;
 	float3 specularColor = 0.0.xxx;
@@ -1420,7 +1434,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 lightsDiffuseColor = 0.0.xxx;
 	float3 lightsSpecularColor = 0.0.xxx;
 
-	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirShadow;
+	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirDetailShadow;
 
 #	if defined(SOFT_LIGHTING)
 	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
@@ -1440,7 +1454,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 	} else {
 #	if defined(SPECULAR) || defined(SPARKLE)
-		lightsSpecularColor = GetLightSpecularInput(input, DirLightDirection, viewDirection, modelNormal.xyz, dirLightColor.xyz, shininess, uv);
+		lightsSpecularColor = GetLightSpecularInput(input, DirLightDirection, viewDirection, modelNormal.xyz, dirLightColor.xyz * dirDetailShadow, shininess, uv);
 #	endif
 	}
 

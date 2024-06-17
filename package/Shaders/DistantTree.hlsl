@@ -166,6 +166,10 @@ const static float DepthOffsets[16] = {
 #		include "TerrainOcclusion/TerrainOcclusion.hlsli"
 #	endif
 
+#	if defined(CLOUD_SHADOWS)
+#		include "CloudShadows/CloudShadows.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -214,11 +218,21 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 
 #			if defined(TERRA_OCC)
-	float terrainShadow = 1;
-	float terrainAo = 1;
-	GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampDiffuse, terrainShadow, terrainAo);
-	dirShadow = min(dirShadow, terrainShadow);
+	if (dirShadow > 0.0)
+	{
+		float terrainShadow = 1;
+		float terrainAo = 1;
+		GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampDiffuse, terrainShadow, terrainAo);
+		dirShadow = min(dirShadow, terrainShadow);
+	}
 #			endif
+
+#	if defined(CLOUD_SHADOWS)	
+	if (dirShadow > 0.0) 
+	{
+		dirShadow *= GetCloudShadowMult(input.WorldPosition, SampDiffuse);
+	}	
+#	endif
 
 	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5 * lerp(1.0, dirShadow, 0.8);
 
