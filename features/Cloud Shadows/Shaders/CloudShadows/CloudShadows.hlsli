@@ -3,7 +3,7 @@ TextureCube<float4> cloudShadowsTexture : register(t40);
 
 #define CloudHeight (2e3f / 1.428e-2)
 #define PlanetRadius (6371e3f / 1.428e-2)
-#define RcpHPlusR  (1.0 / (CloudHeight + PlanetRadius))
+#define RcpHPlusR (1.0 / (CloudHeight + PlanetRadius))
 
 float3 GetCloudShadowSampleDir(float3 rel_pos, float3 eye_to_sun)
 {

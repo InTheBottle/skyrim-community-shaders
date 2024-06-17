@@ -218,8 +218,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 
 #			if defined(TERRA_OCC)
-	if (dirShadow > 0.0)
-	{
+	if (dirShadow > 0.0) {
 		float terrainShadow = 1;
 		float terrainAo = 1;
 		GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampDiffuse, terrainShadow, terrainAo);
@@ -227,12 +226,11 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #			endif
 
-#	if defined(CLOUD_SHADOWS)	
-	if (dirShadow > 0.0) 
-	{
+#			if defined(CLOUD_SHADOWS)
+	if (dirShadow > 0.0) {
 		dirShadow *= GetCloudShadowMult(input.WorldPosition, SampDiffuse);
-	}	
-#	endif
+	}
+#			endif
 
 	psout.Diffuse.xyz = DirLightColorShared.xyz * baseColor.xyz * 0.5 * lerp(1.0, dirShadow, 0.8);
 

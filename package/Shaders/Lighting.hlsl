@@ -1394,19 +1394,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
-	if (!inDirShadow) {
-		float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
+		if (!inDirShadow) {
+			float3 dirLightDirectionTS = mul(DirLightDirection, tbn).xyz;
 #		if defined(LANDSCAPE)
-		if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
-			dirDetailShadow *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+			if (extendedMaterialSettings.EnableTerrainParallax && extendedMaterialSettings.EnableShadows)
+				dirDetailShadow *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, dirLightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #		elif defined(PARALLAX)
-		if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
-			dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
+			if (extendedMaterialSettings.EnableParallax && extendedMaterialSettings.EnableShadows)
+				dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
 #		elif defined(ENVMAP)
-		if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
-			dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
+			if (complexMaterialParallax && extendedMaterialSettings.EnableShadows)
+				dirDetailShadow *= GetParallaxSoftShadowMultiplier(uv, mipLevel, dirLightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
 #		endif  // LANDSCAPE
-	}
+		}
 #	endif  // defined(EMAT) && (defined (SKINNED) || !defined \
 				// (MODELSPACENORMALS))
 
@@ -1419,11 +1419,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 	}
 
-#	if defined(CLOUD_SHADOWS)	
-	if (!inDirShadow) 
-	{
+#	if defined(CLOUD_SHADOWS)
+	if (!inDirShadow) {
 		dirShadow *= GetCloudShadowMult(input.WorldPosition, SampColorSampler);
-	}	
+	}
 #	endif
 
 	dirLightColor *= dirShadow;

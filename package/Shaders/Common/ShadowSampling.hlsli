@@ -1,6 +1,6 @@
-#	if defined(CLOUD_SHADOWS)
-#		include "CloudShadows/CloudShadows.hlsli"
-#	endif
+#if defined(CLOUD_SHADOWS)
+#	include "CloudShadows/CloudShadows.hlsli"
+#endif
 
 struct PerGeometry
 {
@@ -65,9 +65,8 @@ float3 GetShadow(float3 positionWS)
 
 	float shadow = dot(depths > deltaZ, 0.25);
 
-#	if defined(CLOUD_SHADOWS)	
-	if (shadow > 0.0)
-	{
+#	if defined(CLOUD_SHADOWS)
+	if (shadow > 0.0) {
 		shadow *= GetCloudShadowMult(positionWS, LinearSampler);
 	}
 #	endif
@@ -157,25 +156,22 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 			shadow = dot(depths > deltaZ, 0.25);
 
-#		if defined(TERRA_OCC)
-			if (shadow > 0.0)
-			{
+#	if defined(TERRA_OCC)
+			if (shadow > 0.0) {
 				float terrainShadow = 1;
 				float terrainAo = 1;
 				GetTerrainOcclusion(samplePositionWS + CameraPosAdjust[0], length(samplePositionWS), LinearSampler, terrainShadow, terrainAo);
 				shadow *= terrainShadow;
 			}
-#		endif
+#	endif
 
-#		if defined(CLOUD_SHADOWS)	
-			if (shadow > 0.0)
-			{
+#	if defined(CLOUD_SHADOWS)
+			if (shadow > 0.0) {
 				shadow *= GetCloudShadowMult(samplePositionWS, LinearSampler);
 			}
-#		endif
+#	endif
 
-		shadow *= (dot(normalize(samplePositionWS.xyz), DirLightDirectionShared.xyz) * 0.5 + 0.5);
-
+			shadow *= (dot(normalize(samplePositionWS.xyz), DirLightDirectionShared.xyz) * 0.5 + 0.5);
 		}
 		vl += shadow;
 	}
