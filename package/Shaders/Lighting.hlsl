@@ -1467,13 +1467,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float wetness = 0.0;
 
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
-	float shoreFactor = saturate(1.0 - (wetnessDistToWater / (float)perPassWetnessEffects[0].ShoreRange));
+	float shoreFactor = saturate(1.0 - (wetnessDistToWater / (float)wetnessEffects.ShoreRange));
 	float shoreFactorAlbedo = shoreFactor;
 
 	[flatten] if (input.WorldPosition.z < waterHeight)
 		shoreFactorAlbedo = 1.0;
 
-	float minWetnessValue = perPassWetnessEffects[0].MinRainWetness;
+	float minWetnessValue = wetnessEffects.MinRainWetness;
 
 	float maxOcclusion = 1;
 	float minWetnessAngle = 0;
@@ -1482,63 +1482,59 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	bool raindropOccluded = false;
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
-	if (perPassWetnessEffects[0].Raining > 0.0f && perPassWetnessEffects[0].EnableRaindropFx &&
-		(dot(input.WorldPosition, input.WorldPosition) < perPassWetnessEffects[0].RaindropFxRange * perPassWetnessEffects[0].RaindropFxRange)) {
-		float4 precipPositionCS = float4(2 * float2(screenUV.x, -screenUV.y + 1) - 1, input.Position.z, 1);
-		float4 precipPositionMS = mul(CameraViewProjInverse[eyeIndex], precipPositionCS);
-		precipPositionMS.xyz = precipPositionMS.xyz / precipPositionMS.w;
+	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
+		 (dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
+		// float4 precipPositionCS = float4(2 * float2(screenUV.x, -screenUV.y + 1) - 1, input.Position.z, 1);
+		// float4 precipPositionMS = mul(CameraViewProjInverse[eyeIndex], precipPositionCS);
+		// precipPositionMS.xyz = precipPositionMS.xyz / precipPositionMS.w;
 
-		float4 precipOcclusionTexCoord = mul(perPassWetnessEffects[0].PrecipProj, float4(precipPositionMS.xyz, 1));
-		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
-		float2 precipOcclusionUv = precipOcclusionTexCoord.xy * 0.5.xx + 0.5.xx;
-		float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampShadowMaskSampler, precipOcclusionUv, 0).x;
+		// float4 precipOcclusionTexCoord = mul(wetnessEffects.PrecipProj, float4(precipPositionMS.xyz, 1));
+		// precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
+		// float2 precipOcclusionUv = precipOcclusionTexCoord.xy * 0.5.xx + 0.5.xx;
+		// float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampShadowMaskSampler, precipOcclusionUv, 0).x;
 
-		if (precipOcclusionTexCoord.z < precipOcclusionZ + 1e-2)
-			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, perPassWetnessEffects[0].Time, worldSpaceNormal);
+		// if (precipOcclusionTexCoord.z < precipOcclusionZ + 1e-2)
+			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
 	}
 
-	float rainWetness = perPassWetnessEffects[0].Wetness * minWetnessAngle * perPassWetnessEffects[0].MaxRainWetness;
+	float rainWetness = wetnessEffects.Wetness * minWetnessAngle * wetnessEffects.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
 
-	float puddleWetness = perPassWetnessEffects[0].PuddleWetness * minWetnessAngle;
+	float puddleWetness = wetnessEffects.PuddleWetness * minWetnessAngle;
 #		if defined(SKIN)
-	rainWetness = perPassWetnessEffects[0].SkinWetness * perPassWetnessEffects[0].Wetness;
+	rainWetness = wetnessEffects.SkinWetness * wetnessEffects.Wetness;
 #		endif
 #		if defined(HAIR)
-	rainWetness = perPassWetnessEffects[0].SkinWetness * perPassWetnessEffects[0].Wetness * 0.8f;
+	rainWetness = wetnessEffects.SkinWetness * wetnessEffects.Wetness * 0.8f;
 #		endif
 
-	wetness = max(shoreFactor * perPassWetnessEffects[0].MaxShoreWetness, rainWetness);
+	wetness = max(shoreFactor * wetnessEffects.MaxShoreWetness, rainWetness);
 
 	float3 wetnessNormal = worldSpaceNormal;
 
-	float3 puddleCoords = ((input.WorldPosition.xyz + CameraPosAdjust[0]) * 0.5 + 0.5) * 0.01 * (1 / perPassWetnessEffects[0].PuddleRadius);
+	float3 puddleCoords = ((input.WorldPosition.xyz + CameraPosAdjust[0]) * 0.5 + 0.5) * 0.01 * (1 / wetnessEffects.PuddleRadius);
 	float puddle = wetness;
 	if (wetness > 0.0 || puddleWetness > 0) {
 #		if !defined(SKINNED)
-		puddle = noise(puddleCoords) * ((minWetnessAngle / perPassWetnessEffects[0].PuddleMaxAngle) * perPassWetnessEffects[0].MaxPuddleWetness * 0.25) + 0.5;
+		puddle = noise(puddleCoords) * ((minWetnessAngle / wetnessEffects.PuddleMaxAngle) * wetnessEffects.MaxPuddleWetness * 0.25) + 0.5;
 		wetness = lerp(wetness, puddleWetness, saturate(puddle - 0.25));
 #		endif
 		puddle *= wetness;
-		if (PixelShaderDescriptor & _DefShadow && PixelShaderDescriptor & _ShadowDir) {
-			float upAngle = saturate(dot(float3(0, 0, 1), normalizedDirLightDirectionWS.xyz));
-			puddle *= max(1.0 - maxOcclusion, lerp(1.0, shadowColor.x, upAngle * 0.2));
-		}
 	}
 
 	puddle *= nearFactor;
 
 	float3 wetnessSpecular = 0.0;
 
-	float wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * perPassWetnessEffects[0].MaxShoreWetness);
+	float wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * wetnessEffects.MaxShoreWetness);
 	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
 
 	float wetnessGlossinessSpecular = puddle;
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
 
-	float flatnessAmount = smoothstep(perPassWetnessEffects[0].PuddleMaxAngle, 1.0, minWetnessAngle);
+	float flatnessAmount = smoothstep(wetnessEffects.PuddleMaxAngle, 1.0, minWetnessAngle);
 
-	flatnessAmount *= smoothstep(perPassWetnessEffects[0].PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
+	flatnessAmount *= smoothstep(wetnessEffects.PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
 
 	wetnessNormal = normalize(lerp(wetnessNormal, float3(0, 0, 1), saturate(flatnessAmount)));
 
@@ -1548,7 +1544,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular;
 
 	if (waterRoughnessSpecular < 1.0)
-		wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedDirLightDirectionWS, worldSpaceViewDirection, sRGB2Lin(dirLightColor) * perPassWetnessEffects[0].MaxDALCSpecular, waterRoughnessSpecular);
+		wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedDirLightDirectionWS, worldSpaceViewDirection, sRGB2Lin(dirLightColor * dirDetailShadow), waterRoughnessSpecular);
 #	endif
 
 #	if !defined(LOD)
@@ -1697,7 +1693,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #			if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1.0)
-			wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedLightDirection, worldSpaceViewDirection, sRGB2Lin(lightColor), waterRoughnessSpecular) * perPassWetnessEffects[0].MaxPointLightSpecular;
+			wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedLightDirection, worldSpaceViewDirection, sRGB2Lin(lightColor), waterRoughnessSpecular) * wetnessEffects.MaxPointLightSpecular;
 #			endif
 	}
 #		endif
@@ -1793,8 +1789,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo;
 	baseColor.xyz = lerp(baseColor.xyz, pow(baseColor.xyz, 1.0 + wetnessDarkeningAmount), 0.8);
 #		endif
+
+	float3 wetnessReflectance = 0.0;
+
 	if (waterRoughnessSpecular < 1.0)
-		wetnessSpecular += GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular) * perPassWetnessEffects[0].MaxAmbientSpecular;
+		wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
+
+#		if !defined(DEFERRED)
+		wetnessSpecular += wetnessReflectance;
+#		endif
 #	endif
 
 	float4 color;
@@ -2016,14 +2019,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
+	
+	float outGlossiness = saturate(glossiness * SSRParams.w);
+
+#	if defined(WETNESS_EFFECTS)
+	psout.Reflectance = float4(wetnessReflectance, psout.Diffuse.w);
+	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), wetnessGlossinessSpecular, psout.Diffuse.w);
+#	else
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
+	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
+#	endif
 
 #		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
 #		endif
 
-	float outGlossiness = saturate(glossiness * SSRParams.w);
-	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
 
 #		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #			if defined(DYNAMIC_CUBEMAPS)

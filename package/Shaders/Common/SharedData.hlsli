@@ -70,12 +70,54 @@ struct TerraOccSettings
 	float3 Offset;
 };
 
+struct WetnessEffects
+{
+	float Time;
+	float Raining;
+	float Wetness;
+	float PuddleWetness;
+
+	uint EnableWetnessEffects;
+	float MaxRainWetness;
+	float MaxPuddleWetness;
+	float MaxShoreWetness;
+	uint ShoreRange;
+	float PuddleRadius;
+	float PuddleMaxAngle;
+	float PuddleMinWetness;
+	float MinRainWetness;
+	float SkinWetness;
+	float WeatherTransitionSpeed;
+
+	uint EnableRaindropFx;
+	uint EnableSplashes;
+	uint EnableRipples;
+	uint EnableChaoticRipples;
+	float RaindropFxRange;
+	float RaindropGridSizeRcp;
+	float RaindropIntervalRcp;
+	float RaindropChance;
+	float SplashesLifetime;
+	float SplashesStrength;
+	float SplashesMinRadius;
+	float SplashesMaxRadius;
+	float RippleStrength;
+	float RippleRadius;
+	float RippleBreadth;
+	float RippleLifetimeRcp;
+	float ChaoticRippleStrength;
+	float ChaoticRippleScaleRcp;
+	float ChaoticRippleSpeed;
+	float pad0[2];
+};
+
 cbuffer FeatureData : register(b6)
 {
 	GrassLightingSettings grassLightingSettings;
 	CPMSettings extendedMaterialSettings;
 	CubemapCreatorSettings cubemapCreatorSettings;
 	TerraOccSettings terraOccSettings;
+	WetnessEffects wetnessEffects;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);

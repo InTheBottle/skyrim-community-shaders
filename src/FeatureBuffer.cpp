@@ -4,6 +4,7 @@
 #include "Features/ExtendedMaterials.h"
 #include "Features/GrassLighting.h"
 #include "Features/TerrainOcclusion.h"
+#include "Features/WetnessEffects.h"
 
 template <class... Ts>
 std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
@@ -27,5 +28,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData()
 		GrassLighting::GetSingleton()->settings,
 		ExtendedMaterials::GetSingleton()->settings,
 		DynamicCubemaps::GetSingleton()->settings,
-		TerrainOcclusion::GetSingleton()->GetCommonBufferData());
+		TerrainOcclusion::GetSingleton()->GetCommonBufferData(),
+		WetnessEffects::GetSingleton()->GetCommonBufferData());
 }
