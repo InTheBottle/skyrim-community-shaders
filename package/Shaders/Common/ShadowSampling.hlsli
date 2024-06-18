@@ -152,9 +152,7 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 
 			float deltaZ = samplePositionLS.z - shadowMapThreshold;
 
-			float4 depths = TexShadowMapSampler.GatherRed(LinearSampler, half3(samplePositionLS.xy, cascadeIndex), 0);
-
-			shadow = dot(depths > deltaZ, 0.25);
+			shadow = TexShadowMapSampler.SampleLevel(LinearSampler, half3(samplePositionLS.xy, cascadeIndex), 0) > deltaZ;
 
 #	if defined(TERRA_OCC)
 			if (shadow > 0.0) {
@@ -162,12 +160,6 @@ float GetVL(float3 startPosWS, float3 endPosWS, float2 screenPosition)
 				float terrainAo = 1;
 				GetTerrainOcclusion(samplePositionWS + CameraPosAdjust[0], length(samplePositionWS), LinearSampler, terrainShadow, terrainAo);
 				shadow *= terrainShadow;
-			}
-#	endif
-
-#	if defined(CLOUD_SHADOWS)
-			if (shadow > 0.0) {
-				shadow *= GetCloudShadowMult(samplePositionWS, LinearSampler);
 			}
 #	endif
 
