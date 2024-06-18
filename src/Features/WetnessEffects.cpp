@@ -251,7 +251,6 @@ void WetnessEffects::Draw(const RE::BSShader*, const uint32_t)
 
 WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData()
 {
-
 	PerFrame data{};
 	data.Wetness = DRY_WETNESS;
 	data.PuddleWetness = DRY_WETNESS;

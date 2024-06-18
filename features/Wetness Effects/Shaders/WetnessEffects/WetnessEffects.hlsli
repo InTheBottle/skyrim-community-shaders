@@ -192,16 +192,16 @@ float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 VN, float3 V, float
 	float NoV = saturate(dot(N, V));
 
 #if defined(DYNAMIC_CUBEMAPS)
-#		if defined(DEFERRED)
+#	if defined(DEFERRED)
 	float level = roughness * 9.0;
 	float3 specularIrradiance = 1.0;
-#		else
+#	else
 	float level = roughness * 9.0;
 	float3 specularIrradiance = sRGB2Lin(specularTexture.SampleLevel(SampColorSampler, R, level));
-#		endif
-#	else
-	float3 specularIrradiance = 1.0;
 #	endif
+#else
+	float3 specularIrradiance = 1.0;
+#endif
 
 	float2 specularBRDF = EnvBRDFApproxWater(0.02, roughness, NoV);
 
