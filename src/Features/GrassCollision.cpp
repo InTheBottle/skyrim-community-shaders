@@ -158,6 +158,8 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 					data.centre[0].w = radius;
 					perFrameData.collisionData[currentCollisionCount] = data;
 					currentCollisionCount++;
+					if (currentCollisionCount == 256)
+						return RE::BSVisit::BSVisitControl::kStop;
 				}
 				return RE::BSVisit::BSVisitControl::kContinue;
 			});
