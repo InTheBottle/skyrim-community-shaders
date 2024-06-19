@@ -174,7 +174,7 @@ float GetParallaxSoftShadowMultiplier(float2 coords, float mipLevel, float3 L, f
 		sh.y = tex.SampleLevel(texSampler, coords + rayDir * multipliers.y, mipLevel)[channel];
 		sh.z = tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel)[channel];
 		sh.w = tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel];
-		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality;
+		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0) * 2.0) * quality;
 	}
 	return 1.0;
 }
@@ -190,7 +190,7 @@ float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords, floa
 		sh.y = GetTerrainHeight(input, coords + rayDir * multipliers.y, mipLevel);
 		sh.z = GetTerrainHeight(input, coords + rayDir * multipliers.z, mipLevel);
 		sh.w = GetTerrainHeight(input, coords + rayDir * multipliers.w, mipLevel);
-		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality;
+		return 1.0 - saturate(dot(max(0, sh - sh0), 1.0) * 2.0) * quality;
 	}
 	return 1.0;
 }
