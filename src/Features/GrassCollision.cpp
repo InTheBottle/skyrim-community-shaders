@@ -133,6 +133,8 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 		cameraPosition = (shadowState->GetVRRuntimeData().posAdjust.getEye(0) + shadowState->GetVRRuntimeData().posAdjust.getEye(1)) * 0.5f;
 
 	for (const auto actor : actorList) {
+		if (currentCollisionCount == 256)
+			break;
 		if (auto root = actor->Get3D(false)) {
 			auto position = actor->GetPosition();
 			if (cameraPosition.GetDistance(position) > 1024)  // Check against distance
