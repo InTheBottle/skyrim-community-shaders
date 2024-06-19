@@ -1483,7 +1483,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
-		 (dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
+		(dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
 		// float4 precipPositionCS = float4(2 * float2(screenUV.x, -screenUV.y + 1) - 1, input.Position.z, 1);
 		// float4 precipPositionMS = mul(CameraViewProjInverse[eyeIndex], precipPositionCS);
 		// precipPositionMS.xyz = precipPositionMS.xyz / precipPositionMS.w;
@@ -1494,7 +1494,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		// float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampShadowMaskSampler, precipOcclusionUv, 0).x;
 
 		// if (precipOcclusionTexCoord.z < precipOcclusionZ + 1e-2)
-			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
+		raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
 	}
 
 	float rainWetness = wetnessEffects.Wetness * minWetnessAngle * wetnessEffects.MaxRainWetness;
@@ -1796,7 +1796,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
 
 #		if !defined(DEFERRED)
-		wetnessSpecular += wetnessReflectance;
+	wetnessSpecular += wetnessReflectance;
 #		endif
 #	endif
 
@@ -2019,21 +2019,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
-	
+
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
-#	if defined(WETNESS_EFFECTS)
+#		if defined(WETNESS_EFFECTS)
 	psout.Reflectance = float4(wetnessReflectance, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), wetnessGlossinessSpecular, psout.Diffuse.w);
-#	else
+#		else
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
-#	endif
+#		endif
 
 #		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
 #		endif
-
 
 #		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #			if defined(DYNAMIC_CUBEMAPS)
