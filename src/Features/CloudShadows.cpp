@@ -95,7 +95,7 @@ void CloudShadows::Prepass()
 	context->GenerateMips(texCubemapCloudOcc->srv.get());
 
 	ID3D11ShaderResourceView* srv = texCubemapCloudOcc->srv.get();
-	context->PSSetShaderResources(40, 1, &srv);
+	context->PSSetShaderResources(27, 1, &srv);
 }
 
 void CloudShadows::Draw(const RE::BSShader*, const uint32_t)
