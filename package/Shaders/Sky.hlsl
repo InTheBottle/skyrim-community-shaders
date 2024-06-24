@@ -147,9 +147,9 @@ cbuffer AlphaTestRefCB : register(b11)
 	float AlphaTestRefRS : packoffset(c0);
 }
 
-#include "Common/FrameBuffer.hlsl"
-#include "Common/MotionBlur.hlsl"
-#include "Common/SharedData.hlsli"
+#	include "Common/FrameBuffer.hlsl"
+#	include "Common/MotionBlur.hlsl"
+#	include "Common/SharedData.hlsli"
 
 #	if defined(CLOUD_SHADOWS)
 #		include "CloudShadows/CloudShadows.hlsli"
