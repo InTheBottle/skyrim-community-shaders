@@ -39,6 +39,9 @@ void State::Draw()
 
 						lastVertexDescriptor = currentVertexDescriptor;
 						lastPixelDescriptor = currentPixelDescriptor;
+
+						ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
+						context->PSSetConstantBuffers(4, 3, buffers);
 					}
 
 					if (IsDeveloperMode()) {
@@ -497,9 +500,6 @@ void State::UpdateSharedData()
 
 		delete[] data;
 	}
-
-	ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
-	context->PSSetConstantBuffers(4, 3, buffers);
 
 	auto depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
 	context->PSSetShaderResources(20, 1, &depth);
