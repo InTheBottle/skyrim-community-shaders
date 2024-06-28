@@ -244,6 +244,11 @@ void Skylighting::Compute()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
+void Skylighting::Prepass()
+{
+	Bind();
+}
+
 void Skylighting::Bind()
 {
 	auto state = State::GetSingleton();

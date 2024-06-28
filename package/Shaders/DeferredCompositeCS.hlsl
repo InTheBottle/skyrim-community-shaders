@@ -8,23 +8,24 @@
 Texture2D<half3> SpecularTexture : register(t0);
 Texture2D<unorm half3> AlbedoTexture : register(t1);
 Texture2D<unorm half3> NormalRoughnessTexture : register(t2);
-Texture2D<unorm half3> Masks2Texture : register(t3);
+Texture2D<unorm half3> MasksTexture : register(t3);
+Texture2D<unorm half3> Masks2Texture : register(t4);
 
 RWTexture2D<half3> MainRW : register(u0);
 RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 RWTexture2D<half2> SnowParametersRW : register(u2);
 
 #if defined(DYNAMIC_CUBEMAPS)
-Texture2D<unorm float> DepthTexture : register(t4);
-Texture2D<unorm half3> ReflectanceTexture : register(t5);
-TextureCube<half3> EnvTexture : register(t6);
-TextureCube<half3> EnvReflectionsTexture : register(t7);
+Texture2D<unorm float> DepthTexture : register(t5);
+Texture2D<unorm half3> ReflectanceTexture : register(t6);
+TextureCube<half3> EnvTexture : register(t7);
+TextureCube<half3> EnvReflectionsTexture : register(t8);
 
 SamplerState LinearSampler : register(s0);
 #endif
 
 #if defined(SKYLIGHTING)
-Texture2D<half2> SkylightingTexture : register(t8);
+Texture2D<half2> SkylightingTexture : register(t9);
 #endif
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
@@ -50,6 +51,10 @@ Texture2D<half2> SkylightingTexture : register(t8);
 	if (reflectance.x > 0.0 || reflectance.y > 0.0 || reflectance.z > 0.0) {
 		half3 normalWS = normalize(mul(CameraViewInverse[eyeIndex], half4(normalVS, 0)));
 
+		half wetnessMask = MasksTexture[dispatchID.xy].z;
+
+		normalWS = lerp(normalWS, float3(0, 0, 1), wetnessMask);
+		
 		color = sRGB2Lin(color);
 
 		half depth = DepthTexture[dispatchID.xy];

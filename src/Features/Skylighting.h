@@ -307,6 +307,8 @@ public:
 
 	bool inOcclusion = false;
 
+	virtual void Prepass() override;
+
 	void Bind();
 
 	struct BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl
@@ -438,7 +440,7 @@ public:
 	{
 		static void thunk(RE::BSShader* This, RE::BSWaterShaderMaterial* a_material)
 		{
-			GetSingleton()->Bind();
+			//GetSingleton()->Bind();
 			func(This, a_material);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

@@ -377,6 +377,7 @@ void Deferred::DeferredPasses()
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
+	auto masks = renderer->GetRuntimeData().renderTargets[MASKS];
 	auto masks2 = renderer->GetRuntimeData().renderTargets[MASKS2];
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
@@ -430,10 +431,11 @@ void Deferred::DeferredPasses()
 
 	// Deferred Composite
 	{
-		ID3D11ShaderResourceView* srvs[9]{
+		ID3D11ShaderResourceView* srvs[10]{
 			specular.SRV,
 			albedo.SRV,
 			normalRoughness.SRV,
+			masks.SRV,
 			masks2.SRV,
 			dynamicCubemaps->loaded ? depth.depthSRV : nullptr,
 			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
@@ -464,7 +466,7 @@ void Deferred::DeferredPasses()
 
 	// Clear
 	{
-		ID3D11ShaderResourceView* views[9]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* views[10]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
