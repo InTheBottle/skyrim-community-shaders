@@ -156,7 +156,9 @@ half GetScreenDepth(half depth)
 	skylighting.x = lerp(skylighting.z, 1.0, Parameters.x) * Parameters.z + skylighting.x * saturate(dot(normalWS, float3(0, 0, 1))) * Parameters.w;
 	skylighting.y = saturate(skylighting.y);
 
-	SkylightingTextureRW[globalId.xy] = skylighting.xy;
+	half fadeFactor = pow(saturate(length(positionMS.xyz) / 10000.0), 8);
+
+	SkylightingTextureRW[globalId.xy] = lerp(skylighting.xy, 1.0, fadeFactor);
 }
 #else
 [numthreads(8, 8, 1)] void main(uint3 globalId
@@ -252,7 +254,7 @@ half GetScreenDepth(half depth)
 
 			float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
 
-			half shadowMapValues = TexShadowMapSampler.SampleCmpLevelZero(ShadowSamplerPCF, float3(positionLS.xy, cascadeIndex), positionLS.z - (1e-2 * 0.1 * radius));
+			half shadowMapValues = TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) > positionLS.z - shadowMapThreshold;
 
 			half3 H = normalize(-offsetDirection + V);
 			half NoH = dot(normalWS, H);
