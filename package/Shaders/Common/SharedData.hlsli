@@ -108,7 +108,14 @@ struct WetnessEffects
 	float ChaoticRippleStrength;
 	float ChaoticRippleScaleRcp;
 	float ChaoticRippleSpeed;
-	float pad0[2];
+};
+
+struct LightLimitFixSettings
+{
+	uint EnableContactShadows;
+	uint EnableLightsVisualisation;
+	uint LightsVisualisationMode;
+	uint pad0;
 };
 
 cbuffer FeatureData : register(b6)
@@ -118,6 +125,7 @@ cbuffer FeatureData : register(b6)
 	CubemapCreatorSettings cubemapCreatorSettings;
 	TerraOccSettings terraOccSettings;
 	WetnessEffects wetnessEffects;
+	LightLimitFixSettings lightLimitFixSettings;
 };
 
 Texture2D<float4> TexDepthSampler : register(t20);
