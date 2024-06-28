@@ -130,7 +130,6 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 
 void LightLimitFix::SetupResources()
 {
-
 	{
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", {}, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", {}, "cs_5_0");
@@ -311,7 +310,6 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	bool isWorld = accumulator->GetRuntimeData().activeShadowSceneNode == RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 
 	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld) {
-
 		strictLightDataTemp.EnableGlobalLights = isWorld;
 
 		D3D11_MAPPED_SUBRESOURCE mapped;
@@ -336,7 +334,7 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 		Matrix viewMatrix;
 
 		if (a_cached) {
-			eyePosition = eyePositionCached[eyeIndex]; 
+			eyePosition = eyePositionCached[eyeIndex];
 			viewMatrix = viewMatrixCached[eyeIndex];
 		} else {
 			eyePosition = eyeCount == 1 ?
@@ -386,14 +384,14 @@ void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int&
 void LightLimitFix::Prepass()
 {
 	auto& context = State::GetSingleton()->context;
-	
+
 	UpdateLights();
 
 	ID3D11ShaderResourceView* views[3]{};
 	views[0] = lights->srv.get();
 	views[1] = lightList->srv.get();
 	views[2] = lightGrid->srv.get();
-	context->PSSetShaderResources(50, ARRAYSIZE(views), views);	
+	context->PSSetShaderResources(50, ARRAYSIZE(views), views);
 }
 
 bool LightLimitFix::IsValidLight(RE::BSLight* a_light)

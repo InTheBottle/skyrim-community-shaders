@@ -1490,7 +1490,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
-		 (dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
+		(dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
 		if (skylight > 0.0)
 			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
 	}
@@ -1610,8 +1610,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
-	{	
-	
+	{
 		StructuredLight light;
 		if (lightIndex < strictLights[0].NumStrictLights) {
 			light = strictLights[0].StrictLights[lightIndex];
@@ -1797,7 +1796,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
 
 #		if !defined(DEFERRED)
-		wetnessSpecular += wetnessReflectance;
+	wetnessSpecular += wetnessReflectance;
 #		endif
 #	endif
 
@@ -2016,22 +2015,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	screenSpaceNormal.xy /= screenSpaceNormal.zz;
 	psout.ScreenSpaceNormals.xy = screenSpaceNormal.xy + 0.5.xx;
 	psout.ScreenSpaceNormals.z = 0;
-	
+
 #	else
 
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
-	
+
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
-#	if defined(WETNESS_EFFECTS)
+#		if defined(WETNESS_EFFECTS)
 	psout.Reflectance = float4(wetnessReflectance, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), wetnessGlossinessSpecular, psout.Diffuse.w);
-#	else
+#		else
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
-#	endif
+#		endif
 
 #		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
@@ -2051,7 +2050,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		elif defined(WETNESS_EFFECTS)
 	float wetnessNormalAmount = saturate(dot(float3(0, 0, 1), wetnessNormal) * saturate(flatnessAmount));
 	psout.Masks = float4(0, 0, wetnessNormalAmount, psout.Diffuse.w);
-#	else
+#		else
 	psout.Masks = float4(0, 0, 0, psout.Diffuse.w);
 #		endif
 #	endif

@@ -779,7 +779,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 finalColor = saturate(1 - input.WPosition.w * 0.002) * ((1 - fresnel) * (diffuseColor - finalSpecularColor)) + finalSpecularColor;
 #			else
 	float3 sunColor = GetSunColor(normal, viewDirection);
-	
+
 	if (!(PixelShaderDescriptor & _Interior))
 		sunColor *= GetShadow(input.WPosition + normal * 32);
 
@@ -791,12 +791,12 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	psout.Lighting = saturate(float4(finalColor * PosAdjust[eyeIndex].w, isSpecular));
-#			if defined(DEPTH)
-#				if defined(VERTEX_ALPHA_DEPTH) && defined(VC)
+#		if defined(DEPTH)
+#			if defined(VERTEX_ALPHA_DEPTH) && defined(VC)
 	float blendFactor = 1 - smoothstep(0.0, 0.025, input.TexCoord3.z);
-#				else
+#			else
 	float blendFactor = 1 - smoothstep(0.0, 0.025, distanceMul.z);
-#				endif  // defined(VERTEX_ALPHA_DEPTH) && defined(VC)
+#			endif  // defined(VERTEX_ALPHA_DEPTH) && defined(VC)
 	if (blendFactor > 0.0) {
 		float4 background = RefractionTex.Load(float3(screenPosition, 0));
 		psout.Lighting.xyz = lerp(psout.Lighting.xyz, background.xyz, blendFactor);

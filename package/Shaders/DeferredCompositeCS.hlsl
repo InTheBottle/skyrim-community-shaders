@@ -54,7 +54,7 @@ Texture2D<half2> SkylightingTexture : register(t9);
 		half wetnessMask = MasksTexture[dispatchID.xy].z;
 
 		normalWS = lerp(normalWS, float3(0, 0, 1), wetnessMask);
-		
+
 		color = sRGB2Lin(color);
 
 		half depth = DepthTexture[dispatchID.xy];
