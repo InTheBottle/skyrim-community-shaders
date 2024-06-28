@@ -364,7 +364,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float dirShadow = 1.0;
 
 	if (shadowColor.x > 0.0) {
-		if (dirLightAngle > 0.0){
+		if (dirLightAngle > 0.0) {
 #		if defined(SCREEN_SPACE_SHADOWS)
 			dirDetailShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #		endif
