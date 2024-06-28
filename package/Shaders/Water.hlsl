@@ -663,6 +663,8 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 
 	uint eyeIndex = GetEyeIndexPS(input.HPosition, VPOSOffset);
+	float2 screenPosition = DynamicResolutionParams1.xy * (DynamicResolutionParams2.xy * input.HPosition.xy);
+
 #	if defined(SIMPLE) || defined(UNDERWATER) || defined(LOD) || defined(SPECULAR)
 	float3 viewDirection = normalize(input.WPosition.xyz);
 
@@ -680,8 +682,6 @@ PS_OUTPUT main(PS_INPUT input)
 #				endif
 #			else
 	distanceMul = 0;
-
-	float2 screenPosition = DynamicResolutionParams1.xy * (DynamicResolutionParams2.xy * input.HPosition.xy);
 
 	depth = GetScreenDepthWater(screenPosition);
 	float2 depthOffset =
@@ -748,7 +748,7 @@ PS_OUTPUT main(PS_INPUT input)
 	uint lightCount = 0;
 
 	uint clusterIndex = 0;
-	if (perPassLLF[0].EnableGlobalLights && GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
+	if (GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
 		lightCount = lightGrid[clusterIndex].lightCount;
 		uint lightOffset = lightGrid[clusterIndex].offset;
 		[loop] for (uint i = 0; i < lightCount; i++)
@@ -779,7 +779,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 finalColor = saturate(1 - input.WPosition.w * 0.002) * ((1 - fresnel) * (diffuseColor - finalSpecularColor)) + finalSpecularColor;
 #			else
 	float3 sunColor = GetSunColor(normal, viewDirection);
-	sunColor *= GetShadow(input.WPosition + normal * 32);
+	
+	if (!(PixelShaderDescriptor & _Interior))
+		sunColor *= GetShadow(input.WPosition + normal * 32);
 
 	float specularFraction = lerp(1, fresnel * depthControl.x, distanceFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
@@ -789,22 +791,17 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	psout.Lighting = saturate(float4(finalColor * PosAdjust[eyeIndex].w, isSpecular));
-#		if defined(WATER_BLENDING)
 #			if defined(DEPTH)
-	if (perPassWaterBlending[0].EnableWaterBlending) {
-		float2 screenPosition = DynamicResolutionParams1.xy * (DynamicResolutionParams2.xy * input.HPosition.xy);
 #				if defined(VERTEX_ALPHA_DEPTH) && defined(VC)
-		float blendFactor = 1 - smoothstep(0.0, 0.025 * perPassWaterBlending[0].WaterBlendRange, input.TexCoord3.z);
+	float blendFactor = 1 - smoothstep(0.0, 0.025, input.TexCoord3.z);
 #				else
-		float blendFactor = 1 - smoothstep(0.0, 0.025 * perPassWaterBlending[0].WaterBlendRange, distanceMul.z);
+	float blendFactor = 1 - smoothstep(0.0, 0.025, distanceMul.z);
 #				endif  // defined(VERTEX_ALPHA_DEPTH) && defined(VC)
-		if (blendFactor > 0.0) {
-			float4 background = RefractionTex.Load(float3(screenPosition, 0));
-			psout.Lighting.xyz = lerp(psout.Lighting.xyz, background.xyz, blendFactor);
-			psout.Lighting.w = lerp(psout.Lighting.w, background.w, blendFactor);
-		}
+	if (blendFactor > 0.0) {
+		float4 background = RefractionTex.Load(float3(screenPosition, 0));
+		psout.Lighting.xyz = lerp(psout.Lighting.xyz, background.xyz, blendFactor);
+		psout.Lighting.w = lerp(psout.Lighting.w, background.w, blendFactor);
 	}
-#			endif
 #		endif
 
 #	endif

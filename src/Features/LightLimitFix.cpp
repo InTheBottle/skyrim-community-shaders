@@ -119,43 +119,17 @@ void LightLimitFix::DrawSettings()
 	}
 }
 
+LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
+{
+	PerFrame perFrame{};
+	perFrame.EnableContactShadows = settings.EnableContactShadows;
+	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
+	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
+	return perFrame;
+}
+
 void LightLimitFix::SetupResources()
 {
-	{
-		D3D11_BUFFER_DESC sbDesc{};
-		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
-		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		sbDesc.StructureByteStride = sizeof(PerPass);
-		sbDesc.ByteWidth = sizeof(PerPass);
-		perPass = std::make_unique<Buffer>(sbDesc);
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		srvDesc.Buffer.FirstElement = 0;
-		srvDesc.Buffer.NumElements = 1;
-		perPass->CreateSRV(srvDesc);
-	}
-
-	{
-		D3D11_BUFFER_DESC sbDesc{};
-		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
-		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		sbDesc.StructureByteStride = sizeof(StrictLightData);
-		sbDesc.ByteWidth = sizeof(StrictLightData);
-		strictLightData = std::make_unique<Buffer>(sbDesc);
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		srvDesc.Buffer.FirstElement = 0;
-		srvDesc.Buffer.NumElements = 1;
-		strictLightData->CreateSRV(srvDesc);
-	}
 
 	{
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", {}, "cs_5_0");
@@ -238,11 +212,28 @@ void LightLimitFix::SetupResources()
 		srvDesc.Buffer.NumElements = MAX_LIGHTS;
 		lights->CreateSRV(srvDesc);
 	}
+
+	{
+		D3D11_BUFFER_DESC sbDesc{};
+		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		sbDesc.StructureByteStride = sizeof(StrictLightData);
+		sbDesc.ByteWidth = sizeof(StrictLightData);
+		strictLightData = std::make_unique<Buffer>(sbDesc);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = 1;
+		strictLightData->CreateSRV(srvDesc);
+	}
 }
 
 void LightLimitFix::Reset()
 {
-	rendered = false;
 	for (auto& particleLight : particleLights) {
 		if (const auto particleSystem = netimmerse_cast<RE::NiParticleSystem*>(particleLight.first)) {
 			if (auto particleData = particleSystem->GetParticleRuntimeData().particleData.get()) {
@@ -253,7 +244,6 @@ void LightLimitFix::Reset()
 	}
 	particleLights.clear();
 	std::swap(particleLights, queuedParticleLights);
-	boundViews = false;
 }
 
 void LightLimitFix::Load(json& o_json)
@@ -275,7 +265,7 @@ void LightLimitFix::RestoreDefaultSettings()
 
 void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass*)
 {
-	strictLightDataTemp.NumLights = 0;
+	strictLightDataTemp.NumStrictLights = 0;
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass, DirectX::XMMATRIX&, uint32_t, uint32_t, float, Space)
@@ -283,8 +273,9 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 
-	strictLightDataTemp.NumLights = a_pass->numLights - 1;
-	for (uint32_t i = 0; i < strictLightDataTemp.NumLights; i++) {
+	strictLightDataTemp.NumStrictLights = a_pass->numLights - 1;
+
+	for (uint32_t i = 0; i < strictLightDataTemp.NumStrictLights; i++) {
 		auto bsLight = a_pass->sceneLights[i + 1];
 		auto niLight = bsLight->light.get();
 
@@ -307,17 +298,34 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 {
+	auto& context = State::GetSingleton()->context;
+	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
+
+	strictLightDataTemp.LightsNear = lightsNear;
+	strictLightDataTemp.LightsFar = lightsFar;
+
 	static bool wasEmpty = false;
-	bool isEmpty = strictLightDataTemp.NumLights == 0;
-	if (!isEmpty || (isEmpty && !wasEmpty)) {
-		auto& context = State::GetSingleton()->context;
+	static bool wasWorld = false;
+
+	bool isEmpty = strictLightDataTemp.NumStrictLights == 0;
+	bool isWorld = accumulator->GetRuntimeData().activeShadowSceneNode == RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+
+	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld) {
+
+		strictLightDataTemp.EnableGlobalLights = isWorld;
+
 		D3D11_MAPPED_SUBRESOURCE mapped;
 		DX::ThrowIfFailed(context->Map(strictLightData->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
 		size_t bytes = sizeof(StrictLightData);
 		memcpy_s(mapped.pData, bytes, &strictLightDataTemp, bytes);
 		context->Unmap(strictLightData->resource.get(), 0);
+
 		wasEmpty = isEmpty;
+		wasWorld = isWorld;
 	}
+
+	ID3D11ShaderResourceView* view = strictLightData->srv.get();
+	context->PSSetShaderResources(53, 1, &view);
 }
 
 void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached)
@@ -328,7 +336,7 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 		Matrix viewMatrix;
 
 		if (a_cached) {
-			eyePosition = eyePositionCached[eyeIndex];
+			eyePosition = eyePositionCached[eyeIndex]; 
 			viewMatrix = viewMatrixCached[eyeIndex];
 		} else {
 			eyePosition = eyeCount == 1 ?
@@ -375,70 +383,17 @@ void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int&
 	numHits += particleLightsDetectionHits;
 }
 
-void LightLimitFix::Bind()
+void LightLimitFix::Prepass()
 {
 	auto& context = State::GetSingleton()->context;
-	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
+	
+	UpdateLights();
 
-	auto reflections = (!REL::Module::IsVR() ?
-							   RE::BSGraphics::RendererShadowState::GetSingleton()->GetRuntimeData().cubeMapRenderTarget :
-							   RE::BSGraphics::RendererShadowState::GetSingleton()->GetVRRuntimeData().cubeMapRenderTarget) == RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS;
-
-	if (!boundViews) {
-		boundViews = true;
-
-		ID3D11ShaderResourceView* view = perPass->srv.get();
-		context->PSSetShaderResources(32, 1, &view);
-
-		view = strictLightData->srv.get();
-		context->PSSetShaderResources(37, 1, &view);
-	}
-
-	if (reflections || accumulator->GetRuntimeData().activeShadowSceneNode != RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0]) {
-		if (perPassData.EnableGlobalLights) {
-			perPassData.EnableGlobalLights = false;
-
-			D3D11_MAPPED_SUBRESOURCE mapped;
-			DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-			size_t bytes = sizeof(PerPass);
-			memcpy_s(mapped.pData, bytes, &perPassData, bytes);
-			context->Unmap(perPass->resource.get(), 0);
-		}
-	} else {
-		if (!rendered) {
-			UpdateLights();
-			rendered = true;
-			ID3D11ShaderResourceView* views[3]{};
-			views[0] = lights->srv.get();
-			views[1] = lightList->srv.get();
-			views[2] = lightGrid->srv.get();
-			context->PSSetShaderResources(17, ARRAYSIZE(views), views);
-			perPassData.EnableGlobalLights = false;
-		}
-
-		if (!perPassData.EnableGlobalLights) {
-			auto viewport = RE::BSGraphics::State::GetSingleton();
-
-			perPassData.LightsNear = lightsNear;
-			perPassData.LightsFar = lightsFar;
-
-			const auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-			auto bTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled :
-			                                   imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-
-			perPassData.FrameCount = viewport->uiFrameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
-			perPassData.EnableGlobalLights = true;
-			perPassData.EnableContactShadows = settings.EnableContactShadows;
-			perPassData.EnableLightsVisualisation = settings.EnableLightsVisualisation;
-			perPassData.LightsVisualisationMode = settings.LightsVisualisationMode;
-
-			D3D11_MAPPED_SUBRESOURCE mapped;
-			DX::ThrowIfFailed(context->Map(perPass->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-			size_t bytes = sizeof(PerPass);
-			memcpy_s(mapped.pData, bytes, &perPassData, bytes);
-			context->Unmap(perPass->resource.get(), 0);
-		}
-	}
+	ID3D11ShaderResourceView* views[3]{};
+	views[0] = lights->srv.get();
+	views[1] = lightList->srv.get();
+	views[2] = lightGrid->srv.get();
+	context->PSSetShaderResources(50, ARRAYSIZE(views), views);	
 }
 
 bool LightLimitFix::IsValidLight(RE::BSLight* a_light)
@@ -609,21 +564,8 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, LightLimitFix::Co
 	return true;
 }
 
-enum class GrassShaderTechniques
+void LightLimitFix::Draw(const RE::BSShader*, const uint32_t)
 {
-	RenderDepth = 8,
-};
-
-void LightLimitFix::Draw(const RE::BSShader* shader, const uint32_t)
-{
-	switch (shader->shaderType.get()) {
-	case RE::BSShader::Type::Lighting:
-	case RE::BSShader::Type::Grass:
-	case RE::BSShader::Type::Effect:
-	case RE::BSShader::Type::Water:
-		Bind();
-		break;
-	}
 }
 
 void LightLimitFix::PostPostLoad()
@@ -997,18 +939,4 @@ void LightLimitFix::UpdateLights()
 
 	ID3D11UnorderedAccessView* null_uavs[3] = { nullptr };
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
-}
-
-bool LightLimitFix::HasShaderDefine(RE::BSShader::Type shaderType)
-{
-	switch (shaderType) {
-	case RE::BSShader::Type::Lighting:
-	case RE::BSShader::Type::Grass:
-	case RE::BSShader::Type::Water:
-		return true;
-	case RE::BSShader::Type::Effect:
-		return !REL::Module::IsVR();
-	default:
-		return false;
-	}
 }

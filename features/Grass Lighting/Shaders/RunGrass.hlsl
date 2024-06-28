@@ -292,6 +292,10 @@ float3x3 CalculateTBN(float3 N, float3 p, float2 uv)
 #		include "TerrainOcclusion/TerrainOcclusion.hlsli"
 #	endif
 
+#	if defined(CLOUD_SHADOWS)
+#		include "CloudShadows/CloudShadows.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -356,19 +360,28 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float dirLightAngle = dot(normal, DirLightDirectionShared.xyz);
 
+	float dirDetailShadow = 1.0;
 	float dirShadow = 1.0;
 
-	if (shadowColor.x > 0.0 && dirLightAngle > 0.0) {
+	if (shadowColor.x > 0.0) {
+		if (dirLightAngle > 0.0){
 #		if defined(SCREEN_SPACE_SHADOWS)
-		dirShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
+			dirDetailShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #		endif
+		}
 
 #		if defined(TERRA_OCC)
 		if (dirShadow > 0.0) {
 			float terrainShadow = 1;
 			float terrainAo = 1;
 			GetTerrainOcclusion(input.WorldPosition.xyz + CameraPosAdjust[eyeIndex], length(input.WorldPosition.xyz), SampBaseSampler, terrainShadow, terrainAo);
-			dirShadow = min(dirShadow, terrainShadow);
+			dirShadow *= terrainShadow;
+		}
+#		endif
+
+#		if defined(CLOUD_SHADOWS)
+		if (dirShadow != 0.0) {
+			dirShadow *= GetCloudShadowMult(input.WorldPosition, SampBaseSampler);
 		}
 #		endif
 	}
@@ -419,7 +432,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 				float3 normalizedLightDirectionVS = WorldToView(normalizedLightDirection, true, eyeIndex);
 				if (light.firstPersonShadow)
 					lightColor *= ContactShadows(viewPosition, screenUV, screenNoise, normalizedLightDirectionVS, shadowQualityScale, 0.0, eyeIndex);
-				else if (perPassLLF[0].EnableContactShadows)
+				else if (lightLimitFixSettings.EnableContactShadows)
 					lightColor *= ContactShadows(viewPosition, screenUV, screenNoise, normalizedLightDirectionVS, shadowQualityScale, 0.0, eyeIndex);
 
 				float3 lightDiffuseColor = lightColor * saturate(lightAngle.xxx);
@@ -443,11 +456,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	specularColor += lightsSpecularColor;
 	specularColor *= specColor.w * grassLightingSettings.SpecularStrength;
 
-#		if defined(LIGHT_LIMIT_FIX)
-	if (perPassLLF[0].EnableLightsVisualisation) {
-		if (perPassLLF[0].LightsVisualisationMode == 0) {
+#		if defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
+	if (lightLimitFixSettings.EnableLightsVisualisation) {
+		if (lightLimitFixSettings.LightsVisualisationMode == 0) {
 			diffuseColor.xyz = TurboColormap(0);
-		} else if (perPassLLF[0].LightsVisualisationMode == 1) {
+		} else if (lightLimitFixSettings.LightsVisualisationMode == 1) {
 			diffuseColor.xyz = TurboColormap(0);
 		} else {
 			diffuseColor.xyz = TurboColormap((float)lightCount / 128.0);

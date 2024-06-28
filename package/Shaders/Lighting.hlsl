@@ -939,6 +939,11 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "CloudShadows/CloudShadows.hlsli"
 #	endif
 
+#	if defined(SKYLIGHTING)
+#		define LinearSampler SampColorSampler
+#		include "Skylighting/Skylighting.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
 {
@@ -1479,22 +1484,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float minWetnessAngle = 0;
 	minWetnessAngle = saturate(max(minWetnessValue, worldSpaceNormal.z));
 
+	float skylight = GetSkylightOcclusion(input.WorldPosition + worldSpaceNormal, screenNoise);
+
 	bool raindropOccluded = false;
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
-		(dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
-		// float4 precipPositionCS = float4(2 * float2(screenUV.x, -screenUV.y + 1) - 1, input.Position.z, 1);
-		// float4 precipPositionMS = mul(CameraViewProjInverse[eyeIndex], precipPositionCS);
-		// precipPositionMS.xyz = precipPositionMS.xyz / precipPositionMS.w;
-
-		// float4 precipOcclusionTexCoord = mul(wetnessEffects.PrecipProj, float4(precipPositionMS.xyz, 1));
-		// precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
-		// float2 precipOcclusionUv = precipOcclusionTexCoord.xy * 0.5.xx + 0.5.xx;
-		// float precipOcclusionZ = TexPrecipOcclusion.SampleLevel(SampShadowMaskSampler, precipOcclusionUv, 0).x;
-
-		// if (precipOcclusionTexCoord.z < precipOcclusionZ + 1e-2)
-		raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
+		 (dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
+		if (skylight > 0.0)
+			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
 	}
 
 	float rainWetness = wetnessEffects.Wetness * minWetnessAngle * wetnessEffects.MaxRainWetness;
@@ -1507,6 +1505,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		if defined(HAIR)
 	rainWetness = wetnessEffects.SkinWetness * wetnessEffects.Wetness * 0.8f;
 #		endif
+
+	rainWetness *= skylight;
+	puddleWetness *= skylight;
 
 	wetness = max(shoreFactor * wetnessEffects.MaxShoreWetness, rainWetness);
 
@@ -1598,24 +1599,24 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	input.TBN2.z = worldSpaceVertexNormal[2];
 #			endif
 
-	uint numStrictLights = strictLightData[0].NumStrictLights;
 	uint numClusteredLights = 0;
-	uint totalLightCount = numStrictLights;
+	uint totalLightCount = strictLights[0].NumStrictLights;
 	uint clusterIndex = 0;
 	uint lightOffset = 0;
-	if (perPassLLF[0].EnableGlobalLights && GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
+	if (strictLights[0].EnableGlobalLights && GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
 		numClusteredLights = lightGrid[clusterIndex].lightCount;
 		totalLightCount += numClusteredLights;
 		lightOffset = lightGrid[clusterIndex].offset;
 	}
 
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
-	{
+	{	
+	
 		StructuredLight light;
-		if (lightIndex < numStrictLights) {
-			light = strictLightData[0].StrictLights[lightIndex];
+		if (lightIndex < strictLights[0].NumStrictLights) {
+			light = strictLights[0].StrictLights[lightIndex];
 		} else {
-			uint clusterIndex = lightList[lightOffset + (lightIndex - numStrictLights)];
+			uint clusterIndex = lightList[lightOffset + (lightIndex - strictLights[0].NumStrictLights)];
 			light = lights[clusterIndex];
 		}
 
@@ -1640,10 +1641,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		float3 normalizedLightDirection = normalize(lightDirection);
 		float lightAngle = dot(worldSpaceNormal.xyz, normalizedLightDirection.xyz);
 
-		[branch] if (perPassLLF[0].EnableGlobalLights && !FrameParams.z && FrameParams.y && (light.firstPersonShadow || perPassLLF[0].EnableContactShadows) && shadowComponent != 0.0 && lightAngle > 0.0)
+		[branch] if (strictLights[0].EnableGlobalLights && !FrameParams.z && FrameParams.y && (light.firstPersonShadow || lightLimitFixSettings.EnableContactShadows) && shadowComponent != 0.0 && lightAngle > 0.0)
 		{
 			float3 normalizedLightDirectionVS = normalize(light.positionVS[eyeIndex].xyz - viewPosition.xyz);
-			float contactShadow = ContactShadows(viewPosition, screenUV, screenNoise, normalizedLightDirectionVS, light.radius, light.firstPersonShadow, eyeIndex);
+			contactShadow = ContactShadows(viewPosition, screenUV, screenNoise, normalizedLightDirectionVS, light.radius, light.firstPersonShadow, eyeIndex);
 			[flatten] if (light.firstPersonShadow)
 			{
 				contactShadow = contactShadow;
@@ -1663,7 +1664,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 				lightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, lightDirectionTS, sh0, TexParallaxSampler, SampParallaxSampler, 0, parallaxShadowQuality, screenNoise);
 #				elif defined(LANDSCAPE)
 			if (extendedMaterialSettings.EnableTerrainParallax)
-				lightColor *= GetParallaxSoftShadowMultiplierTerrain(input, terrainUVs, mipLevel, lightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
+				lightColor *= GetParallaxSoftShadowMultiplierTerrain(input, uv, mipLevels, lightDirectionTS, sh0, parallaxShadowQuality, screenNoise);
 #				elif defined(ENVMAP)
 			if (complexMaterialParallax)
 				lightColor *= GetParallaxSoftShadowMultiplier(uv, mipLevel, lightDirectionTS, sh0, TexEnvMaskSampler, SampEnvMaskSampler, 3, parallaxShadowQuality, screenNoise);
@@ -1693,7 +1694,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #			if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1.0)
-			wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedLightDirection, worldSpaceViewDirection, sRGB2Lin(lightColor), waterRoughnessSpecular) * wetnessEffects.MaxPointLightSpecular;
+			wetnessSpecular += GetWetnessSpecular(wetnessNormal, normalizedLightDirection, worldSpaceViewDirection, sRGB2Lin(lightColor), waterRoughnessSpecular);
 #			endif
 	}
 #		endif
@@ -1796,7 +1797,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
 
 #		if !defined(DEFERRED)
-	wetnessSpecular += wetnessReflectance;
+		wetnessSpecular += wetnessReflectance;
 #		endif
 #	endif
 
@@ -1975,14 +1976,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	endif
 #	if defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
-	if (perPassLLF[0].EnableLightsVisualisation) {
-		if (perPassLLF[0].LightsVisualisationMode == 0) {
-			psout.Diffuse.xyz = TurboColormap(strictLightData[0].NumStrictLights >= 7.0);
-		} else if (perPassLLF[0].LightsVisualisationMode == 1) {
-			psout.Diffuse.xyz = TurboColormap((float)strictLightData[0].NumStrictLights / 15.0);
+	if (lightLimitFixSettings.EnableLightsVisualisation) {
+		if (lightLimitFixSettings.LightsVisualisationMode == 0) {
+			psout.Diffuse.xyz = TurboColormap(NumStrictLights >= 7.0);
+		} else if (lightLimitFixSettings.LightsVisualisationMode == 1) {
+			psout.Diffuse.xyz = TurboColormap((float)NumStrictLights / 15.0);
 		} else {
 			psout.Diffuse.xyz = TurboColormap((float)numClusteredLights / 128.0);
 		}
+		baseColor.xyz = 0.0;
 	} else {
 		psout.Diffuse.xyz = color.xyz - tmpColor.xyz * FrameParams.zzz;
 	}
@@ -2014,21 +2016,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	screenSpaceNormal.xy /= screenSpaceNormal.zz;
 	psout.ScreenSpaceNormals.xy = screenSpaceNormal.xy + 0.5.xx;
 	psout.ScreenSpaceNormals.z = 0;
+	
 #	else
 
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
 	psout.Specular = float4(specularColor.xyz, psout.Diffuse.w);
 	psout.Albedo = float4(baseColor.xyz * realVertexColor, psout.Diffuse.w);
-
+	
 	float outGlossiness = saturate(glossiness * SSRParams.w);
 
-#		if defined(WETNESS_EFFECTS)
+#	if defined(WETNESS_EFFECTS)
 	psout.Reflectance = float4(wetnessReflectance, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), wetnessGlossinessSpecular, psout.Diffuse.w);
-#		else
+#	else
 	psout.Reflectance = float4(0.0.xxx, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(EncodeNormal(screenSpaceNormal), outGlossiness, psout.Diffuse.w);
-#		endif
+#	endif
 
 #		if defined(SNOW)
 	psout.Parameters.w = psout.Diffuse.w;
@@ -2045,7 +2048,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #		if defined(SSS) && defined(SKIN)
 	psout.Masks = float4(saturate(baseColor.a), !perPassSSS[0].IsBeastRace, 0, psout.Diffuse.w);
-#		else
+#		elif defined(WETNESS_EFFECTS)
+	float wetnessNormalAmount = saturate(dot(float3(0, 0, 1), wetnessNormal) * saturate(flatnessAmount));
+	psout.Masks = float4(0, 0, wetnessNormalAmount, psout.Diffuse.w);
+#	else
 	psout.Masks = float4(0, 0, 0, psout.Diffuse.w);
 #		endif
 #	endif

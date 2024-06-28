@@ -3,6 +3,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/GrassLighting.h"
+#include "Features/LightLimitFix.h"
 #include "Features/TerrainOcclusion.h"
 #include "Features/WetnessEffects.h"
 
@@ -29,5 +30,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData()
 		ExtendedMaterials::GetSingleton()->settings,
 		DynamicCubemaps::GetSingleton()->settings,
 		TerrainOcclusion::GetSingleton()->GetCommonBufferData(),
-		WetnessEffects::GetSingleton()->GetCommonBufferData());
+		WetnessEffects::GetSingleton()->GetCommonBufferData(),
+		LightLimitFix::GetSingleton()->GetCommonBufferData());
 }
