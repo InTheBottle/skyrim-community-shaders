@@ -418,10 +418,6 @@ void Deferred::DeferredPasses()
 		interior = sky->mode.get() != RE::Sky::Mode::kFull;
 
 	auto skylighting = Skylighting::GetSingleton();
-
-	if (skylighting->loaded)
-		skylighting->Compute();
-
 	auto ssgi = ScreenSpaceGI::GetSingleton();
 
 	if (ssgi->loaded)

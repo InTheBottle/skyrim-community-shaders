@@ -49,13 +49,21 @@ void Skylighting::SetupResources()
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
 
-		texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
 		skylightingTexture = new Texture2D(texDesc);
 		skylightingTexture->CreateSRV(srvDesc);
 		skylightingTexture->CreateUAV(uavDesc);
+
+		texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		srvDesc.Format = texDesc.Format;
+		uavDesc.Format = texDesc.Format;
+
+		wetnessOcclusionTexture = new Texture2D(texDesc);
+		wetnessOcclusionTexture->CreateSRV(srvDesc);
+		wetnessOcclusionTexture->CreateUAV(uavDesc);
 	}
 
 	{
@@ -186,31 +194,48 @@ void Skylighting::Compute()
 			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
 		}
 
+		data.BufferDim.x = state->screenWidth;
+		data.BufferDim.y = state->screenHeight;
+		data.BufferDim.z = 1.0f / data.BufferDim.x;
+		data.BufferDim.w = 1.0f / data.BufferDim.y;
+
+		data.CameraData = Util::GetCameraData();
+
+		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+
+		auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+		data.FrameCount = useTAA ? RE::BSGraphics::State::GetSingleton()->uiFrameCount : 0;
+
 		perFrameCB->Update(data);
 	}
 
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
-	ID3D11ShaderResourceView* srvs[6]{
+	ID3D11ShaderResourceView* srvs[5]{
 		depth.depthSRV,
 		Deferred::GetSingleton()->shadowView,
 		Deferred::GetSingleton()->perShadow->srv.get(),
 		noiseView,
-		occlusionTexture->srv.get(),
-		normalRoughness.SRV
+		occlusionTexture->srv.get()
 	};
 
-	context->CSSetShaderResources(0, 6, srvs);
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+	ID3D11UnorderedAccessView* uavs[2]{ skylightingTexture->uav.get(), wetnessOcclusionTexture->uav.get() };
+	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 
 	auto buffer = perFrameCB->CB();
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
 	context->CSSetSamplers(0, 2, samplers);
+
+	{
+		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
+		ID3D11Buffer* buffers[1] = {*perFrame.get() };
+
+		context->CSSetConstantBuffers(12, 1, buffers);
+	}
 
 	context->CSSetShader(settings.HeightSkylighting ? GetSkylightingCS() : GetSkylightingShadowMapCS(), nullptr, 0);
 
@@ -221,25 +246,25 @@ void Skylighting::Compute()
 	srvs[2] = nullptr;
 	srvs[3] = nullptr;
 	srvs[4] = nullptr;
-	srvs[5] = nullptr;
-
-	context->CSSetShaderResources(0, 6, srvs);
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 	uavs[0] = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+	uavs[1] = nullptr;
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 	buffer = nullptr;
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	samplers[0] = nullptr;
 	samplers[1] = nullptr;
-	context->CSSetSamplers(0, 2, samplers);
+	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void Skylighting::Prepass()
 {
+	Compute();
 	Bind();
 }
 
@@ -268,9 +293,12 @@ void Skylighting::Bind()
 	auto buffer = perFrameCB->CB();
 	context->PSSetConstantBuffers(8, 1, &buffer);
 
-	ID3D11ShaderResourceView* srvs[1]{
-		occlusionTexture->srv.get()
+	ID3D11ShaderResourceView* srvs[3]
+	{
+		occlusionTexture->srv.get(),
+		skylightingTexture->srv.get(),
+		wetnessOcclusionTexture->srv.get()
 	};
 
-	context->PSSetShaderResources(29, 1, srvs);
+	context->PSSetShaderResources(29, ARRAYSIZE(srvs), srvs);
 }

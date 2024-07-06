@@ -1,14 +1,15 @@
-#include "Common/Color.hlsl"
 #include "Common/DeferredShared.hlsli"
 #include "Common/FrameBuffer.hlsl"
 #include "Common/GBuffer.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/Color.hlsl"
 
 Texture2D<unorm half3> AlbedoTexture : register(t0);
 Texture2D<unorm half3> NormalRoughnessTexture : register(t1);
 
 #if defined(SKYLIGHTING)
-Texture2D<half2> SkylightingTexture : register(t2);
+#include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+Texture2D<unorm float4> SkylightingTexture : register(t2);
 #endif
 
 #if defined(SSGI)
@@ -38,19 +39,22 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	half3 ambient = albedo * directionalAmbientColor;
 
 	diffuseColor = sRGB2Lin(diffuseColor);
-	ambient = sRGB2Lin(max(0, ambient));  // Fixes black blobs on the world map
+	ambient = sRGB2Lin(max(0, ambient)); // Fixes black blobs on the world map
 	albedo = sRGB2Lin(albedo);
 
 #if defined(SKYLIGHTING)
-	half skylightingDiffuse = SkylightingTexture[dispatchID.xy].x;
-	ambient *= skylightingDiffuse;
+	half skylighting = lerp(0.1, 1.0, saturate(shUnproject(SkylightingTexture[dispatchID.xy], normalWS)));
+	ambient *= skylighting;
 #endif
+
 #if defined(SSGI)
 
 	half4 ssgiDiffuse = SSGITexture[dispatchID.xy];
 
-	ambient = ambient * ssgiDiffuse.a + ssgiDiffuse.rgb * albedo;
+	ambient = ambient * ssgiDiffuse.a;
 
+	diffuseColor *= ssgiDiffuse.a;
+	diffuseColor += ssgiDiffuse.rgb * albedo;
 #endif
 
 	diffuseColor = Lin2sRGB(diffuseColor);

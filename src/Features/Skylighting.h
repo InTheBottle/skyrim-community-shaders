@@ -47,6 +47,10 @@ public:
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 ShadowDirection;
 		float4 Parameters;
+		float4 BufferDim;
+		float4 CameraData;
+		uint FrameCount;
+		uint pad0[3];
 	};
 
 	struct Settings
@@ -69,6 +73,7 @@ public:
 	virtual void ClearShaderCache() override;
 
 	Texture2D* skylightingTexture = nullptr;
+	Texture2D* wetnessOcclusionTexture = nullptr;
 
 	ID3D11ShaderResourceView* noiseView = nullptr;
 

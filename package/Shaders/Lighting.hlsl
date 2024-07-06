@@ -99,7 +99,10 @@ struct VS_OUTPUT
 #if defined(VR)
 	float ClipDistance : SV_ClipDistance0;  // o11
 	float CullDistance : SV_CullDistance0;  // p11
-#endif                                      // VR
+#endif  
+
+	float3 ModelPosition : TEXCOORD12;
+                               
 };
 #ifdef VSHADER
 
@@ -224,24 +227,6 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
 	float4 viewPos = mul(modelView, inputPosition);
 #	endif  // SKINNED
-
-#	if defined(OUTLINE) && !defined(MODELSPACENORMALS)
-	float3 normal = normalize(-1.0.xxx + 2.0.xxx * input.Normal.xyz);
-	float outlineShift = min(max(viewPos.z / 150, 1), 50);
-	inputPosition.xyz += outlineShift * normal.xyz;
-	previousInputPosition.xyz += outlineShift * normal.xyz;
-
-#		if defined(SKINNED)
-	previousWorldPosition =
-		float4(mul(inputPosition, transpose(previousWorldMatrix)), 1);
-	worldPosition = float4(mul(inputPosition, transpose(worldMatrix)), 1);
-	viewPos = mul(ViewProj[eyeIndex], worldPosition);
-#		else   // !SKINNED
-	previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], inputPosition), 1);
-	worldPosition = float4(mul(World[eyeIndex], inputPosition), 1);
-	viewPos = mul(modelView, inputPosition);
-#		endif  // SKINNED
-#	endif      // defined(OUTLINE) && !defined(MODELSPACENORMALS)
 
 	vsout.Position = viewPos;
 
@@ -387,15 +372,17 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.CullDistance.x = VRout.CullDistance;
 #	endif  // VR
 
+	vsout.ModelPosition = input.Position.xyz;
+
 	return vsout;
 }
 #endif  // VSHADER
 
 typedef VS_OUTPUT PS_INPUT;
 
-#if !defined(LANDSCAPE)
-#	undef TERRAIN_BLENDING
-#endif
+#	if !defined(LANDSCAPE)
+#		undef TERRAIN_BLENDING
+#	endif
 
 #if defined(DEFERRED)
 struct PS_OUTPUT
@@ -986,7 +973,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	if (input.Position.z == depthSampled)
 		blendFactorTerrain = 1;
-
+		
 	clip(blendFactorTerrain);
 	blendFactorTerrain = saturate(blendFactorTerrain);
 
@@ -1460,16 +1447,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle) * dirDetailShadow;
 
+#	if defined(SOFT_LIGHTING) || defined(RIM_LIGHTING) || defined(BACK_LIGHTING)
+	float backlighting = 1.0 + saturate(dot(viewDirection, -DirLightDirection.xyz));
+#	endif
+
 #	if defined(SOFT_LIGHTING)
-	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
+	lightsDiffuseColor += dirLightColor * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz * backlighting;
 #	endif
 
 #	if defined(RIM_LIGHTING)
-	lightsDiffuseColor += dirLightColor * GetRimLightMultiplier(DirLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz;
+	lightsDiffuseColor += dirLightColor * GetRimLightMultiplier(DirLightDirection, viewDirection, modelNormal.xyz) * rimSoftLightColor.xyz * backlighting;
 #	endif
 
 #	if defined(BACK_LIGHTING)
-	lightsDiffuseColor += dirLightColor * saturate(-dirLightAngle) * backLightColor.xyz;
+	lightsDiffuseColor += dirLightColor * saturate(-dirLightAngle) * backLightColor.xyz * backlighting;
 #	endif
 
 	if (useSnowSpecular && useSnowDecalSpecular) {
@@ -1504,16 +1495,30 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float minWetnessAngle = 0;
 	minWetnessAngle = saturate(max(minWetnessValue, worldSpaceNormal.z));
 
-	float skylight = GetSkylightOcclusion(input.WorldPosition + worldSpaceNormal, screenNoise);
+#		if defined(SKYLIGHTING)
+#			if defined(DEFERRED)
+	float wetnessOcclusion = WetnessOcclusionTexture.Load(int3(screenUV * BufferDim, 0));
+#			else
+	float wetnessOcclusion = GetSkylightOcclusion(input.WorldPosition, screenNoise);
+#			endif
+#		endif
 
 	bool raindropOccluded = false;
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
 		(dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
-		if (skylight > 0.0)
-			raindropInfo = GetRainDrops((input.WorldPosition + CameraPosAdjust[eyeIndex]).xyz, wetnessEffects.Time, worldSpaceNormal);
-	}
+#		if defined(SKYLIGHTING)			
+		if (wetnessOcclusion > 0.5)
+#		endif
+#		if defined(SKINNED)
+			raindropInfo = GetRainDrops(input.ModelPosition, wetnessEffects.Time, worldSpaceNormal);
+#		elif defined(DEFERRED)
+			raindropInfo = GetRainDrops(input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
+#		else
+			raindropInfo = GetRainDrops(!FrameParams.y ? input.ModelPosition : input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
+#		endif
+	}	
 
 	float rainWetness = wetnessEffects.Wetness * minWetnessAngle * wetnessEffects.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
@@ -1526,8 +1531,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	rainWetness = wetnessEffects.SkinWetness * wetnessEffects.Wetness * 0.8f;
 #		endif
 
-	rainWetness *= skylight;
-	puddleWetness *= skylight;
+	rainWetness *= wetnessOcclusion;
+	puddleWetness *= wetnessOcclusion;
 
 	wetness = max(shoreFactor * wetnessEffects.MaxShoreWetness, rainWetness);
 
@@ -1898,12 +1903,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 #	endif
 
-	color.xyz = lerp(vertexColor.xyz, input.FogParam.xyz, input.FogParam.w);
-	color.xyz = vertexColor.xyz - color.xyz * FogColor.w;
-
-	float3 tmpColor = color.xyz * FrameParams.yyy;
-	color.xyz = tmpColor.xyz + ColourOutputClamp.xxx;
-	color.xyz = min(vertexColor.xyz, color.xyz);
+	color.xyz = vertexColor.xyz;
 
 #	if defined(EMAT) && defined(ENVMAP)
 	specularColor *= complexSpecular;
@@ -1921,14 +1921,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	color.xyz = Lin2sRGB(color.xyz);
 
-#	if defined(SPECULAR) || defined(SPARKLE)
-	float3 specularTmp = lerp(color.xyz, input.FogParam.xyz, input.FogParam.w);
-	specularTmp = color.xyz - specularTmp.xyz * FogColor.w;
-
-	tmpColor = specularTmp.xyz * FrameParams.yyy;
-	specularTmp.xyz = tmpColor.xyz + ColourOutputClamp.zzz;
-	color.xyz = min(specularTmp.xyz, color.xyz);
-#	endif  // defined (SPECULAR) || defined(SPARKLE)
+#	if !defined(DEFERRED)
+	if (FrameParams.y)
+		color.xyz = lerp(color.xyz, input.FogParam.xyz, input.FogParam.w);
+#	endif
 
 #	if defined(TESTCUBEMAP)
 #		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
