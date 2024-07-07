@@ -233,7 +233,7 @@ void Skylighting::Compute()
 
 	{
 		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
-		ID3D11Buffer* buffers[1] = {*perFrame.get() };
+		ID3D11Buffer* buffers[1] = { *perFrame.get() };
 
 		context->CSSetConstantBuffers(12, 1, buffers);
 	}
@@ -294,8 +294,7 @@ void Skylighting::Bind()
 	auto buffer = perFrameCB->CB();
 	context->PSSetConstantBuffers(8, 1, &buffer);
 
-	ID3D11ShaderResourceView* srvs[3]
-	{
+	ID3D11ShaderResourceView* srvs[3]{
 		occlusionTexture->srv.get(),
 		skylightingTexture->srv.get(),
 		wetnessOcclusionTexture->srv.get()

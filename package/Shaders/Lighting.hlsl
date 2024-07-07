@@ -99,10 +99,9 @@ struct VS_OUTPUT
 #if defined(VR)
 	float ClipDistance : SV_ClipDistance0;  // o11
 	float CullDistance : SV_CullDistance0;  // p11
-#endif  
+#endif
 
 	float3 ModelPosition : TEXCOORD12;
-                               
 };
 #ifdef VSHADER
 
@@ -380,9 +379,9 @@ VS_OUTPUT main(VS_INPUT input)
 
 typedef VS_OUTPUT PS_INPUT;
 
-#	if !defined(LANDSCAPE)
-#		undef TERRAIN_BLENDING
-#	endif
+#if !defined(LANDSCAPE)
+#	undef TERRAIN_BLENDING
+#endif
 
 #if defined(DEFERRED)
 struct PS_OUTPUT
@@ -973,7 +972,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	if (input.Position.z == depthSampled)
 		blendFactorTerrain = 1;
-		
+
 	clip(blendFactorTerrain);
 	blendFactorTerrain = saturate(blendFactorTerrain);
 
@@ -1508,17 +1507,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
 		(dot(input.WorldPosition, input.WorldPosition) < wetnessEffects.RaindropFxRange * wetnessEffects.RaindropFxRange)) {
-#		if defined(SKYLIGHTING)			
+#		if defined(SKYLIGHTING)
 		if (wetnessOcclusion > 0.5)
 #		endif
 #		if defined(SKINNED)
 			raindropInfo = GetRainDrops(input.ModelPosition, wetnessEffects.Time, worldSpaceNormal);
 #		elif defined(DEFERRED)
-			raindropInfo = GetRainDrops(input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
+		raindropInfo = GetRainDrops(input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
 #		else
-			raindropInfo = GetRainDrops(!FrameParams.y ? input.ModelPosition : input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
+		raindropInfo = GetRainDrops(!FrameParams.y ? input.ModelPosition : input.WorldPosition + CameraPosAdjust[eyeIndex], wetnessEffects.Time, worldSpaceNormal);
 #		endif
-	}	
+	}
 
 	float rainWetness = wetnessEffects.Wetness * minWetnessAngle * wetnessEffects.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);

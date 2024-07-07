@@ -461,7 +461,6 @@ void State::SetPerfMarker(std::string_view title)
 	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
 }
 
-
 void State::UpdateSharedData()
 {
 	{
