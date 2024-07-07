@@ -47,7 +47,6 @@ public:
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 EyePosition;
 		float4 ShadowDirection;
-		float4 Parameters;
 		float4 BufferDim;
 		float4 CameraData;
 		uint FrameCount;
@@ -58,13 +57,8 @@ public:
 	{
 		bool EnableSkylighting = true;
 		bool HeightSkylighting = true;
-		float AmbientDiffuseBlend = 0.5;
-		float DirectionalPow = 5.0;
-		float AmbientMult = 1.0;
-		float SkyMult = 1.0;
 		float MinimumBound = 128;
 		bool RenderTrees = false;
-		float RenderDistance = 10000;
 	};
 
 	Settings settings;
@@ -413,7 +407,7 @@ public:
 					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
 
 					GetSingleton()->inOcclusion = true;
-					PrecipitationShaderCubeSize = GetSingleton()->settings.RenderDistance;
+					PrecipitationShaderCubeSize = 10000;
 
 					float originaLastCubeSize = precip->lastCubeSize;
 					precip->lastCubeSize = PrecipitationShaderCubeSize;

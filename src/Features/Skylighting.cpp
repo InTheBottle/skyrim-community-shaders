@@ -7,24 +7,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	EnableSkylighting,
 	HeightSkylighting,
-	AmbientDiffuseBlend,
-	AmbientMult,
-	SkyMult,
 	MinimumBound,
-	RenderTrees,
-	RenderDistance)
+	RenderTrees)
 
 void Skylighting::DrawSettings()
 {
 	ImGui::Checkbox("Enable Skylighting", &settings.EnableSkylighting);
 	ImGui::Checkbox("Enable Height Map Rendering", &settings.HeightSkylighting);
-	ImGui::SliderFloat("Ambient Diffuse Blend", &settings.AmbientDiffuseBlend, 0, 1, "%.2f");
-	ImGui::SliderFloat("Directional Pow", &settings.DirectionalPow, 1, 10, "%.0f");
-	ImGui::SliderFloat("Ambient Mult", &settings.AmbientMult, 0, 1, "%.2f");
-	ImGui::SliderFloat("Sky Mult", &settings.SkyMult, 0, 1, "%.2f");
 	ImGui::SliderFloat("Minimum Bound", &settings.MinimumBound, 1, 256, "%.0f");
 	ImGui::Checkbox("Render Trees", &settings.RenderTrees);
-	ImGui::SliderFloat("Render Distance", &settings.RenderDistance, 5000, 20000, "%.0f");
 }
 
 void Skylighting::Draw(const RE::BSShader*, const uint32_t)
@@ -185,8 +176,6 @@ void Skylighting::Compute()
 		data.OcclusionViewProj = viewProjMat;
 		data.EyePosition = { eyePosition.x, eyePosition.y, eyePosition.z, 0 };
 
-		data.Parameters = { settings.AmbientDiffuseBlend, settings.DirectionalPow, settings.AmbientMult, settings.SkyMult };
-
 		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
 		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
@@ -273,23 +262,6 @@ void Skylighting::Bind()
 {
 	auto state = State::GetSingleton();
 	auto& context = state->context;
-
-	{
-		PerFrameCB data{};
-		data.OcclusionViewProj = viewProjMat;
-
-		data.Parameters = { settings.AmbientDiffuseBlend, settings.DirectionalPow, settings.AmbientMult, settings.SkyMult };
-
-		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-		auto shadowDirLight = (RE::BSShadowDirectionalLight*)shadowSceneNode->GetRuntimeData().shadowDirLight;
-		bool dirShadow = shadowDirLight && shadowDirLight->shadowLightIndex == 0;
-
-		if (dirShadow) {
-			data.ShadowDirection = float4(shadowDirLight->lightDirection.x, shadowDirLight->lightDirection.y, shadowDirLight->lightDirection.z, 0);
-		}
-
-		perFrameCB->Update(data);
-	}
 
 	auto buffer = perFrameCB->CB();
 	context->PSSetConstantBuffers(8, 1, &buffer);
