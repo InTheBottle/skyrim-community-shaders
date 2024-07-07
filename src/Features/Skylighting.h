@@ -447,16 +447,6 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct BSWaterShader_SetupMaterial
-	{
-		static void thunk(RE::BSShader* This, RE::BSWaterShaderMaterial* a_material)
-		{
-			//GetSingleton()->Bind();
-			func(This, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct Hooks
 	{
 		static void Install()
@@ -464,7 +454,6 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
-			stl::write_vfunc<0x4, BSWaterShader_SetupMaterial>(RE::VTABLE_BSWaterShader[0]);
 		}
 	};
 
