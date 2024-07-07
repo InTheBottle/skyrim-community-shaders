@@ -1922,7 +1922,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = Lin2sRGB(color.xyz);
 
 #	if !defined(DEFERRED)
-	if (FrameParams.y)
+	if (!FrameParams.x || !FrameParams.y)
 		color.xyz = lerp(color.xyz, input.FogParam.xyz, input.FogParam.w);
 #	endif
 
