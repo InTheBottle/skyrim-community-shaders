@@ -141,10 +141,6 @@ void Deferred::SetupResources()
 	}
 
 	{
-		waterCB = new ConstantBuffer(ConstantBufferDesc<WaterCB>());
-	}
-
-	{
 		D3D11_TEXTURE2D_DESC texDesc;
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		mainTex.texture->GetDesc(&texDesc);
@@ -241,6 +237,11 @@ void Deferred::UpdateConstantBuffer()
 
 void Deferred::PrepassPasses()
 {
+	auto& shaderCache = SIE::ShaderCache::Instance();
+
+	if (!shaderCache.IsEnabled())
+		return;
+
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
@@ -531,11 +532,6 @@ void Deferred::EndDeferred()
 	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
 	deferredPass = false;
-
-	{
-		ID3D11Buffer* buffer = waterCB->CB();
-		context->PSSetConstantBuffers(7, 1, &buffer);
-	}
 }
 
 void Deferred::OverrideBlendStates()
@@ -753,12 +749,4 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 		mainCompositeInteriorCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}
 	return mainCompositeInteriorCS;
-}
-
-void Deferred::UpdateWaterMaterial(RE::BSWaterShaderMaterial* a_material)
-{
-	WaterCB updateData{};
-	updateData.ShallowColor = { a_material->shallowWaterColor.red, a_material->shallowWaterColor.green, a_material->shallowWaterColor.blue };
-	updateData.DeepColor = { a_material->deepWaterColor.red, a_material->deepWaterColor.green, a_material->deepWaterColor.blue };
-	waterCB->Update(updateData);
 }
