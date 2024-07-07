@@ -136,7 +136,6 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-
 		static void Install()
 		{
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
