@@ -37,6 +37,7 @@ RWTexture2D<unorm float> WetnessOcclusionTextureRW : register(u1);
 cbuffer PerFrame : register(b0)
 {
 	row_major float4x4 OcclusionViewProj;
+	float4 EyePosition;
 	float4 ShadowDirection;
 	float4 Parameters;
 	float4 BufferDim;
@@ -64,6 +65,8 @@ half GetBlueNoise(half2 uv)
 
 	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
+
+	positionMS.xyz = positionMS.xyz - CameraPosAdjust[eyeIndex] + EyePosition;
 
 	float3 startPositionMS = positionMS;
 
@@ -120,7 +123,7 @@ half GetBlueNoise(half2 uv)
 		float wetnessScale = 1.0 - (length(rayDir) * 0.5);
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
-			half shadowMapValues = saturate((OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0) - occlusionThreshold) * 100000);
+			half shadowMapValues = saturate((OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0) - occlusionThreshold + 0.001) * 1024);
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));
 			wetnessOcclusion += shadowMapValues * wetnessScale;
@@ -236,7 +239,7 @@ half GetScreenDepth(half depth)
 
 			float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
 
-			half shadowMapValues = saturate((TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) - positionLS.z) * 100000);
+			half shadowMapValues = saturate((TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) - positionLS.z + 0.001) * 1024);
 
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));

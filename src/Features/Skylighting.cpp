@@ -183,6 +183,7 @@ void Skylighting::Compute()
 	{
 		PerFrameCB data{};
 		data.OcclusionViewProj = viewProjMat;
+		data.EyePosition = { eyePosition.x, eyePosition.y, eyePosition.z, 0 };
 
 		data.Parameters = { settings.AmbientDiffuseBlend, settings.DirectionalPow, settings.AmbientMult, settings.SkyMult };
 

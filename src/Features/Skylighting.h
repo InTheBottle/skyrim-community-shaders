@@ -45,6 +45,7 @@ public:
 	struct alignas(16) PerFrameCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
+		float4 EyePosition;
 		float4 ShadowDirection;
 		float4 Parameters;
 		float4 BufferDim;
@@ -78,6 +79,8 @@ public:
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
+
+	RE::NiPoint3 eyePosition;
 
 	struct BSParticleShaderRainEmitter
 	{
@@ -391,6 +394,9 @@ public:
 
 				} else {
 					doPrecip = true;
+
+					auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+					GetSingleton()->eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
 
 					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
