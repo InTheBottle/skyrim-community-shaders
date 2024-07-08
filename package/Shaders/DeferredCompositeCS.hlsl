@@ -16,7 +16,7 @@ RWTexture2D<half4> NormalTAAMaskSpecularMaskRW : register(u1);
 RWTexture2D<half2> SnowParametersRW : register(u2);
 
 #if defined(DYNAMIC_CUBEMAPS)
-Texture2D<unorm float> DepthTexture : register(t5);
+Texture2D<float> DepthTexture : register(t5);
 Texture2D<unorm half3> ReflectanceTexture : register(t6);
 TextureCube<half3> EnvTexture : register(t7);
 TextureCube<half3> EnvReflectionsTexture : register(t8);
@@ -61,7 +61,7 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 		half depth = DepthTexture[dispatchID.xy];
 
 		half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
-		positionCS = mul(CameraViewInverse[eyeIndex], positionCS);
+		positionCS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 		positionCS.xyz = positionCS.xyz / positionCS.w;
 
 		half3 positionWS = positionCS;
