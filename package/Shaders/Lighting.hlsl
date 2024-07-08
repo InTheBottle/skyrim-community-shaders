@@ -941,7 +941,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	if defined(SKINNED) || !defined(MODELSPACENORMALS)
 	float3x3 tbn = float3x3(input.TBN0.xyz, input.TBN1.xyz, input.TBN2.xyz);
 
-#		if !defined(TREE_ANIM)
+#		if !defined(TREE_ANIM) && !defined(LOD)
 	// Fix incorrect vertex normals on double-sided meshes
 	if (!frontFace)
 		tbn = -tbn;
@@ -1395,11 +1395,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		dirLightColor *= shadowColor.x;
 	}
 
-	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) || dirLightAngle <= 0.0;
+#	if defined(SOFT_LIGHTING) || defined(BACK_LIGHTING) || defined(RIM_LIGHTING)
+	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0);
+#	else
+	bool inDirShadow = ((PixelShaderDescriptor & _DefShadow) && (PixelShaderDescriptor & _ShadowDir) && shadowColor.x == 0) && dirLightAngle > 0.0;
+#	endif
 
 	float dirDetailShadow = 1.0;
 	float dirShadow = 1.0;
+#	if defined(SOFT_LIGHTING) || defined(BACK_LIGHTING) || defined(RIM_LIGHTING)
+	if (!inDirShadow && dirLightAngle > 0.0) {
+#	else
 	if (!inDirShadow) {
+#	endif
 #	if defined(DEFERRED) && defined(SCREEN_SPACE_SHADOWS)
 		dirDetailShadow = GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
 #	endif
@@ -1824,6 +1832,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 #	endif
 
+
 	float4 color;
 	color.xyz = diffuseColor * baseColor.xyz;
 
@@ -1921,7 +1930,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	color.xyz = Lin2sRGB(color.xyz);
 
 #	if !defined(DEFERRED)
-	if (!FrameParams.x || !FrameParams.y)
+	if (FrameParams.y && FrameParams.z)
 		color.xyz = lerp(color.xyz, input.FogParam.xyz, input.FogParam.w);
 #	endif
 
