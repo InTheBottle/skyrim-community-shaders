@@ -25,7 +25,7 @@ SamplerState LinearSampler : register(s0);
 #endif
 
 #if defined(SKYLIGHTING)
-#include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 Texture2D<unorm float4> SkylightingTexture : register(t9);
 #endif
 
@@ -80,18 +80,16 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 #	elif defined(SKYLIGHTING)
 		half skylighting = saturate(shUnproject(SkylightingTexture[dispatchID.xy], R));
 
-		half3 specularIrradiance = 1;	
+		half3 specularIrradiance = 1;
 
-		if (skylighting < 1.0)
-		{
+		if (skylighting < 1.0) {
 			specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
 			specularIrradiance = sRGB2Lin(specularIrradiance);
 		}
 
 		half3 specularIrradianceReflections = 1.0;
-		
-		if (skylighting > 0.0)
-		{
+
+		if (skylighting > 0.0) {
 			specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
 			specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
 		}
@@ -125,7 +123,7 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 
 #endif
 
-	MainRW[dispatchID.xy] = min(color, 128); // Vanilla bloom fix
+	MainRW[dispatchID.xy] = min(color, 128);  // Vanilla bloom fix
 	NormalTAAMaskSpecularMaskRW[dispatchID.xy] = half4(EncodeNormalVanilla(normalVS), 0.0, glossiness);
 	SnowParametersRW[dispatchID.xy] = snowParameters;
 }
