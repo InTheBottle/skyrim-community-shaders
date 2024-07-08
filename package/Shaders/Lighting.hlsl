@@ -1830,7 +1830,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 #	endif
 
-
 	float4 color;
 	color.xyz = diffuseColor * baseColor.xyz;
 
