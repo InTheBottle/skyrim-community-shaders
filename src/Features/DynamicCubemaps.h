@@ -33,8 +33,8 @@ public:
 	ConstantBuffer* spmapCB = nullptr;
 	Texture2D* envTexture = nullptr;
 	Texture2D* envReflectionsTexture = nullptr;
-	ID3D11UnorderedAccessView* uavArray[9];
-	ID3D11UnorderedAccessView* uavReflectionsArray[9];
+	ID3D11UnorderedAccessView* uavArray[7];
+	ID3D11UnorderedAccessView* uavReflectionsArray[7];
 
 	// Reflection capture
 

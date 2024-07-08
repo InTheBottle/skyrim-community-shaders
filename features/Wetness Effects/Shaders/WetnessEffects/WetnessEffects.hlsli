@@ -193,10 +193,10 @@ float3 GetWetnessAmbientSpecular(float2 uv, float3 N, float3 VN, float3 V, float
 
 #if defined(DYNAMIC_CUBEMAPS)
 #	if defined(DEFERRED)
-	float level = roughness * 9.0;
+	float level = roughness * 7.0;
 	float3 specularIrradiance = 1.0;
 #	else
-	float level = roughness * 9.0;
+	float level = roughness * 7.0;
 	float3 specularIrradiance = sRGB2Lin(specularTexture.SampleLevel(SampColorSampler, R, level));
 #	endif
 #else

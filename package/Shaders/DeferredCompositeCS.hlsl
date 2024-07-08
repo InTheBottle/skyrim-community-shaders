@@ -17,7 +17,7 @@ RWTexture2D<half2> SnowParametersRW : register(u2);
 
 #if defined(DYNAMIC_CUBEMAPS)
 Texture2D<float> DepthTexture : register(t5);
-Texture2D<unorm half3> ReflectanceTexture : register(t6);
+Texture2D<half3> ReflectanceTexture : register(t6);
 TextureCube<half3> EnvTexture : register(t7);
 TextureCube<half3> EnvReflectionsTexture : register(t8);
 
@@ -70,7 +70,7 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 		half3 R = reflect(V, normalWS);
 
 		half roughness = 1.0 - glossiness;
-		half level = roughness * 9.0;
+		half level = roughness * 7.0;
 
 #	if defined(INTERIOR)
 		half3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
