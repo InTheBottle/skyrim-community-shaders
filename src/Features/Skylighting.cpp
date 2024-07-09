@@ -1,7 +1,6 @@
 #include "Skylighting.h"
 #include <DDSTextureLoader.h>
 #include <Deferred.h>
-#include <Util.h>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
