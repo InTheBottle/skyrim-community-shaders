@@ -3,6 +3,7 @@
 #include "Buffer.h"
 #include "Feature.h"
 #include "State.h"
+#include "Util.h"
 
 struct Skylighting : Feature
 {
@@ -389,8 +390,7 @@ public:
 				} else {
 					doPrecip = true;
 
-					auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-					GetSingleton()->eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
+					GetSingleton()->eyePosition = Util::GetEyePosition(0);
 
 					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
