@@ -45,21 +45,20 @@ public:
 	struct alignas(16) PerFrameCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
+		float4 EyePosition;
 		float4 ShadowDirection;
-		float4 Parameters;
+		float4 BufferDim;
+		float4 CameraData;
+		uint FrameCount;
+		uint pad0[3];
 	};
 
 	struct Settings
 	{
 		bool EnableSkylighting = true;
 		bool HeightSkylighting = true;
-		float AmbientDiffuseBlend = 0.5;
-		float DirectionalPow = 5.0;
-		float AmbientMult = 1.0;
-		float SkyMult = 1.0;
 		float MinimumBound = 128;
 		bool RenderTrees = false;
-		float RenderDistance = 10000;
 	};
 
 	Settings settings;
@@ -69,10 +68,13 @@ public:
 	virtual void ClearShaderCache() override;
 
 	Texture2D* skylightingTexture = nullptr;
+	Texture2D* wetnessOcclusionTexture = nullptr;
 
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
+
+	RE::NiPoint3 eyePosition;
 
 	struct BSParticleShaderRainEmitter
 	{
@@ -387,6 +389,9 @@ public:
 				} else {
 					doPrecip = true;
 
+					auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+					GetSingleton()->eyePosition = shadowState->GetRuntimeData().posAdjust.getEye();
+
 					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 					RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
@@ -402,7 +407,7 @@ public:
 					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
 
 					GetSingleton()->inOcclusion = true;
-					PrecipitationShaderCubeSize = GetSingleton()->settings.RenderDistance;
+					PrecipitationShaderCubeSize = 10000;
 
 					float originaLastCubeSize = precip->lastCubeSize;
 					precip->lastCubeSize = PrecipitationShaderCubeSize;
@@ -436,16 +441,6 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct BSWaterShader_SetupMaterial
-	{
-		static void thunk(RE::BSShader* This, RE::BSWaterShaderMaterial* a_material)
-		{
-			//GetSingleton()->Bind();
-			func(This, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct Hooks
 	{
 		static void Install()
@@ -453,7 +448,6 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
-			stl::write_vfunc<0x4, BSWaterShader_SetupMaterial>(RE::VTABLE_BSWaterShader[0]);
 		}
 	};
 

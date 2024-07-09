@@ -252,10 +252,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = normalize(cross(ddx, ddy));
 
-	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
-
-	float3 color = DirLightColorShared.xyz * baseColor.xyz * 0.5;
-	color += baseColor.xyz * 0.5 * directionalAmbientColor;
+	float3 color = baseColor.xyz * (DiffuseColor + AmbientColor);
 	psout.Diffuse = float4(color, 1.0);
 #		endif  // DEFERRED
 #	endif      // RENDER_DEPTH

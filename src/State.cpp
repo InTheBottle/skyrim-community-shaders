@@ -16,19 +16,20 @@
 
 void State::Draw()
 {
-	auto terrainBlending = TerrainBlending::GetSingleton();
-	if (terrainBlending->loaded)
-		terrainBlending->TerrainShaderHacks();
+	auto& shaderCache = SIE::ShaderCache::Instance();
+	if (shaderCache.IsEnabled()) {
+		auto terrainBlending = TerrainBlending::GetSingleton();
+		if (terrainBlending->loaded)
+			terrainBlending->TerrainShaderHacks();
 
-	if (currentShader && updateShader) {
-		auto type = currentShader->shaderType.get();
-		if (type == RE::BSShader::Type::Utility) {
-			if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
-				Deferred::GetSingleton()->CopyShadowData();
+		if (currentShader && updateShader) {
+			auto type = currentShader->shaderType.get();
+			if (type == RE::BSShader::Type::Utility) {
+				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
+					Deferred::GetSingleton()->CopyShadowData();
+				}
 			}
-		}
-		auto& shaderCache = SIE::ShaderCache::Instance();
-		if (shaderCache.IsEnabled()) {
+
 			VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 			if (type > 0 && type < RE::BSShader::Type::Total) {
 				if (enabledClasses[type - 1]) {
@@ -44,8 +45,11 @@ void State::Draw()
 						lastVertexDescriptor = currentVertexDescriptor;
 						lastPixelDescriptor = currentPixelDescriptor;
 
-						ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
-						context->PSSetConstantBuffers(4, 3, buffers);
+						static Util::FrameChecker frameChecker;
+						if (frameChecker.isNewFrame()) {
+							ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
+							context->PSSetConstantBuffers(4, 3, buffers);
+						}
 					}
 
 					if (IsDeveloperMode()) {
@@ -56,8 +60,8 @@ void State::Draw()
 				}
 			}
 		}
+		updateShader = false;
 	}
-	updateShader = false;
 }
 
 void State::Reset()
