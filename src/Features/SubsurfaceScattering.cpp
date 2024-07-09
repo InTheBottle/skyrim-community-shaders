@@ -241,15 +241,8 @@ void SubsurfaceScattering::DrawSSS()
 	context->CSSetShader(shader, nullptr, 0);
 }
 
-void SubsurfaceScattering::Draw(const RE::BSShader* a_shader, const uint32_t)
+void SubsurfaceScattering::Draw(const RE::BSShader*, const uint32_t)
 {
-	if (a_shader->shaderType.get() == RE::BSShader::Type::Lighting) {
-		if (normalsMode == RE::RENDER_TARGET::kNONE) {
-			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-			GET_INSTANCE_MEMBER(renderTargets, shadowState)
-			normalsMode = renderTargets[2];
-		}
-	}
 }
 
 void SubsurfaceScattering::SetupResources()
@@ -298,8 +291,6 @@ void SubsurfaceScattering::SetupResources()
 
 void SubsurfaceScattering::Reset()
 {
-	normalsMode = RE::RENDER_TARGET::kNONE;
-
 	auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
 	shaderManager.characterLightEnabled = SIE::ShaderCache::Instance().IsEnabled() ? settings.EnableCharacterLighting : true;
 
