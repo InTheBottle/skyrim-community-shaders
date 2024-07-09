@@ -5,6 +5,7 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Util.h"
 
 #include "ShaderTools/BSShaderHooks.h"
 
@@ -385,7 +386,8 @@ namespace Hooks
 						if (vertexShader) {
 							state->context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
 							auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-							shadowState->GetRuntimeData().currentVertexShader = a_vertexShader;
+							GET_INSTANCE_MEMBER(currentVertexShader, shadowState)
+							currentVertexShader = a_vertexShader;
 							return;
 						}
 					}
@@ -411,12 +413,14 @@ namespace Hooks
 							if (pixelShader) {
 								state->context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
 								auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-								shadowState->GetRuntimeData().currentPixelShader = a_pixelShader;
+								GET_INSTANCE_MEMBER(currentPixelShader, shadowState)
+								currentPixelShader = a_pixelShader;
 								return;
 							}
 						} else {
 							auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-							shadowState->GetRuntimeData().currentPixelShader = a_pixelShader;
+							GET_INSTANCE_MEMBER(currentPixelShader, shadowState)
+							currentPixelShader = a_pixelShader;
 							return;
 						}
 					}
@@ -463,8 +467,8 @@ namespace Hooks
 		logger::info("Hooking BSShader::BeginTechnique");
 		*(uintptr_t*)&ptr_BSShader_BeginTechnique = Detours::X64::DetourFunction(REL::RelocationID(101341, 108328).address(), (uintptr_t)&hk_BSShader_BeginTechnique);
 
-		stl::write_thunk_call<BSShader__BeginTechnique_SetVertexShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xC3, 0x3F3, 0x548));
-		stl::write_thunk_call<BSShader__BeginTechnique_SetPixelShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xD7, 0x3F3, 0x548));
+		stl::write_thunk_call<BSShader__BeginTechnique_SetVertexShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xC3, 0x3F3));
+		stl::write_thunk_call<BSShader__BeginTechnique_SetPixelShader>(REL::RelocationID(101341, 101341).address() + REL::Relocate(0xD7, 0x3F3));
 
 		logger::info("Hooking BSGraphics::SetDirtyStates");
 		*(uintptr_t*)&ptr_BSGraphics_SetDirtyStates = Detours::X64::DetourFunction(REL::RelocationID(75580, 77386).address(), (uintptr_t)&hk_BSGraphics_SetDirtyStates);
@@ -488,8 +492,7 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		if (!REL::Module::IsVR())
 			stl::write_thunk_call<CreateRenderTarget_Snow>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x406, 0x409));
-
-		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x554, 0x6b9));
+		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x554, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0x554, 0x6b9));
 	}
 }

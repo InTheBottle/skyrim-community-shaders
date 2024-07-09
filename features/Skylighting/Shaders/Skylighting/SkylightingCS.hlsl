@@ -17,13 +17,9 @@ struct PerGeometry
 	float4 AlphaTestRef;
 	float4 ShadowLightParam;  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4];
-#if !defined(VR)
-	float4x3 ShadowMapProj[1][3];
-	float4x4 CameraViewProjInverse2[1];
-#else
+	// Since PerGeometry is passed between c++ and hlsl, can't have different defines due to strong typing
 	float4x3 ShadowMapProj[2][3];
-	float4x4 CameraViewProjInverse2[2];
-#endif  // VR
+	float4x4 CameraViewProjInverse[2];
 };
 
 Texture2DArray<unorm float> TexShadowMapSampler : register(t1);
@@ -58,6 +54,7 @@ half GetBlueNoise(half2 uv)
 								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * (BufferDim.zw) * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
+	uv = ConvertFromStereoUV(uv, eyeIndex);
 
 	float rawDepth = DepthTexture[globalId.xy];
 
@@ -157,6 +154,7 @@ half GetScreenDepth(half depth)
 								: SV_DispatchThreadID) {
 	float2 uv = float2(globalId.xy + 0.5) * BufferDim.zw * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
+	uv = ConvertFromStereoUV(uv, eyeIndex);
 
 	float rawDepth = DepthTexture[globalId.xy];
 
