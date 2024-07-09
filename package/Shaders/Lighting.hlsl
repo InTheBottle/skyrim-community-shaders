@@ -1537,8 +1537,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	rainWetness = wetnessEffects.SkinWetness * wetnessEffects.Wetness * 0.8f;
 #		endif
 
+#		if defined(SKYLIGHTING)
 	rainWetness *= wetnessOcclusion;
 	puddleWetness *= wetnessOcclusion;
+#		endif
 
 	wetness = max(shoreFactor * wetnessEffects.MaxShoreWetness, rainWetness);
 
@@ -2065,8 +2067,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #			if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap) {
+#		if defined(WETNESS_EFFECTS)
+		psout.Reflectance.xyz = max(envColor, wetnessReflectance);
+		psout.NormalGlossiness.z = lerp(1.0 - envRoughness, 1.0, wetnessGlossinessSpecular);
+#		else
 		psout.Reflectance.xyz = envColor;
 		psout.NormalGlossiness.z = 1.0 - envRoughness;
+#		endif
 	}
 #			endif
 #		endif
