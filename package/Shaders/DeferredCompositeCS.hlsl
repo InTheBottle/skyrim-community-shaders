@@ -33,6 +33,7 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 								: SV_DispatchThreadID) {
 	half2 uv = half2(dispatchID.xy + 0.5) * BufferDim.zw;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
+	uv = ConvertFromStereoUV(uv, eyeIndex);
 
 	half3 normalGlossiness = NormalRoughnessTexture[dispatchID.xy];
 	half3 normalVS = DecodeNormal(normalGlossiness.xy);
@@ -109,14 +110,16 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 
 #if defined(DEBUG)
 
-	half2 texCoord = half2(dispatchID.xy) / BufferDim.xy;
+#	if defined(VR)
+	uv.x += (eyeIndex ? 0.1 : -0.1);
+#	endif  // VR
 
-	if (texCoord.x < 0.5 && texCoord.y < 0.5) {
+	if (uv.x < 0.5 && uv.y < 0.5) {
 		color = color;
-	} else if (texCoord.x < 0.5) {
+	} else if (uv.x < 0.5) {
 		color = albedo;
-	} else if (texCoord.y < 0.5) {
-		color = normalWS;
+	} else if (uv.y < 0.5) {
+		color = normalVS;
 	} else {
 		color = glossiness;
 	}
