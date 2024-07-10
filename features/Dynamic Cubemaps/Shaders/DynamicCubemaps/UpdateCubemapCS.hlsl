@@ -160,9 +160,9 @@ float smoothbumpstep(float edge0, float edge1, float x)
 			float2(0.188513f, 0.501236f),
 			float2(0.0812708f, 0.993774f)
 		};
-
-		// Assume projection maps to one cubemap face, and randomly sample an area within the mapped resolution
-		uv += (PoissonDisc[FrameCountAlwaysActive % 64] * 2.0 - 1.0) * BufferDim.zw * max(1.0, float2(BufferDim.x / 128.0, BufferDim.y / 128.0));
+		
+		// Assume projection maps to one cubemap face, and randomly sample an area within the mapped resolution 
+		uv += (PoissonDisc[FrameCountAlwaysActive  % 64] * 2.0 - 1.0) * BufferDim.zw * max(1.0, float2(BufferDim.x / 128.0, BufferDim.y / 128.0)) * 0.5;
 		uv = saturate(uv);
 
 		uv = GetDynamicResolutionAdjustedScreenPosition(uv);
@@ -180,19 +180,11 @@ float smoothbumpstep(float edge0, float edge1, float x)
 			positionCS = mul(CameraViewProjInverse[0], positionCS);
 			positionCS.xyz = positionCS.xyz / positionCS.w;
 
-			float4 position = float4(positionCS.xyz * 0.01, 1.0);
-
-			float distance = length(position.xyz);
-
-			position.w = smoothstep(1.0, 4096.0 * 0.001, distance);  // Objects which are far away from the perspective of the camera do not fade out
-
-			if (linearDepth > (4096.0 * 5.0))
-				position.w = 0;
+			float4 position = float4(positionCS.xyz * 0.001, linearDepth < (4096.0 * 2.5));
 
 			DynamicCubemapPosition[ThreadID] = lerp(DynamicCubemapPosition[ThreadID], position, lerpFactor);
-
 			DynamicCubemapRaw[ThreadID] = max(0, lerp(DynamicCubemapRaw[ThreadID], output, lerpFactor));
-
+			
 			output *= sqrt(saturate(0.5 * length(position.xyz)));
 
 			DynamicCubemap[ThreadID] = max(0, lerp(DynamicCubemap[ThreadID], output, lerpFactor));
@@ -202,13 +194,13 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	}
 
 	float4 position = DynamicCubemapPosition[ThreadID];
-	position.xyz = (position.xyz + (CameraPreviousPosAdjust[0].xyz * 0.001)) - (CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
+	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];
 
-	float distanceFactor = sqrt(smoothbumpstep(0.0, 1.0, length(position.xyz)));
-	color *= max(0.001, max(distanceFactor, position.w));
+	float distanceFactor = sqrt(smoothbumpstep(0.0, 2.0, length(position.xyz)));
+	color *= distanceFactor;
 
 	DynamicCubemap[ThreadID] = max(0, color);
 }
