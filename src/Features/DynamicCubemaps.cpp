@@ -375,19 +375,27 @@ void DynamicCubemaps::UpdateCubemap()
 	if (nextTask == NextTask::kInferrence) {
 		nextTask = NextTask::kIrradiance;
 		Inferrence(false);
-	} else if (nextTask == NextTask::kIrradiance) {
+	}
+	
+	if (nextTask == NextTask::kIrradiance) {
 		if (activeReflections)
 			nextTask = NextTask::kInferrence2;
 		else
 			nextTask = NextTask::kCapture;
 		Irradiance(false);
-	} else if (nextTask == NextTask::kInferrence2) {
+	}
+
+	if (nextTask == NextTask::kInferrence2) {
 		Inferrence(true);
 		nextTask = NextTask::kIrradiance2;
-	} else if (nextTask == NextTask::kIrradiance2) {
+	}
+
+	if (nextTask == NextTask::kIrradiance2) {
 		nextTask = NextTask::kCapture;
 		Irradiance(true);
-	} else if (nextTask == NextTask::kCapture) {
+	} 
+
+	if (nextTask == NextTask::kCapture) {
 		UpdateCubemapCapture();
 		nextTask = NextTask::kInferrence;
 	}
