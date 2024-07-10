@@ -160,9 +160,9 @@ float smoothbumpstep(float edge0, float edge1, float x)
 			float2(0.188513f, 0.501236f),
 			float2(0.0812708f, 0.993774f)
 		};
-		
-		// Assume projection maps to one cubemap face, and randomly sample an area within the mapped resolution 
-		uv += (PoissonDisc[FrameCountAlwaysActive  % 64] * 2.0 - 1.0) * BufferDim.zw * max(1.0, float2(BufferDim.x / 128.0, BufferDim.y / 128.0)) * 0.5;
+
+		// Assume projection maps to one cubemap face, and randomly sample an area within the mapped resolution
+		uv += (PoissonDisc[FrameCountAlwaysActive % 64] * 2.0 - 1.0) * BufferDim.zw * max(1.0, float2(BufferDim.x / 128.0, BufferDim.y / 128.0)) * 0.5;
 		uv = saturate(uv);
 
 		uv = GetDynamicResolutionAdjustedScreenPosition(uv);
@@ -184,7 +184,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 
 			DynamicCubemapPosition[ThreadID] = lerp(DynamicCubemapPosition[ThreadID], position, lerpFactor);
 			DynamicCubemapRaw[ThreadID] = max(0, lerp(DynamicCubemapRaw[ThreadID], output, lerpFactor));
-			
+
 			output *= sqrt(saturate(0.5 * length(position.xyz)));
 
 			DynamicCubemap[ThreadID] = max(0, lerp(DynamicCubemap[ThreadID], output, lerpFactor));
