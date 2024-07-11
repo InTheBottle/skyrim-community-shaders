@@ -320,6 +320,7 @@ namespace Util
 			logger::info("Game Setting {} {}", set.first, set.second->GetName());
 		}
 	}
+
 	float4 GetCameraData()
 	{
 		float4 cameraData{};
@@ -346,6 +347,12 @@ namespace Util
 		uint dispatchY = (uint)std::ceil(resolutionY / 8.0f);
 
 		return { dispatchX, dispatchY };
+	}
+
+	bool GetTemporal()
+	{
+		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+		return (!REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled) || State::GetSingleton()->upscalerLoaded;
 	}
 
 	HoverTooltipWrapper::HoverTooltipWrapper()
