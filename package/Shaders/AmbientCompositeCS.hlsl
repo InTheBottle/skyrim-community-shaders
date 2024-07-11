@@ -45,7 +45,7 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 #if defined(SKYLIGHTING)
 	sh2 skylightingSH = SkylightingTexture[dispatchID.xy] * 2.0 - 1.0;
 
-	half skylighting = saturate((1.0 + saturate(dot(normalWS, float3(0, 0, 1)))) * saturate(shUnproject(skylightingSH, normalWS))); // Biased to add more directional sky lighting
+	half skylighting = saturate((1.0 + saturate(dot(normalWS, float3(0, 0, 1)))) * saturate(shUnproject(skylightingSH, normalWS)));  // Biased to add more directional sky lighting
 
 	ambient *= lerp(0.1, 1.0, skylighting);
 #endif
