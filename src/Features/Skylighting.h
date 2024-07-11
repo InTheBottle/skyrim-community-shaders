@@ -82,7 +82,7 @@ public:
 	Texture2D* occlusionTexture = nullptr;
 
 	RE::NiPoint3 eyePosition;
-	uint FrameCount = 0;
+	uint frameCount = 0;
 
 	struct BSParticleShaderRainEmitter
 	{
