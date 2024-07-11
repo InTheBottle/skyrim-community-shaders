@@ -1,7 +1,7 @@
 #include "../Common/FrameBuffer.hlsl"
 #include "../Common/GBuffer.hlsli"
-#include "../Common/VR.hlsli"
 #include "../Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#include "../Common/VR.hlsli"
 
 Texture2D<float> DepthTexture : register(t0);
 
@@ -41,7 +41,7 @@ static const float3 g_Poisson8[8] = {
 };
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
-	float2 uv = float2(globalId.xy + 0.5) * (BufferDim.zw )* DynamicResolutionParams2.xy;
+	float2 uv = float2(globalId.xy + 0.5) * (BufferDim.zw) * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
 	half weight = 1.0;
@@ -58,7 +58,7 @@ static const float3 g_Poisson8[8] = {
 		float2 testUV = offsetPosition * BufferDim.zw;
 
 		if (any(testUV < 0) || any(testUV > 1))
-		  	continue;
+			continue;
 
 		float sampleDepth = GetScreenDepth(DepthTexture[offsetPosition]);
 		float attenuation = g_Poisson8[i].z * (1.0 - saturate(10.0 * abs(sampleDepth - depth) / depth));
