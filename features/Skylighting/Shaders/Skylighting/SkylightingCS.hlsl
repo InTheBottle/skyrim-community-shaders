@@ -27,15 +27,14 @@ StructuredBuffer<PerGeometry> perShadow : register(t2);
 Texture2DArray<float4> BlueNoise : register(t3);
 Texture2D<unorm float> OcclusionMapSampler : register(t4);
 
-RWTexture2D<float4> SkylightingTextureRW : register(u0);
-RWTexture2D<unorm float> WetnessOcclusionTextureRW : register(u1);
+RWTexture2D<unorm half4> SkylightingTextureRW : register(u0);
+RWTexture2D<unorm half> WetnessOcclusionTextureRW : register(u1);
 
 cbuffer PerFrame : register(b0)
 {
 	row_major float4x4 OcclusionViewProj;
 	float4 EyePosition;
 	float4 ShadowDirection;
-	float4 Parameters;
 	float4 BufferDim;
 	float4 CameraData;
 	uint FrameCount;
@@ -120,7 +119,8 @@ half GetBlueNoise(half2 uv)
 		float wetnessScale = 1.0 - (length(rayDir) * 0.5);
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
-			half shadowMapValues = saturate((OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0) - occlusionThreshold + 0.001) * 1024);
+			half shadowMapValues = saturate((OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0) - occlusionThreshold + 0.0001) * 1024);
+
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));
 			wetnessOcclusion += shadowMapValues * wetnessScale;
@@ -140,7 +140,7 @@ half GetBlueNoise(half2 uv)
 		wetnessOcclusion /= wetnessWeight;
 	}
 
-	SkylightingTextureRW[globalId.xy] = shSkylighting;
+	SkylightingTextureRW[globalId.xy] = shSkylighting * 0.5 + 0.5;
 	WetnessOcclusionTextureRW[globalId.xy] = saturate(wetnessOcclusion * wetnessOcclusion * 4);
 }
 #else
@@ -235,8 +235,7 @@ half GetScreenDepth(half depth)
 			}
 
 			float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
-
-			half shadowMapValues = saturate((TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) - positionLS.z + 0.001) * 1024);
+			half shadowMapValues = saturate((TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) - positionLS.z + 0.0001) * 1024);
 
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));
@@ -266,7 +265,7 @@ half GetScreenDepth(half depth)
 		wetnessOcclusion /= wetnessWeight;
 	}
 
-	SkylightingTextureRW[globalId.xy] = shSkylighting;
+	SkylightingTextureRW[globalId.xy] = shSkylighting * 0.5 + 0.5;
 	WetnessOcclusionTextureRW[globalId.xy] = saturate(wetnessOcclusion * wetnessOcclusion * 4);
 }
 #endif

@@ -7,8 +7,8 @@ Texture2D<unorm float> WetnessOcclusionTexture : register(t31);
 cbuffer SkylightingData : register(b8)
 {
 	row_major float4x4 OcclusionViewProj;
+	float4 EyePosition;
 	float4 ShadowDirection;
-	float4 Parameters;
 };
 
 float GetVLSkylighting(float3 startPosWS, float3 endPosWS, float2 screenPosition)

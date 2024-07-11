@@ -38,8 +38,11 @@ public:
 
 	ID3D11ComputeShader* skylightingCS = nullptr;
 	ID3D11ComputeShader* skylightingShadowMapCS = nullptr;
+	ID3D11ComputeShader* skylightingBlurCS = nullptr;
+
 	ID3D11ComputeShader* GetSkylightingCS();
 	ID3D11ComputeShader* GetSkylightingShadowMapCS();
+	ID3D11ComputeShader* GetSkylightingBlurCS();
 
 	ID3D11SamplerState* comparisonSampler;
 
@@ -69,13 +72,17 @@ public:
 	virtual void ClearShaderCache() override;
 
 	Texture2D* skylightingTexture = nullptr;
+	Texture2D* skylightingTempTexture = nullptr;
+
 	Texture2D* wetnessOcclusionTexture = nullptr;
+	Texture2D* wetnessOcclusionTempTexture = nullptr;
 
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
 
 	RE::NiPoint3 eyePosition;
+	uint FrameCount = 0;
 
 	struct BSParticleShaderRainEmitter
 	{
@@ -98,6 +105,7 @@ public:
 	}
 
 	void Compute();
+	void ComputeBlur();
 
 	enum class ShaderTechnique
 	{

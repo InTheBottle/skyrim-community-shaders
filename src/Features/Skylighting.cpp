@@ -1,6 +1,7 @@
 #include "Skylighting.h"
 #include <DDSTextureLoader.h>
 #include <Deferred.h>
+#include <Features/TerrainBlending.h>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
@@ -39,13 +40,17 @@ void Skylighting::SetupResources()
 		main.SRV->GetDesc(&srvDesc);
 		main.UAV->GetDesc(&uavDesc);
 
-		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		srvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
 
 		skylightingTexture = new Texture2D(texDesc);
 		skylightingTexture->CreateSRV(srvDesc);
 		skylightingTexture->CreateUAV(uavDesc);
+
+		skylightingTempTexture = new Texture2D(texDesc);
+		skylightingTempTexture->CreateSRV(srvDesc);
+		skylightingTempTexture->CreateUAV(uavDesc);
 
 		texDesc.Format = DXGI_FORMAT_R8_UNORM;
 		srvDesc.Format = texDesc.Format;
@@ -54,6 +59,10 @@ void Skylighting::SetupResources()
 		wetnessOcclusionTexture = new Texture2D(texDesc);
 		wetnessOcclusionTexture->CreateSRV(srvDesc);
 		wetnessOcclusionTexture->CreateUAV(uavDesc);
+
+		wetnessOcclusionTempTexture = new Texture2D(texDesc);
+		wetnessOcclusionTempTexture->CreateSRV(srvDesc);
+		wetnessOcclusionTempTexture->CreateUAV(uavDesc);
 	}
 
 	{
@@ -143,6 +152,15 @@ ID3D11ComputeShader* Skylighting::GetSkylightingShadowMapCS()
 	return skylightingShadowMapCS;
 }
 
+ID3D11ComputeShader* Skylighting::GetSkylightingBlurCS()
+{
+	if (!skylightingBlurCS) {
+		logger::debug("Compiling SkylightingBlurCS");
+		skylightingBlurCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Skylighting\\SkylightingBlurCS.hlsl", {}, "cs_5_0");
+	}
+	return skylightingBlurCS;
+}
+
 void Skylighting::ClearShaderCache()
 {
 	if (skylightingCS) {
@@ -152,6 +170,10 @@ void Skylighting::ClearShaderCache()
 	if (skylightingShadowMapCS) {
 		skylightingShadowMapCS->Release();
 		skylightingShadowMapCS = nullptr;
+	}
+	if (skylightingBlurCS) {
+		skylightingBlurCS->Release();
+		skylightingBlurCS = nullptr;
 	}
 }
 
@@ -169,6 +191,8 @@ void Skylighting::Compute()
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	auto dispatchCount = Util::GetScreenDispatchCount();
+
+	bool temporal = Util::GetTemporal();
 
 	{
 		PerFrameCB data{};
@@ -190,10 +214,8 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
-		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-
-		auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-		data.FrameCount = useTAA ? RE::BSGraphics::State::GetSingleton()->uiFrameCount : 0;
+		data.FrameCount = temporal ? FrameCount : 0;
+		FrameCount++;
 
 		perFrameCB->Update(data);
 	}
@@ -210,20 +232,20 @@ void Skylighting::Compute()
 
 	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[2]{ skylightingTexture->uav.get(), wetnessOcclusionTexture->uav.get() };
+	ID3D11UnorderedAccessView* uavs[2]{ (temporal ? skylightingTexture : skylightingTempTexture)->uav.get(), (temporal ? wetnessOcclusionTexture : wetnessOcclusionTempTexture)->uav.get() };
 	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 
 	auto buffer = perFrameCB->CB();
 	context->CSSetConstantBuffers(0, 1, &buffer);
 
 	ID3D11SamplerState* samplers[2] = { Deferred::GetSingleton()->linearSampler, comparisonSampler };
-	context->CSSetSamplers(0, 2, samplers);
+	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
 	{
 		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
 		ID3D11Buffer* buffers[1] = { *perFrame.get() };
 
-		context->CSSetConstantBuffers(12, 1, buffers);
+		context->CSSetConstantBuffers(12, ARRAYSIZE(buffers), buffers);
 	}
 
 	context->CSSetShader(settings.HeightSkylighting ? GetSkylightingCS() : GetSkylightingShadowMapCS(), nullptr, 0);
@@ -251,9 +273,76 @@ void Skylighting::Compute()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
+void Skylighting::ComputeBlur()
+{
+	auto state = State::GetSingleton();
+	auto& context = state->context;
+
+	if (!settings.EnableSkylighting) {
+		return;
+	}
+
+	if (Util::GetTemporal())
+		return;
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	auto dispatchCount = Util::GetScreenDispatchCount();
+
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+	auto terrainBlending = TerrainBlending::GetSingleton();
+
+	ID3D11ShaderResourceView* srvs[3]{
+		terrainBlending->loaded ? terrainBlending->blendedDepthTexture16->srv.get() : depth.depthSRV,
+		skylightingTempTexture->srv.get(),
+		wetnessOcclusionTempTexture->srv.get()
+	};
+
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+	ID3D11UnorderedAccessView* uavs[2]{ skylightingTexture->uav.get(), wetnessOcclusionTexture->uav.get() };
+	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+	auto buffer = perFrameCB->CB();
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	ID3D11SamplerState* samplers[1] = { Deferred::GetSingleton()->linearSampler };
+	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
+
+	{
+		REL::Relocation<ID3D11Buffer**> perFrame{ REL::RelocationID(524768, 411384) };
+		ID3D11Buffer* buffers[1] = { *perFrame.get() };
+
+		context->CSSetConstantBuffers(12, ARRAYSIZE(buffers), buffers);
+	}
+
+	context->CSSetShader(GetSkylightingBlurCS(), nullptr, 0);
+
+	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+
+	srvs[0] = nullptr;
+	srvs[1] = nullptr;
+	srvs[2] = nullptr;
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+	uavs[0] = nullptr;
+	uavs[1] = nullptr;
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	buffer = nullptr;
+	context->CSSetConstantBuffers(0, 1, &buffer);
+
+	samplers[0] = nullptr;
+	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
 void Skylighting::Prepass()
 {
 	Compute();
+	ComputeBlur();
 	Bind();
 }
 
