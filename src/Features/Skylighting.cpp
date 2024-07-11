@@ -214,8 +214,7 @@ void Skylighting::Compute()
 
 		data.CameraData = Util::GetCameraData();
 
-		data.FrameCount = temporal ? frameCount : 0;
-		frameCount++;
+		data.FrameCount = temporal ? RE::BSGraphics::State::GetSingleton()->uiFrameCount : 0;
 
 		perFrameCB->Update(data);
 	}

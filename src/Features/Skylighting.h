@@ -82,7 +82,7 @@ public:
 	Texture2D* occlusionTexture = nullptr;
 
 	RE::NiPoint3 eyePosition;
-	uint frameCount = 0;
+	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
 
 	struct BSParticleShaderRainEmitter
 	{
@@ -336,7 +336,7 @@ public:
 
 			precipitationOcclusionMapRenderPassList->Clear();
 
-			if (!GetSingleton()->inOcclusion && property->flags.any(kSkinned, kTreeAnim))
+			if (!GetSingleton()->inOcclusion && property->flags.any(kSkinned, kTreeAnim) && !GetSingleton()->settings.RenderTrees)
 				return precipitationOcclusionMapRenderPassList;
 
 			if (property->flags.any(kSkinned) && !property->flags.any(kTreeAnim))
@@ -398,48 +398,57 @@ public:
 				} else {
 					doPrecip = true;
 
-					GetSingleton()->eyePosition = Util::GetEyePosition(0);
+					auto singleton = GetSingleton();
 
-					auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-					auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-					RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
+					std::chrono::time_point<std::chrono::system_clock> currentTimer = std::chrono::system_clock::now();
+					auto timePassed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTimer - singleton->lastUpdateTimer).count();
 
-					precipitation.depthSRV = GetSingleton()->occlusionTexture->srv.get();
-					precipitation.texture = GetSingleton()->occlusionTexture->resource.get();
-					precipitation.views[0] = GetSingleton()->occlusionTexture->dsv.get();
+					if (timePassed >= (1000.0f / 30.0f)) {
+						singleton->lastUpdateTimer = currentTimer;
 
-					static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
-					float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
+						singleton->eyePosition = Util::GetEyePosition(0);
 
-					static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 401648).address());
-					RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
+						auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+						auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+						RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
 
-					GetSingleton()->inOcclusion = true;
-					PrecipitationShaderCubeSize = 10000;
+						precipitation.depthSRV = singleton->occlusionTexture->srv.get();
+						precipitation.texture = singleton->occlusionTexture->resource.get();
+						precipitation.views[0] = singleton->occlusionTexture->dsv.get();
 
-					float originaLastCubeSize = precip->lastCubeSize;
-					precip->lastCubeSize = PrecipitationShaderCubeSize;
+						static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
+						float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
 
-					PrecipitationShaderDirection = { 0, 0, -1 };
+						static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 401648).address());
+						RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
 
-					Precipitation_SetupMask(precip);
-					Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
+						singleton->inOcclusion = true;
+						PrecipitationShaderCubeSize = 10000;
 
-					BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-					Precipitation_RenderMask(precip, rain);
-					GetSingleton()->inOcclusion = false;
-					RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
-					GetSingleton()->viewProjMat = cube->occlusionProjection;
+						float originaLastCubeSize = precip->lastCubeSize;
+						precip->lastCubeSize = PrecipitationShaderCubeSize;
 
-					cube = nullptr;
-					delete rain;
+						PrecipitationShaderDirection = { 0, 0, -1 };
 
-					PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
-					precip->lastCubeSize = originaLastCubeSize;
+						Precipitation_SetupMask(precip);
+						Precipitation_SetupMask(precip);  // Calling setup twice fixes an issue when it is raining
 
-					PrecipitationShaderDirection = originalParticleShaderDirection;
+						BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
+						Precipitation_RenderMask(precip, rain);
+						singleton->inOcclusion = false;
+						RE::BSParticleShaderCubeEmitter* cube = (RE::BSParticleShaderCubeEmitter*)rain;
+						singleton->viewProjMat = cube->occlusionProjection;
 
-					precipitation = precipitationCopy;
+						cube = nullptr;
+						delete rain;
+
+						PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
+						precip->lastCubeSize = originaLastCubeSize;
+
+						PrecipitationShaderDirection = originalParticleShaderDirection;
+
+						precipitation = precipitationCopy;
+					}
 				}
 			} else {
 				func();
