@@ -115,7 +115,7 @@ void TerrainBlending::SetupResources()
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
-		
+
 		blendedDepthTexture16 = new Texture2D(texDesc);
 		blendedDepthTexture16->CreateSRV(srvDesc);
 		blendedDepthTexture16->CreateRTV(rtvDesc);
