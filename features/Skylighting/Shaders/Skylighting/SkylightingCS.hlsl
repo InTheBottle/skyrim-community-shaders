@@ -62,7 +62,7 @@ half GetBlueNoise(half2 uv)
 	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	positionMS.xyz = positionMS.xyz - CameraPosAdjust[eyeIndex] + EyePosition;
+	positionMS.xyz = positionMS.xyz + CameraPosAdjust[eyeIndex] - EyePosition;
 
 	float3 startPositionMS = positionMS;
 
