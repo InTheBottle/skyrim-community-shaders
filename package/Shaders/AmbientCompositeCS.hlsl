@@ -43,16 +43,9 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	albedo = sRGB2Lin(albedo);
 
 #if defined(SKYLIGHTING)
-	// ZH3 hallucination, url: http://torust.me/ZH3.pdf
 	sh2 skylightingSH = SkylightingTexture[dispatchID.xy] * 2.0 - 1.0;
 
-	half3 zonalAxis = normalize(half3(-skylightingSH.w, -skylightingSH.y, skylightingSH.z) + 1e-10);
-	half ratio = abs(dot(half3(-skylightingSH.w, -skylightingSH.y, skylightingSH.z), zonalAxis)) / (skylightingSH.x + 1e-10);
-	half zonalL2Coeff = skylightingSH.x * (0.08f * ratio + 0.6f * ratio * ratio);
-	half fZ = dot(zonalAxis, normalWS);
-	half zhDir = sqrt(5.0f / (16.0f * shPI)) * (3.0f * fZ * fZ - 1.0f);
-
-	half skylighting = lerp(0.1, 1.0, saturate((1.0 + saturate(dot(normalWS, float3(0, 0, 1)))) * dot(skylightingSH, shEvaluateCosineLobe(normalWS))));
+	half skylighting = saturate((1.0 + saturate(dot(normalWS, float3(0, 0, 1)))) * saturate(shUnproject(skylightingSH, normalWS))); // Biased to add more directional sky lighting
 
 	ambient *= lerp(0.1, 1.0, skylighting);
 #endif
