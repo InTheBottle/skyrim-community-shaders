@@ -515,6 +515,9 @@ void State::UpdateSharedData()
 		delete[] data;
 	}
 
-	auto depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
-	context->PSSetShaderResources(20, 1, &depth);
+	auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto terrainBlending = TerrainBlending::GetSingleton();
+	auto srv = (terrainBlending->loaded ? terrainBlending->blendedDepthTexture16->srv.get() : depth.depthSRV);
+
+	context->PSSetShaderResources(20, 1, &srv);
 }

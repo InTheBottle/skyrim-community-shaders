@@ -1,9 +1,10 @@
 #include "SubsurfaceScattering.h"
-#include <Util.h>
 
+#include "Util.h"
 #include "State.h"
-#include <Deferred.h>
-#include <ShaderCache.h>
+#include "Deferred.h"
+#include "ShaderCache.h"
+#include "Features/TerrainBlending.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubsurfaceScattering::DiffusionProfile,
 	BlurRadius, Thickness, Strength, Falloff)
@@ -187,15 +188,18 @@ void SubsurfaceScattering::DrawSSS()
 		context->CSSetConstantBuffers(1, 1, buffer);
 
 		auto main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
 		auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		auto mask = renderer->GetRuntimeData().renderTargets[MASKS];
 
 		ID3D11UnorderedAccessView* uav = blurHorizontalTemp->uav.get();
 		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
+		auto terrainBlending = TerrainBlending::GetSingleton();
+
 		ID3D11ShaderResourceView* views[3];
 		views[0] = main.SRV;
-		views[1] = depth.depthSRV;
+		views[1] = terrainBlending->loaded ? terrainBlending->blendedDepthTexture16->srv.get() : depth.depthSRV,
 		views[2] = mask.SRV;
 
 		context->CSSetShaderResources(0, 3, views);

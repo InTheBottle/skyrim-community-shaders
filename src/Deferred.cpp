@@ -8,6 +8,7 @@
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
+#include "Features/TerrainBlending.h"
 
 struct DepthStates
 {
@@ -412,7 +413,7 @@ void Deferred::DeferredPasses()
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 	auto snow = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[3]];
 
-	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 
 	bool interior = true;
@@ -455,6 +456,8 @@ void Deferred::DeferredPasses()
 	if (dynamicCubemaps->loaded)
 		dynamicCubemaps->UpdateCubemap();
 
+	auto terrainBlending = TerrainBlending::GetSingleton();
+
 	// Deferred Composite
 	{
 		ID3D11ShaderResourceView* srvs[10]{
@@ -463,7 +466,7 @@ void Deferred::DeferredPasses()
 			normalRoughness.SRV,
 			masks.SRV,
 			masks2.SRV,
-			dynamicCubemaps->loaded ? mainDepth.depthSRV : nullptr,
+			dynamicCubemaps->loaded ? (terrainBlending->loaded ? terrainBlending->blendedDepthTexture16->srv.get() : depth.depthSRV) : nullptr,
 			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envTexture->srv.get() : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envReflectionsTexture->srv.get() : nullptr,
