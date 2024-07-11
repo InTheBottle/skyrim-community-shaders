@@ -228,9 +228,9 @@ void DynamicCubemaps::UpdateCubemapCapture()
 	auto& context = State::GetSingleton()->context;
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto& snowSwap = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP];
+	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	ID3D11ShaderResourceView* srvs[2] = { depth.depthSRV, snowSwap.SRV };
+	ID3D11ShaderResourceView* srvs[2] = { depth.depthSRV, main.SRV };
 	context->CSSetShaderResources(0, 2, srvs);
 
 	ID3D11UnorderedAccessView* uavs[3] = { envCaptureTexture->uav.get(), envCaptureRawTexture->uav.get(), envCapturePositionTexture->uav.get() };
@@ -381,13 +381,19 @@ void DynamicCubemaps::UpdateCubemap()
 		else
 			nextTask = NextTask::kCapture;
 		Irradiance(false);
-	} else if (nextTask == NextTask::kInferrence2) {
+	}
+
+	else if (nextTask == NextTask::kInferrence2) {
 		Inferrence(true);
 		nextTask = NextTask::kIrradiance2;
-	} else if (nextTask == NextTask::kIrradiance2) {
+	}
+
+	else if (nextTask == NextTask::kIrradiance2) {
 		nextTask = NextTask::kCapture;
 		Irradiance(true);
-	} else if (nextTask == NextTask::kCapture) {
+	}
+
+	else if (nextTask == NextTask::kCapture) {
 		UpdateCubemapCapture();
 		nextTask = NextTask::kInferrence;
 	}

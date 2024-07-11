@@ -231,6 +231,7 @@ void Deferred::UpdateConstantBuffer()
 
 	auto useTAA = !REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
 	data.FrameCount = useTAA ? RE::BSGraphics::State::GetSingleton()->uiFrameCount : 0;
+	data.FrameCountAlwaysActive = RE::BSGraphics::State::GetSingleton()->uiFrameCount;
 
 	deferredCB->Update(data);
 }

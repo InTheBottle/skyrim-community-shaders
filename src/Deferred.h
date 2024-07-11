@@ -59,7 +59,8 @@ public:
 		float4 CameraData;
 		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		uint FrameCount;
-		uint pad0[3];
+		uint FrameCountAlwaysActive;
+		uint pad0[2];
 	};
 
 	ConstantBuffer* deferredCB = nullptr;
