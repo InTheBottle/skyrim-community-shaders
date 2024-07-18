@@ -422,30 +422,33 @@ void Deferred::DeferredPasses()
 
 	auto skylighting = Skylighting::GetSingleton();
 	auto ssgi = ScreenSpaceGI::GetSingleton();
-
-	if (ssgi->loaded)
-		ssgi->DrawSSGI(prevDiffuseAmbientTexture);
-
+	
 	auto dispatchCount = Util::GetScreenDispatchCount();
 
-	// Ambient Composite
+
+	if (ssgi->loaded) 
 	{
-		ID3D11ShaderResourceView* srvs[4]{
-			albedo.SRV,
-			normalRoughness.SRV,
-			skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr,
-			ssgi->loaded ? ssgi->texGI[ssgi->outputGIIdx]->srv.get() : nullptr,
-		};
+		ssgi->DrawSSGI(prevDiffuseAmbientTexture);
 
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		// Ambient Composite
+		{
+			ID3D11ShaderResourceView* srvs[4]{
+				albedo.SRV,
+				normalRoughness.SRV,
+				skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr,
+				ssgi->loaded ? ssgi->texGI[ssgi->outputGIIdx]->srv.get() : nullptr,
+			};
 
-		ID3D11UnorderedAccessView* uavs[2]{ main.UAV, prevDiffuseAmbientTexture->uav.get() };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		auto shader = interior ? GetComputeAmbientCompositeInterior() : GetComputeAmbientComposite();
-		context->CSSetShader(shader, nullptr, 0);
+			ID3D11UnorderedAccessView* uavs[2]{ main.UAV, prevDiffuseAmbientTexture->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			auto shader = interior ? GetComputeAmbientCompositeInterior() : GetComputeAmbientComposite();
+			context->CSSetShader(shader, nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
 	}
 
 	auto sss = SubsurfaceScattering::GetSingleton();

@@ -11,6 +11,7 @@
 
 #include "Deferred.h"
 #include "Features/TerrainBlending.h"
+#include "Features/Skylighting.h"
 
 #include "VariableRateShading.h"
 
@@ -21,6 +22,10 @@ void State::Draw()
 		auto terrainBlending = TerrainBlending::GetSingleton();
 		if (terrainBlending->loaded)
 			terrainBlending->TerrainShaderHacks();
+	
+		auto skylighting = Skylighting::GetSingleton();
+		if (skylighting->loaded)
+			skylighting->SkylightingShaderHacks();
 
 		if (currentShader && updateShader) {
 			auto type = currentShader->shaderType.get();

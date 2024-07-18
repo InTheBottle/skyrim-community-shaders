@@ -1,8 +1,7 @@
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 
 Texture2D<unorm float> OcclusionMapSampler : register(t29);
-Texture2D<unorm float4> SkylightingTexture : register(t30);
-Texture2D<unorm float> WetnessOcclusionTexture : register(t31);
+Texture2D<float4> SkylightingTexture : register(t30);
 
 cbuffer SkylightingData : register(b8)
 {

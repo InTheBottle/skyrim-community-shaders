@@ -1,15 +1,11 @@
 #include "../Common/FrameBuffer.hlsl"
 #include "../Common/GBuffer.hlsli"
-#include "../Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "../Common/VR.hlsli"
 
-Texture2D<float> DepthTexture : register(t0);
+Texture2D<half> DepthTexture : register(t0);
 
-Texture2D<unorm half4> SkylightingTexture : register(t1);
-Texture2D<unorm half> WetnessOcclusionTexture : register(t2);
-
-RWTexture2D<unorm float4> SkylightingTextureRW : register(u0);
-RWTexture2D<unorm half> WetnessOcclusionTextureRW : register(u1);
+Texture2D<half4> SkylightingTexture : register(t1);
+RWTexture2D<float4> SkylightingTextureRW : register(u0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -39,41 +35,38 @@ static const float3 g_Poisson8[8] = {
 	float3(+0.7836658, -0.4208784, +0.8895339),
 	float3(+0.1564120, -0.8198990, +0.8346850)
 };
+
 [numthreads(8, 8, 1)] void main(uint3 globalId
 								: SV_DispatchThreadID) {
-	float2 uv = float2(globalId.xy + 0.5) * (BufferDim.zw) * DynamicResolutionParams2.xy;
+	half2 uv = half2(globalId.xy + 0.5) * (BufferDim.zw) * DynamicResolutionParams2.xy;
 	uint eyeIndex = GetEyeIndexFromTexCoord(uv);
 
-	half weight = 1.0;
+	half4 skylightingSH = 0;
+	half weight = 0.0;
 
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
-	sh2 skylightingSH = SkylightingTexture[globalId.xy] * 2.0 - 1.0;
-	half wetnessOcclusion = WetnessOcclusionTexture[globalId.xy];
+	[unroll] for (uint i = 0; i < 8; i++) {
 
-	for (uint i = 0; i < 8; i++) {
-		int2 pxOffset = (g_Poisson8[i].xy * 2.0 - 1.0) * 3.0;
-		uint2 offsetPosition = round(globalId.xy + pxOffset);
-		float2 testUV = offsetPosition * BufferDim.zw;
+#   if defined(HORIZONTAL)
+		half2 testUV = uv + g_Poisson8[i].xy * BufferDim.zw * 8.0;
+#   else
+		half2 testUV = uv + g_Poisson8[i].yx * BufferDim.zw * 16.0;
+#   endif
 
 		if (any(testUV < 0) || any(testUV > 1))
 			continue;
 
-		float sampleDepth = GetScreenDepth(DepthTexture[offsetPosition]);
-		float attenuation = g_Poisson8[i].z * (1.0 - saturate(10.0 * abs(sampleDepth - depth) / depth));
+		half sampleDepth = GetScreenDepth(DepthTexture.SampleLevel(LinearSampler, testUV, 0));
+		half attenuation = g_Poisson8[i].z * lerp(g_Poisson8[i].z * 0.01, 1.0, 1.0 - saturate(0.01 * abs(sampleDepth - depth)));
 
 		[branch] if (attenuation > 0.0)
 		{
-			skylightingSH = shAdd(skylightingSH, shScale(SkylightingTexture[offsetPosition] * 2.0 - 1.0, attenuation));
-			wetnessOcclusion += WetnessOcclusionTexture[offsetPosition] * attenuation;
+			skylightingSH += SkylightingTexture.SampleLevel(LinearSampler, testUV, 0) * attenuation;
 			weight += attenuation;
 		}
 	}
 
-	skylightingSH = shScale(skylightingSH, 1.0 / weight);
-	wetnessOcclusion /= weight;
-
-	SkylightingTextureRW[globalId.xy] = skylightingSH * 0.5 + 0.5;
-	WetnessOcclusionTextureRW[globalId.xy] = wetnessOcclusion;
+	SkylightingTextureRW[globalId.xy] = skylightingSH / weight;
 }

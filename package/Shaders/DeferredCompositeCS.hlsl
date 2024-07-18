@@ -79,7 +79,9 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 
 		color += reflectance * specularIrradiance;
 #	elif defined(SKYLIGHTING)
-		half skylighting = saturate(shUnproject(SkylightingTexture[dispatchID.xy], R));
+		sh2 skylightingSH = SkylightingTexture[dispatchID.xy];
+
+		half skylighting = saturate(shUnproject(skylightingSH, R));
 
 		half3 specularIrradiance = 1;
 
@@ -95,7 +97,7 @@ Texture2D<unorm float4> SkylightingTexture : register(t9);
 			specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
 		}
 
-		color += reflectance * lerp(specularIrradiance, specularIrradianceReflections, skylighting * skylighting);
+		color += reflectance * lerp(specularIrradiance, specularIrradianceReflections, skylighting);
 #	else
 		half3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
 		specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);

@@ -435,8 +435,6 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, uint32_t a_target, RE::BSGraphics::DepthStencilTargetProperties* a_properties)
 		{
-			a_properties->height = 256;
-			a_properties->width = 256;
 			a_properties->use16BitsDepth = true;
 			a_properties->stencil = false;
 			func(This, a_target, a_properties);

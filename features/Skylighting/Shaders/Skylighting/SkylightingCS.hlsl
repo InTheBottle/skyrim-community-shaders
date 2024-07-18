@@ -27,8 +27,7 @@ StructuredBuffer<PerGeometry> perShadow : register(t2);
 Texture2DArray<float4> BlueNoise : register(t3);
 Texture2D<unorm float> OcclusionMapSampler : register(t4);
 
-RWTexture2D<unorm half4> SkylightingTextureRW : register(u0);
-RWTexture2D<unorm half> WetnessOcclusionTextureRW : register(u1);
+RWTexture2D<float4> SkylightingTextureRW : register(u0);
 
 cbuffer PerFrame : register(b0)
 {
@@ -70,26 +69,14 @@ half GetBlueNoise(half2 uv)
 
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	float2 PoissonDisc[16] = {
-		float2(0.107883f, 0.374004f),
-		float2(0.501633f, 0.773888f),
-		float2(0.970519f, 0.248024f),
-		float2(0.999939f, 0.896329f),
-		float2(0.492874f, 0.0122379f),
-		float2(0.00650044f, 0.943358f),
-		float2(0.569201f, 0.382672f),
-		float2(0.0345164f, 0.00137333f),
-		float2(0.93289f, 0.616749f),
-		float2(0.3155f, 0.989013f),
-		float2(0.197119f, 0.701132f),
-		float2(0.721946f, 0.983612f),
-		float2(0.773705f, 0.0301218f),
-		float2(0.400403f, 0.541612f),
-		float2(0.728111f, 0.236213f),
-		float2(0.240547f, 0.0980255f)
+	float2 PoissonDisc[] = {
+        float2(0.881375f, 0.216315f),
+        float2(0.0872829f, 0.987854f),
+        float2(0.0710166f, 0.132633f),
+        float2(0.517563f, 0.643117f)
 	};
 
-	uint sampleCount = 16;
+	uint sampleCount = 4;
 
 	float occlusionThreshold = mul(OcclusionViewProj, float4(positionMS.xyz, 1)).z;
 
@@ -110,38 +97,36 @@ half GetBlueNoise(half2 uv)
 
 		positionMS.xy = startPositionMS + rayDir.xy * 128;
 
-		rayDir = normalize(rayDir);
-
-		half2 occlusionPosition = mul((float2x4)OcclusionViewProj, float4(positionMS.xyz, 1));
+		half3 occlusionPosition = mul(OcclusionViewProj, float4(positionMS.xyz, 1));
 		occlusionPosition.y = -occlusionPosition.y;
 		half2 occlusionUV = occlusionPosition.xy * 0.5 + 0.5;
 
-		float wetnessScale = 1.0 - (length(rayDir) * 0.5);
-
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
-			half shadowMapValues = saturate((OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0) - occlusionThreshold + 0.0001) * 1024);
+			float shadowMapValues = OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0);
+			
+			shadowMapValues = 1.0 - shadowMapValues;
+			occlusionPosition.z = 1.0 - occlusionPosition.z;
+
+			half skylightingContribution = 1.0 - saturate((shadowMapValues - occlusionPosition.z) * 4096);
 
 			sh2 sh = shEvaluate(rayDir);
-			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));
-			wetnessOcclusion += shadowMapValues * wetnessScale;
-			wetnessWeight += wetnessScale;
+			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(skylightingContribution, 1.0, fadeFactor)));
+			
 			weight++;
 		} else {
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, 1));
 			weight++;
-			wetnessWeight += wetnessScale;
 		}
 	}
-
-	if (weight > 0.0) {
-		float shFactor = 4.0 * shPI / weight;
+	
+	if (weight > 0.0)
+	{
+		float shFactor = 4.0 * shPI * 1.0 / weight;
 		shSkylighting = shScale(shSkylighting, shFactor);
-		wetnessOcclusion /= wetnessWeight;
-	}
-
-	SkylightingTextureRW[globalId.xy] = shSkylighting * 0.5 + 0.5;
-	WetnessOcclusionTextureRW[globalId.xy] = saturate(wetnessOcclusion * wetnessOcclusion * 4);
+	}	
+	
+	SkylightingTextureRW[globalId.xy] = shSkylighting;
 }
 #else
 
@@ -173,47 +158,33 @@ half GetScreenDepth(half depth)
 	float3 startPositionMS = positionMS;
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
-
-	fadeFactor = lerp(1.0, fadeFactor, pow(saturate(dot(float3(0, 0, -1), ShadowDirection.xyz)), 0.25));
+	
+	fadeFactor = lerp(1.0, fadeFactor, pow(saturate(dot(float3(0, 0, -1), ShadowDirection.xyz)), 0.5));
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 * shPI;
 
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
-	float2 PoissonDisc[16] = {
-		float2(0.107883f, 0.374004f),
-		float2(0.501633f, 0.773888f),
-		float2(0.970519f, 0.248024f),
-		float2(0.999939f, 0.896329f),
-		float2(0.492874f, 0.0122379f),
-		float2(0.00650044f, 0.943358f),
-		float2(0.569201f, 0.382672f),
-		float2(0.0345164f, 0.00137333f),
-		float2(0.93289f, 0.616749f),
-		float2(0.3155f, 0.989013f),
-		float2(0.197119f, 0.701132f),
-		float2(0.721946f, 0.983612f),
-		float2(0.773705f, 0.0301218f),
-		float2(0.400403f, 0.541612f),
-		float2(0.728111f, 0.236213f),
-		float2(0.240547f, 0.0980255f)
+	float2 PoissonDisc[] = {
+        float2(0.881375f, 0.216315f),
+        float2(0.0872829f, 0.987854f),
+        float2(0.0710166f, 0.132633f),
+        float2(0.517563f, 0.643117f)
 	};
 
-	uint sampleCount = 16;
-
+	uint sampleCount = 4;
+	
 	sh2 shSkylighting = shZero();
-	float wetnessOcclusion = 0;
 
 	half weight = 0.0;
-	half wetnessWeight = 0;
 
 	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
-		float3 rayDir = float3(PoissonDisc[i].xy * 2.0 - 1.0, 0);
+		float3 rayDir = float3(PoissonDisc[i].xy * 2.0 - 1.0, 0);		
 		rayDir.xy = mul(rayDir.xy, rotationMatrix);
 
 		positionMS.xy = startPositionMS + rayDir.xy * 128 + length(rayDir.xy) * ShadowDirection.xy * 128;
-
+		
 		rayDir = normalize(rayDir);
 
 		float shadowMapDepth = length(positionMS.xyz);
@@ -235,37 +206,32 @@ half GetScreenDepth(half depth)
 			}
 
 			float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
-			half shadowMapValues = saturate((TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0) - positionLS.z + 0.0001) * 1024);
+
+			half shadowMapValues = TexShadowMapSampler.SampleLevel(LinearSampler, float3(positionLS.xy, cascadeIndex), 0);
+
+			shadowMapValues = 1.0 - shadowMapValues;
+			positionLS.z = 1.0 - positionLS.z;
+
+			half skylightingContribution = 1.0 - saturate((shadowMapValues - positionLS.z) * 4096);
 
 			sh2 sh = shEvaluate(rayDir);
-			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(shadowMapValues, 1.0, fadeFactor)));
-
-			float wetnessScale = 1.0 - (length(rayDir) * 0.5);
-			wetnessOcclusion += shadowMapValues * wetnessScale;
-			wetnessWeight += wetnessScale;
+			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(skylightingContribution, 1.0, fadeFactor)));
 
 			weight++;
-		}
-		else
-		{
+		} else {
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, 1.0));
 
-			float wetnessScale = 1.0 - (length(rayDir) * 0.5);
-			wetnessOcclusion += wetnessScale;
-			wetnessWeight += wetnessScale;
-
 			weight++;
 		}
 	}
 
-	if (weight > 0.0) {
-		float shFactor = 4.0 * shPI / weight;
+	if (weight > 0.0)
+	{
+		float shFactor = 4.0 * shPI * 1.0 / weight;
 		shSkylighting = shScale(shSkylighting, shFactor);
-		wetnessOcclusion /= wetnessWeight;
 	}
-
-	SkylightingTextureRW[globalId.xy] = shSkylighting * 0.5 + 0.5;
-	WetnessOcclusionTextureRW[globalId.xy] = saturate(wetnessOcclusion * wetnessOcclusion * 4);
+	
+	SkylightingTextureRW[globalId.xy] = shSkylighting;
 }
 #endif

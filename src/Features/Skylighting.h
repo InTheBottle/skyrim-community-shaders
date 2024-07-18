@@ -38,13 +38,23 @@ public:
 
 	ID3D11ComputeShader* skylightingCS = nullptr;
 	ID3D11ComputeShader* skylightingShadowMapCS = nullptr;
-	ID3D11ComputeShader* skylightingBlurCS = nullptr;
+	ID3D11ComputeShader* skylightingBlurHorizontalCS = nullptr;
+	ID3D11ComputeShader* skylightingBlurVerticalCS = nullptr;
 
 	ID3D11ComputeShader* GetSkylightingCS();
 	ID3D11ComputeShader* GetSkylightingShadowMapCS();
-	ID3D11ComputeShader* GetSkylightingBlurCS();
+	ID3D11ComputeShader* GetSkylightingBlurHorizontalCS();
+	ID3D11ComputeShader* GetSkylightingBlurVerticalCS();
 
 	ID3D11SamplerState* comparisonSampler;
+	
+	ID3D11PixelShader* GetFoliagePS();
+	ID3D11PixelShader* foliagePixelShader = nullptr;
+
+	bool foliage = false;
+	void UpdateFoliage(RE::BSRenderPass* a_pass);
+
+	void SkylightingShaderHacks();
 
 	struct alignas(16) PerFrameCB
 	{
@@ -74,9 +84,6 @@ public:
 	Texture2D* skylightingTexture = nullptr;
 	Texture2D* skylightingTempTexture = nullptr;
 
-	Texture2D* wetnessOcclusionTexture = nullptr;
-	Texture2D* wetnessOcclusionTempTexture = nullptr;
-
 	ID3D11ShaderResourceView* noiseView = nullptr;
 
 	Texture2D* occlusionTexture = nullptr;
@@ -105,7 +112,7 @@ public:
 	}
 
 	void Compute();
-	void ComputeBlur();
+	void ComputeBlur(bool a_horizontal);
 
 	enum class ShaderTechnique
 	{
@@ -448,12 +455,24 @@ public:
 						PrecipitationShaderDirection = originalParticleShaderDirection;
 
 						precipitation = precipitationCopy;
+
+						singleton->foliage = false;
 					}
 				}
 			} else {
 				func();
 			}
 			State::GetSingleton()->EndPerfEvent();
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSUtilityShader_SetupGeometry
+	{
+		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+		{
+			GetSingleton()->UpdateFoliage(Pass);
+			func(This, Pass, RenderFlags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -465,6 +484,7 @@ public:
 			logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 			stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 			stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
+			stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 		}
 	};
 
