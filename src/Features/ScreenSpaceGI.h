@@ -29,12 +29,10 @@ struct ScreenSpaceGI : Feature
 	virtual inline void Draw(const RE::BSShader*, const uint32_t) override{};
 
 	void DrawSSGI(Texture2D* srcPrevAmbient);
-	void GenerateHilbertLUT();
 	void UpdateSB();
 
 	//////////////////////////////////////////////////////////////////////////////////
 
-	bool hilbertLutGenFlag = false;
 	bool recompileFlag = false;
 	uint outputGIIdx = 0;
 
@@ -45,8 +43,8 @@ struct ScreenSpaceGI : Feature
 		bool EnableGI = true;
 		// performance/quality
 		uint NumSlices = 2;
-		uint NumSteps = 5;
-		bool HalfRes = true;
+		uint NumSteps = 4;
+		bool HalfRate = true;
 		float DepthMIPSamplingOffset = 3.3f;
 		// visual
 		float EffectRadius = 500.f;
@@ -63,7 +61,7 @@ struct ScreenSpaceGI : Feature
 		float GICompensationMaxDist = 500;
 		// mix
 		float AOPower = 1.f;
-		float GIStrength = 4.f;
+		float GIStrength = 6.f;
 		// denoise
 		bool EnableTemporalDenoiser = true;
 		bool EnableBlur = true;
@@ -83,10 +81,8 @@ struct ScreenSpaceGI : Feature
 
 		float2 TexDim;
 		float2 RcpTexDim;  //
-		float2 SrcFrameDim;
-		float2 RcpSrcFrameDim;  //
-		float2 OutFrameDim;
-		float2 RcpOutFrameDim;  //
+		float2 FrameDim;
+		float2 RcpFrameDim;  //
 		uint FrameIndex;
 
 		uint NumSlices;
@@ -119,7 +115,7 @@ struct ScreenSpaceGI : Feature
 	};
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
 
-	eastl::unique_ptr<Texture2D> texHilbertLUT = nullptr;
+	eastl::unique_ptr<Texture2D> texNoise = nullptr;
 	eastl::unique_ptr<Texture2D> texWorkingDepth = nullptr;
 	winrt::com_ptr<ID3D11UnorderedAccessView> uavWorkingDepth[5] = { nullptr };
 	eastl::unique_ptr<Texture2D> texPrevGeo = nullptr;
@@ -130,10 +126,8 @@ struct ScreenSpaceGI : Feature
 	winrt::com_ptr<ID3D11SamplerState> linearClampSampler = nullptr;
 	winrt::com_ptr<ID3D11SamplerState> pointClampSampler = nullptr;
 
-	winrt::com_ptr<ID3D11ComputeShader> hilbertLutCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> prefilterDepthsCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
-	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 };

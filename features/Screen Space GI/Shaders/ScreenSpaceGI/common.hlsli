@@ -30,10 +30,8 @@ cbuffer SSGICB : register(b1)
 
 	float2 TexDim;
 	float2 RcpTexDim;
-	float2 SrcFrameDim;
-	float2 RcpSrcFrameDim;
-	float2 OutFrameDim;
-	float2 RcpOutFrameDim;
+	float2 FrameDim;
+	float2 RcpFrameDim;
 
 	uint FrameIndex;
 
@@ -69,18 +67,6 @@ SamplerState samplerPointClamp : register(s0);
 SamplerState samplerLinearClamp : register(s1);
 
 ///////////////////////////////////////////////////////////////////////////////
-
-// screenPos - normalised position in FrameDim, one eye only
-// uv - normalised position in FrameDim, both eye
-// texCoord - texture coordinate
-
-#ifdef HALF_RES
-#	define READ_DEPTH(tex, px) tex.Load(int3(px, 1))
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex.SampleLevel(samp, texCoord, 0)
-#else
-#	define READ_DEPTH(tex, px) tex[px]
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
-#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 
