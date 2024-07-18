@@ -232,17 +232,16 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #			endif
 
-
 	float3 diffuseColor = DirLightColorShared.xyz * dirShadow;
-	
+
 	float3 ddx = ddx_coarse(input.WorldPosition);
 	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = normalize(cross(ddx, ddy));
 
-#	if !defined(SSGI)
+#			if !defined(SSGI)
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 	diffuseColor += directionalAmbientColor;
-#	endif
+#			endif
 
 	psout.Diffuse.xyz = diffuseColor * baseColor.xyz * 0.5;
 	psout.Diffuse.w = 1;

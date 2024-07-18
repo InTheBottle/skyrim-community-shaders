@@ -47,13 +47,14 @@ static const float3 g_Poisson8[8] = {
 	half rawDepth = DepthTexture[globalId.xy];
 	half depth = GetScreenDepth(rawDepth);
 
-	[unroll] for (uint i = 0; i < 8; i++) {
+	[unroll] for (uint i = 0; i < 8; i++)
+	{
 
-#   if defined(HORIZONTAL)
+#if defined(HORIZONTAL)
 		half2 testUV = uv + g_Poisson8[i].xy * BufferDim.zw * 8.0;
-#   else
+#else
 		half2 testUV = uv + g_Poisson8[i].yx * BufferDim.zw * 16.0;
-#   endif
+#endif
 
 		if (any(testUV < 0) || any(testUV > 1))
 			continue;

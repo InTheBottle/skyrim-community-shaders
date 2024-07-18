@@ -455,17 +455,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	diffuseColor += lightsDiffuseColor;
 
-#	if !defined(SSGI)
+#		if !defined(SSGI)
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 
-#		if defined(SKYLIGHTING)
+#			if defined(SKYLIGHTING)
 	float4 skylightingSH = SkylightingTexture.Load(int3(input.HPosition.xy, 0));
 	float skylighting = saturate(shUnproject(skylightingSH, normal));
 	directionalAmbientColor *= lerp(1.0 / 3.0, 1.0, skylighting);
-#		endif
+#			endif
 
 	diffuseColor += directionalAmbientColor;
-#	endif
+#		endif
 
 	diffuseColor *= albedo;
 	diffuseColor += max(0, sss * subsurfaceColor * grassLightingSettings.SubsurfaceScatteringAmount);

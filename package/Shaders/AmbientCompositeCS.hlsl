@@ -37,10 +37,10 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 
 	half3 ambient = albedo * directionalAmbientColor;
-	
+
 #if defined(SKYLIGHTING)
 	sh2 skylightingSH = SkylightingTexture[dispatchID.xy];
-	
+
 	half skylighting = saturate(shUnproject(skylightingSH, normalWS));
 
 	ambient *= lerp(0.25, 1.0, skylighting);

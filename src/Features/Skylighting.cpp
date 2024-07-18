@@ -171,14 +171,13 @@ ID3D11PixelShader* Skylighting::GetFoliagePS()
 void Skylighting::UpdateFoliage(RE::BSRenderPass* a_pass)
 {
 	if (inOcclusion) {
-		foliage = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);	
+		foliage = a_pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTreeAnim);
 	}
 }
 
 void Skylighting::SkylightingShaderHacks()
 {
-	if (inOcclusion)
-	{
+	if (inOcclusion) {
 		auto& context = State::GetSingleton()->context;
 
 		if (foliage) {
@@ -268,7 +267,7 @@ void Skylighting::Compute()
 
 	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get()};
+	ID3D11UnorderedAccessView* uavs[1]{ skylightingTexture->uav.get() };
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 	auto buffer = perFrameCB->CB();
@@ -332,8 +331,7 @@ void Skylighting::ComputeBlur(bool a_horizontal)
 
 	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-	ID3D11UnorderedAccessView* uavs[1]
-	{
+	ID3D11UnorderedAccessView* uavs[1]{
 		(!a_horizontal ? skylightingTexture : skylightingTempTexture)->uav.get()
 	};
 

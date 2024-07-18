@@ -1445,8 +1445,8 @@ PS_OUTPUT main(PS_INPUT input)
 	positionMS.xyz += CameraPosAdjust[eyeIndex];
 
 	positionMS.xyz *= 0.000001;
-	
-   	float checkerboard = frac(sin(dot(positionMS.xy, float2(12.9898,78.233))) * 43758.5453);
+
+	float checkerboard = frac(sin(dot(positionMS.xy, float2(12.9898, 78.233))) * 43758.5453);
 
 	if (checkerboard > 0.5)
 		discard;

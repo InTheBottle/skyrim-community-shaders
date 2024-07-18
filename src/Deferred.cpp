@@ -422,12 +422,10 @@ void Deferred::DeferredPasses()
 
 	auto skylighting = Skylighting::GetSingleton();
 	auto ssgi = ScreenSpaceGI::GetSingleton();
-	
+
 	auto dispatchCount = Util::GetScreenDispatchCount();
 
-
-	if (ssgi->loaded) 
-	{
+	if (ssgi->loaded) {
 		ssgi->DrawSSGI(prevDiffuseAmbientTexture);
 
 		// Ambient Composite

@@ -1145,7 +1145,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	endif  // LANDSCAPE
 
-
 #	if defined(EMAT) && defined(ENVMAP)
 	complexMaterial = complexMaterial && complexMaterialColor.y > (4.0 / 255.0) && (complexMaterialColor.y < (1.0 - (4.0 / 255.0)));
 	shininess = lerp(shininess, shininess * complexMaterialColor.y, complexMaterial);
@@ -1158,8 +1157,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	elif defined(FACEGEN_RGB_TINT)
 	baseColor.xyz = GetFacegenRGBTintBaseColor(baseColor.xyz, uv);
 #	endif  // FACEGEN
-
-
 
 #	if defined(LANDSCAPE)
 
@@ -1834,13 +1831,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 
 	// This also applies fresnel
-	float3 wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);;
+	float3 wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
+	;
 
 #		if !defined(DEFERRED)
 	wetnessSpecular += wetnessReflectance;
 #		endif
 #	endif
-
 
 	float4 color;
 	color.xyz = diffuseColor * baseColor.xyz;
@@ -2077,13 +2074,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #			if defined(DYNAMIC_CUBEMAPS)
 	if (dynamicCubemap) {
-#		if defined(WETNESS_EFFECTS)
+#				if defined(WETNESS_EFFECTS)
 		psout.Reflectance.xyz = max(envColor, wetnessReflectance);
 		psout.NormalGlossiness.z = lerp(1.0 - envRoughness, 1.0, wetnessGlossinessSpecular);
-#		else
+#				else
 		psout.Reflectance.xyz = envColor;
 		psout.NormalGlossiness.z = 1.0 - envRoughness;
-#		endif
+#				endif
 	}
 #			endif
 #		endif

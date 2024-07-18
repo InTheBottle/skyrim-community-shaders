@@ -70,10 +70,10 @@ half GetBlueNoise(half2 uv)
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
 	float2 PoissonDisc[] = {
-        float2(0.881375f, 0.216315f),
-        float2(0.0872829f, 0.987854f),
-        float2(0.0710166f, 0.132633f),
-        float2(0.517563f, 0.643117f)
+		float2(0.881375f, 0.216315f),
+		float2(0.0872829f, 0.987854f),
+		float2(0.0710166f, 0.132633f),
+		float2(0.517563f, 0.643117f)
 	};
 
 	uint sampleCount = 4;
@@ -103,7 +103,7 @@ half GetBlueNoise(half2 uv)
 
 		if ((occlusionUV.x == saturate(occlusionUV.x) && occlusionUV.y == saturate(occlusionUV.y)) || !fadeOut) {
 			float shadowMapValues = OcclusionMapSampler.SampleLevel(LinearSampler, occlusionUV, 0);
-			
+
 			shadowMapValues = 1.0 - shadowMapValues;
 			occlusionPosition.z = 1.0 - occlusionPosition.z;
 
@@ -111,7 +111,7 @@ half GetBlueNoise(half2 uv)
 
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(skylightingContribution, 1.0, fadeFactor)));
-			
+
 			weight++;
 		} else {
 			sh2 sh = shEvaluate(rayDir);
@@ -119,13 +119,12 @@ half GetBlueNoise(half2 uv)
 			weight++;
 		}
 	}
-	
-	if (weight > 0.0)
-	{
+
+	if (weight > 0.0) {
 		float shFactor = 4.0 * shPI * 1.0 / weight;
 		shSkylighting = shScale(shSkylighting, shFactor);
-	}	
-	
+	}
+
 	SkylightingTextureRW[globalId.xy] = shSkylighting;
 }
 #else
@@ -158,7 +157,7 @@ half GetScreenDepth(half depth)
 	float3 startPositionMS = positionMS;
 
 	half fadeFactor = pow(saturate(dot(positionMS.xyz, positionMS.xyz) / sD.ShadowLightParam.z), 8);
-	
+
 	fadeFactor = lerp(1.0, fadeFactor, pow(saturate(dot(float3(0, 0, -1), ShadowDirection.xyz)), 0.5));
 
 	half noise = GetBlueNoise(globalId.xy) * 2.0 * shPI;
@@ -166,25 +165,25 @@ half GetScreenDepth(half depth)
 	half2x2 rotationMatrix = half2x2(cos(noise), sin(noise), -sin(noise), cos(noise));
 
 	float2 PoissonDisc[] = {
-        float2(0.881375f, 0.216315f),
-        float2(0.0872829f, 0.987854f),
-        float2(0.0710166f, 0.132633f),
-        float2(0.517563f, 0.643117f)
+		float2(0.881375f, 0.216315f),
+		float2(0.0872829f, 0.987854f),
+		float2(0.0710166f, 0.132633f),
+		float2(0.517563f, 0.643117f)
 	};
 
 	uint sampleCount = 4;
-	
+
 	sh2 shSkylighting = shZero();
 
 	half weight = 0.0;
 
 	[unroll] for (uint i = 0; i < sampleCount; i++)
 	{
-		float3 rayDir = float3(PoissonDisc[i].xy * 2.0 - 1.0, 0);		
+		float3 rayDir = float3(PoissonDisc[i].xy * 2.0 - 1.0, 0);
 		rayDir.xy = mul(rayDir.xy, rotationMatrix);
 
 		positionMS.xy = startPositionMS + rayDir.xy * 128 + length(rayDir.xy) * ShadowDirection.xy * 128;
-		
+
 		rayDir = normalize(rayDir);
 
 		float shadowMapDepth = length(positionMS.xyz);
@@ -218,7 +217,9 @@ half GetScreenDepth(half depth)
 			shSkylighting = shAdd(shSkylighting, shScale(sh, lerp(skylightingContribution, 1.0, fadeFactor)));
 
 			weight++;
-		} else {
+		}
+		else
+		{
 			sh2 sh = shEvaluate(rayDir);
 			shSkylighting = shAdd(shSkylighting, shScale(sh, 1.0));
 
@@ -226,12 +227,11 @@ half GetScreenDepth(half depth)
 		}
 	}
 
-	if (weight > 0.0)
-	{
+	if (weight > 0.0) {
 		float shFactor = 4.0 * shPI * 1.0 / weight;
 		shSkylighting = shScale(shSkylighting, shFactor);
 	}
-	
+
 	SkylightingTextureRW[globalId.xy] = shSkylighting;
 }
 #endif

@@ -196,10 +196,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = normalize(cross(ddx, ddy));
 
-#	if !defined(SSGI)
+#		if !defined(SSGI)
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 	diffuseColor += directionalAmbientColor;
-#	endif
+#		endif
 
 	float3 albedo = baseColor.xyz * input.DiffuseColor.xyz * 0.5;
 

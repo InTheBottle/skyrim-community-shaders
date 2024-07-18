@@ -47,7 +47,7 @@ public:
 	ID3D11ComputeShader* GetSkylightingBlurVerticalCS();
 
 	ID3D11SamplerState* comparisonSampler;
-	
+
 	ID3D11PixelShader* GetFoliagePS();
 	ID3D11PixelShader* foliagePixelShader = nullptr;
 
