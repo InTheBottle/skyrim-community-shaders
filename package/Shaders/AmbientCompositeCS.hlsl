@@ -8,12 +8,13 @@ Texture2D<unorm half3> AlbedoTexture : register(t0);
 Texture2D<unorm half3> NormalRoughnessTexture : register(t1);
 
 #if defined(SKYLIGHTING)
-#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-Texture2D<float4> SkylightingTexture : register(t2);
+#	include "Skylighting/Skylighting.hlsli"
+Texture2D<unorm float> DepthTexture : register(t2);
+Texture3D<sh2> SkylightingProbeArray : register(t3);
 #endif
 
 #if defined(SSGI)
-Texture2D<half4> SSGITexture : register(t3);
+Texture2D<half4> SSGITexture : register(t4);
 #endif
 
 RWTexture2D<half3> MainRW : register(u0);
@@ -44,11 +45,16 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	albedo = sRGB2Lin(albedo);
 
 #if defined(SKYLIGHTING)
-	sh2 skylightingSH = SkylightingTexture[dispatchID.xy];
+	float rawDepth = DepthTexture[dispatchID.xy];
+	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
+	float4 positionMS = mul(CameraViewProjInverse[0], positionCS);
+	positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	half skylighting = saturate(shUnproject(skylightingSH, normalWS));
+	sh2 skylighting = sampleSkylighting(SkylightingProbeArray, positionMS.xyz, normalWS);
+	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, normalWS);
+	skylightingDiffuse = lerp(1, saturate(skylightingDiffuse * 1.5), 0.8);
 
-	ambient *= lerp(0.25, 1.0, skylighting);
+	ambient *= skylightingDiffuse;
 #endif
 
 #if defined(SSGI)

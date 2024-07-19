@@ -7,96 +7,78 @@
 
 struct Skylighting : Feature
 {
-public:
 	static Skylighting* GetSingleton()
 	{
 		static Skylighting singleton;
 		return &singleton;
 	}
 
-	bool SupportsVR() override { return true; };
+	bool SupportsVR() override { return false; };
 
 	virtual inline std::string GetName() { return "Skylighting"; }
 	virtual inline std::string GetShortName() { return "Skylighting"; }
 	inline std::string_view GetShaderDefineName() override { return "SKYLIGHTING"; }
-	bool HasShaderDefine(RE::BSShader::Type) override { return true; };
+	// bool HasShaderDefine(RE::BSShader::Type) override { return true; };
 
-	virtual void SetupResources();
-	virtual void Reset();
+	virtual inline void RestoreDefaultSettings() override{};
+	virtual void DrawSettings() override;
 
-	virtual void DrawSettings();
+	virtual void Load(json& o_json) override;
+	virtual void Save(json& o_json) override;
 
-	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);
-
-	virtual void Load(json& o_json);
-	virtual void Save(json& o_json);
-
-	virtual void PostPostLoad();
-
-	virtual void Prepass() override;
-
-	virtual void RestoreDefaultSettings();
-
-	ID3D11ComputeShader* GetSkylightingCS();
-	ID3D11ComputeShader* GetSkylightingShadowMapCS();
-	ID3D11ComputeShader* GetSkylightingBlurHorizontalCS();
-	ID3D11ComputeShader* GetSkylightingBlurVerticalCS();
+	virtual inline void Reset() override{};
+	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
+	void CompileComputeShaders();
 
-	void Bind();
+	virtual inline void Draw(const RE::BSShader*, const uint32_t) override{};
+	void UpdateProbeArray();
 
-	void Compute();
-	void ComputeBlur(bool a_horizontal);
+	virtual void PostPostLoad() override;
 
-	ID3D11PixelShader* GetFoliagePS();
-
-	void SkylightingShaderHacks();  // referenced in State.cpp
+	void UpdateDepthStencilView(RE::BSRenderPass* a_pass);
 
 	//////////////////////////////////////////////////////////////////////////////////
 
-	struct alignas(16) PerFrameCB
-	{
-		REX::W32::XMFLOAT4X4 OcclusionViewProj;
-		float4 EyePosition;
-		float4 ShadowDirection;
-		float4 BufferDim;
-		float4 CameraData;
-		uint FrameCount;
-		uint pad0[3];
-	};
-
-	ConstantBuffer* perFrameCB = nullptr;
-
 	struct Settings
 	{
-		bool EnableSkylighting = true;
-		bool HeightSkylighting = true;
-		float MinimumBound = 128;
-		bool RenderTrees = false;
+		float maxZenith = 3.1415926f / 3.f;  // 60 deg
+	} settings;
+
+	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
+
+	struct alignas(16) SkylightingCB
+	{
+		REX::W32::XMFLOAT4X4 OcclusionViewProj;
+		float4 OcclusionDir;
+
+		float3 PosOffset;  // cell origin in camera model space
+		float _pad;
+		uint ArrayOrigin[4];
+		uint ValidID0[4];
+		uint ValidID1[4];
 	};
+	eastl::unique_ptr<ConstantBuffer> skylightingCB = nullptr;
 
-	Settings settings;
+	winrt::com_ptr<ID3D11SamplerState> pointClampSampler = nullptr;
 
-	Texture2D* skylightingTexture = nullptr;
-	Texture2D* skylightingTempTexture = nullptr;
-	ID3D11ShaderResourceView* noiseView = nullptr;
-	Texture2D* occlusionTexture = nullptr;
+	Texture2D* texOcclusion = nullptr;
+	Texture3D* texProbeArray = nullptr;
 
-	ID3D11ComputeShader* skylightingCS = nullptr;
-	ID3D11ComputeShader* skylightingShadowMapCS = nullptr;
-	ID3D11ComputeShader* skylightingBlurHorizontalCS = nullptr;
-	ID3D11ComputeShader* skylightingBlurVerticalCS = nullptr;
+	bool doOcclusion = true;
 
-	ID3D11SamplerState* comparisonSampler;
+	uint probeArrayDims[3] = { 128, 128, 64 };
+	float occlusionDistance = 8192.f;
+	bool renderTrees = false;
 
-	ID3D11PixelShader* foliagePixelShader = nullptr;
-
-	// cached variables
+	float boundSize = 128;
 	bool inOcclusion = false;
-	bool foliage = false;
-	REX::W32::XMFLOAT4X4 viewProjMat;
-	RE::NiPoint3 eyePosition;
-	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
+
+	RE::NiPoint3 eyePosition{};
+	RE::BSGraphics::DepthStencilData precipitationCopy;
+
+	REX::W32::XMFLOAT4X4 OcclusionTransform;
+	float4 OcclusionDir;
 
 	//////////////////////////////////////////////////////////////////////////////////
 
@@ -114,7 +96,11 @@ public:
 
 	struct BSUtilityShader_SetupGeometry
 	{
-		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags);
+		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+		{
+			GetSingleton()->UpdateDepthStencilView(Pass);
+			func(This, Pass, RenderFlags);
+		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 };

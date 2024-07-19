@@ -25,8 +25,8 @@ SamplerState LinearSampler : register(s0);
 #endif
 
 #if defined(SKYLIGHTING)
-#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-Texture2D<unorm float4> SkylightingTexture : register(t9);
+#	include "Skylighting/Skylighting.hlsli"
+Texture3D<sh2> SkylightingProbeArray : register(t9);
 #endif
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID

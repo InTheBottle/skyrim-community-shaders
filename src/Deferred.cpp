@@ -471,7 +471,8 @@ void Deferred::DeferredPasses()
 			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envTexture->srv.get() : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envReflectionsTexture->srv.get() : nullptr,
-			dynamicCubemaps->loaded && skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
+			// dynamicCubemaps->loaded && skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
+			nullptr,
 		};
 
 		if (dynamicCubemaps->loaded)
@@ -730,9 +731,9 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		if (dynamicCubemaps->loaded)
 			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-		auto skylighting = Skylighting::GetSingleton();
-		if (skylighting->loaded)
-			defines.push_back({ "SKYLIGHTING", nullptr });
+		// auto skylighting = Skylighting::GetSingleton();
+		// if (skylighting->loaded)
+		// 	defines.push_back({ "SKYLIGHTING", nullptr });
 
 		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}

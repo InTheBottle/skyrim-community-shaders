@@ -928,10 +928,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "CloudShadows/CloudShadows.hlsli"
 #	endif
 
-#	if defined(SKYLIGHTING)
-#		define LinearSampler SampColorSampler
-#		include "Skylighting/Skylighting.hlsli"
-#	endif
+// #	if defined(SKYLIGHTING)
+// #		define LinearSampler SampColorSampler
+// #		include "Skylighting/Skylighting.hlsli"
+// #	endif
 
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
