@@ -24,7 +24,7 @@ SamplerState samplerPointClamp : register(s0);
 
 [numthreads(8, 8, 1)] void main(uint3 dtid
 								: SV_DispatchThreadID) {
-	const static float lerpFactor = rcp(150);
+	const static float lerpFactor = rcp(256);
 	const static float rcpMaxUint = rcp(4294967295.0);
 
 	uint3 cellID = (int3(dtid) - ArrayOrigin.xyz) % ARRAY_DIM;
@@ -37,14 +37,15 @@ SamplerState samplerPointClamp : register(s0);
 	cellCentreOS.y = -cellCentreOS.y;
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
-	bool visible = true;
 	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
 		float occlusionDepth = srcOcclusionDepth.SampleLevel(samplerPointClamp, occlusionUV, 0);
-		visible = cellCentreOS.z < occlusionDepth;
-	}
+		bool visible = cellCentreOS.z < occlusionDepth;
 
-	sh2 occlusionSH = shScale(shEvaluate(OcclusionDir.xyz), float(visible));
-	if (isValid)
-		occlusionSH = shAdd(shScale(outProbeArray[dtid], 1 - lerpFactor), shScale(occlusionSH, lerpFactor));  // exponential accumulation
-	outProbeArray[dtid] = occlusionSH;
+		sh2 occlusionSH = shScale(shEvaluate(OcclusionDir.xyz), float(visible));
+		if (isValid)
+			occlusionSH = shAdd(shScale(outProbeArray[dtid], 1 - lerpFactor), shScale(occlusionSH, lerpFactor));  // exponential accumulation
+		outProbeArray[dtid] = occlusionSH;
+	} else if (!isValid) {
+		outProbeArray[dtid] = 1;
+	}
 }
