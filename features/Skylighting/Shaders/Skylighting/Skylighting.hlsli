@@ -61,11 +61,6 @@ sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 norma
 
 	sh2 result = shScale(sum, rcp(wsum + 1e-10));
 
-	// fadeout
-	float3 edgeDist = min(uvw, 1 - uvw);
-	float fadeFactor = saturate(min(edgeDist.x, min(edgeDist.y, edgeDist.z)) * 10);
-	result = shAdd(1 - fadeFactor, shScale(result, fadeFactor));
-
 	return result;
 }
 

@@ -136,6 +136,8 @@ void Skylighting::UpdateProbeArray()
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	{
+		static float3 lastCellID = { 0, 0, 0 };
+
 		auto eyePosNI = !REL::Module::IsVR() ? state->GetRuntimeData().posAdjust.getEye() : state->GetVRRuntimeData().posAdjust.getEye();
 		auto eyePos = float3{ eyePosNI.x, eyePosNI.y, eyePosNI.z };
 
@@ -157,10 +159,17 @@ void Skylighting::UpdateProbeArray()
 				((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
 				((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2], 0 },
 			.ValidID0 = { 0, 0, 0, 0 },
-			.ValidID1 = { probeArrayDims[0], probeArrayDims[1], probeArrayDims[2], 0 },
+			.ValidID1 = { probeArrayDims[0] - 1, probeArrayDims[1] - 1, probeArrayDims[2] - 1, 0 },
 		};
 
+		float3 cellIDDiff = cellID - lastCellID;
+		cellIDDiff.x > 0 ? data.ValidID1[0] : data.ValidID0[0] -= (int)cellIDDiff.x;
+		cellIDDiff.y > 0 ? data.ValidID1[1] : data.ValidID0[1] -= (int)cellIDDiff.y;
+		cellIDDiff.z > 0 ? data.ValidID1[2] : data.ValidID0[2] -= (int)cellIDDiff.z;
+
 		skylightingCB->Update(data);
+
+		lastCellID = cellID;
 	}
 
 	std::array<ID3D11ShaderResourceView*, 1> srvs = { texOcclusion->srv.get() };

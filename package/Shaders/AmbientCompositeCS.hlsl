@@ -52,7 +52,12 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 
 	sh2 skylighting = sampleSkylighting(SkylightingProbeArray, positionMS.xyz, normalWS);
 	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, normalWS);
-	skylightingDiffuse = lerp(1, saturate(skylightingDiffuse * 1.5), 0.8);
+	skylightingDiffuse = lerp(1, saturate(skylightingDiffuse * 2), 0.7);
+
+	// fadeout
+	const float fadeDist = 0.9;
+	float fadeFactor = saturate((length(positionMS.xyz) * 2 / SKYLIGHTING_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
+	skylightingDiffuse = lerp(skylightingDiffuse, 1, fadeFactor);
 
 	ambient *= skylightingDiffuse;
 #endif
