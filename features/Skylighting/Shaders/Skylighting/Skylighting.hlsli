@@ -85,4 +85,30 @@ float shHallucinateZH3Irradiance(sh2 sh, float3 normal)
 	return saturate(result);
 }
 
+// https://www.gdcvault.com/play/1026701/Fast-Denoising-With-Self-Stabilizing
+float3 getSpecularDominantDirection(float3 N, float3 V, float roughness)
+{
+	float f = (1 - roughness) * (sqrt(1 - roughness) + roughness);
+	float3 R = reflect(-V, N);
+	float3 D = lerp(N, R, f);
+
+	return normalize(D);
+}
+
+sh2 fauxSpecularLobeSH(float3 N, float3 V, float roughness)
+{
+	// https://www.gdcvault.com/play/1026701/Fast-Denoising-With-Self-Stabilizing
+	// get dominant ggx reflection direction
+	float f = (1 - roughness) * (sqrt(1 - roughness) + roughness);
+	float3 R = reflect(-V, N);
+	float3 D = lerp(N, R, f);
+	float3 dominantDir = normalize(D);
+
+	sh2 directional = shEvaluate(dominantDir);
+	sh2 cosineLobe = shEvaluateCosineLobe(dominantDir);
+	sh2 result = shAdd(shScale(directional, f), shScale(cosineLobe, 1 - f));
+
+	return result;
+}
+
 #endif

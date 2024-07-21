@@ -461,6 +461,9 @@ void Deferred::DeferredPasses()
 
 	// Deferred Composite
 	{
+		ID3D11Buffer* buffer = skylighting->loaded ? skylighting->skylightingCB->CB() : nullptr;
+		context->CSSetConstantBuffers(1, 1, &buffer);
+
 		ID3D11ShaderResourceView* srvs[10]{
 			specular.SRV,
 			albedo.SRV,
@@ -471,8 +474,7 @@ void Deferred::DeferredPasses()
 			dynamicCubemaps->loaded ? reflectance.SRV : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envTexture->srv.get() : nullptr,
 			dynamicCubemaps->loaded ? dynamicCubemaps->envReflectionsTexture->srv.get() : nullptr,
-			// dynamicCubemaps->loaded && skylighting->loaded ? skylighting->skylightingTexture->srv.get() : nullptr
-			nullptr,
+			dynamicCubemaps->loaded && skylighting->loaded ? skylighting->texProbeArray->srv.get() : nullptr
 		};
 
 		if (dynamicCubemaps->loaded)
@@ -487,6 +489,9 @@ void Deferred::DeferredPasses()
 		context->CSSetShader(shader, nullptr, 0);
 
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+
+		buffer = nullptr;
+		context->CSSetConstantBuffers(0, 1, &buffer);
 	}
 
 	// Clear
@@ -731,9 +736,9 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		if (dynamicCubemaps->loaded)
 			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-		// auto skylighting = Skylighting::GetSingleton();
-		// if (skylighting->loaded)
-		// 	defines.push_back({ "SKYLIGHTING", nullptr });
+		auto skylighting = Skylighting::GetSingleton();
+		if (skylighting->loaded)
+			defines.push_back({ "SKYLIGHTING", nullptr });
 
 		mainCompositeCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 	}
