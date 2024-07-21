@@ -1,16 +1,13 @@
+#define SL_INCL_STRUCT
+#include "Skylighting.hlsli"
+
 #include "../Common/DeferredShared.hlsli"
 #include "../Common/FrameBuffer.hlsl"
 #include "../Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 
 cbuffer SkylightingCB : register(b1)
 {
-	row_major float4x4 OcclusionViewProj;
-	float4 OcclusionDir;
-
-	float4 PosOffset;
-	uint4 ArrayOrigin;
-	uint4 ValidID0;
-	uint4 ValidID1;
+	SkylightingSettings settings;
 };
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
@@ -27,13 +24,13 @@ SamplerState samplerPointClamp : register(s0);
 	const static float lerpFactor = rcp(256);
 	const static float rcpMaxUint = rcp(4294967295.0);
 
-	uint3 cellID = (int3(dtid) - ArrayOrigin.xyz) % ARRAY_DIM;
-	bool isValid = all(cellID >= ValidID0.xyz) && all(cellID <= ValidID1.xyz);  // check if the cell is newly added
+	uint3 cellID = (int3(dtid) - settings.ArrayOrigin.xyz) % ARRAY_DIM;
+	bool isValid = all(cellID >= settings.ValidID0.xyz) && all(cellID <= settings.ValidID1.xyz);  // check if the cell is newly added
 
 	float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-	cellCentreMS = cellCentreMS / ARRAY_DIM * ARRAY_SIZE + PosOffset.xyz;
+	cellCentreMS = cellCentreMS / ARRAY_DIM * ARRAY_SIZE + settings.PosOffset.xyz;
 
-	float3 cellCentreOS = mul(OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
+	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
@@ -41,7 +38,7 @@ SamplerState samplerPointClamp : register(s0);
 		float occlusionDepth = srcOcclusionDepth.SampleLevel(samplerPointClamp, occlusionUV, 0);
 		bool visible = cellCentreOS.z < occlusionDepth;
 
-		sh2 occlusionSH = shScale(shEvaluate(OcclusionDir.xyz), float(visible));
+		sh2 occlusionSH = shScale(shEvaluate(settings.OcclusionDir.xyz), float(visible));
 		if (isValid)
 			occlusionSH = shAdd(shScale(outProbeArray[dtid], 1 - lerpFactor), shScale(occlusionSH, lerpFactor));  // exponential accumulation
 		outProbeArray[dtid] = occlusionSH;
