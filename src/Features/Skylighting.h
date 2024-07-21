@@ -70,6 +70,7 @@ struct Skylighting : Feature
 
 	Texture2D* texOcclusion = nullptr;
 	Texture3D* texProbeArray = nullptr;
+	Texture3D* texAccumFramesArray = nullptr;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 
@@ -103,11 +104,13 @@ struct Skylighting : Feature
 
 	struct BSUtilityShader_SetupGeometry
 	{
-		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
-		{
-			GetSingleton()->UpdateDepthStencilView(Pass);
-			func(This, Pass, RenderFlags);
-		}
+		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct SetViewFrustum
+	{
+		static void thunk(RE::NiCamera* a_camera, RE::NiFrustum* a_frustum);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 };

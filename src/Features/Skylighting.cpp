@@ -97,6 +97,12 @@ void Skylighting::SetupResources()
 		texProbeArray = new Texture3D(texDesc);
 		texProbeArray->CreateSRV(srvDesc);
 		texProbeArray->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_UINT;
+
+		texAccumFramesArray = new Texture3D(texDesc);
+		texAccumFramesArray->CreateSRV(srvDesc);
+		texAccumFramesArray->CreateUAV(uavDesc);
 	}
 
 	{
@@ -195,7 +201,7 @@ void Skylighting::Prepass()
 	}
 
 	std::array<ID3D11ShaderResourceView*, 1> srvs = { texOcclusion->srv.get() };
-	std::array<ID3D11UnorderedAccessView*, 1> uavs = { texProbeArray->uav.get() };
+	std::array<ID3D11UnorderedAccessView*, 2> uavs = { texProbeArray->uav.get(), texAccumFramesArray->uav.get() };
 	std::array<ID3D11SamplerState*, 1> samplers = { pointClampSampler.get() };
 	auto cb = skylightingCB->CB();
 
@@ -235,22 +241,7 @@ void Skylighting::PostPostLoad()
 	logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 	stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 	stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
-}
-
-void Skylighting::UpdateDepthStencilView(RE::BSRenderPass*)
-{
-	if (inOcclusion) {
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
-		precipitation.depthSRV = texOcclusion->srv.get();
-		precipitation.texture = texOcclusion->resource.get();
-		precipitation.views[0] = texOcclusion->dsv.get();
-
-		auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
-		GET_INSTANCE_MEMBER(stateUpdateFlags, state)
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-	}
+	// stl::write_thunk_call<SetViewFrustum>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D));
 }
 
 //////////////////////////////////////////////////////////////
@@ -630,4 +621,43 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 		}
 	}
 	State::GetSingleton()->EndPerfEvent();
+}
+
+void Skylighting::BSUtilityShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+{
+	auto& feat = *GetSingleton();
+	if (feat.inOcclusion) {
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+
+		precipitation.depthSRV = feat.texOcclusion->srv.get();
+		precipitation.texture = feat.texOcclusion->resource.get();
+		precipitation.views[0] = feat.texOcclusion->dsv.get();
+
+		auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
+		GET_INSTANCE_MEMBER(stateUpdateFlags, state)
+		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+	}
+
+	func(This, Pass, RenderFlags);
+}
+
+void Skylighting::SetViewFrustum::thunk(RE::NiCamera* a_camera, RE::NiFrustum* a_frustum)
+{
+	if (GetSingleton()->inOcclusion) {
+		static float frameCount = 0;
+
+		uint corner = (uint)frameCount % 4;
+
+		a_frustum->fBottom = (corner == 0 || corner == 1) ? -5000.0f : 0.0f;
+
+		a_frustum->fLeft = (corner == 0 || corner == 2) ? -5000.0f : 0.0f;
+		a_frustum->fRight = (corner == 1 || corner == 3) ? 5000.0f : 0.0f;
+
+		a_frustum->fTop = (corner == 2 || corner == 3) ? 5000.0f : 0.0f;
+
+		frameCount += 0.5f;
+	}
+
+	func(a_camera, a_frustum);
 }

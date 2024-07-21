@@ -13,6 +13,7 @@ cbuffer SkylightingCB : register(b1)
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
 
 RWTexture3D<sh2> outProbeArray : register(u0);
+RWTexture3D<uint> outAccumFramesArray : register(u1);
 
 SamplerState samplerPointClamp : register(s0);
 
@@ -21,7 +22,6 @@ SamplerState samplerPointClamp : register(s0);
 
 [numthreads(8, 8, 1)] void main(uint3 dtid
 								: SV_DispatchThreadID) {
-	const static float lerpFactor = rcp(256);
 	const static float rcpMaxUint = rcp(4294967295.0);
 
 	uint3 cellID = (int3(dtid) - settings.ArrayOrigin.xyz) % ARRAY_DIM;
@@ -39,10 +39,16 @@ SamplerState samplerPointClamp : register(s0);
 		bool visible = cellCentreOS.z < occlusionDepth;
 
 		sh2 occlusionSH = shScale(shEvaluate(settings.OcclusionDir.xyz), float(visible));
-		if (isValid)
+		uint accumFrames = 1;
+		if (isValid) {
+			accumFrames = min(outAccumFramesArray[dtid] + 1, 10000);
+			float lerpFactor = rcp(accumFrames);
 			occlusionSH = shAdd(shScale(outProbeArray[dtid], 1 - lerpFactor), shScale(occlusionSH, lerpFactor));  // exponential accumulation
+		}
 		outProbeArray[dtid] = occlusionSH;
+		outAccumFramesArray[dtid] = accumFrames;
 	} else if (!isValid) {
 		outProbeArray[dtid] = 1;
+		outAccumFramesArray[dtid] = 0;
 	}
 }
