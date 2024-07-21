@@ -8,7 +8,15 @@ Texture2D<unorm half3> AlbedoTexture : register(t0);
 Texture2D<unorm half3> NormalRoughnessTexture : register(t1);
 
 #if defined(SKYLIGHTING)
+#	define SL_INCL_STRUCT
+#	define SL_INCL_METHODS
 #	include "Skylighting/Skylighting.hlsli"
+
+cbuffer SkylightingCB : register(b1)
+{
+	SkylightingSettings skylightingSettings;
+};
+
 Texture2D<unorm float> DepthTexture : register(t2);
 Texture3D<sh2> SkylightingProbeArray : register(t3);
 #endif
@@ -50,13 +58,13 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	float4 positionMS = mul(CameraViewProjInverse[0], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
-	sh2 skylighting = sampleSkylighting(SkylightingProbeArray, positionMS.xyz, normalWS);
+	sh2 skylighting = sampleSkylighting(skylightingSettings, SkylightingProbeArray, positionMS.xyz, normalWS);
 	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, normalWS);
-	skylightingDiffuse = lerp(SL_MixParams.x, 1, saturate(skylightingDiffuse * SL_MixParams.y));
+	skylightingDiffuse = lerp(skylightingSettings.MixParams.x, 1, saturate(skylightingDiffuse * skylightingSettings.MixParams.y));
 
 	// fadeout
 	const float fadeDist = 0.9;
-	float fadeFactor = saturate((length(positionMS.xyz) * 2 / SKYLIGHTING_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
+	float fadeFactor = saturate((length(positionMS.xyz) * 2 / SL_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
 	skylightingDiffuse = lerp(skylightingDiffuse, 1, fadeFactor);
 
 	ambient *= skylightingDiffuse;

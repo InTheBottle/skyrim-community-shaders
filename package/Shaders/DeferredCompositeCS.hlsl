@@ -25,7 +25,15 @@ SamplerState LinearSampler : register(s0);
 #endif
 
 #if defined(SKYLIGHTING)
+#	define SL_INCL_STRUCT
+#	define SL_INCL_METHODS
 #	include "Skylighting/Skylighting.hlsli"
+
+cbuffer SkylightingCB : register(b1)
+{
+	SkylightingSettings skylightingSettings;
+};
+
 Texture3D<sh2> SkylightingProbeArray : register(t9);
 #endif
 
@@ -79,15 +87,15 @@ Texture3D<sh2> SkylightingProbeArray : register(t9);
 
 		color += reflectance * specularIrradiance;
 #	elif defined(SKYLIGHTING)
-		sh2 skylighting = sampleSkylighting(SkylightingProbeArray, positionWS.xyz, normalWS);
+		sh2 skylighting = sampleSkylighting(skylightingSettings, SkylightingProbeArray, positionWS.xyz, normalWS);
 		sh2 specularLobe = fauxSpecularLobeSH(normalWS, -V, roughness);
 
 		half skylightingSpecular = saturate(shFuncProductIntegral(skylighting, specularLobe));
-		skylightingSpecular = lerp(SL_MixParams.z, 1, saturate(skylightingSpecular * SL_MixParams.w));
+		skylightingSpecular = lerp(skylightingSettings.MixParams.z, 1, saturate(skylightingSpecular * skylightingSettings.MixParams.w));
 
 		// fadeout
 		const float fadeDist = 0.9;
-		float fadeFactor = saturate((length(positionWS.xyz) * 2 / SKYLIGHTING_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
+		float fadeFactor = saturate((length(positionWS.xyz) * 2 / SL_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
 		skylightingSpecular = lerp(skylightingSpecular, 1, fadeFactor);
 
 		half3 specularIrradiance = 1;

@@ -33,9 +33,9 @@ void Skylighting::DrawSettings()
 
 	if (ImGui::TreeNodeEx("Visual", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat("Min Diffuse Visibility", &settings.MinDiffuseVisibility, 0, 1, "%.2f");
-		ImGui::SliderFloat("Diffuse Brightness", &settings.DiffuseBrightness, 0, 5, "%.1f");
+		ImGui::SliderFloat("Diffuse Brightness", &settings.DiffuseBrightness, 0, 10, "%.1f");
 		ImGui::SliderFloat("Min Specular Visibility", &settings.MinSpecularVisibility, 0, 1, "%.2f");
-		ImGui::SliderFloat("Specular Brightness", &settings.SpecularBrightness, 0, 5, "%.1f");
+		ImGui::SliderFloat("Specular Brightness", &settings.SpecularBrightness, 0, 10, "%.1f");
 
 		ImGui::TreePop();
 	}
@@ -171,7 +171,7 @@ void Skylighting::Prepass()
 		cellID = { round(cellID.x), round(cellID.y), round(cellID.z) };
 		auto cellOrigin = cellID * cellSize;
 
-		SkylightingCB data = {
+		cbData = {
 			.OcclusionViewProj = OcclusionTransform,
 			.OcclusionDir = OcclusionDir,
 			.PosOffset = cellOrigin - eyePos,
@@ -185,11 +185,11 @@ void Skylighting::Prepass()
 		};
 
 		float3 cellIDDiff = cellID - lastCellID;
-		cellIDDiff.x > 0 ? data.ValidID1[0] : data.ValidID0[0] -= (int)cellIDDiff.x;
-		cellIDDiff.y > 0 ? data.ValidID1[1] : data.ValidID0[1] -= (int)cellIDDiff.y;
-		cellIDDiff.z > 0 ? data.ValidID1[2] : data.ValidID0[2] -= (int)cellIDDiff.z;
+		cellIDDiff.x > 0 ? cbData.ValidID1[0] : cbData.ValidID0[0] -= (int)cellIDDiff.x;
+		cellIDDiff.y > 0 ? cbData.ValidID1[1] : cbData.ValidID0[1] -= (int)cellIDDiff.y;
+		cellIDDiff.z > 0 ? cbData.ValidID1[2] : cbData.ValidID0[2] -= (int)cellIDDiff.z;
 
-		skylightingCB->Update(data);
+		skylightingCB->Update(cbData);
 
 		lastCellID = cellID;
 	}
@@ -221,6 +221,12 @@ void Skylighting::Prepass()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(nullptr, nullptr, 0);
+	}
+
+	// set PS shader resource
+	{
+		ID3D11ShaderResourceView* srv = texProbeArray->srv.get();
+		context->PSSetShaderResources(29, 1, &srv);
 	}
 }
 

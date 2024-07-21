@@ -18,7 +18,7 @@ struct Skylighting : Feature
 	virtual inline std::string GetName() { return "Skylighting"; }
 	virtual inline std::string GetShortName() { return "Skylighting"; }
 	inline std::string_view GetShaderDefineName() override { return "SKYLIGHTING"; }
-	// bool HasShaderDefine(RE::BSShader::Type) override { return true; };
+	bool HasShaderDefine(RE::BSShader::Type) override { return true; };
 
 	virtual inline void RestoreDefaultSettings() override{};
 	virtual void DrawSettings() override;
@@ -50,7 +50,7 @@ struct Skylighting : Feature
 		float SpecularBrightness = 4;
 	} settings;
 
-	struct alignas(16) SkylightingCB
+	struct SkylightingCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 OcclusionDir;
@@ -62,7 +62,8 @@ struct Skylighting : Feature
 		uint ValidID1[4];
 
 		float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
-	};
+	} cbData;
+	static_assert(sizeof(SkylightingCB) % 16 == 0);
 	eastl::unique_ptr<ConstantBuffer> skylightingCB = nullptr;
 
 	winrt::com_ptr<ID3D11SamplerState> pointClampSampler = nullptr;

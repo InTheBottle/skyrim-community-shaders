@@ -1,36 +1,43 @@
-#ifndef SKYLIGHTING_INCLUDE
-#define SKYLIGHTING_INCLUDE
+// Define SL_INCL_STRUCT and SL_INCL_METHODS to include different parts
+// Because this file is included by both forward and deferred shaders
 
-#include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-
-cbuffer SkylightingCB : register(b1)
+#ifdef SL_INCL_STRUCT
+struct SkylightingSettings
 {
-	row_major float4x4 SL_OcclusionViewProj;
-	float4 SL_OcclusionDir;
+	row_major float4x4 OcclusionViewProj;
+	float4 OcclusionDir;
 
-	float4 SL_PosOffset;
-	uint4 SL_ArrayOrigin;
-	uint4 SL_ValidID0;
-	uint4 SL_ValidID1;
+	float4 PosOffset;
+	uint4 ArrayOrigin;
+	uint4 ValidID0;
+	uint4 ValidID1;
 
-	float4 SL_MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
-
-	uint4 SL_DoOcclusion;
+	float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
 };
 
-const static uint3 SKYLIGHTING_ARRAY_DIM = uint3(128, 128, 64);
-const static float3 SKYLIGHTING_ARRAY_SIZE = float3(8192, 8192, 8192 * 0.5);
-const static float3 SKYLIGHTING_CELL_SIZE = SKYLIGHTING_ARRAY_SIZE / SKYLIGHTING_ARRAY_DIM;
+#endif
 
-sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 normalWS)
+#ifdef SL_INCL_METHODS
+
+#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+
+#	ifdef PSHADER
+Texture3D<sh2> SkylightingProbeArray : register(t29);
+#	endif
+
+const static uint3 SL_ARRAY_DIM = uint3(128, 128, 64);
+const static float3 SL_ARRAY_SIZE = float3(8192, 8192, 8192 * 0.5);
+const static float3 SL_CELL_SIZE = SL_ARRAY_SIZE / SL_ARRAY_DIM;
+
+sh2 sampleSkylighting(SkylightingSettings params, Texture3D<sh2> probeArray, float3 positionMS, float3 normalWS)
 {
-	float3 positionMSAdjusted = positionMS - SL_PosOffset;
-	float3 uvw = positionMSAdjusted / SKYLIGHTING_ARRAY_SIZE + .5;
+	float3 positionMSAdjusted = positionMS - params.PosOffset;
+	float3 uvw = positionMSAdjusted / SL_ARRAY_SIZE + .5;
 
 	if (any(uvw < 0) || any(uvw > 1))
 		return 1;
 
-	float3 cellVxCoord = uvw * SKYLIGHTING_ARRAY_DIM;
+	float3 cellVxCoord = uvw * SL_ARRAY_DIM;
 	int3 cell000 = floor(cellVxCoord - 0.5);
 	float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
@@ -42,11 +49,11 @@ sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 norma
 				int3 offset = int3(i, j, k);
 				int3 cellID = cell000 + offset;
 
-				if (any(cellID < 0) || any(cellID >= SKYLIGHTING_ARRAY_DIM))
+				if (any(cellID < 0) || any(cellID >= SL_ARRAY_DIM))
 					continue;
 
-				float3 cellCentreMS = cellID + 0.5 - SKYLIGHTING_ARRAY_DIM / 2;
-				cellCentreMS = cellCentreMS * SKYLIGHTING_CELL_SIZE;
+				float3 cellCentreMS = cellID + 0.5 - SL_ARRAY_DIM / 2;
+				cellCentreMS = cellCentreMS * SL_CELL_SIZE;
 
 				// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
 				// basic tangent checks
@@ -56,7 +63,7 @@ sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 norma
 				float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 				float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-				uint3 cellTexID = (cellID + SL_ArrayOrigin.xyz) % SKYLIGHTING_ARRAY_DIM;
+				uint3 cellTexID = (cellID + params.ArrayOrigin.xyz) % SL_ARRAY_DIM;
 				sh2 probe = shScale(probeArray[cellTexID], w);
 
 				sum = shAdd(sum, probe);
@@ -87,16 +94,6 @@ float shHallucinateZH3Irradiance(sh2 sh, float3 normal)
 	result += 0.25f * zonalL2Coeff * zhDir;
 
 	return saturate(result);
-}
-
-// https://www.gdcvault.com/play/1026701/Fast-Denoising-With-Self-Stabilizing
-float3 getSpecularDominantDirection(float3 N, float3 V, float roughness)
-{
-	float f = (1 - roughness) * (sqrt(1 - roughness) + roughness);
-	float3 R = reflect(-V, N);
-	float3 D = lerp(N, R, f);
-
-	return normalize(D);
 }
 
 sh2 fauxSpecularLobeSH(float3 N, float3 V, float roughness)

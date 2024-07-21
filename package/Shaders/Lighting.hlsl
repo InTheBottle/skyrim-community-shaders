@@ -928,10 +928,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "CloudShadows/CloudShadows.hlsli"
 #	endif
 
-// #	if defined(SKYLIGHTING)
-// #		define LinearSampler SampColorSampler
-// #		include "Skylighting/Skylighting.hlsli"
-// #	endif
+#	if defined(SKYLIGHTING)
+#		define SL_INCL_METHODS
+#		include "Skylighting/Skylighting.hlsli"
+#	endif
 
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
@@ -1514,13 +1514,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float maxOcclusion = 1;
 	float minWetnessAngle = 0;
 	minWetnessAngle = saturate(max(minWetnessValue, worldSpaceNormal.z));
-
 #		if defined(SKYLIGHTING)
-	float wetnessOcclusion = saturate(shUnproject(skylightingSH, float3(0, 0, -1)));
-	wetnessOcclusion = saturate(wetnessOcclusion * 1.5);
-#		endif
-
-	bool raindropOccluded = false;
+	sh2 skylightingSH = sampleSkylighting(skylightingSettings, SkylightingProbeArray, input.WorldPosition.xyz, worldSpaceNormal);
+	float wetnessOcclusion = saturate(shUnproject(skylightingSH, float3(0, 0, 1)) * 10);
+#		endif  // SKYLIGHTING
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	if (worldSpaceNormal.z > 0 && wetnessEffects.Raining > 0.0f && wetnessEffects.EnableRaindropFx &&
