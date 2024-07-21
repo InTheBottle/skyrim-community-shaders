@@ -5,13 +5,17 @@
 
 cbuffer SkylightingCB : register(b1)
 {
-	row_major float4x4 OcclusionViewProj;
-	float4 OcclusionDir;
+	row_major float4x4 SL_OcclusionViewProj;
+	float4 SL_OcclusionDir;
 
-	float4 PosOffset;
-	uint4 ArrayOrigin;
-	uint4 ValidID0;
-	uint4 ValidID1;
+	float4 SL_PosOffset;
+	uint4 SL_ArrayOrigin;
+	uint4 SL_ValidID0;
+	uint4 SL_ValidID1;
+
+	float4 SL_MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
+
+	uint4 SL_DoOcclusion;
 };
 
 const static uint3 SKYLIGHTING_ARRAY_DIM = uint3(128, 128, 64);
@@ -20,7 +24,7 @@ const static float3 SKYLIGHTING_CELL_SIZE = SKYLIGHTING_ARRAY_SIZE / SKYLIGHTING
 
 sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 normalWS)
 {
-	float3 positionMSAdjusted = positionMS - PosOffset;
+	float3 positionMSAdjusted = positionMS - SL_PosOffset;
 	float3 uvw = positionMSAdjusted / SKYLIGHTING_ARRAY_SIZE + .5;
 
 	if (any(uvw < 0) || any(uvw > 1))
@@ -52,7 +56,7 @@ sh2 sampleSkylighting(Texture3D<sh2> probeArray, float3 positionMS, float3 norma
 				float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 				float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-				uint3 cellTexID = (cellID + ArrayOrigin.xyz) % SKYLIGHTING_ARRAY_DIM;
+				uint3 cellTexID = (cellID + SL_ArrayOrigin.xyz) % SKYLIGHTING_ARRAY_DIM;
 				sh2 probe = shScale(probeArray[cellTexID], w);
 
 				sum = shAdd(sum, probe);

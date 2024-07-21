@@ -32,7 +32,8 @@ struct Skylighting : Feature
 	void CompileComputeShaders();
 
 	virtual inline void Draw(const RE::BSShader*, const uint32_t) override{};
-	void UpdateProbeArray();
+
+	virtual void Prepass() override;
 
 	virtual void PostPostLoad() override;
 
@@ -42,10 +43,12 @@ struct Skylighting : Feature
 
 	struct Settings
 	{
-		float maxZenith = 3.1415926f / 3.f;  // 60 deg
+		float MaxZenith = 3.1415926f / 3.f;  // 60 deg
+		float MinDiffuseVisibility = 0.25;
+		float DiffuseBrightness = 3;
+		float MinSpecularVisibility = 0;
+		float SpecularBrightness = 4;
 	} settings;
-
-	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 
 	struct alignas(16) SkylightingCB
 	{
@@ -53,10 +56,12 @@ struct Skylighting : Feature
 		float4 OcclusionDir;
 
 		float3 PosOffset;  // cell origin in camera model space
-		float _pad;
+		float _pad0;
 		uint ArrayOrigin[4];
 		uint ValidID0[4];
 		uint ValidID1[4];
+
+		float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
 	};
 	eastl::unique_ptr<ConstantBuffer> skylightingCB = nullptr;
 
@@ -65,23 +70,24 @@ struct Skylighting : Feature
 	Texture2D* texOcclusion = nullptr;
 	Texture3D* texProbeArray = nullptr;
 
-	bool doOcclusion = true;
+	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 
+	// misc parameters
+	bool doOcclusion = true;
 	uint probeArrayDims[3] = { 128, 128, 64 };
 	float occlusionDistance = 8192.f;
 	bool renderTrees = false;
-
 	float boundSize = 128;
+
+	// cached variables
 	bool inOcclusion = false;
-
 	RE::NiPoint3 eyePosition{};
-	RE::BSGraphics::DepthStencilData precipitationCopy;
-
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;
 
 	//////////////////////////////////////////////////////////////////////////////////
 
+	// Hooks
 	struct BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl
 	{
 		static void* thunk(RE::BSLightingShaderProperty* property, RE::BSGeometry* geometry, uint32_t renderMode, RE::BSGraphics::BSShaderAccumulator* accumulator);

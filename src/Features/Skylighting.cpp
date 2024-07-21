@@ -2,22 +2,43 @@
 
 #include "Skylighting/RNGSobol.h"
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	Skylighting::Settings,
+	MaxZenith,
+	MinDiffuseVisibility,
+	DiffuseBrightness,
+	MinSpecularVisibility,
+	SpecularBrightness)
+
 void Skylighting::Load(json& o_json)
 {
-	// if (o_json[GetName()].is_object())
-	// 	settings = o_json[GetName()];
+	if (o_json[GetName()].is_object())
+		settings = o_json[GetName()];
 
 	Feature::Load(o_json);
 }
 
-void Skylighting::Save(json&)
+void Skylighting::Save(json& o_json)
 {
-	// o_json[GetName()] = settings;
+	o_json[GetName()] = settings;
 }
 
 void Skylighting::DrawSettings()
 {
-	ImGui::SliderAngle("Max Zenith Angle", &settings.maxZenith, 0, 90);
+	ImGui::SliderAngle("Max Zenith Angle", &settings.MaxZenith, 0, 90);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text(
+			"Smaller angles creates more focused top-down shadow, with less flickering.\n"
+			"Larger angles enhances horizontal light \"spilling\".");
+
+	if (ImGui::TreeNodeEx("Visual", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat("Min Diffuse Visibility", &settings.MinDiffuseVisibility, 0, 1, "%.2f");
+		ImGui::SliderFloat("Diffuse Brightness", &settings.DiffuseBrightness, 0, 5, "%.1f");
+		ImGui::SliderFloat("Min Specular Visibility", &settings.MinSpecularVisibility, 0, 1, "%.2f");
+		ImGui::SliderFloat("Specular Brightness", &settings.SpecularBrightness, 0, 5, "%.1f");
+
+		ImGui::TreePop();
+	}
 }
 
 void Skylighting::SetupResources()
@@ -130,7 +151,7 @@ void Skylighting::CompileComputeShaders()
 	}
 }
 
-void Skylighting::UpdateProbeArray()
+void Skylighting::Prepass()
 {
 	auto& context = State::GetSingleton()->context;
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
@@ -160,6 +181,7 @@ void Skylighting::UpdateProbeArray()
 				((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2], 0 },
 			.ValidID0 = { 0, 0, 0, 0 },
 			.ValidID1 = { probeArrayDims[0] - 1, probeArrayDims[1] - 1, probeArrayDims[2] - 1, 0 },
+			.MixParams = { settings.MinDiffuseVisibility, settings.DiffuseBrightness, settings.MinSpecularVisibility, settings.SpecularBrightness },
 		};
 
 		float3 cellIDDiff = cellID - lastCellID;
@@ -177,23 +199,29 @@ void Skylighting::UpdateProbeArray()
 	std::array<ID3D11SamplerState*, 1> samplers = { pointClampSampler.get() };
 	auto cb = skylightingCB->CB();
 
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
-	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-	context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-	context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
+	// update probe array
+	{
+		context->CSSetConstantBuffers(1, 1, &cb);
+		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
+		context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
+	}
 
-	srvs.fill(nullptr);
-	uavs.fill(nullptr);
-	samplers.fill(nullptr);
-	cb = nullptr;
+	// reset
+	{
+		srvs.fill(nullptr);
+		uavs.fill(nullptr);
+		samplers.fill(nullptr);
+		cb = nullptr;
 
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
-	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-	context->CSSetShader(nullptr, nullptr, 0);
+		context->CSSetConstantBuffers(1, 1, &cb);
+		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 }
 
 void Skylighting::PostPostLoad()
@@ -530,7 +558,7 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 			auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-			GetSingleton()->precipitationCopy = precipitation;
+			RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
 
 			auto viewport = RE::BSGraphics::State::GetSingleton();
 
@@ -562,7 +590,7 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 				vPoint.x = (float)rng.generate01();
 				vPoint.y = (float)rng.generate01();
 
-				vPoint.x = sqrt(vPoint.x * sin(GetSingleton()->settings.maxZenith));
+				vPoint.x = sqrt(vPoint.x * sin(GetSingleton()->settings.MaxZenith));
 				vPoint.y *= 6.28318530718;
 
 				vPoint = { vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
@@ -592,7 +620,7 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 
 			PrecipitationShaderDirection = originalParticleShaderDirection;
 
-			precipitation = GetSingleton()->precipitationCopy;
+			precipitation = precipitationCopy;
 		}
 	}
 	State::GetSingleton()->EndPerfEvent();

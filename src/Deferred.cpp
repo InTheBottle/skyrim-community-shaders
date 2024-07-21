@@ -421,6 +421,7 @@ void Deferred::DeferredPasses()
 		interior = sky->mode.get() != RE::Sky::Mode::kFull;
 
 	auto skylighting = Skylighting::GetSingleton();
+
 	auto ssgi = ScreenSpaceGI::GetSingleton();
 
 	auto dispatchCount = Util::GetScreenDispatchCount();

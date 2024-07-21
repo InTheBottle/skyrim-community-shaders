@@ -81,8 +81,9 @@ Texture3D<sh2> SkylightingProbeArray : register(t9);
 #	elif defined(SKYLIGHTING)
 		sh2 skylighting = sampleSkylighting(SkylightingProbeArray, positionWS.xyz, normalWS);
 		sh2 specularLobe = fauxSpecularLobeSH(normalWS, -V, roughness);
+
 		half skylightingSpecular = saturate(shFuncProductIntegral(skylighting, specularLobe));
-		skylightingSpecular = saturate(skylightingSpecular * 4);
+		skylightingSpecular = lerp(SL_MixParams.z, 1, saturate(skylightingSpecular * SL_MixParams.w));
 
 		// fadeout
 		const float fadeDist = 0.9;
