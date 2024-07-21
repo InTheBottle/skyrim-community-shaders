@@ -75,6 +75,34 @@ sh2 sampleSkylighting(SkylightingSettings params, Texture3D<sh2> probeArray, flo
 	return result;
 }
 
+float getVLSkylighting(SkylightingSettings params, Texture3D<sh2> probeArray, float3 startPosWS, float3 endPosWS, float2 screenPosition)
+{
+	const static uint nSteps = 16;
+	const static float step = 1.0 / float(nSteps);
+
+	float3 worldDir = endPosWS - startPosWS;
+	float3 worldDirNormalised = normalize(worldDir);
+
+	float noise = InterleavedGradientNoise(screenPosition);
+
+	float vl = 0;
+
+	for (uint i = 0; i < nSteps; ++i) {
+		float t = saturate(i * step);
+
+		float shadow = 0;
+		{
+			float3 samplePositionWS = startPosWS + worldDir * t;
+
+			sh2 skylighting = sampleSkylighting(params, probeArray, samplePositionWS, float3(0, 0, 1));
+
+			shadow += lerp(params.MixParams.x, 1, saturate(shUnproject(skylighting, worldDirNormalised) * params.MixParams.y));
+		}
+		vl += shadow;
+	}
+	return vl * step;
+}
+
 // http://torust.me/ZH3.pdf
 // ZH hallucination that makes skylighting more directional
 // skipped luminance because it's single channel
