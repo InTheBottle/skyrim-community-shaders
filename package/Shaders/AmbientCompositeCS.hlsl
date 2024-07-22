@@ -59,7 +59,7 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
 
 	sh2 skylighting = sampleSkylighting(skylightingSettings, SkylightingProbeArray, positionMS.xyz, normalWS);
-	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, normalWS);
+	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, skylightingSettings.DirectionalDiffuse ? normalWS : float3(0, 0, 1));
 	skylightingDiffuse = lerp(skylightingSettings.MixParams.x, 1, saturate(skylightingDiffuse * skylightingSettings.MixParams.y));
 	skylightingDiffuse = applySkylightingFadeout(skylightingDiffuse, length(positionMS.xyz));
 

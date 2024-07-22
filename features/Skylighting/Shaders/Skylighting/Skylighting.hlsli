@@ -12,6 +12,9 @@ struct SkylightingSettings
 	int4 ValidMargin;
 
 	float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
+
+	uint DirectionalDiffuse;
+	float3 _pad1;
 };
 
 #endif

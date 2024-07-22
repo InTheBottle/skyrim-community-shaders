@@ -43,9 +43,10 @@ struct Skylighting : Feature
 
 	struct Settings
 	{
+		bool DirectionalDiffuse = true;
 		float MaxZenith = 3.1415926f / 3.f;  // 60 deg
 		float MinDiffuseVisibility = 0.1;
-		float DiffuseBrightness = 5;
+		float DiffuseBrightness = 4;
 		float MinSpecularVisibility = 0;
 		float SpecularBrightness = 4;
 	} settings;
@@ -61,6 +62,9 @@ struct Skylighting : Feature
 		int ValidMargin[4];
 
 		float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
+
+		uint DirectionalDiffuse;
+		float3 _pad1;
 	} cbData;
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 	eastl::unique_ptr<ConstantBuffer> skylightingCB = nullptr;

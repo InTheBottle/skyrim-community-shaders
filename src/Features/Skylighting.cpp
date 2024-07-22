@@ -4,6 +4,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
+	DirectionalDiffuse,
 	MaxZenith,
 	MinDiffuseVisibility,
 	DiffuseBrightness,
@@ -25,20 +26,20 @@ void Skylighting::Save(json& o_json)
 
 void Skylighting::DrawSettings()
 {
-	ImGui::SliderAngle("Max Zenith Angle", &settings.MaxZenith, 0, 90);
+	ImGui::Checkbox("Directional Diffuse", &settings.DirectionalDiffuse);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text(
-			"Smaller angles creates more focused top-down shadow, with less flickering.\n"
-			"Larger angles enhances horizontal light \"spilling\".");
+			"Extra darkening depending on surface orientation.\n"
+			"More physically correct, but may impact the intended visual of certain weathers.");
 
-	if (ImGui::TreeNodeEx("Visual", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Min Diffuse Visibility", &settings.MinDiffuseVisibility, 0, 1, "%.2f");
-		ImGui::SliderFloat("Diffuse Brightness", &settings.DiffuseBrightness, 0, 10, "%.1f");
-		ImGui::SliderFloat("Min Specular Visibility", &settings.MinSpecularVisibility, 0, 1, "%.2f");
-		ImGui::SliderFloat("Specular Brightness", &settings.SpecularBrightness, 0, 10, "%.1f");
+	ImGui::SliderAngle("Max Zenith Angle", &settings.MaxZenith, 0, 90);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("Smaller angles creates more focused top-down shadow.");
 
-		ImGui::TreePop();
-	}
+	ImGui::SliderFloat("Diffuse Min Visibility", &settings.MinDiffuseVisibility, 0, 1, "%.2f");
+	ImGui::SliderFloat("Diffuse Brightness", &settings.DiffuseBrightness, 0, 10, "%.1f");
+	ImGui::SliderFloat("Specular Min Visibility", &settings.MinSpecularVisibility, 0, 1, "%.2f");
+	ImGui::SliderFloat("Specular Brightness", &settings.SpecularBrightness, 0, 10, "%.1f");
 }
 
 void Skylighting::SetupResources()
@@ -163,7 +164,7 @@ void Skylighting::Prepass()
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
 
 	{
-		static float3 lastCellID = { 0, 0, 0 };
+		static float3 prevCellID = { 0, 0, 0 };
 
 		auto eyePosNI = !REL::Module::IsVR() ? state->GetRuntimeData().posAdjust.getEye() : state->GetVRRuntimeData().posAdjust.getEye();
 		auto eyePos = float3{ eyePosNI.x, eyePosNI.y, eyePosNI.z };
@@ -176,7 +177,7 @@ void Skylighting::Prepass()
 		auto cellID = eyePos / cellSize;
 		cellID = { round(cellID.x), round(cellID.y), round(cellID.z) };
 		auto cellOrigin = cellID * cellSize;
-		float3 cellIDDiff = lastCellID - cellID;
+		float3 cellIDDiff = prevCellID - cellID;
 
 		cbData = {
 			.OcclusionViewProj = OcclusionTransform,
@@ -188,11 +189,12 @@ void Skylighting::Prepass()
 				((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2], 0 },
 			.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 			.MixParams = { settings.MinDiffuseVisibility, settings.DiffuseBrightness, settings.MinSpecularVisibility, settings.SpecularBrightness },
+			.DirectionalDiffuse = settings.DirectionalDiffuse,
 		};
 
 		skylightingCB->Update(cbData);
 
-		lastCellID = cellID;
+		prevCellID = cellID;
 	}
 
 	std::array<ID3D11ShaderResourceView*, 1> srvs = { texOcclusion->srv.get() };
@@ -588,7 +590,7 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 				vPoint = { vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
 			}
 
-			float3 PrecipitationShaderDirectionF = -float3{ vPoint.x, vPoint.y, 1 - vPoint.LengthSquared() };  // cosine weighted
+			float3 PrecipitationShaderDirectionF = -float3{ vPoint.x, vPoint.y, sqrt(1 - vPoint.LengthSquared()) };
 			PrecipitationShaderDirectionF.Normalize();
 
 			PrecipitationShaderDirection = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z };
