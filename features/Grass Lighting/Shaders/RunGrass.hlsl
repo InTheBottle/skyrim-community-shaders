@@ -297,7 +297,7 @@ float3x3 CalculateTBN(float3 N, float3 p, float2 uv)
 #	endif
 
 #	if defined(SKYLIGHTING)
-#		define LinearSampler SampBaseSampler
+#		define SL_INCL_METHODS
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 
@@ -459,9 +459,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 
 #			if defined(SKYLIGHTING)
-	float4 skylightingSH = SkylightingTexture.Load(int3(input.HPosition.xy, 0));
-	float skylighting = saturate(shUnproject(skylightingSH, normal));
-	directionalAmbientColor *= lerp(1.0 / 3.0, 1.0, skylighting);
+	sh2 skylightingSH = sampleSkylighting(skylightingSettings, SkylightingProbeArray, input.WorldPosition.xyz, worldSpaceNormal);
+	float skylighting = shHallucinateZH3Irradiance(skylightingSH, normalWS);
+	skylighting = lerp(skylightingSettings.MixParams.x, 1, saturate(skylighting * skylightingSettings.MixParams.y));
+	skylighting = applySkylightingFadeout(skylighting, length(input.WorldPosition.xyz));
+	directionalAmbientColor *= skylighting;
 #			endif
 
 	diffuseColor += directionalAmbientColor;

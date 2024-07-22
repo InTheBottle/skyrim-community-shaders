@@ -92,27 +92,23 @@ Texture3D<sh2> SkylightingProbeArray : register(t9);
 
 		half skylightingSpecular = saturate(shFuncProductIntegral(skylighting, specularLobe));
 		skylightingSpecular = lerp(skylightingSettings.MixParams.z, 1, saturate(skylightingSpecular * skylightingSettings.MixParams.w));
-
-		// fadeout
-		const float fadeDist = 0.9;
-		float fadeFactor = saturate((length(positionWS.xyz) * 2 / SL_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
-		skylightingSpecular = lerp(skylightingSpecular, 1, fadeFactor);
+		skylightingSpecular = applySkylightingFadeout(skylightingSpecular, length(positionWS.xyz));
 
 		half3 specularIrradiance = 1;
 
-		if (skylighting < 1.0) {
+		if (skylightingSpecular < 1.0) {
 			specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level).xyz;
 			specularIrradiance = sRGB2Lin(specularIrradiance);
 		}
 
 		half3 specularIrradianceReflections = 1.0;
 
-		if (skylighting > 0.0) {
+		if (skylightingSpecular > 0.0) {
 			specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
 			specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);
 		}
 
-		color += reflectance * lerp(specularIrradiance, specularIrradianceReflections, skylighting);
+		color += reflectance * lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular);
 #	else
 		half3 specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level).xyz;
 		specularIrradianceReflections = sRGB2Lin(specularIrradianceReflections);

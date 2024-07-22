@@ -139,4 +139,11 @@ sh2 fauxSpecularLobeSH(float3 N, float3 V, float roughness)
 	return result;
 }
 
+float applySkylightingFadeout(float x, float dist)
+{
+	const static float fadeDist = 0.9;
+	float fadeFactor = saturate((dist * 2 / SL_ARRAY_SIZE.x - fadeDist) / (1 - fadeDist));
+	return lerp(x, 1, fadeFactor);
+}
+
 #endif
