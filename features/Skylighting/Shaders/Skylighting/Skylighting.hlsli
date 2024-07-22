@@ -9,7 +9,7 @@ struct SkylightingSettings
 
 	float4 PosOffset;
 	uint4 ArrayOrigin;
-	uint4 ValidMargin;
+	int4 ValidMargin;
 
 	float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
 };
