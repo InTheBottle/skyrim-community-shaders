@@ -40,7 +40,6 @@ public:
 
 	struct alignas(16) UpdateCubemapCB
 	{
-		float4 CameraData;
 		uint Reset;
 		float3 CameraPreviousPosAdjust;
 	};

@@ -52,7 +52,6 @@ float3 GetSamplingVector(uint3 ThreadID, in RWTexture2DArray<float4> OutputTextu
 
 cbuffer UpdateData : register(b1)
 {
-	float4 CameraData2;
 	uint Reset;
 	float3 CameraPreviousPosAdjust2;
 }

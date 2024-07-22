@@ -240,7 +240,6 @@ void DynamicCubemaps::UpdateCubemapCapture()
 	context->PSGetConstantBuffers(12, 1, buffers);
 
 	UpdateCubemapCB updateData{};
-	updateData.CameraData = Util::GetCameraData();
 	updateData.Reset = resetCapture;
 
 	static float3 cameraPreviousPosAdjust = { 0, 0, 0 };
