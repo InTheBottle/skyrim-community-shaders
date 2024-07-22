@@ -25,7 +25,7 @@ SamplerState samplerPointClamp : register(s0);
 	const static float rcpMaxUint = rcp(4294967295.0);
 
 	uint3 cellID = (int3(dtid) - settings.ArrayOrigin.xyz) % ARRAY_DIM;
-	bool isValid = all(cellID >= settings.ValidID0.xyz) && all(cellID <= settings.ValidID1.xyz);  // check if the cell is newly added
+	bool isValid = all(cellID >= settings.ValidMargin.xyz) && all(cellID <= ARRAY_DIM - 1 - settings.ValidMargin.xyz);  // check if the cell is newly added
 
 	float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
 	cellCentreMS = cellCentreMS / ARRAY_DIM * ARRAY_SIZE + settings.PosOffset.xyz;
@@ -48,7 +48,7 @@ SamplerState samplerPointClamp : register(s0);
 		outProbeArray[dtid] = occlusionSH;
 		outAccumFramesArray[dtid] = accumFrames;
 	} else if (!isValid) {
-		outProbeArray[dtid] = 1;
+		outProbeArray[dtid] = float4(1, 0, 1, 0);
 		outAccumFramesArray[dtid] = 0;
 	}
 }

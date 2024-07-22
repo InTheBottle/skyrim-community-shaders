@@ -9,8 +9,7 @@ struct SkylightingSettings
 
 	float4 PosOffset;
 	uint4 ArrayOrigin;
-	uint4 ValidID0;
-	uint4 ValidID1;
+	uint4 ValidMargin;
 
 	float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
 };
@@ -35,7 +34,7 @@ sh2 sampleSkylighting(SkylightingSettings params, Texture3D<sh2> probeArray, flo
 	float3 uvw = positionMSAdjusted / SL_ARRAY_SIZE + .5;
 
 	if (any(uvw < 0) || any(uvw > 1))
-		return 1;
+		return float4(1, 0, 1, 0);
 
 	float3 cellVxCoord = uvw * SL_ARRAY_DIM;
 	int3 cell000 = floor(cellVxCoord - 0.5);

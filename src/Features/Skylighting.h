@@ -58,8 +58,7 @@ struct Skylighting : Feature
 		float3 PosOffset;  // cell origin in camera model space
 		float _pad0;
 		uint ArrayOrigin[4];
-		uint ValidID0[4];
-		uint ValidID1[4];
+		uint ValidMargin[4];
 
 		float4 MixParams;  // x: min diffuse visibility, y: diffuse mult, z: min specular visibility, w: specular mult
 	} cbData;

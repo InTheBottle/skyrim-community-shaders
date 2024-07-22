@@ -176,6 +176,7 @@ void Skylighting::Prepass()
 		auto cellID = eyePos / cellSize;
 		cellID = { round(cellID.x), round(cellID.y), round(cellID.z) };
 		auto cellOrigin = cellID * cellSize;
+		float3 cellIDDiff = cellID - lastCellID;
 
 		cbData = {
 			.OcclusionViewProj = OcclusionTransform,
@@ -185,15 +186,9 @@ void Skylighting::Prepass()
 				((int)cellID.x - probeArrayDims[0] / 2) % probeArrayDims[0],
 				((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
 				((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2], 0 },
-			.ValidID0 = { 0, 0, 0, 0 },
-			.ValidID1 = { probeArrayDims[0] - 1, probeArrayDims[1] - 1, probeArrayDims[2] - 1, 0 },
+			.ValidMargin = { (uint)abs(cellIDDiff.x), (uint)abs(cellIDDiff.y), (uint)abs(cellIDDiff.z) },
 			.MixParams = { settings.MinDiffuseVisibility, settings.DiffuseBrightness, settings.MinSpecularVisibility, settings.SpecularBrightness },
 		};
-
-		float3 cellIDDiff = cellID - lastCellID;
-		cellIDDiff.x > 0 ? cbData.ValidID1[0] : cbData.ValidID0[0] -= (int)cellIDDiff.x;
-		cellIDDiff.y > 0 ? cbData.ValidID1[1] : cbData.ValidID0[1] -= (int)cellIDDiff.y;
-		cellIDDiff.z > 0 ? cbData.ValidID1[2] : cbData.ValidID0[2] -= (int)cellIDDiff.z;
 
 		skylightingCB->Update(cbData);
 
@@ -241,7 +236,7 @@ void Skylighting::PostPostLoad()
 	logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 	stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 	stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
-	// stl::write_thunk_call<SetViewFrustum>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D));
+	stl::write_thunk_call<SetViewFrustum>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D));
 }
 
 //////////////////////////////////////////////////////////////
@@ -581,7 +576,7 @@ void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 				static std::once_flag flag;
 				std::call_once(flag, [&]() { rng.setDim(2); });
 
-				if (viewport->frameCount % 1000 == 0)
+				if (viewport->frameCount % 10000 == 0)
 					rng.setSeed(std::rand());
 
 				vPoint.x = (float)rng.generate01();
