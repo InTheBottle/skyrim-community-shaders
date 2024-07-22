@@ -37,8 +37,6 @@ struct Skylighting : Feature
 
 	virtual void PostPostLoad() override;
 
-	void UpdateDepthStencilView(RE::BSRenderPass* a_pass);
-
 	//////////////////////////////////////////////////////////////////////////////////
 
 	struct Settings

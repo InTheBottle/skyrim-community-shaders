@@ -459,10 +459,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 directionalAmbientColor = mul(DirectionalAmbientShared, float4(normal, 1.0));
 
 #			if defined(SKYLIGHTING)
-	sh2 skylightingSH = sampleSkylighting(skylightingSettings, SkylightingProbeArray, input.WorldPosition.xyz, worldSpaceNormal);
+#				if defined(VR)
+	float3 positionMSSkylight = input.WorldPosition.xyz + (eyeIndex == 1 ? CameraPosAdjust[1] - CameraPosAdjust[0] : 0);
+#				else
+	float3 positionMSSkylight = input.WorldPosition.xyz;
+#				endif
+
+	sh2 skylightingSH = sampleSkylighting(skylightingSettings, SkylightingProbeArray, positionMSSkylight, worldSpaceNormal);
 	float skylighting = shHallucinateZH3Irradiance(skylightingSH, normalWS);
 	skylighting = lerp(skylightingSettings.MixParams.x, 1, saturate(skylighting * skylightingSettings.MixParams.y));
-	skylighting = applySkylightingFadeout(skylighting, length(input.WorldPosition.xyz));
+	skylighting = applySkylightingFadeout(skylighting, length(positionMSSkylight));
 	directionalAmbientColor *= skylighting;
 #			endif
 

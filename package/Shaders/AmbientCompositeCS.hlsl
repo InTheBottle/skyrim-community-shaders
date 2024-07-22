@@ -55,8 +55,12 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 #if defined(SKYLIGHTING)
 	float rawDepth = DepthTexture[dispatchID.xy];
 	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, rawDepth, 1);
-	float4 positionMS = mul(CameraViewProjInverse[0], positionCS);
+	float4 positionMS = mul(CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz = positionMS.xyz / positionMS.w;
+#	if defined(VR)
+	if (eyeIndex == 1)
+		positionMS.xyz += CameraPosAdjust[1] - CameraPosAdjust[0];
+#	endif
 
 	sh2 skylighting = sampleSkylighting(skylightingSettings, SkylightingProbeArray, positionMS.xyz, normalWS);
 	half skylightingDiffuse = shHallucinateZH3Irradiance(skylighting, skylightingSettings.DirectionalDiffuse ? normalWS : float3(0, 0, 1));
