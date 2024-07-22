@@ -217,8 +217,8 @@ void Deferred::UpdateConstantBuffer()
 
 	auto state = State::GetSingleton();
 
-	data.BufferDim.x = state->screenWidth;
-	data.BufferDim.y = state->screenHeight;
+	data.BufferDim.x = state->screenSize.x;
+	data.BufferDim.y = state->screenSize.y;
 	data.BufferDim.z = 1.0f / data.BufferDim.x;
 	data.BufferDim.w = 1.0f / data.BufferDim.y;
 

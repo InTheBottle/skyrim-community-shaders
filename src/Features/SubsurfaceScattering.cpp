@@ -164,10 +164,7 @@ void SubsurfaceScattering::DrawSSS()
 
 	validMaterials = false;
 
-	auto viewport = RE::BSGraphics::State::GetSingleton();
-
-	float resolutionX = blurHorizontalTemp->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
-	float resolutionY = blurHorizontalTemp->desc.Height * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;
+	auto dispatchCount = Util::GetScreenDispatchCount();
 
 	{
 		auto cameraData = Util::GetCameraData(0);
@@ -209,7 +206,7 @@ void SubsurfaceScattering::DrawSSS()
 			auto shader = GetComputeShaderHorizontalBlur();
 			context->CSSetShader(shader, nullptr, 0);
 
-			context->Dispatch((uint32_t)std::ceil(resolutionX / 8.0f), (uint32_t)std::ceil(resolutionY / 8.0f), 1);
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 		}
 
 		uav = nullptr;
@@ -226,7 +223,7 @@ void SubsurfaceScattering::DrawSSS()
 			auto shader = GetComputeShaderVerticalBlur();
 			context->CSSetShader(shader, nullptr, 0);
 
-			context->Dispatch((uint32_t)std::ceil(resolutionX / 8.0f), (uint32_t)std::ceil(resolutionY / 8.0f), 1);
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 		}
 	}
 
