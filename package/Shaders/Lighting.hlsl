@@ -1772,11 +1772,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
 
-#	if defined(SKYLIGHTING) && !defined(SSGI)
-	float skylighting = shHallucinateZH3Irradiance(skylightingSH, normalWS);
-	skylighting = lerp(skylightingSettings.MixParams.x, 1, saturate(skylighting * skylightingSettings.MixParams.y));
-	skylighting = applySkylightingFadeout(skylighting, length(positionMSSkylight));
-	diffuseColor *= skylighting;
+	float3 reflectionDiffuseColor = diffuseColor + directionalAmbientColor;
+
+#	if defined(SKYLIGHTING)
+	float skylightingDiffuse = shHallucinateZH3Irradiance(skylightingSH, worldSpaceNormal);
+	skylightingDiffuse = lerp(skylightingSettings.MixParams.x, 1, saturate(skylightingDiffuse * skylightingSettings.MixParams.y));
+	skylightingDiffuse = applySkylightingFadeout(skylightingDiffuse, viewPosition.z);
+	directionalAmbientColor *= skylightingDiffuse;
 #	endif
 
 #	if !(defined(DEFERRED) && defined(SSGI))
@@ -1845,7 +1847,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	// This also applies fresnel
 	float3 wetnessReflectance = GetWetnessAmbientSpecular(screenUV, wetnessNormal, worldSpaceVertexNormal, worldSpaceViewDirection, 1.0 - wetnessGlossinessSpecular);
-	;
 
 #		if !defined(DEFERRED)
 	wetnessSpecular += wetnessReflectance;
@@ -1897,9 +1898,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		specularColor = 0;
 #	endif
 
-#	if defined(DEFERRED)
-	diffuseColor += directionalAmbientColor;
-#	endif
+	diffuseColor = reflectionDiffuseColor;
 
 #	if (defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE))
 #		if defined(DYNAMIC_CUBEMAPS)
