@@ -13,7 +13,7 @@ struct Skylighting : Feature
 		return &singleton;
 	}
 
-	bool SupportsVR() override { return false; };
+	bool SupportsVR() override { return true; };
 
 	virtual inline std::string GetName() { return "Skylighting"; }
 	virtual inline std::string GetShortName() { return "Skylighting"; }
