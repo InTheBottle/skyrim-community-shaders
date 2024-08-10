@@ -15,6 +15,7 @@
 #include "TruePBR.h"
 
 #include "VariableRateShading.h"
+#include "HDR.h"
 
 void State::Draw()
 {
@@ -38,7 +39,7 @@ void State::Draw()
 				}
 			}
 
-			VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
+			//VariableRateShading::GetSingleton()->UpdateViews(type != RE::BSShader::Type::ImageSpace && type != RE::BSShader::Type::Sky && type != RE::BSShader::Type::Water);
 			if (type > 0 && type < RE::BSShader::Type::Total) {
 				if (enabledClasses[type - 1]) {
 					// Only check against non-shader bits
@@ -268,6 +269,7 @@ void State::PostPostLoad()
 		logger::info("Skyrim Upscaler not detected");
 	Deferred::Hooks::Install();
 	TruePBR::GetSingleton()->PostPostLoad();
+	HDR::InstallHooks();
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)
@@ -375,6 +377,8 @@ void State::SetupResources()
 	context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
 	device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
 	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
+
+	HDR::GetSingleton()->SetupResources();
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)

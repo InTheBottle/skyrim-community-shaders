@@ -186,6 +186,8 @@ HRESULT STDMETHODCALLTYPE hk_CreatePixelShader(ID3D11Device* This, const void* p
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
 
+#include <dxgi1_4.h>  // For IDXGISwapChain3
+
 HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	IDXGIAdapter* pAdapter,
 	D3D_DRIVER_TYPE DriverType,
@@ -194,7 +196,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	[[maybe_unused]] const D3D_FEATURE_LEVEL* pFeatureLevels,
 	[[maybe_unused]] UINT FeatureLevels,
 	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+	DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
 	[[maybe_unused]] D3D_FEATURE_LEVEL* pFeatureLevel,
@@ -204,9 +206,12 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 
-#ifndef NDEBUG
-	Flags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
+//#ifndef NDEBUG
+//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
+//#endif
+
+	pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
 	HRESULT hr = (*ptrD3D11CreateDeviceAndSwapChain)(
 		pAdapter,
@@ -221,6 +226,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppDevice,
 		nullptr,
 		ppImmediateContext);
+
+	{
+		IDXGISwapChain3* pSwapChain3 = nullptr;
+		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
+
+		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+	}
 
 	return hr;
 }
@@ -475,9 +487,9 @@ namespace Hooks
 		logger::info("Hooking WndProcHandler");
 		stl::write_thunk_call_6<RegisterClassA_Hook>(REL::VariantID(75591, 77226, 0xDC4B90).address() + REL::VariantOffset(0x8E, 0x15C, 0x99).offset());
 
-		//logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-		//*(FARPROC*)&ptrD3D11CreateDeviceAndSwapChain = GetProcAddress(GetModuleHandleA("d3d11.dll"), "D3D11CreateDeviceAndSwapChain");
-		//SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+		logger::info("Hooking D3D11CreateDeviceAndSwapChain");
+		*(FARPROC*)&ptrD3D11CreateDeviceAndSwapChain = GetProcAddress(GetModuleHandleA("d3d11.dll"), "D3D11CreateDeviceAndSwapChain");
+		SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 
 		logger::info("Hooking BSShaderRenderTargets::Create");
 		*(uintptr_t*)&ptr_BSShaderRenderTargets_Create = Detours::X64::DetourFunction(REL::RelocationID(100458, 107175).address(), (uintptr_t)&hk_BSShaderRenderTargets_Create);
