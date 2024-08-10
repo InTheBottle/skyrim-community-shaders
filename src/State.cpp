@@ -14,8 +14,8 @@
 #include "Features/TerrainBlending.h"
 #include "TruePBR.h"
 
-#include "VariableRateShading.h"
 #include "HDR.h"
+#include "VariableRateShading.h"
 
 void State::Draw()
 {

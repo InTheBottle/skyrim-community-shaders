@@ -14,19 +14,19 @@ float average(float3 color)
 float safeDivision(float quotient, float dividend, int fallbackMode = 0)
 {
 	if (dividend == 0.f) {
-        if (fallbackMode == 0)
-          return 0;
-        if (fallbackMode == 1)
-          return sign(quotient);
-        return FLT_MAX * sign(quotient);
-    }
-    return quotient / dividend;
+		if (fallbackMode == 0)
+			return 0;
+		if (fallbackMode == 1)
+			return sign(quotient);
+		return FLT_MAX * sign(quotient);
+	}
+	return quotient / dividend;
 }
 
 // Returns 0, 1 or FLT_MAX if "dividend" is 0
 float3 safeDivision(float3 quotient, float3 dividend, int fallbackMode = 0)
 {
-    return float3(safeDivision(quotient.x, dividend.x, fallbackMode), safeDivision(quotient.y, dividend.y, fallbackMode), safeDivision(quotient.z, dividend.z, fallbackMode));
+	return float3(safeDivision(quotient.x, dividend.x, fallbackMode), safeDivision(quotient.y, dividend.y, fallbackMode), safeDivision(quotient.z, dividend.z, fallbackMode));
 }
 
 float3 sqr(float3 x) { return x * x; }
@@ -41,5 +41,5 @@ float max3(float3 _a) { return max(_a.x, max(_a.y, _a.z)); }
 
 float3 NRand3(float2 seed, float tr = 1.0)
 {
-  return frac(sin(dot(seed.xy, float2(34.483, 89.637) * tr)) * float3(29156.4765, 38273.5639, 47843.7546));
+	return frac(sin(dot(seed.xy, float2(34.483, 89.637) * tr)) * float3(29156.4765, 38273.5639, 47843.7546));
 }

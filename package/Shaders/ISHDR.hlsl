@@ -103,7 +103,7 @@ float3 AgxEotf(float3 val)
 	// NOTE: We're linearizing the output here. Comment/adjust when
 	// *not* using a sRGB render target
 	val = pow(saturate(val), 2.2);
-	
+
 	return val;
 }
 
@@ -114,25 +114,25 @@ float3 AgxMinimal(float3 val)
 	return val;
 }
 
-#include "Math.hlsl"
-#include "Color.hlsl"
-#include "DICE.hlsl"
-#include "Oklab.hlsl"
+#	include "Color.hlsl"
+#	include "DICE.hlsl"
+#	include "Math.hlsl"
+#	include "Oklab.hlsl"
 
 // Takes any original color (before some post process is applied to it) and re-applies the same transformation the post process had applied to it on a different (but similar) color.
 // The images are expected to have roughly the same mid gray.
 // It can be used for example to apply any SDR LUT or SDR Color Correction on an HDR color.
 float3 RestorePostProcess(float3 NonPostProcessedTargetColor, float3 NonPostProcessedSourceColor, float3 PostProcessedSourceColor)
 {
-    static const float MaxShadowsColor = pow(1.f / 3.f, 2.2);
-    const float3 PostProcessColorRatio = safeDivision(PostProcessedSourceColor, NonPostProcessedSourceColor);
-    const float3 PostProcessColorOffset = PostProcessedSourceColor - NonPostProcessedSourceColor;
-    const float3 PostProcessedRatioColor = NonPostProcessedTargetColor * PostProcessColorRatio;
-    const float3 PostProcessedOffsetColor = NonPostProcessedTargetColor + PostProcessColorOffset;
-    // Near black, we prefer using the "offset" (sum) pp restoration method, as otherwise any raised black from post processing would not work to apply,
-    // for example if any zero was shifted to a more raised color, "PostProcessColorRatio" would not be able to replicate that shift due to a division by zero.
-    const float3 PostProcessedTargetColor = lerp(PostProcessedOffsetColor, PostProcessedRatioColor, max(saturate(abs(NonPostProcessedTargetColor) / MaxShadowsColor), saturate(abs(NonPostProcessedSourceColor) / MaxShadowsColor)));
-    return PostProcessedTargetColor;
+	static const float MaxShadowsColor = pow(1.f / 3.f, 2.2);
+	const float3 PostProcessColorRatio = safeDivision(PostProcessedSourceColor, NonPostProcessedSourceColor);
+	const float3 PostProcessColorOffset = PostProcessedSourceColor - NonPostProcessedSourceColor;
+	const float3 PostProcessedRatioColor = NonPostProcessedTargetColor * PostProcessColorRatio;
+	const float3 PostProcessedOffsetColor = NonPostProcessedTargetColor + PostProcessColorOffset;
+	// Near black, we prefer using the "offset" (sum) pp restoration method, as otherwise any raised black from post processing would not work to apply,
+	// for example if any zero was shifted to a more raised color, "PostProcessColorRatio" would not be able to replicate that shift due to a division by zero.
+	const float3 PostProcessedTargetColor = lerp(PostProcessedOffsetColor, PostProcessedRatioColor, max(saturate(abs(NonPostProcessedTargetColor) / MaxShadowsColor), saturate(abs(NonPostProcessedSourceColor) / MaxShadowsColor)));
+	return PostProcessedTargetColor;
 }
 
 PS_OUTPUT main(PS_INPUT input)
@@ -198,16 +198,16 @@ PS_OUTPUT main(PS_INPUT input)
 		}
 
 		gameSdrColor = inputColor * (blendFactor / inputColor);
-		
+
 		float blendedLuminance = RGBToLuminance(gameSdrColor);
-		
+
 		ppColor = lerp(avgValue.x, Cinematic.w * lerp(lerp(blendedLuminance, gameSdrColor, Cinematic.x), blendedLuminance * Tint, Tint.w), Cinematic.z);
 	}
 
 	// Linearize game buffers, before they are used by HDR processing
 	gameSdrColor = pow(gameSdrColor, 2.2);
 	ppColor = pow(ppColor, 2.2);
-  	inputColor = pow(inputColor, 2.2);
+	inputColor = pow(inputColor, 2.2);
 
 	// In HDR, apply the SDR tonemapping and post-processing
 	inputColor = RestorePostProcess(inputColor, gameSdrColor, ppColor);
@@ -217,17 +217,17 @@ PS_OUTPUT main(PS_INPUT input)
 	inputColor.y *= 1.25;
 	inputColor = oklch_to_linear_srgb(inputColor);
 
-    float3 hdrColor = DICETonemap(inputColor * 203, 1000) / 203;
-	
+	float3 hdrColor = DICETonemap(inputColor * 203, 1000) / 203;
+
 #		if defined(FADE)
 	// Linearize the fade color, paper-white brightness
 	hdrColor = lerp(hdrColor, pow(Fade.xyz, 2.2), Fade.w);
 #		endif
 
 	// Convert the HDR image to the HDR10 color space
-  	float3 bt2020 = BT709_To_BT2020(hdrColor);
+	float3 bt2020 = BT709_To_BT2020(hdrColor);
 	psout.Color = float4(Linear_to_PQ((bt2020 * 203.0) / 10000.0), 1.0);
-	
+
 #	endif
 
 	return psout;

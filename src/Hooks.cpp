@@ -206,9 +206,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 
-//#ifndef NDEBUG
-//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
-//#endif
+	//#ifndef NDEBUG
+	//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
+	//#endif
 
 	pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
 	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;

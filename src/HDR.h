@@ -35,7 +35,7 @@ public:
 	struct MenuManagerDrawInterfaceStartHook
 	{
 		static void thunk(int64_t a1)
-		{		
+		{
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
@@ -72,7 +72,7 @@ public:
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
 			GetSingleton()->HDROutput();
-			
+
 			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER].RTV, nullptr);
 
 			func(a1);
@@ -125,7 +125,7 @@ public:
 	//struct PlayMovieEndHook
 	//{
 	//	static void thunk()
-	//	{		
+	//	{
 	//		func();
 
 	//		GetSingleton()->playingMovie = false;
@@ -195,7 +195,6 @@ public:
 	//	static inline REL::Relocation<decltype(thunk)> func;
 	//};
 
-
 	static void InstallHooks()
 	{
 		// stl::write_thunk_call<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x7E, 0x83, 0x17F));
@@ -206,7 +205,7 @@ public:
 		//stl::write_thunk_call<PlayMovieStartHook>(REL::RelocationID(38085, 82084).address() + REL::Relocate(0x6E, 0x17F, 0x17F));
 		//stl::write_thunk_call<PlayMovieEndHook>(REL::RelocationID(38085, 82084).address() + REL::Relocate(0x91, 0x17F, 0x17F));
 
-	//	stl::write_thunk_call<PlayMovieStartHook2>(REL::RelocationID(35550, 82084).address() + REL::Relocate(0x1C8, 0x17F, 0x17F));
-	//	stl::write_thunk_call<PlayMovieEndHook2>(REL::RelocationID(35550, 82084).address() + REL::Relocate(0x254, 0x17F, 0x17F));
+		//	stl::write_thunk_call<PlayMovieStartHook2>(REL::RelocationID(35550, 82084).address() + REL::Relocate(0x1C8, 0x17F, 0x17F));
+		//	stl::write_thunk_call<PlayMovieEndHook2>(REL::RelocationID(35550, 82084).address() + REL::Relocate(0x254, 0x17F, 0x17F));
 	}
 };

@@ -5,7 +5,7 @@
 void HDR::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	
+
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 	D3D11_TEXTURE2D_DESC texDesc{};
@@ -17,7 +17,7 @@ void HDR::SetupResources()
 	main.SRV->GetDesc(&srvDesc);
 	main.RTV->GetDesc(&rtvDesc);
 	main.UAV->GetDesc(&uavDesc);
-	
+
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
@@ -64,8 +64,7 @@ void HDR::HDROutput()
 	auto& context = State::GetSingleton()->context;
 	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	if (swapChain.SRV) 
-	{
+	if (swapChain.SRV) {
 		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 		{
