@@ -388,27 +388,6 @@ void State::SetupResources()
 	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 
 	tracyCtx = TracyD3D11Context(device, context);
-
-	FfxDevice fsrDevice = ffxGetDeviceDX11(State::GetSingleton()->device);
-
-	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(1);
-	void* scratchBuffer = malloc(scratchBufferSize);
-	memset(scratchBuffer, 0, scratchBufferSize);
-
-	FfxInterface backendInterface;
-	ffxGetInterfaceDX11(&backendInterface, fsrDevice, scratchBuffer, scratchBufferSize, 1);
-
-	FfxFrameInterpolationContext* fgContext = nullptr;
-	FfxFrameInterpolationContextDescription fgDescription;
-	fgDescription.flags = 0;
-	fgDescription.maxRenderSize = { (uint)State::GetSingleton()->screenSize.x, (uint)State::GetSingleton()->screenSize.y };
-	fgDescription.displaySize = fgDescription.maxRenderSize;
-	fgDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
-	fgDescription.backendInterface = backendInterface;
-
-	auto result = ffxFrameInterpolationContextCreate(fgContext, &fgDescription);
-
-	logger::info("{}", result == FFX_OK ? "ok" : "not ok");
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
