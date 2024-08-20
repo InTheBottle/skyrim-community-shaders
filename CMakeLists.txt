@@ -43,6 +43,7 @@ find_package(cppwinrt CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
+add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/FidelityFX)
 
 set(NVAPI_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/extern/nvapi/" CACHE STRING "Path to NVAPI include headers/shaders" )
 set(NVAPI_LIBRARY "${CMAKE_SOURCE_DIR}/extern/nvapi/amd64/nvapi64.lib" CACHE STRING "Path to NVAPI .lib file")
@@ -78,7 +79,8 @@ target_link_libraries(
 	unordered_dense::unordered_dense
 	efsw::efsw
 	Tracy::TracyClient
-	${NVAPI_LIBRARY} 
+	FidelityFX
+	${NVAPI_LIBRARY}
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
