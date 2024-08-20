@@ -1,8 +1,8 @@
 #pragma once
 
-#include <FidelityFX/host/ffx_interface.h>
-#include <FidelityFX/host/ffx_fsr3.h>
 #include <FidelityFX/host/backends/dx11/ffx_dx11.h>
+#include <FidelityFX/host/ffx_fsr3.h>
+#include <FidelityFX/host/ffx_interface.h>
 
 class FidelityFX
 {

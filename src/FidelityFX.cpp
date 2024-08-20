@@ -11,14 +11,13 @@ FfxErrorCode FidelityFX::Initialize(uint32_t a_maxContexts)
 	const auto fsrDevice = ffxGetDeviceDX11(state->device);
 	const auto scratchSize = ffxGetScratchMemorySizeDX11(a_maxContexts);
 
-   	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(a_maxContexts);
+	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(a_maxContexts);
 	void* scratchBuffer = malloc(scratchBufferSize);
 	memset(scratchBuffer, 0, scratchBufferSize);
 
 	auto errorCode = ffxGetInterfaceDX11(&ffxInterface, fsrDevice, scratchBuffer, scratchBufferSize, a_maxContexts);
 
-	if (errorCode == FFX_OK)
-	{
+	if (errorCode == FFX_OK) {
 		logger::info("[FidelityFX] Successfully initialised");
 	} else {
 		logger::error("[FidelityFX] Failed to initialise!");
@@ -27,7 +26,7 @@ FfxErrorCode FidelityFX::Initialize(uint32_t a_maxContexts)
 	return errorCode;
 }
 
- typedef enum Fsr3BackendTypes : uint32_t
+typedef enum Fsr3BackendTypes : uint32_t
 {
 	FSR3_BACKEND_SHARED_RESOURCES,
 	FSR3_BACKEND_UPSCALING,
@@ -102,7 +101,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 
 	FfxSwapchain ffxSwapChain = reinterpret_cast<void*>(manager->GetRuntimeData().renderWindows->swapChain);
 
-	FfxFrameGenerationConfig frameGenerationConfig; 
+	FfxFrameGenerationConfig frameGenerationConfig;
 	frameGenerationConfig.frameGenerationEnabled = true;
 	frameGenerationConfig.frameGenerationCallback = ffxFsr3DispatchFrameGeneration;
 	frameGenerationConfig.presentCallback = nullptr;
@@ -110,7 +109,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 	frameGenerationConfig.HUDLessColor = FfxResource({});
 
 	errorCode = ffxFsr3ConfigureFrameGeneration(&fsrContext, &frameGenerationConfig);
-	
+
 	if (errorCode == FFX_OK) {
 		logger::info("[FidelityFX] Sucessfully initialised frame generation");
 	} else {
