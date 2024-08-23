@@ -1,19 +1,23 @@
 #ifdef VSHADER
 void main(
-  float4 v0 : POSITION0,
-  float2 v1 : TEXCOORD0,
-  out float4 o0 : SV_POSITION0,
-  out float2 o1 : TEXCOORD0)
+	float4 v0
+	: POSITION0,
+	float2 v1
+	: TEXCOORD0,
+	out float4 o0
+	: SV_POSITION0,
+	out float2 o1
+	: TEXCOORD0)
 {
-  o0.xyz = v0.xyz;
-  o0.w = 1;
-  o1.xy = v1.xy;
-  return;
+	o0.xyz = v0.xyz;
+	o0.w = 1;
+	o1.xy = v1.xy;
+	return;
 }
 #endif
 
 #if defined(PSHADER)
-#include "Common/FrameBuffer.hlsli"
+#	include "Common/FrameBuffer.hlsli"
 
 Texture2D<float4> NormalTexture : register(t0);
 Texture2D<float4> ColorTexture : register(t1);
@@ -27,32 +31,35 @@ SamplerState AlphaSampler : register(s3);
 
 cbuffer Params : register(b2)
 {
-  float ReflectionRayThickness;
-  float ReflectionMarchingRadius;
-  float AlphaWeight;
-  float ReflectionMarchingRadiusRcp;
-  float4 DefaultNormal;
+	float ReflectionRayThickness;
+	float ReflectionMarchingRadius;
+	float AlphaWeight;
+	float ReflectionMarchingRadiusRcp;
+	float4 DefaultNormal;
 }
 
 float3 GetDecodedNormal(float2 enc)
 {
-    float2 fenc = enc*4-2;
-    float f = dot(fenc,fenc);
-    float g = sqrt(1-f/4);
-    float3 n;
-    n.xy = fenc*g;
-    n.z = 1-f/2;
-    return n;
+	float2 fenc = enc * 4 - 2;
+	float f = dot(fenc, fenc);
+	float g = sqrt(1 - f / 4);
+	float3 n;
+	n.xy = fenc * g;
+	n.z = 1 - f / 2;
+	return n;
 }
 
-#define cmp -
+#	define cmp -
 
 void main(
-  float4 v0 : SV_POSITION0,
-  float2 v1 : TEXCOORD0,
-  out float4 o0 : SV_Target0)
+	float4 v0
+	: SV_POSITION0,
+	float2 v1
+	: TEXCOORD0,
+	out float4 o0
+	: SV_Target0)
 {
-	float4 r0,r1,r2,r3,r4,r5,r6,uvAndDepth,r8;
+	float4 r0, r1, r2, r3, r4, r5, r6, uvAndDepth, r8;
 
 	float2 uv = v1.xy;
 
@@ -65,7 +72,7 @@ void main(
 
 	// Check if the surface is marked for SSR
 	if (r2.z < 9.99999975e-06) {
-		o0.xyzw = float4(0,0,0,0);
+		o0.xyzw = float4(0, 0, 0, 0);
 		return;
 	}
 
@@ -120,8 +127,7 @@ void main(
 
 	bool found = false;
 
-	for(uint i = 1; i < sampleCount + 1; i++)
-	{
+	for (uint i = 1; i < sampleCount + 1; i++) {
 		r2.w = rcp(sampleCount) * i;
 		r8.xyz = r2.www * r3.xyw + r0.xyz;
 		r2.w = DepthTexture.SampleLevel(DepthSampler, r8.xy, 0).x;
@@ -136,18 +142,17 @@ void main(
 		uvAndDepth.xyz = r8.xyz;
 	}
 
-	if (!found)
-	{
-		o0.xyzw = float4(0,0,0,0);
+	if (!found) {
+		o0.xyzw = float4(0, 0, 0, 0);
 		return;
 	}
 
 	// TODO: binary search
 
-	r0.xy = GetDynamicResolutionAdjustedScreenPosition(uvAndDepth.xy); 
+	r0.xy = GetDynamicResolutionAdjustedScreenPosition(uvAndDepth.xy);
 	r0.xyz = AlphaTexture.Sample(AlphaSampler, r0.xy).xyz;
 
-	r3.zw = max(float2(0,0), uvAndDepth.xy);
+	r3.zw = max(float2(0, 0), uvAndDepth.xy);
 	r1.xy = min(r3.zw, float2(DynamicResolutionParams2.z, DynamicResolutionParams1.y));
 	r3.xyz = ColorTexture.Sample(ColorSampler, r1.xy).xyz;
 
@@ -172,6 +177,6 @@ void main(
 
 	o0.w = fade1 * fade2;
 
-  	return;
+	return;
 }
 #endif
