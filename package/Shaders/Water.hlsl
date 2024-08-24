@@ -672,7 +672,7 @@ float3 GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection,
 	if (!(PixelShaderDescriptor & _Interior)) {
 		float vl = GetVL(input.WPosition.xyz, refractionWorldPosition.xyz, normal, screenPosition, shadow, a_eyeIndex);
 
-		float3 refractionDiffuseColorSunlight = 5 * refractionDiffuseColor * vl * sRGB2Lin(SunColor.xyz * SunDir.w);
+		float3 refractionDiffuseColorSunlight = 4 * refractionDiffuseColor * vl * sRGB2Lin(SunColor.xyz * SunDir.w);
 #				if defined(SKYLIGHTING)
 #					if defined(VR)
 		float3 skylightPosOffset = a_eyeIndex == 1 ? CameraPosAdjust[1] - CameraPosAdjust[0] : 0;
