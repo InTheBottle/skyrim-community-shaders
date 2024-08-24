@@ -569,7 +569,7 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 			float2 ssrReflectionUv = GetDynamicResolutionAdjustedScreenPosition((DynamicResolutionParams2.xy * input.HPosition.xy) * SSRParams.zw + SSRParams2.x * normal.xy);
 			float4 ssrReflectionColor1 = SSRReflectionTex.Sample(SSRReflectionSampler, ssrReflectionUv);
 			float4 ssrReflectionColor2 = RawSSRReflectionTex.Sample(RawSSRReflectionSampler, ssrReflectionUv);
-			
+
 			ssrReflectionColor1.xyz = sRGB2Lin(ssrReflectionColor1.xyz);
 			ssrReflectionColor2.xyz = sRGB2Lin(ssrReflectionColor2.xyz);
 
@@ -844,10 +844,10 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 	float3 sunColor = GetSunColor(normal, viewDirection);
 
-#	if defined(LOD)
+#					if defined(LOD)
 	if (length(sunColor) > 0.0)
 		shadow = GetWorldShadow(input.WPosition, length(input.WPosition.xyz), normal, eyeIndex);
-#	endif
+#					endif
 
 	if (!(PixelShaderDescriptor & _Interior)) {
 		if (shadow != 0.0) {
