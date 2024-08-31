@@ -169,14 +169,14 @@ float3 Uncharted2Tonemap(float3 x)
 	float E = 0.02;
 	float F = 0.30;
 
-	return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
+	return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
 }
 
 float3 UC2(float3 color)
 {
 	float W = 11.2;
 
-	float exposureBias  = 2.0;
+	float exposureBias = 2.0;
 	return Uncharted2Tonemap(exposureBias * color) / Uncharted2Tonemap(W);
 }
 
