@@ -614,8 +614,8 @@ namespace Hooks
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
 
-		stl::write_thunk_call<CreateRenderTarget_TempCopy>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x62F, 0x3F3, 0x548));
-		stl::write_thunk_call<CreateRenderTarget_TempCopy2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x642, 0x3F3, 0x548));
+		//stl::write_thunk_call<CreateRenderTarget_TempCopy>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x62F, 0x3F3, 0x548));
+		//stl::write_thunk_call<CreateRenderTarget_TempCopy2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x642, 0x3F3, 0x548));
 
 #ifdef TRACY_ENABLE
 		stl::write_thunk_call<Main_Update>(REL::RelocationID(35551, 36544).address() + REL::Relocate(0x11F, 0x160));
