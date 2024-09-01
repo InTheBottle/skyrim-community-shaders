@@ -4,3 +4,6 @@
 [submodule "extern/NVAPI"]
 	path = extern/NVAPI
 	url = https://github.com/NVIDIA/nvapi.git
+[submodule "extern/FidelityFX-SDK-DX11"]
+	path = extern/FidelityFX-SDK-DX11
+	url = https://github.com/metarutaiga/FidelityFX-SDK-DX11

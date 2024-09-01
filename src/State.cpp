@@ -16,6 +16,11 @@
 
 #include "VariableRateShading.h"
 
+enum class PermutationFlags : uint32_t
+{
+	InWorld = 1 << 24,
+};
+
 void State::Draw()
 {
 	const auto& shaderCache = SIE::ShaderCache::Instance();

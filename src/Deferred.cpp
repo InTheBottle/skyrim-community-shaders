@@ -11,6 +11,8 @@
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 
+#include "FidelityFX.h"
+
 struct DepthStates
 {
 	ID3D11DepthStencilState* a[6][40];
@@ -185,6 +187,12 @@ void Deferred::SetupResources()
 		prevDiffuseAmbientTexture = new Texture2D(texDesc);
 		prevDiffuseAmbientTexture->CreateSRV(srvDesc);
 		prevDiffuseAmbientTexture->CreateUAV(uavDesc);
+	}
+
+	{
+		auto ffx = FidelityFX::GetSingleton();
+		ffx->Initialize(1);
+		ffx->InitializeFSR3();
 	}
 }
 
