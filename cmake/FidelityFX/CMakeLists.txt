@@ -19,15 +19,6 @@ set(SOURCES
     ${FidelityFXPath}/FidelityFX/host/shared/ffx_object_management.h
     ${FidelityFXPath}/DXBC/DXBCChecksum.c
     ${FidelityFXPath}/DXBC/md5.c
-    ${FidelityFXPath}/FidelityFX/host/shared/ffx_assert.cpp
-    ${FidelityFXPath}/FidelityFX/host/shared/ffx_object_management.cpp
-    ${FidelityFXPath}/FidelityFX/host/backends/dx11/ffx_dx11.cpp
-
-    ${FidelityFXPath}/FidelityFX/host/components/fsr3/ffx_fsr3.cpp
-    ${FidelityFXPath}/FidelityFX/host/components/fsr3upscaler/ffx_fsr3upscaler.cpp
-    ${FidelityFXPath}/FidelityFX/host/components/opticalflow/ffx_opticalflow.cpp
-    ${FidelityFXPath}/FidelityFX/host/components/frameinterpolation/ffx_frameinterpolation.cpp
-    ${FidelityFXPath}/FidelityFX/host/backends/ffx_shader_blobs.cpp
 )
 
 add_library(${PROJECT_NAME} STATIC ${SOURCES})

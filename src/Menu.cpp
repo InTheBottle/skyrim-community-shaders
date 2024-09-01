@@ -19,6 +19,8 @@
 
 #include "VariableRateShading.h"
 
+#include "FidelityFX.h"
+
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"
 #define SETTING_MENU_FONTSCALE "Font Scale"
@@ -447,6 +449,10 @@ void Menu::DrawSettings()
 				ImGui::EndTable();
 			}
 		}
+
+		ImGui::Separator();
+
+		ImGui::Checkbox("Enable Frame Generation", &FidelityFX::GetSingleton()->enableFrameGeneration);
 
 		ImGui::Separator();
 

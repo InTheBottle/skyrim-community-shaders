@@ -81,6 +81,7 @@ target_link_libraries(
 	Tracy::TracyClient
 	FidelityFX
 	${NVAPI_LIBRARY}
+	${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr3_x64.lib
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
