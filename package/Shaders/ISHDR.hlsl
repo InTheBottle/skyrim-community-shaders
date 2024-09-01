@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/DICETonemapper.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 
@@ -58,7 +59,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 downsampledColor = 0;
 	for (int sampleIndex = 0; sampleIndex < DOWNSAMPLE; ++sampleIndex) {
 		float2 texCoord = BlurOffsets[sampleIndex].xy * BlurScale.xy + input.TexCoord;
-		if (Flags.x > 0.5) {
+		[branch] if (Flags.x > 0.5)
+		{
 			texCoord = GetDynamicResolutionAdjustedScreenPosition(texCoord);
 		}
 		float3 imageColor = ImageTex.Sample(ImageSampler, texCoord).xyz;
@@ -79,42 +81,63 @@ PS_OUTPUT main(PS_INPUT input)
 			sign(adaptDelta) * clamp(abs(Param.wz * adaptDelta), 0.00390625, abs(adaptDelta)) +
 			adaptValue;
 	}
+	downsampledColor = max(asfloat(0x00800000), downsampledColor);  // Black screen fix
 #		endif
 	psout.Color = float4(downsampledColor, BlurScale.z);
 
 #	elif defined(BLEND)
-	float2 adjustedTexCoord = GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
-	float3 blendColor = BlendTex.Sample(BlendSampler, adjustedTexCoord).xyz;
-	float3 imageColor = 0;
+	float2 uv = GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
+
+	float3 inputColor = BlendTex.Sample(BlendSampler, uv).xyz;
+
+	float3 bloomColor = 0;
 	if (Flags.x > 0.5) {
-		imageColor = ImageTex.Sample(ImageSampler, adjustedTexCoord).xyz;
+		bloomColor = ImageTex.Sample(ImageSampler, uv).xyz;
 	} else {
-		imageColor = ImageTex.Sample(ImageSampler, input.TexCoord).xyz;
-	}
-	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord).xy;
-
-	float luminance = max(1e-5, RGBToLuminance(blendColor));
-	float exposureAdjustedLuminance = (avgValue.y / avgValue.x) * luminance;
-	float blendFactor;
-	if (Param.z > 0.5) {
-		blendFactor = GetTonemapFactorHejlBurgessDawson(exposureAdjustedLuminance);
-	} else {
-		blendFactor = GetTonemapFactorReinhard(exposureAdjustedLuminance);
+		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
 	}
 
-	float3 blendedColor =
-		blendColor * (blendFactor / luminance) + saturate(Param.x - blendFactor) * imageColor;
-	float blendedLuminance = RGBToLuminance(blendedColor);
+	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
 
-	float4 linearColor = lerp(avgValue.x,
-		Cinematic.w * lerp(lerp(blendedLuminance, float4(blendedColor, 1), Cinematic.x),
-						  blendedLuminance * Tint, Tint.w),
-		Cinematic.z);
-	float4 srgbColor = float4(ToSRGBColor(saturate(linearColor.xyz)), linearColor.w);
+	// Vanilla tonemapping and post-processing
+	float3 gameSdrColor = 0.0;
+	float3 ppColor = 0.0;
+	{
+		float luminance = max(1e-5, RGBToLuminance(inputColor));
+		float exposureAdjustedLuminance = (avgValue.y / avgValue.x) * luminance;
+		float blendFactor;
+		if (Param.z > 0.5) {
+			blendFactor = GetTonemapFactorHejlBurgessDawson(exposureAdjustedLuminance);
+		} else {
+			blendFactor = GetTonemapFactorReinhard(exposureAdjustedLuminance);
+		}
+
+		float3 blendedColor = inputColor * (blendFactor / luminance);
+		blendedColor += saturate(Param.x - blendFactor) * bloomColor;
+
+		gameSdrColor = blendedColor;
+
+		float blendedLuminance = RGBToLuminance(blendedColor);
+
+		float3 linearColor = Cinematic.w * lerp(lerp(blendedLuminance, float4(blendedColor, 1), Cinematic.x), blendedLuminance * Tint, Tint.w);
+
+		// Contrast modified to fix crushed shadows
+		linearColor = pow(abs(linearColor) / avgValue.x, Cinematic.z) * avgValue.x * sign(linearColor);
+
+		gameSdrColor = max(0, gameSdrColor);
+		ppColor = max(0, linearColor);
+	}
+
+	// HDR tonemapping
+	float3 srgbColor = ApplyHuePreservingShoulder(ppColor, lerp(0.25, 0.50, Param.z));
+
 #		if defined(FADE)
-	srgbColor = lerp(srgbColor, Fade, Fade.w);
+	srgbColor = lerp(srgbColor, Fade.xyz, Fade.w);
 #		endif
-	psout.Color = srgbColor;
+
+	srgbColor = ToSRGBColor(srgbColor);
+
+	psout.Color = float4(srgbColor, 1.0);
 
 #	endif
 

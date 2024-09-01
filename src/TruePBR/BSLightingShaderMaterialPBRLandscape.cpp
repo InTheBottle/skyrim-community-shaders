@@ -9,7 +9,9 @@ BSLightingShaderMaterialPBRLandscape::BSLightingShaderMaterialPBRLandscape()
 }
 
 BSLightingShaderMaterialPBRLandscape::~BSLightingShaderMaterialPBRLandscape()
-{}
+{
+	All.erase(this);
+}
 
 BSLightingShaderMaterialPBRLandscape* BSLightingShaderMaterialPBRLandscape::Make()
 {
@@ -46,6 +48,8 @@ void BSLightingShaderMaterialPBRLandscape::CopyMembers(RE::BSShaderMaterial* tha
 	pbrThat->terrainTexOffsetY = terrainTexOffsetY;
 	pbrThat->terrainTexFade = terrainTexFade;
 	pbrThat->glintParameters = glintParameters;
+
+	All[this] = All[pbrThat];
 }
 
 RE::BSShaderMaterial::Feature BSLightingShaderMaterialPBRLandscape::GetFeature() const

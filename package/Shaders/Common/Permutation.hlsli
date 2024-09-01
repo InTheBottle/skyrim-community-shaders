@@ -40,10 +40,12 @@
 #define _GrayscaleToAlpha (1 << 20)
 #define _IgnoreTexAlpha (1 << 21)
 
-#define _InWorld (1 << 24)
+#define _InWorld (1 << 0)
+#define _IsBeastRace (1 << 1)
 
 cbuffer PerShader : register(b4)
 {
 	uint VertexShaderDescriptor;
 	uint PixelShaderDescriptor;
+	uint ExtraShaderDescriptor;
 };

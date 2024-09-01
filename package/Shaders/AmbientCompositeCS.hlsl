@@ -51,9 +51,11 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 
 	half3 directionalAmbientColor = mul(DirectionalAmbient, half4(normalWS, 1.0));
 
-	half3 linAlbedo = sRGB2Lin(albedo);
-	half3 linDirectionalAmbientColor = sRGB2Lin(directionalAmbientColor);
-	half3 linDiffuseColor = sRGB2Lin(diffuseColor);
+	half3 linAlbedo = GammaToLinear(albedo);
+	half3 linDirectionalAmbientColor = GammaToLinear(directionalAmbientColor);
+	half3 linDiffuseColor = GammaToLinear(diffuseColor);
+
+	half3 linAmbient = lerp(GammaToLinear(albedo * directionalAmbientColor), linAlbedo * linDirectionalAmbientColor, pbrWeight);
 
 	half visibility = 1.0;
 #if defined(SKYLIGHTING)
@@ -87,10 +89,11 @@ RWTexture2D<half3> DiffuseAmbientRW : register(u1);
 	linDiffuseColor += ssgiDiffuse.rgb;
 #endif
 
-	diffuseColor = Lin2sRGB(linDiffuseColor);
-	directionalAmbientColor = Lin2sRGB(linDirectionalAmbientColor * visibility);
+	linAmbient *= visibility;
+	diffuseColor = LinearToGamma(linDiffuseColor);
+	directionalAmbientColor = LinearToGamma(linDirectionalAmbientColor * visibility);
 
-	diffuseColor = diffuseColor + directionalAmbientColor * albedo;
+	diffuseColor = lerp(diffuseColor + directionalAmbientColor * albedo, LinearToGamma(linDiffuseColor + linAmbient), pbrWeight);
 
 	MainRW[dispatchID.xy] = diffuseColor;
 };

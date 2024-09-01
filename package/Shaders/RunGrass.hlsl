@@ -438,7 +438,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			else
 	float4 specColor = TexNormalSampler.Sample(SampNormalSampler, input.TexCoord.xy);
 #			endif
-	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
+	float dirShadowColor = !InInterior ? TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0)) : 1.0;
 
 	uint eyeIndex = GetEyeIndexPS(input.HPosition, VPOSOffset);
 	psout.MotionVectors = GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
@@ -503,17 +503,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 dirLightColor = DirLightColorShared.xyz;
 	float3 dirLightColorMultiplier = 1;
-	dirLightColorMultiplier *= shadowColor.x;
+	dirLightColorMultiplier *= dirShadowColor;
 
 	float dirLightAngle = dot(normal, DirLightDirectionShared.xyz);
 
 	float dirDetailShadow = 1.0;
 	float dirShadow = 1.0;
 
-	if (shadowColor.x > 0.0) {
+	if (dirShadowColor > 0.0) {
 		if (dirLightAngle > 0.0) {
 #			if defined(SCREEN_SPACE_SHADOWS)
-			dirDetailShadow = ScreenSpaceShadows::GetScreenSpaceShadow(screenUV, screenNoise, viewPosition, eyeIndex);
+			dirDetailShadow = ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition, screenUV, screenNoise, viewPosition, eyeIndex);
 #			endif  // SCREEN_SPACE_SHADOWS
 		}
 
@@ -621,8 +621,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	diffuseColor.xyz += transmissionColor;
 	specularColor.xyz += specularColorPBR;
-	specularColor.xyz = Lin2sRGB(specularColor.xyz);
-	diffuseColor.xyz = Lin2sRGB(diffuseColor.xyz);
+	specularColor.xyz = LinearToGamma(specularColor.xyz);
+	diffuseColor.xyz = LinearToGamma(diffuseColor.xyz);
 #			else
 
 #				if !defined(SSGI)
@@ -639,9 +639,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float skylighting = shFuncProductIntegral(skylightingSH, shEvaluateCosineLobe(skylightingSettings.DirectionalDiffuse ? normal : float3(0, 0, 1))) / shPI;
 	skylighting = Skylighting::mixDiffuse(skylightingSettings, skylighting);
 
-	directionalAmbientColor = sRGB2Lin(directionalAmbientColor);
+	directionalAmbientColor = GammaToLinear(directionalAmbientColor);
 	directionalAmbientColor *= skylighting;
-	directionalAmbientColor = Lin2sRGB(directionalAmbientColor);
+	directionalAmbientColor = LinearToGamma(directionalAmbientColor);
 #					endif  // SKYLIGHTING
 
 	diffuseColor += directionalAmbientColor;
@@ -672,7 +672,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 normalVS = normalize(WorldToView(normal, false, eyeIndex));
 #			if defined(TRUE_PBR)
-	psout.Albedo = float4(Lin2sRGB(indirectDiffuseLobeWeight), 1);
+	psout.Albedo = float4(LinearToGamma(indirectDiffuseLobeWeight), 1);
 	psout.NormalGlossiness = float4(EncodeNormal(normalVS), 1 - pbrSurfaceProperties.Roughness, 1);
 	psout.Reflectance = float4(indirectSpecularLobeWeight, 1);
 	psout.Parameters = float4(0, 0, 1, 1);
