@@ -466,7 +466,7 @@ namespace Hooks
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
-#endif 
+#endif
 
 	struct CreateRenderTarget_TempCopy
 	{

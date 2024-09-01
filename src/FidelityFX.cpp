@@ -238,7 +238,7 @@ void FidelityFX::DispatchFrameGeneration()
 	fgDesc.backBufferTransferFunction = FFX_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
 	fgDesc.minMaxLuminance[0] = 0.0;
 	fgDesc.minMaxLuminance[1] = 200.0;
-	
+
 	FfxErrorCode errorCode = ffxFsr3DispatchFrameGeneration(&fgDesc);
 	if (errorCode != FFX_OK) {
 		logger::error("[FidelityFX] Failed to dispatch frame generation!");
