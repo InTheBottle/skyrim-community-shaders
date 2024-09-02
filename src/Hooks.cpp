@@ -13,6 +13,8 @@
 #pragma warning(push)
 #pragma warning(disable: 5103)
 #include "Streamline/include/sl.h"
+#include "Streamline/include/sl_consts.h"
+#include "Streamline/include/sl_dlss_g.h"
 #pragma warning(pop)
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
@@ -219,6 +221,15 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	auto mod = LoadLibraryW(L"sl.interposer.dll");
 
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast< decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(mod, "D3D11CreateDeviceAndSwapChain"));
+
+	sl::Preferences pref;
+	sl::Feature myFeatures[] = { sl::kFeatureDLSS_G };
+	pref.featuresToLoad = myFeatures;
+	pref.numFeaturesToLoad = _countof(myFeatures);
+
+	if (SL_FAILED(res, slInit(pref))) {
+		logger::error("Failed to initalise Streamline");
+	}
 
 	auto hr = slD3D11CreateDeviceAndSwapChain(
 		pAdapter,
