@@ -227,7 +227,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	pref.numFeaturesToLoad = _countof(myFeatures);
 
 	if (SL_FAILED(res, slInit(pref))) {
-		logger::error("Failed to initalise Streamline");
+		logger::error("Failed to initialise Streamline");
 	}
 
 	auto hr = slD3D11CreateDeviceAndSwapChain(
