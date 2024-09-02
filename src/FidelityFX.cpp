@@ -202,7 +202,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 		logger::error("[FidelityFX] Failed to initialise FSR3 context!");
 		return errorCode;
 	}
-	
+
 	SetupFrameGenerationResources();
 
 	auto manager = RE::BSGraphics::Renderer::GetSingleton();
