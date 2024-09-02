@@ -16,6 +16,8 @@
 
 #include "VariableRateShading.h"
 
+#include "FidelityFX.h"
+
 enum class PermutationFlags : uint32_t
 {
 	InWorld = 1 << 24,
@@ -277,6 +279,7 @@ void State::PostPostLoad()
 	else
 		logger::info("Skyrim Upscaler not detected");
 	Deferred::Hooks::Install();
+	FidelityFX::InstallHooks();
 	TruePBR::GetSingleton()->PostPostLoad();
 }
 

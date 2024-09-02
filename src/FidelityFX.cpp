@@ -37,77 +37,6 @@ typedef enum Fsr3BackendTypes : uint32_t
 	FSR3_BACKEND_COUNT
 } Fsr3BackendTypes;
 
-FfxErrorCode FidelityFX::InitializeFSR3()
-{
-	auto state = State::GetSingleton();
-
-	FfxErrorCode errorCode = 0;
-	FfxInterface ffxFsr3Backends_[FSR3_BACKEND_COUNT] = {};
-	const auto fsrDevice = ffxGetDeviceDX11(state->device);
-
-	int effectCounts[] = { 1, 1, 2 };
-	for (auto i = 0; i < FSR3_BACKEND_COUNT; i++) {
-		const size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(effectCounts[i]);
-		void* scratchBuffer = calloc(scratchBufferSize, 1);
-		memset(scratchBuffer, 0, scratchBufferSize);
-		errorCode |= ffxGetInterfaceDX11(&ffxFsr3Backends_[i], fsrDevice, scratchBuffer, scratchBufferSize, effectCounts[i]);
-	}
-
-	if (errorCode == FFX_OK) {
-		logger::info("[FidelityFX] Successfully initialised FSR3 backend interfaces");
-	} else {
-		logger::error("[FidelityFX] Failed to initialise FSR3 backend interfaces!");
-		return errorCode;
-	}
-
-	FfxFsr3ContextDescription contextDescription;
-	contextDescription.maxRenderSize.width = (uint)state->screenSize.x;
-	contextDescription.maxRenderSize.height = (uint)state->screenSize.y;
-	contextDescription.upscaleOutputSize.width = (uint)state->screenSize.x;
-	contextDescription.upscaleOutputSize.height = (uint)state->screenSize.y;
-	contextDescription.displaySize.width = (uint)state->screenSize.x;
-	contextDescription.displaySize.height = (uint)state->screenSize.y;
-	contextDescription.flags = FFX_FSR3_ENABLE_AUTO_EXPOSURE;
-	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
-
-	contextDescription.backendInterfaceSharedResources = ffxFsr3Backends_[FSR3_BACKEND_SHARED_RESOURCES];
-	contextDescription.backendInterfaceUpscaling = ffxFsr3Backends_[FSR3_BACKEND_UPSCALING];
-	contextDescription.backendInterfaceFrameInterpolation = ffxFsr3Backends_[FSR3_BACKEND_FRAME_INTERPOLATION];
-
-	errorCode = ffxFsr3ContextCreate(&fsrContext, &contextDescription);
-
-	if (errorCode == FFX_OK) {
-		logger::info("[FidelityFX] Successfully initialised FSR3 context");
-	} else {
-		logger::error("[FidelityFX] Failed to initialise FSR3 context!");
-		return errorCode;
-	}
-
-	auto manager = RE::BSGraphics::Renderer::GetSingleton();
-
-	FfxSwapchain ffxSwapChain = reinterpret_cast<void*>(manager->GetRuntimeData().renderWindows->swapChain);
-
-	FfxFrameGenerationConfig frameGenerationConfig;
-	frameGenerationConfig.frameGenerationEnabled = true;
-	frameGenerationConfig.frameGenerationCallback = ffxFsr3DispatchFrameGeneration;
-	frameGenerationConfig.presentCallback = nullptr;
-	frameGenerationConfig.swapChain = ffxSwapChain;
-	frameGenerationConfig.HUDLessColor = FfxResource({});
-
-	errorCode = ffxFsr3ConfigureFrameGeneration(&fsrContext, &frameGenerationConfig);
-
-	if (errorCode == FFX_OK) {
-		logger::info("[FidelityFX] Successfully initialised frame generation");
-	} else {
-		logger::error("[FidelityFX] Failed to initialise frame generation!");
-		return errorCode;
-	}
-
-	SetupFrameGenerationResources();
-
-	return errorCode;
-}
-
 // register a DX11 resource to the backend
 FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	wchar_t const* ffxResName,
@@ -161,6 +90,142 @@ void FidelityFX::SetupFrameGenerationResources()
 	swapChainTempTexture->CreateSRV(srvDesc);
 	swapChainTempTexture->CreateRTV(rtvDesc);
 	swapChainTempTexture->CreateUAV(uavDesc);
+
+	HUDLessColor = new Texture2D(texDesc);
+	HUDLessColor->CreateSRV(srvDesc);
+	HUDLessColor->CreateRTV(rtvDesc);
+	HUDLessColor->CreateUAV(uavDesc);
+
+	{
+		const char textureName[] = "swapChainPreviousTexture";
+		swapChainPreviousTexture->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainPreviousTextureSwap";
+		swapChainPreviousTextureSwap->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainTempTexture";
+		swapChainTempTexture->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "HUDLessColor";
+		HUDLessColor->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainPreviousTextureUAV";
+		swapChainPreviousTexture->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainPreviousTextureSwapUAV";
+		swapChainPreviousTextureSwap->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainTempTextureUAV";
+		swapChainTempTexture->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "HUDLessColorSRV";
+		HUDLessColor->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainPreviousTextureSRV";
+		swapChainPreviousTexture->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainPreviousTextureSwapSRV";
+		swapChainPreviousTextureSwap->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "swapChainTempTextureSRV";
+		swapChainTempTexture->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+
+	{
+		const char textureName[] = "HUDLessColorSRV";
+		HUDLessColor->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
+	}
+}
+
+FfxErrorCode FidelityFX::InitializeFSR3()
+{
+	auto state = State::GetSingleton();
+
+	FfxErrorCode errorCode = 0;
+	FfxInterface ffxFsr3Backends_[FSR3_BACKEND_COUNT] = {};
+	const auto fsrDevice = ffxGetDeviceDX11(state->device);
+
+	int effectCounts[] = { 1, 1, 2 };
+	for (auto i = 0; i < FSR3_BACKEND_COUNT; i++) {
+		const size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(effectCounts[i]);
+		void* scratchBuffer = calloc(scratchBufferSize, 1);
+		memset(scratchBuffer, 0, scratchBufferSize);
+		errorCode |= ffxGetInterfaceDX11(&ffxFsr3Backends_[i], fsrDevice, scratchBuffer, scratchBufferSize, effectCounts[i]);
+	}
+
+	if (errorCode == FFX_OK) {
+		logger::info("[FidelityFX] Successfully initialised FSR3 backend interfaces");
+	} else {
+		logger::error("[FidelityFX] Failed to initialise FSR3 backend interfaces!");
+		return errorCode;
+	}
+
+	FfxFsr3ContextDescription contextDescription;
+	contextDescription.maxRenderSize.width = (uint)state->screenSize.x;
+	contextDescription.maxRenderSize.height = (uint)state->screenSize.y;
+	contextDescription.upscaleOutputSize.width = (uint)state->screenSize.x;
+	contextDescription.upscaleOutputSize.height = (uint)state->screenSize.y;
+	contextDescription.displaySize.width = (uint)state->screenSize.x;
+	contextDescription.displaySize.height = (uint)state->screenSize.y;
+	contextDescription.flags = FFX_FSR3_ENABLE_AUTO_EXPOSURE;
+	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
+
+	contextDescription.backendInterfaceSharedResources = ffxFsr3Backends_[FSR3_BACKEND_SHARED_RESOURCES];
+	contextDescription.backendInterfaceUpscaling = ffxFsr3Backends_[FSR3_BACKEND_UPSCALING];
+	contextDescription.backendInterfaceFrameInterpolation = ffxFsr3Backends_[FSR3_BACKEND_FRAME_INTERPOLATION];
+
+	errorCode = ffxFsr3ContextCreate(&fsrContext, &contextDescription);
+
+	if (errorCode == FFX_OK) {
+		logger::info("[FidelityFX] Successfully initialised FSR3 context");
+	} else {
+		logger::error("[FidelityFX] Failed to initialise FSR3 context!");
+		return errorCode;
+	}
+	
+	SetupFrameGenerationResources();
+
+	auto manager = RE::BSGraphics::Renderer::GetSingleton();
+
+	FfxSwapchain ffxSwapChain = reinterpret_cast<void*>(manager->GetRuntimeData().renderWindows->swapChain);
+
+	FfxFrameGenerationConfig frameGenerationConfig;
+	frameGenerationConfig.frameGenerationEnabled = true;
+	frameGenerationConfig.frameGenerationCallback = ffxFsr3DispatchFrameGeneration;
+	frameGenerationConfig.presentCallback = nullptr;
+	frameGenerationConfig.swapChain = ffxSwapChain;
+	frameGenerationConfig.HUDLessColor = ffxGetResource(HUDLessColor->resource.get(), L"FSR3_HUDLessColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+
+	errorCode = ffxFsr3ConfigureFrameGeneration(&fsrContext, &frameGenerationConfig);
+
+	if (errorCode == FFX_OK) {
+		logger::info("[FidelityFX] Successfully initialised frame generation");
+	} else {
+		logger::error("[FidelityFX] Failed to initialise frame generation!");
+		return errorCode;
+	}
+
+	return errorCode;
 }
 
 void FidelityFX::DispatchUpscaling()
@@ -253,7 +318,10 @@ void FidelityFX::Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 {
 	if (enableFrameGeneration) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		auto& context = State::GetSingleton()->context;
+
+		auto state = State::GetSingleton();
+
+		auto& context = state->context;
 
 		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
@@ -262,8 +330,13 @@ void FidelityFX::Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 		ID3D11Resource* swapChainResource;
 		swapChain.SRV->GetResource(&swapChainResource);
 
+		state->BeginPerfEvent("FSR Upscaling");
 		DispatchUpscaling();
+		state->EndPerfEvent();
+
+		state->BeginPerfEvent("FSR Frame Generation");
 		DispatchFrameGeneration();
+		state->EndPerfEvent();
 
 		static bool swap = false;
 
@@ -284,7 +357,7 @@ void FidelityFX::Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 
 		swap = !swap;
 
-		(This->*ptr_IDXGISwapChain_Present)(SyncInterval, Flags);
+		(This->*ptr_IDXGISwapChain_Present)(std::max(1u, SyncInterval), 0);
 
 		// Swap current frame with interpolated frame
 		context->CopyResource(swapChainResource, swapChainTempTexture->resource.get());
