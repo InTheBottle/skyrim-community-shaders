@@ -10,12 +10,7 @@
 
 #include "ShaderTools/BSShaderHooks.h"
 
-#pragma warning(push)
-#pragma warning(disable: 5103)
-#include "Streamline/include/sl.h"
-#include "Streamline/include/sl_consts.h"
-#include "Streamline/include/sl_dlss_g.h"
-#pragma warning(pop)
+#include "Streamline.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
@@ -200,48 +195,31 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_DRIVER_TYPE DriverType,
 	HMODULE Software,
 	UINT Flags,
-	[[maybe_unused]] const D3D_FEATURE_LEVEL* pFeatureLevels,
-	[[maybe_unused]] UINT FeatureLevels,
+	const D3D_FEATURE_LEVEL* pFeatureLevels,
+	UINT FeatureLevels,
 	UINT SDKVersion,
 	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
-	[[maybe_unused]] D3D_FEATURE_LEVEL* pFeatureLevel,
+	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	logger::info("Upgrading D3D11 feature level to 11.1");
+	auto streamline = Streamline::GetSingleton();
 
-	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-																	//
-																	//#ifndef NDEBUG
-																	//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
-																	//#endif
+	streamline->Initialize();
 
-	auto mod = LoadLibraryW(L"sl.interposer.dll");
-
-	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(mod, "D3D11CreateDeviceAndSwapChain"));
-
-	sl::Preferences pref;
-	sl::Feature myFeatures[] = { sl::kFeatureDLSS_G };
-	pref.featuresToLoad = myFeatures;
-	pref.numFeaturesToLoad = _countof(myFeatures);
-
-	if (SL_FAILED(res, slInit(pref))) {
-		logger::error("Failed to initialise Streamline");
-	}
-
-	auto hr = slD3D11CreateDeviceAndSwapChain(
+	auto hr = streamline->CreateSwapchain(
 		pAdapter,
 		DriverType,
 		Software,
 		Flags,
-		&featureLevel,
-		1,
+		pFeatureLevels,
+		FeatureLevels,
 		SDKVersion,
 		pSwapChainDesc,
 		ppSwapChain,
 		ppDevice,
-		nullptr,
+		pFeatureLevel,
 		ppImmediateContext);
 
 	return hr;
