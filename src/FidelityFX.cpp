@@ -271,11 +271,11 @@ void FidelityFX::DispatchUpscaling()
 
 		auto cameraData = Util::GetCameraData(0);
 		dispatchParameters.cameraFovAngleVertical = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
-		
+
 		auto cameraData2 = Util::GetCameraData();
 		dispatchParameters.cameraFar = cameraData2.x;
 		dispatchParameters.cameraNear = cameraData2.y;
-		
+
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 
 		FfxErrorCode errorCode = ffxFsr3ContextDispatchUpscale(&fsrContext, &dispatchParameters);
