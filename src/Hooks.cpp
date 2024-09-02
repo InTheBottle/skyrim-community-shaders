@@ -212,15 +212,14 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	logger::info("Upgrading D3D11 feature level to 11.1");
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-//
-//#ifndef NDEBUG
-//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
-//#endif
-
+																	//
+																	//#ifndef NDEBUG
+																	//	Flags |= D3D11_CREATE_DEVICE_DEBUG;
+																	//#endif
 
 	auto mod = LoadLibraryW(L"sl.interposer.dll");
 
-	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast< decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(mod, "D3D11CreateDeviceAndSwapChain"));
+	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(mod, "D3D11CreateDeviceAndSwapChain"));
 
 	sl::Preferences pref;
 	sl::Feature myFeatures[] = { sl::kFeatureDLSS_G };
