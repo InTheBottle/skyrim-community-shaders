@@ -28,6 +28,8 @@ public:
 	Texture2D* swapChainTempTexture;
 	Texture2D* HUDLessColor;
 
+	float viewScale = 0.01428222656f;
+
 	FfxErrorCode Initialize(uint32_t a_maxContexts);
 	void SetupFrameGenerationResources();
 	FfxErrorCode InitializeFSR3();

@@ -228,29 +228,45 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 	return errorCode;
 }
 
+// https://github.com/PureDark/Skyrim-Upscaler/blob/fa057bb088cf399e1112c1eaba714590c881e462/src/SkyrimUpscaler.cpp#L88
+float GetVerticalFOVRad()
+{
+	static float& fac = (*(float*)(RELOCATION_ID(513786, 388785).address()));
+	const auto base = fac;
+	const auto x = base / 1.30322540f;
+	auto state = State::GetSingleton();
+	const auto vFOV = 2 * atan(x / (state->screenSize.x / state->screenSize.y));
+	return vFOV;
+}
+
 void FidelityFX::DispatchUpscaling()
 {
 	if (enableFrameGeneration) {
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
+		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+		ID3D11Resource* swapChainResource;
+		swapChain.SRV->GetResource(&swapChainResource);
+
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto& motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+		auto& taaMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
+		
+		auto state = State::GetSingleton();
 
 		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
 
 		dispatchParameters.commandList = dx11CommandList;
-		dispatchParameters.color = ffxGetResource(nullptr, L"FSR3_Input_OutputColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.color = ffxGetResource(swapChainResource, L"FSR3_Input_OutputColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.depth = ffxGetResource(depth.texture, L"FSR3_InputDepth", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.motionVectors = ffxGetResource(motionVectors.texture, L"FSR3_InputMotionVectors", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.exposure = ffxGetResource(nullptr, L"FSR3_InputExposure", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.upscaleOutput = dispatchParameters.color;
-		dispatchParameters.reactive = ffxGetResource(nullptr, L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-		dispatchParameters.transparencyAndComposition = ffxGetResource(nullptr, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.reactive = ffxGetResource(taaMask.texture, L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.transparencyAndComposition = ffxGetResource(taaMask.texture, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 
 		dispatchParameters.jitterOffset.x = 0;
 		dispatchParameters.jitterOffset.y = 0;
-
-		auto state = State::GetSingleton();
 
 		dispatchParameters.motionVectorScale.x = state->screenSize.x;
 		dispatchParameters.motionVectorScale.y = state->screenSize.y;
@@ -269,14 +285,15 @@ void FidelityFX::DispatchUpscaling()
 		dispatchParameters.renderSize.width = (uint)state->screenSize.x;
 		dispatchParameters.renderSize.height = (uint)state->screenSize.y;
 
-		auto cameraData = Util::GetCameraData(0);
-		dispatchParameters.cameraFovAngleVertical = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
+		dispatchParameters.cameraFovAngleVertical = GetVerticalFOVRad();
 
-		auto cameraData2 = Util::GetCameraData();
-		dispatchParameters.cameraFar = cameraData2.x;
-		dispatchParameters.cameraNear = cameraData2.y;
+		static float& g_fNear = (*(float*)(RELOCATION_ID(517032, 403540).address() + 0x40));  // 2F26FC0, 2FC1A90
+		static float& g_fFar = (*(float*)(RELOCATION_ID(517032, 403540).address() + 0x44));   // 2F26FC4, 2FC1A94
 
-		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+		dispatchParameters.cameraFar = g_fFar;
+		dispatchParameters.cameraNear = g_fNear;
+
+		dispatchParameters.viewSpaceToMetersFactor = 1;
 
 		FfxErrorCode errorCode = ffxFsr3ContextDispatchUpscale(&fsrContext, &dispatchParameters);
 		if (errorCode != FFX_OK) {
