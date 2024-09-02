@@ -68,7 +68,7 @@ public:
 
 			state->BeginPerfEvent("HudLessColor Copy");
 			context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
-			state->EndPerfEvent();		
+			state->EndPerfEvent();
 
 			func(a1);
 		}

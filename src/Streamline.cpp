@@ -1,11 +1,10 @@
 #include "Streamline.h"
-#include <Util.h>
 #include <Streamline/include/sl_matrix_helpers.h>
+#include <Util.h>
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
-	switch (type)
-	{
+	switch (type) {
 	case sl::LogType::eInfo:
 		logger::info("{}", msg);
 		break;
@@ -202,7 +201,6 @@ void Streamline::UpgradeGameResources()
 	}
 }
 
-
 void Streamline::SetTags()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -212,7 +210,7 @@ void Streamline::SetTags()
 
 	sl::Resource depth = { sl::ResourceType::eTex2d, depthBuffer.texture };
 	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, NULL };
-	
+
 	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture };
 	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, NULL };
 
@@ -247,7 +245,7 @@ void Streamline::SetConstants()
 	sl::float4x4 cameraToPrevCamera;
 
 	calcCameraToPrevCamera(cameraToPrevCamera, *(sl::float4x4*)&cameraToWorld, *(sl::float4x4*)&cameraToWorldPrev);
-	
+
 	sl::float4x4 prevCameraToCamera;
 
 	calcCameraToPrevCamera(prevCameraToCamera, *(sl::float4x4*)&cameraToWorldPrev, *(sl::float4x4*)&cameraToWorld);
@@ -281,14 +279,12 @@ void Streamline::SetConstants()
 
 	float cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 
-    sl::FrameToken* frameToken{};
-	if(SL_FAILED(res, slGetNewFrameToken(frameToken)))
-    {
+	sl::FrameToken* frameToken{};
+	if (SL_FAILED(res, slGetNewFrameToken(frameToken))) {
 		logger::error("Coulld not get frame token");
-    }
+	}
 
-	if (SL_FAILED(res, slSetConstants(consts, *frameToken, viewport))) 
-	{
+	if (SL_FAILED(res, slSetConstants(consts, *frameToken, viewport))) {
 		logger::error("Coulld not set constants");
 	}
 }
