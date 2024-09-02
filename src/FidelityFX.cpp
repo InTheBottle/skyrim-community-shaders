@@ -251,7 +251,7 @@ void FidelityFX::DispatchUpscaling()
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto& motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 		auto& taaMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
-		
+
 		auto state = State::GetSingleton();
 
 		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
