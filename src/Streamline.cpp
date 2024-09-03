@@ -5,8 +5,7 @@
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
-	switch (type)
-	{
+	switch (type) {
 	case sl::LogType::eInfo:
 		logger::info("{}", msg);
 		break;
@@ -236,7 +235,7 @@ void Streamline::SetTags()
 
 	sl::Resource depth = { sl::ResourceType::eTex2d, depthBuffer->resource.get() };
 	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, NULL };
-	
+
 	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture };
 	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, NULL };
 
@@ -269,7 +268,7 @@ void Streamline::SetConstants()
 	sl::float4x4 cameraToPrevCamera;
 
 	calcCameraToPrevCamera(cameraToPrevCamera, *(sl::float4x4*)&cameraToWorld, *(sl::float4x4*)&cameraToWorldPrev);
-	
+
 	sl::float4x4 prevCameraToCamera;
 
 	calcCameraToPrevCamera(prevCameraToCamera, *(sl::float4x4*)&cameraToWorldPrev, *(sl::float4x4*)&cameraToWorld);
@@ -305,11 +304,10 @@ void Streamline::SetConstants()
     sl::FrameToken* frameToken{};
 	if(SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr)))
     {
-		logger::error("Coulld not get frame token");
-    }
+		logger::error("Could not get frame token");
+	}
 
-	if (SL_FAILED(res, slSetConstants(consts, *frameToken, viewport))) 
-	{
-		logger::error("Coulld not set constants");
+	if (SL_FAILED(res, slSetConstants(consts, *frameToken, viewport))) {
+		logger::error("Could not set constants");
 	}
 }
