@@ -18,54 +18,54 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/ 
+*/
 
 #pragma once
 
 namespace sl
 {
 
-//! NVIDIA Image Scaling
-constexpr Feature kFeatureNIS = 2;
+	//! NVIDIA Image Scaling
+	constexpr Feature kFeatureNIS = 2;
 
-enum class NISMode : uint32_t
-{
-    eOff,
-    eScaler,
-    eSharpen,
-    eCount
-};
+	enum class NISMode : uint32_t
+	{
+		eOff,
+		eScaler,
+		eSharpen,
+		eCount
+	};
 
-enum class NISHDR : uint32_t
-{
-    eNone,
-    eLinear,
-    ePQ,
-    eCount
-};
+	enum class NISHDR : uint32_t
+	{
+		eNone,
+		eLinear,
+		ePQ,
+		eCount
+	};
 
-// {676610E5-9674-4D3A-9C8A-F495D01B36F3}
-SL_STRUCT(NISOptions, StructType({ 0x676610e5, 0x9674, 0x4d3a, { 0x9c, 0x8a, 0xf4, 0x95, 0xd0, 0x1b, 0x36, 0xf3 } }), kStructVersion1)
-    //! Specifies which mode should be used
-    NISMode mode = NISMode::eScaler;
-    //! Specifies which hdr mode should be used
-    NISHDR hdrMode = NISHDR::eNone;
-    //! Specifies sharpening level in range [0,1]
-    float sharpness = 0.0f;
+	// {676610E5-9674-4D3A-9C8A-F495D01B36F3}
+	SL_STRUCT(NISOptions, StructType({ 0x676610e5, 0x9674, 0x4d3a, { 0x9c, 0x8a, 0xf4, 0x95, 0xd0, 0x1b, 0x36, 0xf3 } }), kStructVersion1)
+	//! Specifies which mode should be used
+	NISMode mode = NISMode::eScaler;
+	//! Specifies which hdr mode should be used
+	NISHDR hdrMode = NISHDR::eNone;
+	//! Specifies sharpening level in range [0,1]
+	float sharpness = 0.0f;
 
-    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
+	//! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Returned by the NIS plugin
-//! 
+//!
 // {71AB4FD0-D959-4C2A-AF69-ED4850BD4E3D}
 SL_STRUCT(NISState, StructType({ 0x71ab4fd0, 0xd959, 0x4c2a, { 0xaf, 0x69, 0xed, 0x48, 0x50, 0xbd, 0x4e, 0x3d } }), kStructVersion1)
-    //! Specified the amount of memory expected to be used
-    uint64_t estimatedVRAMUsageInBytes {};
+//! Specified the amount of memory expected to be used
+uint64_t estimatedVRAMUsageInBytes{};
 
 //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
-
+}
+;
 }
 
 //! Sets NIS options
@@ -91,15 +91,15 @@ using PFun_slNISSetOptions = sl::Result(const sl::ViewportHandle& viewport, cons
 using PFun_slNISGetState = sl::Result(const sl::ViewportHandle& viewport, sl::NISState& state);
 
 //! HELPERS
-//! 
+//!
 inline sl::Result slNISSetOptions(const sl::ViewportHandle& viewport, const sl::NISOptions& options)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNIS, slNISSetOptions);
-    return s_slNISSetOptions(viewport, options);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNIS, slNISSetOptions);
+	return s_slNISSetOptions(viewport, options);
 }
 
 inline sl::Result slNISGetState(const sl::ViewportHandle& viewport, sl::NISState& state)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNIS, slNISGetState);
-    return s_slNISGetState(viewport, state);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNIS, slNISGetState);
+	return s_slNISGetState(viewport, state);
 }

@@ -18,110 +18,113 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/ 
+*/
 
 #pragma once
 
 namespace sl
 {
 
-//! Low-Latency
-constexpr Feature kFeatureReflex = 3;
+	//! Low-Latency
+	constexpr Feature kFeatureReflex = 3;
 
-enum ReflexMode
-{
-    eOff,
-    eLowLatency,
-    eLowLatencyWithBoost,
-};
+	enum ReflexMode
+	{
+		eOff,
+		eLowLatency,
+		eLowLatencyWithBoost,
+	};
 
-// {F03AF81A-6D0B-4902-A651-C4965E215434}
-SL_STRUCT(ReflexOptions, StructType({ 0xf03af81a, 0x6d0b, 0x4902, { 0xa6, 0x51, 0xc4, 0x96, 0x5e, 0x21, 0x54, 0x34 } }), kStructVersion1)
-    //! Specifies which mode should be used
-    ReflexMode mode = ReflexMode::eOff;
-    //! Specifies if frame limiting (FPS cap) is enabled (0 to disable, microseconds otherwise).
-    //! One benefit of using Reflex's FPS cap over other implementations is the driver would be aware and can provide better optimizations.
-    //! This setting is independent of ReflexOptions::mode; it can even be used with eReflexModeOff.
-    uint32_t frameLimitUs = 0;
-    //! Specifies if markers can be used for optimization or not.  Set to true UNLESS (if any of the below apply, set to false):
-    //! - The game is single threaded (i.e. simulation for frame X+1 cannot start until render submission for frame X is done)
-    //! - The present call is not called right after render submission
-    //! - Simulation does not happen exactly once per render frame
-    bool useMarkersToOptimize = false;
-    //! Specifies the hot-key which should be used instead of custom message for PC latency marker
-    //! Possible values: VK_F13, VK_F14, VK_F15
-    uint16_t virtualKey = 0;
-    //! ThreadID for reflex messages
-    uint32_t idThread = 0;
+	// {F03AF81A-6D0B-4902-A651-C4965E215434}
+	SL_STRUCT(ReflexOptions, StructType({ 0xf03af81a, 0x6d0b, 0x4902, { 0xa6, 0x51, 0xc4, 0x96, 0x5e, 0x21, 0x54, 0x34 } }), kStructVersion1)
+	//! Specifies which mode should be used
+	ReflexMode mode = ReflexMode::eOff;
+	//! Specifies if frame limiting (FPS cap) is enabled (0 to disable, microseconds otherwise).
+	//! One benefit of using Reflex's FPS cap over other implementations is the driver would be aware and can provide better optimizations.
+	//! This setting is independent of ReflexOptions::mode; it can even be used with eReflexModeOff.
+	uint32_t frameLimitUs = 0;
+	//! Specifies if markers can be used for optimization or not.  Set to true UNLESS (if any of the below apply, set to false):
+	//! - The game is single threaded (i.e. simulation for frame X+1 cannot start until render submission for frame X is done)
+	//! - The present call is not called right after render submission
+	//! - Simulation does not happen exactly once per render frame
+	bool useMarkersToOptimize = false;
+	//! Specifies the hot-key which should be used instead of custom message for PC latency marker
+	//! Possible values: VK_F13, VK_F14, VK_F15
+	uint16_t virtualKey = 0;
+	//! ThreadID for reflex messages
+	uint32_t idThread = 0;
 
-    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
+	//! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 // {0D569B37-A1C8-4453-BE4D-40F4DE57952B}
 SL_STRUCT(ReflexReport, StructType({ 0xd569b37, 0xa1c8, 0x4453, { 0xbe, 0x4d, 0x40, 0xf4, 0xde, 0x57, 0x95, 0x2b } }), kStructVersion1)
-    //! Various latency related stats
-    uint64_t frameID{};
-    uint64_t inputSampleTime{};
-    uint64_t simStartTime{};
-    uint64_t simEndTime{};
-    uint64_t renderSubmitStartTime{};
-    uint64_t renderSubmitEndTime{};
-    uint64_t presentStartTime{};
-    uint64_t presentEndTime{};
-    uint64_t driverStartTime{};
-    uint64_t driverEndTime{};
-    uint64_t osRenderQueueStartTime{};
-    uint64_t osRenderQueueEndTime{};
-    uint64_t gpuRenderStartTime{};
-    uint64_t gpuRenderEndTime{};
-    uint32_t gpuActiveRenderTimeUs{};
-    uint32_t gpuFrameTimeUs{};
+//! Various latency related stats
+uint64_t frameID{};
+uint64_t inputSampleTime{};
+uint64_t simStartTime{};
+uint64_t simEndTime{};
+uint64_t renderSubmitStartTime{};
+uint64_t renderSubmitEndTime{};
+uint64_t presentStartTime{};
+uint64_t presentEndTime{};
+uint64_t driverStartTime{};
+uint64_t driverEndTime{};
+uint64_t osRenderQueueStartTime{};
+uint64_t osRenderQueueEndTime{};
+uint64_t gpuRenderStartTime{};
+uint64_t gpuRenderEndTime{};
+uint32_t gpuActiveRenderTimeUs{};
+uint32_t gpuFrameTimeUs{};
 
-    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+//! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
+}
+;
 
 // {F0BB5985-DAF9-4728-B2FD-AE80A2BD7989}
 SL_STRUCT(ReflexState, StructType({ 0xf0bb5985, 0xdaf9, 0x4728, { 0xb2, 0xfd, 0xae, 0x80, 0xa2, 0xbd, 0x79, 0x89 } }), kStructVersion1)
-    //! Specifies if low-latency mode is available or not
-    bool lowLatencyAvailable = false;
-    //! Specifies if the frameReport below contains valid data or not
-    bool latencyReportAvailable = false;
-    //! Specifies low latency Windows message id (if ReflexOptions::virtualKey is 0)
-    uint32_t statsWindowMessage;
-    //! Reflex report per frame
-    ReflexReport frameReport[64];
-    //! Specifies ownership of flash indicator toggle (true = driver, false = application)
-    bool flashIndicatorDriverControlled = false;
+//! Specifies if low-latency mode is available or not
+bool lowLatencyAvailable = false;
+//! Specifies if the frameReport below contains valid data or not
+bool latencyReportAvailable = false;
+//! Specifies low latency Windows message id (if ReflexOptions::virtualKey is 0)
+uint32_t statsWindowMessage;
+//! Reflex report per frame
+ReflexReport frameReport[64];
+//! Specifies ownership of flash indicator toggle (true = driver, false = application)
+bool flashIndicatorDriverControlled = false;
 
-    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+//! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
+}
+;
 
 enum ReflexMarker
 {
-    eSimulationStart,
-    eSimulationEnd,
-    eRenderSubmitStart,
-    eRenderSubmitEnd,
-    ePresentStart,
-    ePresentEnd,
-    eInputSample,
-    eTriggerFlash,
-    ePCLatencyPing,
-    eOutOfBandRenderSubmitStart,
-    eOutOfBandRenderSubmitEnd,
-    eOutOfBandPresentStart,
-    eOutOfBandPresentEnd
+	eSimulationStart,
+	eSimulationEnd,
+	eRenderSubmitStart,
+	eRenderSubmitEnd,
+	ePresentStart,
+	ePresentEnd,
+	eInputSample,
+	eTriggerFlash,
+	ePCLatencyPing,
+	eOutOfBandRenderSubmitStart,
+	eOutOfBandRenderSubmitEnd,
+	eOutOfBandPresentStart,
+	eOutOfBandPresentEnd
 };
 
 // {E268B3DC-F963-4C37-9776-AF048E132621}
 SL_STRUCT(ReflexHelper, StructType({ 0xe268b3dc, 0xf963, 0x4c37, { 0x97, 0x76, 0xaf, 0x4, 0x8e, 0x13, 0x26, 0x21 } }), kStructVersion1)
-    ReflexHelper(ReflexMarker m) : BaseStructure(ReflexHelper::s_structType, kStructVersion1), marker(m) {};
-    operator ReflexMarker () const { return marker; };
+ReflexHelper(ReflexMarker m) :
+	BaseStructure(ReflexHelper::s_structType, kStructVersion1), marker(m){};
+operator ReflexMarker() const { return marker; };
+
 private:
-    ReflexMarker marker;
-};
-
-
+ReflexMarker marker;
+}
+;
 }
 
 //! Provides Reflex settings
@@ -166,27 +169,27 @@ using PFun_slReflexSleep = sl::Result(const sl::FrameToken& frame);
 using PFun_slReflexSetOptions = sl::Result(const sl::ReflexOptions& options);
 
 //! HELPERS
-//! 
+//!
 inline sl::Result slReflexGetState(sl::ReflexState& state)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexGetState);
-    return s_slReflexGetState(state);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexGetState);
+	return s_slReflexGetState(state);
 }
 
 inline sl::Result slReflexSetMarker(sl::ReflexMarker marker, const sl::FrameToken& frame)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSetMarker);
-    return s_slReflexSetMarker(marker, frame);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSetMarker);
+	return s_slReflexSetMarker(marker, frame);
 }
 
 inline sl::Result slReflexSleep(const sl::FrameToken& frame)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSleep);
-    return s_slReflexSleep(frame);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSleep);
+	return s_slReflexSleep(frame);
 }
 
 inline sl::Result slReflexSetOptions(const sl::ReflexOptions& options)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSetOptions);
-    return s_slReflexSetOptions(options);
+	SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureReflex, slReflexSetOptions);
+	return s_slReflexSetOptions(options);
 }
