@@ -150,7 +150,7 @@ HRESULT WINAPI hk_IDXGISwapChain_Present(IDXGISwapChain* This, UINT SyncInterval
 {
 	State::GetSingleton()->Reset();
 	Menu::GetSingleton()->DrawOverlay();
-	Streamline::GetSingleton()->SetTags();
+	Streamline::GetSingleton()->Present();
 	auto retval = (This->*ptr_IDXGISwapChain_Present)(SyncInterval, Flags);
 	TracyD3D11Collect(State::GetSingleton()->tracyCtx);
 	return retval;

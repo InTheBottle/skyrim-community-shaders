@@ -25,6 +25,9 @@ public:
 	bool initialized = false;
 
 	sl::ViewportHandle viewport;
+	sl::FrameToken* currentFrame;
+
+	bool enableFrameGeneration = true;
 
 	HMODULE interposer = NULL;
 
@@ -51,9 +54,16 @@ public:
 	PFun_slDLSSGGetState* slDLSSGGetState{};
 	PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
 
-	Texture2D* HUDLessBuffer;
-	Texture2D* depthBuffer;
-	ID3D11ComputeShader* copyDepthToSharedBuffer;
+	// Reflex specific functions
+	PFun_slReflexGetState* slReflexGetState{};
+	PFun_slReflexSetMarker* slReflexSetMarker{};
+	PFun_slReflexSleep* slReflexSleep{};
+	PFun_slReflexSetOptions* slReflexSetOptions{};
+
+	Texture2D* colorBufferShared;
+	Texture2D* depthBufferShared;
+
+	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
 	void Initialize_preDevice();
 	void Initialize_postDevice();
@@ -78,7 +88,10 @@ public:
 	void UpgradeGameResource(RE::RENDER_TARGET a_target);
 	void UpgradeGameResources();
 
-	void SetTags();
+	void CopyColorToSharedBuffer();
+	void CopyDepthToSharedBuffer();
+
+	void Present();
 
 	void SetConstants();
 

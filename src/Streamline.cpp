@@ -76,6 +76,24 @@ void Streamline::Initialize_postDevice()
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction 
 	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
 	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
+
+	slGetFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
+	slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetMarker", (void*&)slReflexSetMarker);
+	slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
+	slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
+
+	// We set reflex consts to a default config. This can be changed at runtime in the UI.
+	auto reflexOptions = sl::ReflexOptions{};
+	reflexOptions.mode = sl::ReflexMode::eLowLatencyWithBoost;
+	reflexOptions.useMarkersToOptimize = false;
+	reflexOptions.virtualKey = 0;
+	reflexOptions.frameLimitUs = 0;
+
+	if (SL_FAILED(res, slReflexSetOptions(reflexOptions))) {
+		logger::error("Failed to set reflex options");
+	} else {
+		logger::info("Sucessfully set reflex options");
+	}
 }
 
 HRESULT Streamline::CreateDXGIFactory(REFIID riid, void** ppFactory)
@@ -108,6 +126,8 @@ HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 	
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 	
+	//Flags |= D3D11_CREATE_DEVICE_DEBUG;
+
 	auto hr = slD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
@@ -149,24 +169,64 @@ void Streamline::SetupFrameGenerationResources()
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
-	HUDLessBuffer = new Texture2D(texDesc);
-	HUDLessBuffer->CreateSRV(srvDesc);
-	HUDLessBuffer->CreateRTV(rtvDesc);
-	HUDLessBuffer->CreateUAV(uavDesc);
+	colorBufferShared = new Texture2D(texDesc);
+	colorBufferShared->CreateSRV(srvDesc);
+	colorBufferShared->CreateRTV(rtvDesc);
+	colorBufferShared->CreateUAV(uavDesc);
 
 	texDesc.Format = DXGI_FORMAT_R32_FLOAT;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	depthBuffer = new Texture2D(texDesc);
-	depthBuffer->CreateSRV(srvDesc);
-	depthBuffer->CreateRTV(rtvDesc);
-	depthBuffer->CreateUAV(uavDesc);
+	depthBufferShared = new Texture2D(texDesc);
+	depthBufferShared->CreateSRV(srvDesc);
+	depthBufferShared->CreateRTV(rtvDesc);
+	depthBufferShared->CreateUAV(uavDesc);
 
-	//copyDepthToSharedBuffer = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+}
+
+void Streamline::CopyColorToSharedBuffer()
+{
+	auto& context = State::GetSingleton()->context;
+	auto& swapChain = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+	ID3D11Resource* swapChainResource;
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);	
+}
+
+void Streamline::CopyDepthToSharedBuffer()
+{
+	auto& context = State::GetSingleton()->context;
+	auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	auto dispatchCount = Util::GetScreenDispatchCount();
+
+	{
+		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	}
+
+	ID3D11ShaderResourceView* views[1] = { nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	ID3D11ComputeShader* shader = nullptr;
+	context->CSSetShader(shader, nullptr, 0);
 }
 
 void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
@@ -191,7 +251,7 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 	data.RTV->Release();
 	data.texture->Release();
 
-	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
 	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
 	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &srvDesc, &data.SRV));
@@ -211,39 +271,53 @@ void Streamline::UpgradeGameResources()
 	}
 }
 
-void Streamline::SetTags()
+void Streamline::Present()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
+	static bool currentEnableFrameGeneration = enableFrameGeneration;
+	if (currentEnableFrameGeneration != enableFrameGeneration)
 	{
-		// Copy HUD-less texture which is automatically used to mask the UI
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+		currentEnableFrameGeneration = enableFrameGeneration;
 
-		auto state = State::GetSingleton();
+		sl::DLSSGOptions options{};
+		options.mode = currentEnableFrameGeneration ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
 
-		auto& context = state->context;
-
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
-
-		state->BeginPerfEvent("HudLessColor Copy");
-		context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
-		state->EndPerfEvent();		
+		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
+			logger::error("Could not set DLSSG");
+		}
 	}
+
+	// Fake NVIDIA Reflex useage to prevent DLSS FG errors
+	slReflexSleep(*currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::eInputSample, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::ePresentStart, *currentFrame);
+	slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *currentFrame);
+
+	CopyColorToSharedBuffer();
+	CopyDepthToSharedBuffer();
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
 
-	sl::Resource depth = { sl::ResourceType::eTex2d, depthBuffer->resource.get() };
-	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, NULL };
+	auto state = State::GetSingleton();
 
-	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture };
-	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, NULL };
+	sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 
-	sl::Resource hudLess = { sl::ResourceType::eTex2d, HUDLessBuffer->resource.get() };
-	sl::ResourceTag hudLessTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, NULL };
+	sl::Resource depth = { sl::ResourceType::eTex2d, depthBufferShared->resource.get(), 0 };
+	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
-	sl::Resource ui = { sl::ResourceType::eTex2d, nullptr };
-	sl::ResourceTag uiTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, NULL };
+	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture, 0 };
+	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+
+	sl::Resource hudLess = { sl::ResourceType::eTex2d, colorBufferShared->resource.get(), 0 };
+	sl::ResourceTag hudLessTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+
+	sl::Resource ui = { sl::ResourceType::eTex2d, nullptr, 0 };
+	sl::ResourceTag uiTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 	sl::ResourceTag inputs[] = { depthTag, mvecTag, hudLessTag, uiTag };
 	slSetTag(viewport, inputs, _countof(inputs), nullptr);
@@ -301,13 +375,12 @@ void Streamline::SetConstants()
 	consts.motionVectorsJittered = sl::Boolean::eFalse;
 	consts.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 
-    sl::FrameToken* frameToken{};
-	if(SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr)))
+	if (SL_FAILED(res, slGetNewFrameToken(currentFrame, nullptr)))
     {
 		logger::error("Could not get frame token");
 	}
 
-	if (SL_FAILED(res, slSetConstants(consts, *frameToken, viewport))) {
+	if (SL_FAILED(res, slSetConstants(consts, *currentFrame, viewport))) {
 		logger::error("Could not set constants");
 	}
 }

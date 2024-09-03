@@ -17,6 +17,8 @@
 #include "Deferred.h"
 #include "TruePBR.h"
 
+#include "Streamline.h"
+
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"
 #define SETTING_MENU_FONTSCALE "Font Scale"
@@ -452,6 +454,8 @@ void Menu::DrawSettings()
 			}
 		}
 
+		ImGui::Separator();
+		ImGui::Checkbox("Enable Frame Generation", &Streamline::GetSingleton()->enableFrameGeneration);
 		ImGui::Separator();
 
 		if (ImGui::BeginTable("Feature Table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
