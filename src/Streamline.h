@@ -5,12 +5,12 @@
 
 #pragma warning(push)
 #pragma warning(disable: 5103)
-#include "Streamline/include/sl.h"
-#include "Streamline/include/sl_consts.h"
-#include "Streamline/include/sl_dlss.h"
-#include "Streamline/include/sl_dlss_g.h"
-#include "Streamline/include/sl_matrix_helpers.h"
-#include "Streamline/include/sl_reflex.h"
+#include "Streamline/sl.h"
+#include "Streamline/sl_consts.h"
+#include "Streamline/sl_dlss.h"
+#include "Streamline/sl_dlss_g.h"
+#include "Streamline/sl_matrix_helpers.h"
+#include "Streamline/sl_reflex.h"
 #pragma warning(pop)
 
 class Streamline

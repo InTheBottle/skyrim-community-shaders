@@ -232,7 +232,7 @@ void Streamline::UpgradeGameResources()
 	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
 	sl::DLSSGOptions options{};
-	options.mode = sl::DLSSGMode::eOn;
+	options.mode = sl::DLSSGMode::eAuto;
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 		logger::error("[Streamline] Could not enable DLSSG");
@@ -302,7 +302,7 @@ void Streamline::Present()
 		currentEnableFrameGeneration = enableFrameGeneration;
 
 		sl::DLSSGOptions options{};
-		options.mode = currentEnableFrameGeneration ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
+		options.mode = currentEnableFrameGeneration ? sl::DLSSGMode::eAuto : sl::DLSSGMode::eOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 			logger::error("[Streamline] Could not set DLSSG");
