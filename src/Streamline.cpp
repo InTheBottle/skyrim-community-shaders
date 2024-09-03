@@ -1,6 +1,7 @@
 #include "Streamline.h"
+
 #include <Util.h>
-#include <Streamline/include/sl_matrix_helpers.h>
+#include <dxgi.h>
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
@@ -18,56 +19,111 @@ void LoggingCallback(sl::LogType type, const char* msg)
 	}
 }
 
-void Streamline::Initialize()
+void Streamline::Initialize_preDevice()
 {
+	interposer = LoadLibraryW(L"Data/SKSE/Plugins/Streamline/sl.interposer.dll");
+
 	sl::Preferences pref;
-	sl::Feature myFeatures[] = { sl::kFeatureDLSS_G };
+	sl::Feature myFeatures[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex };
 	pref.featuresToLoad = myFeatures;
 	pref.numFeaturesToLoad = _countof(myFeatures);
 
 	pref.logLevel = sl::LogLevel::eVerbose;
 	pref.logMessageCallback = LoggingCallback;
 
-	// Inform SL that it is OK to use newer version of SL or NGX (if available)
-	pref.flags |= sl::PreferenceFlags::eAllowOTA;
+	const wchar_t* pathsToPlugins[] = { L"Data/SKSE/Plugins/Streamline" };
 
-	if (SL_FAILED(res, slInit(pref))) {
+	pref.pathsToPlugins = pathsToPlugins;
+	
+	pref.numPathsToPlugins = _countof(pathsToPlugins);
+
+	pref.engine = sl::EngineType::eCustom;
+	pref.engineVersion = "1.0.0";
+	pref.projectId = "f8776929-c969-43bd-ac2b-294b4de58aac";
+
+	pref.renderAPI = sl::RenderAPI::eD3D11;
+	pref.flags |= sl::PreferenceFlags::eUseManualHooking;
+
+	// Hook up all of the functions exported by the SL Interposer Library
+	slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
+	slShutdown = (PFun_slShutdown*)GetProcAddress(interposer, "slShutdown");
+	slIsFeatureSupported = (PFun_slIsFeatureSupported*)GetProcAddress(interposer, "slIsFeatureSupported");
+	slIsFeatureLoaded = (PFun_slIsFeatureLoaded*)GetProcAddress(interposer, "slIsFeatureLoaded");
+	slSetFeatureLoaded = (PFun_slSetFeatureLoaded*)GetProcAddress(interposer, "slSetFeatureLoaded");
+	slEvaluateFeature = (PFun_slEvaluateFeature*)GetProcAddress(interposer, "slEvaluateFeature");
+	slAllocateResources = (PFun_slAllocateResources*)GetProcAddress(interposer, "slAllocateResources");
+	slFreeResources = (PFun_slFreeResources*)GetProcAddress(interposer, "slFreeResources");
+	slSetTag = (PFun_slSetTag*)GetProcAddress(interposer, "slSetTag");
+	slGetFeatureRequirements = (PFun_slGetFeatureRequirements*)GetProcAddress(interposer, "slGetFeatureRequirements");
+	slGetFeatureVersion = (PFun_slGetFeatureVersion*)GetProcAddress(interposer, "slGetFeatureVersion");
+	slUpgradeInterface = (PFun_slUpgradeInterface*)GetProcAddress(interposer, "slUpgradeInterface");
+	slSetConstants = (PFun_slSetConstants*)GetProcAddress(interposer, "slSetConstants");
+	slGetNativeInterface = (PFun_slGetNativeInterface*)GetProcAddress(interposer, "slGetNativeInterface");
+	slGetFeatureFunction = (PFun_slGetFeatureFunction*)GetProcAddress(interposer, "slGetFeatureFunction");
+	slGetNewFrameToken = (PFun_slGetNewFrameToken*)GetProcAddress(interposer, "slGetNewFrameToken");
+	slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
+	
+	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
 		logger::error("Failed to initialize Streamline");
 	} else {
 		logger::info("Sucessfully initialized Streamline");
 	}
+
+	initialized = true;
+}
+
+void Streamline::Initialize_postDevice()
+{
+	// Hook up all of the feature functions using the sl function slGetFeatureFunction 
+	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
+	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
+}
+
+HRESULT Streamline::CreateDXGIFactory(REFIID riid, void** ppFactory)
+{
+	if (!initialized)
+		Initialize_preDevice();
+
+	auto slCreateDXGIFactory1 = reinterpret_cast<decltype(&CreateDXGIFactory1)>(GetProcAddress(interposer, "CreateDXGIFactory1"));
+
+	return slCreateDXGIFactory1(riid, ppFactory);
 }
 
 HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 	D3D_DRIVER_TYPE DriverType,
 	HMODULE Software,
 	UINT Flags,
-	const D3D_FEATURE_LEVEL* pFeatureLevels,
-	UINT FeatureLevels,
+	const D3D_FEATURE_LEVEL*,
+	UINT,
 	UINT SDKVersion,
 	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
-	D3D_FEATURE_LEVEL* pFeatureLevel,
+	D3D_FEATURE_LEVEL*,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	auto mod = LoadLibraryW(L"sl.interposer.dll");
+	if (!initialized)
+		Initialize_preDevice();
 
-	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(mod, "D3D11CreateDeviceAndSwapChain"));
-
+	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
+	
+	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
+	
 	auto hr = slD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
 		Software,
 		Flags,
-		pFeatureLevels,
-		FeatureLevels,
+		&featureLevel,
+		1,
 		SDKVersion,
 		pSwapChainDesc,
 		ppSwapChain,
 		ppDevice,
-		pFeatureLevel,
+		nullptr,
 		ppImmediateContext);
+
+	Initialize_postDevice();
 
 	viewport = { 0 };
 
@@ -94,27 +150,24 @@ void Streamline::SetupFrameGenerationResources()
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	texDesc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 
 	HUDLessBuffer = new Texture2D(texDesc);
 	HUDLessBuffer->CreateSRV(srvDesc);
 	HUDLessBuffer->CreateRTV(rtvDesc);
 	HUDLessBuffer->CreateUAV(uavDesc);
 
-	{
-		const char textureName[] = "HUDLessBuffer";
-		HUDLessBuffer->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
+	texDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	srvDesc.Format = texDesc.Format;
+	rtvDesc.Format = texDesc.Format;
+	uavDesc.Format = texDesc.Format;
 
-	{
-		const char textureName[] = "HUDLessBufferSRV";
-		HUDLessBuffer->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
+	depthBuffer = new Texture2D(texDesc);
+	depthBuffer->CreateSRV(srvDesc);
+	depthBuffer->CreateRTV(rtvDesc);
+	depthBuffer->CreateUAV(uavDesc);
 
-	{
-		const char textureName[] = "HUDLessBufferSRV";
-		HUDLessBuffer->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
+	//copyDepthToSharedBuffer = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
 void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
@@ -130,87 +183,58 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 	D3D11_TEXTURE2D_DESC texDesc{};
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
 	data.texture->GetDesc(&texDesc);
 	data.SRV->GetDesc(&srvDesc);
 	data.RTV->GetDesc(&rtvDesc);
-	data.UAV->GetDesc(&uavDesc);
 
 	data.SRV->Release();
 	data.RTV->Release();
-	data.UAV->Release();
 	data.texture->Release();
 
-	texDesc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 
 	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
 	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &srvDesc, &data.SRV));
 	DX::ThrowIfFailed(device->CreateRenderTargetView(data.texture, &rtvDesc, &data.RTV));
-	DX::ThrowIfFailed(device->CreateUnorderedAccessView(data.texture, &uavDesc, &data.UAV));
-}
-
-void Streamline::UpgradeGameResourceDepth(RE::RENDER_TARGET_DEPTHSTENCIL a_target)
-{
-	logger::info("Upgrading game resource {}", magic_enum::enum_name(a_target));
-
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-	auto& data = renderer->GetDepthStencilData().depthStencils[a_target];
-
-	auto& device = State::GetSingleton()->device;
-
-	D3D11_TEXTURE2D_DESC texDesc{};
-	D3D11_SHADER_RESOURCE_VIEW_DESC depthSRVDesc = {};
-	D3D11_SHADER_RESOURCE_VIEW_DESC stencilSRVDesc = {};
-
-	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-	D3D11_DEPTH_STENCIL_VIEW_DESC dsvReadOnlyDesc = {};
-
-	data.texture->GetDesc(&texDesc);
-	data.depthSRV->GetDesc(&depthSRVDesc);
-	data.stencilSRV->GetDesc(&stencilSRVDesc);
-	data.views[0]->GetDesc(&dsvDesc);
-	data.readOnlyViews[0]->GetDesc(&dsvReadOnlyDesc);
-
-	data.depthSRV->Release();
-	data.stencilSRV->Release();
-	data.views[0]->Release();
-	data.readOnlyViews[0]->Release();
-
-	data.texture->Release();
-
-	texDesc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-
-	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
-	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &depthSRVDesc, &data.depthSRV));
-	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &stencilSRVDesc, &data.stencilSRV));
-	DX::ThrowIfFailed(device->CreateDepthStencilView(data.texture, &dsvDesc, &data.views[0]));
-	DX::ThrowIfFailed(device->CreateDepthStencilView(data.texture, &dsvReadOnlyDesc, &data.readOnlyViews[0]));
 }
 
 void Streamline::UpgradeGameResources()
 {
+	SetupFrameGenerationResources();
 	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
-	UpgradeGameResourceDepth(RE::RENDER_TARGET_DEPTHSTENCIL::kMAIN);
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eOn;
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
-		logger::error("Coulld not enable DLSSG");
+		logger::error("Could not enable DLSSG");
 	}
 }
-
 
 void Streamline::SetTags()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-	auto& depthBuffer = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kMAIN];
+	{
+		// Copy HUD-less texture which is automatically used to mask the UI
+		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+		auto state = State::GetSingleton();
+
+		auto& context = state->context;
+
+		ID3D11Resource* swapChainResource;
+		swapChain.SRV->GetResource(&swapChainResource);
+
+		state->BeginPerfEvent("HudLessColor Copy");
+		context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
+		state->EndPerfEvent();		
+	}
+
 	auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
 
-	sl::Resource depth = { sl::ResourceType::eTex2d, depthBuffer.texture };
+	sl::Resource depth = { sl::ResourceType::eTex2d, depthBuffer->resource.get() };
 	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, NULL };
 	
 	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture };
@@ -222,10 +246,8 @@ void Streamline::SetTags()
 	sl::Resource ui = { sl::ResourceType::eTex2d, nullptr };
 	sl::ResourceTag uiTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, NULL };
 
-	auto& cmdList = State::GetSingleton()->context;
-
 	sl::ResourceTag inputs[] = { depthTag, mvecTag, hudLessTag, uiTag };
-	slSetTag(viewport, inputs, _countof(inputs), cmdList);
+	slSetTag(viewport, inputs, _countof(inputs), nullptr);
 }
 
 void Streamline::SetConstants()
@@ -269,7 +291,7 @@ void Streamline::SetConstants()
 	consts.cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
 	consts.cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
 
-	consts.cameraFOV = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
+	consts.cameraFOV = atan(1.0f / cameraData.projMatrixUnjittered.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
 
 	consts.depthInverted = sl::Boolean::eFalse;
 	consts.cameraMotionIncluded = sl::Boolean::eTrue;
@@ -278,11 +300,10 @@ void Streamline::SetConstants()
 	consts.orthographicProjection = sl::Boolean::eFalse;
 	consts.motionVectorsDilated = sl::Boolean::eFalse;
 	consts.motionVectorsJittered = sl::Boolean::eFalse;
-
-	float cameraAspectRatio = state->screenSize.x / state->screenSize.y;
+	consts.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 
     sl::FrameToken* frameToken{};
-	if(SL_FAILED(res, slGetNewFrameToken(frameToken)))
+	if(SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr)))
     {
 		logger::error("Coulld not get frame token");
     }

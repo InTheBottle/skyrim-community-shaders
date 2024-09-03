@@ -150,6 +150,7 @@ HRESULT WINAPI hk_IDXGISwapChain_Present(IDXGISwapChain* This, UINT SyncInterval
 {
 	State::GetSingleton()->Reset();
 	Menu::GetSingleton()->DrawOverlay();
+	Streamline::GetSingleton()->SetTags();
 	auto retval = (This->*ptr_IDXGISwapChain_Present)(SyncInterval, Flags);
 	TracyD3D11Collect(State::GetSingleton()->tracyCtx);
 	return retval;
@@ -188,6 +189,24 @@ HRESULT STDMETHODCALLTYPE hk_CreatePixelShader(ID3D11Device* This, const void* p
 	return hr;
 }
 
+decltype(&CreateDXGIFactory) ptrCreateDXGIFactory;
+
+HRESULT WINAPI hk_CreateDXGIFactory(REFIID, void** ppFactory)
+{
+	logger::info("Creating DXGI factory");
+
+	return Streamline::GetSingleton()->CreateDXGIFactory(__uuidof(IDXGIFactory1), ppFactory);
+}
+
+decltype(&CreateDXGIFactory) ptrCreateDXGIFactory1;
+
+HRESULT WINAPI hk_CreateDXGIFactory1(REFIID, void** ppFactory)
+{
+	logger::info("Creating DXGI factory");
+
+	return Streamline::GetSingleton()->CreateDXGIFactory(__uuidof(IDXGIFactory1), ppFactory);
+}
+
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
 
 HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
@@ -204,11 +223,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	auto streamline = Streamline::GetSingleton();
-
-	streamline->Initialize();
-
-	auto hr = streamline->CreateSwapchain(
+	auto hr = Streamline::GetSingleton()->CreateSwapchain(
 		pAdapter,
 		DriverType,
 		Software,
@@ -592,6 +607,12 @@ namespace Hooks
 		logger::info("Hooking D3D11CreateDeviceAndSwapChain");
 		*(FARPROC*)&ptrD3D11CreateDeviceAndSwapChain = GetProcAddress(GetModuleHandleA("d3d11.dll"), "D3D11CreateDeviceAndSwapChain");
 		SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+
+		*(FARPROC*)&ptrCreateDXGIFactory = GetProcAddress(GetModuleHandleA("dxgi.dll"), "CreateDXGIFactory");
+		SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
+
+		*(FARPROC*)&ptrCreateDXGIFactory1 = GetProcAddress(GetModuleHandleA("dxgi.dll"), "CreateDXGIFactory1");
+		SKSE::PatchIAT(hk_CreateDXGIFactory1, "dxgi.dll", "CreateDXGIFactory1");
 
 		logger::info("Hooking BSShaderRenderTargets::Create");
 		*(uintptr_t*)&ptr_BSShaderRenderTargets_Create = Detours::X64::DetourFunction(REL::RelocationID(100458, 107175).address(), (uintptr_t)&hk_BSShaderRenderTargets_Create);

@@ -14,6 +14,8 @@
 #include "Features/TerrainBlending.h"
 #include "TruePBR.h"
 
+#include "Streamline.h"
+
 void State::Draw()
 {
 	const auto& shaderCache = SIE::ShaderCache::Instance();
@@ -103,6 +105,7 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	Deferred::GetSingleton()->SetupResources();
+	Streamline::GetSingleton()->UpgradeGameResources();
 	if (initialized)
 		return;
 	initialized = true;
@@ -268,6 +271,7 @@ void State::PostPostLoad()
 		logger::info("Skyrim Upscaler not detected");
 	Deferred::Hooks::Install();
 	TruePBR::GetSingleton()->PostPostLoad();
+	Streamline::InstallHooks();
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)

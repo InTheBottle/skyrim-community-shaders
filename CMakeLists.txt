@@ -74,11 +74,6 @@ target_link_libraries(
 	unordered_dense::unordered_dense
 	efsw::efsw
 	Tracy::TracyClient
-	${CMAKE_CURRENT_SOURCE_DIR}/include/Streamline/sl.common.lib
-	${CMAKE_CURRENT_SOURCE_DIR}/include/Streamline/sl.dlss.lib
-	${CMAKE_CURRENT_SOURCE_DIR}/include/Streamline/sl.imgui.lib
-	${CMAKE_CURRENT_SOURCE_DIR}/include/Streamline/sl.interposer.lib
-	${CMAKE_CURRENT_SOURCE_DIR}/include/Streamline/sl.reflex.lib
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
