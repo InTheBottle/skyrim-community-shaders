@@ -18,55 +18,55 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/ 
+*/
 
 #pragma once
 
 namespace sl
 {
 
-enum class Result
-{
-    eOk,
-    eErrorIO,
-    eErrorDriverOutOfDate,
-    eErrorOSOutOfDate,
-    eErrorOSDisabledHWS,
-    eErrorDeviceNotCreated,
-    eErrorNoSupportedAdapterFound,
-    eErrorAdapterNotSupported,
-    eErrorNoPlugins,
-    eErrorVulkanAPI,
-    eErrorDXGIAPI,
-    eErrorD3DAPI,
-    eErrorNRDAPI,
-    eErrorNVAPI,
-    eErrorReflexAPI,
-    eErrorNGXFailed,
-    eErrorJSONParsing,
-    eErrorMissingProxy,
-    eErrorMissingResourceState,
-    eErrorInvalidIntegration,
-    eErrorMissingInputParameter,
-    eErrorNotInitialized,
-    eErrorComputeFailed,
-    eErrorInitNotCalled,
-    eErrorExceptionHandler,
-    eErrorInvalidParameter,
-    eErrorMissingConstants,
-    eErrorDuplicatedConstants,
-    eErrorMissingOrInvalidAPI,
-    eErrorCommonConstantsMissing,
-    eErrorUnsupportedInterface,
-    eErrorFeatureMissing,
-    eErrorFeatureNotSupported,
-    eErrorFeatureMissingHooks,
-    eErrorFeatureFailedToLoad,
-    eErrorFeatureWrongPriority,
-    eErrorFeatureMissingDependency,
-    eErrorFeatureManagerInvalidState,
-    eErrorInvalidState,
-    eWarnOutOfVRAM
-};
+	enum class Result
+	{
+		eOk,
+		eErrorIO,
+		eErrorDriverOutOfDate,
+		eErrorOSOutOfDate,
+		eErrorOSDisabledHWS,
+		eErrorDeviceNotCreated,
+		eErrorNoSupportedAdapterFound,
+		eErrorAdapterNotSupported,
+		eErrorNoPlugins,
+		eErrorVulkanAPI,
+		eErrorDXGIAPI,
+		eErrorD3DAPI,
+		eErrorNRDAPI,
+		eErrorNVAPI,
+		eErrorReflexAPI,
+		eErrorNGXFailed,
+		eErrorJSONParsing,
+		eErrorMissingProxy,
+		eErrorMissingResourceState,
+		eErrorInvalidIntegration,
+		eErrorMissingInputParameter,
+		eErrorNotInitialized,
+		eErrorComputeFailed,
+		eErrorInitNotCalled,
+		eErrorExceptionHandler,
+		eErrorInvalidParameter,
+		eErrorMissingConstants,
+		eErrorDuplicatedConstants,
+		eErrorMissingOrInvalidAPI,
+		eErrorCommonConstantsMissing,
+		eErrorUnsupportedInterface,
+		eErrorFeatureMissing,
+		eErrorFeatureNotSupported,
+		eErrorFeatureMissingHooks,
+		eErrorFeatureFailedToLoad,
+		eErrorFeatureWrongPriority,
+		eErrorFeatureMissingDependency,
+		eErrorFeatureManagerInvalidState,
+		eErrorInvalidState,
+		eWarnOutOfVRAM
+	};
 
 }
