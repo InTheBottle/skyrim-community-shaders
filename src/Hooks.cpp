@@ -223,7 +223,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	
 	//Flags |= D3D11_CREATE_DEVICE_DEBUG;
 
 	bool streamlineProxy = false;
