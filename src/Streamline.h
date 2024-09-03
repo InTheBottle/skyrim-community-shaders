@@ -7,9 +7,9 @@
 #pragma warning(disable: 5103)
 #include "Streamline/include/sl.h"
 #include "Streamline/include/sl_consts.h"
-#include "Streamline/include/sl_matrix_helpers.h"
 #include "Streamline/include/sl_dlss.h"
 #include "Streamline/include/sl_dlss_g.h"
+#include "Streamline/include/sl_matrix_helpers.h"
 #include "Streamline/include/sl_reflex.h"
 #pragma warning(pop)
 
@@ -46,7 +46,7 @@ public:
 	PFun_slGetFeatureFunction* slGetFeatureFunction{};
 	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
-	
+
 	// DLSSG specific functions
 	PFun_slDLSSGGetState* slDLSSGGetState{};
 	PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
@@ -111,7 +111,7 @@ public:
 
 			//state->BeginPerfEvent("HudLessColor Copy");
 			//context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
-			//state->EndPerfEvent();		
+			//state->EndPerfEvent();
 
 			func(a1);
 		}

@@ -33,7 +33,7 @@ void Streamline::Initialize_preDevice()
 	const wchar_t* pathsToPlugins[] = { L"Data/SKSE/Plugins/Streamline" };
 
 	pref.pathsToPlugins = pathsToPlugins;
-	
+
 	pref.numPathsToPlugins = _countof(pathsToPlugins);
 
 	pref.engine = sl::EngineType::eCustom;
@@ -61,7 +61,7 @@ void Streamline::Initialize_preDevice()
 	slGetFeatureFunction = (PFun_slGetFeatureFunction*)GetProcAddress(interposer, "slGetFeatureFunction");
 	slGetNewFrameToken = (PFun_slGetNewFrameToken*)GetProcAddress(interposer, "slGetNewFrameToken");
 	slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
-	
+
 	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
 		logger::error("Failed to initialize Streamline");
 	} else {
@@ -73,7 +73,7 @@ void Streamline::Initialize_preDevice()
 
 void Streamline::Initialize_postDevice()
 {
-	// Hook up all of the feature functions using the sl function slGetFeatureFunction 
+	// Hook up all of the feature functions using the sl function slGetFeatureFunction
 	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
 	slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
 }
@@ -105,9 +105,9 @@ HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 		Initialize_preDevice();
 
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
-	
+
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-	
+
 	auto hr = slD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
@@ -228,7 +228,7 @@ void Streamline::SetTags()
 
 		state->BeginPerfEvent("HudLessColor Copy");
 		context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
-		state->EndPerfEvent();		
+		state->EndPerfEvent();
 	}
 
 	auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
@@ -301,9 +301,8 @@ void Streamline::SetConstants()
 	consts.motionVectorsJittered = sl::Boolean::eFalse;
 	consts.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 
-    sl::FrameToken* frameToken{};
-	if(SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr)))
-    {
+	sl::FrameToken* frameToken{};
+	if (SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr))) {
 		logger::error("Could not get frame token");
 	}
 
