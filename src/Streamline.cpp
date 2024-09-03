@@ -291,6 +291,13 @@ void Streamline::CopyResourcesToSharedBuffers()
 	auto& context = State::GetSingleton()->context;
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
+	if (RE::UI::GetSingleton()->GameIsPaused())
+	{
+		float clearColor[4] = { 0, 0, 0, 0 };
+		auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
+		context->ClearUnorderedAccessViewFloat(motionVectorsBuffer.UAV, clearColor);
+	}
+
 	{
 		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
