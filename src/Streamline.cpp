@@ -21,8 +21,7 @@ void LoggingCallback(sl::LogType type, const char* msg)
 
 void Streamline::Shutdown()
 {
-	if (SL_FAILED(res, slShutdown()))
-	{
+	if (SL_FAILED(res, slShutdown())) {
 		logger::error("[Streamline] Failed to shutdown Streamline");
 	} else {
 		logger::info("[Streamline] Sucessfully shutdown Streamline");
