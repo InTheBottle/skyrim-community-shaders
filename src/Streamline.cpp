@@ -24,7 +24,7 @@ void Streamline::Initialize_preDevice()
 	logger::info("[Streamline] Initializing Streamline");
 
 	interposer = LoadLibraryW(L"Data/SKSE/Plugins/Streamline/sl.interposer.dll");
-	
+
 	sl::Preferences pref;
 
 	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex };
@@ -391,7 +391,7 @@ void Streamline::SetConstants()
 	slConstants.clipToPrevClip = *(sl::float4x4*)&cameraToPrevCamera;
 	slConstants.depthInverted = sl::Boolean::eFalse;
 	slConstants.jitterOffset = { 0, 0 };
-	slConstants.mvecScale = { 1, 1};
+	slConstants.mvecScale = { 1, 1 };
 	slConstants.prevClipToClip = *(sl::float4x4*)&prevCameraToCamera;
 	slConstants.reset = sl::Boolean::eFalse;
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
