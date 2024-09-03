@@ -261,7 +261,7 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 void Streamline::UpgradeGameResources()
 {
 	SetupFrameGenerationResources();
-//	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
+	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eOn;
@@ -287,7 +287,6 @@ void Streamline::Present()
 	}
 
 	// Fake NVIDIA Reflex useage to prevent DLSS FG errors
-	slReflexSleep(*currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::eInputSample, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *currentFrame);
