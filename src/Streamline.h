@@ -23,6 +23,7 @@ public:
 	}
 
 	bool initialized = false;
+	bool streamlineActive = false;
 
 	sl::ViewportHandle viewport;
 	sl::FrameToken* currentFrame;
@@ -65,12 +66,14 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
+	void Shutdown();
+
 	void Initialize_preDevice();
 	void Initialize_postDevice();
 
 	HRESULT CreateDXGIFactory(REFIID riid, void** ppFactory);
 
-	HRESULT CreateSwapchain(IDXGIAdapter* pAdapter,
+	HRESULT CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 		D3D_DRIVER_TYPE DriverType,
 		HMODULE Software,
 		UINT Flags,
@@ -81,15 +84,15 @@ public:
 		IDXGISwapChain** ppSwapChain,
 		ID3D11Device** ppDevice,
 		D3D_FEATURE_LEVEL* pFeatureLevel,
-		ID3D11DeviceContext** ppImmediateContext);
+		ID3D11DeviceContext** ppImmediateContext,
+		bool& o_streamlineProxy);
 
 	void CreateFrameGenerationResources();
 
 	void UpgradeGameResource(RE::RENDER_TARGET a_target);
 	void UpgradeGameResources();
 
-	void CopyColorToSharedBuffer();
-	void CopyDepthToSharedBuffer();
+	void CopyResourcesToSharedBuffers();
 
 	void Present();
 
@@ -110,7 +113,7 @@ public:
 	{
 		static void thunk(int64_t a1)
 		{
-			GetSingleton()->CopyColorToSharedBuffer();
+			GetSingleton()->CopyResourcesToSharedBuffers();
 			func(a1);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

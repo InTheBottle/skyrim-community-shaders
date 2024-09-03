@@ -223,7 +223,12 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	auto hr = Streamline::GetSingleton()->CreateSwapchain(
+	
+	//Flags |= D3D11_CREATE_DEVICE_DEBUG;
+
+	bool streamlineProxy = false;
+
+	auto hr = Streamline::GetSingleton()->CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
 		Software,
@@ -235,25 +240,26 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppSwapChain,
 		ppDevice,
 		pFeatureLevel,
-		ppImmediateContext);
+		ppImmediateContext,
+		streamlineProxy);
+
+	if (!streamlineProxy) {
+		hr = (*ptrD3D11CreateDeviceAndSwapChain)(
+			pAdapter,
+			DriverType,
+			Software,
+			Flags,
+			pFeatureLevels,
+			FeatureLevels,
+			SDKVersion,
+			pSwapChainDesc,
+			ppSwapChain,
+			ppDevice,
+			pFeatureLevel,
+			ppImmediateContext);
+	}
 
 	return hr;
-
-	//auto hr = (*ptrD3D11CreateDeviceAndSwapChain)(
-	//	pAdapter,
-	//	DriverType,
-	//	Software,
-	//	Flags,
-	//	&featureLevel,
-	//	1,
-	//	SDKVersion,
-	//	pSwapChainDesc,
-	//	ppSwapChain,
-	//	ppDevice,
-	//	nullptr,
-	//	ppImmediateContext);
-
-	//return hr;
 }
 
 void hk_BSShaderRenderTargets_Create();

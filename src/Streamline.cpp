@@ -19,6 +19,16 @@ void LoggingCallback(sl::LogType type, const char* msg)
 	}
 }
 
+void Streamline::Shutdown()
+{
+	if (SL_FAILED(res, slShutdown()))
+	{
+		logger::error("[Streamline] Failed to shutdown Streamline");
+	} else {
+		logger::info("[Streamline] Sucessfully shutdown Streamline");
+	}
+}
+
 void Streamline::Initialize_preDevice()
 {
 	logger::info("[Streamline] Initializing Streamline");
@@ -66,8 +76,10 @@ void Streamline::Initialize_preDevice()
 
 	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
 		logger::error("[Streamline] Failed to initialize Streamline");
+		streamlineActive = false;
 	} else {
 		logger::info("[Streamline] Sucessfully initialized Streamline");
+		streamlineActive = true;
 	}
 
 	initialized = true;
@@ -110,47 +122,75 @@ HRESULT Streamline::CreateDXGIFactory(REFIID riid, void** ppFactory)
 	return slCreateDXGIFactory1(riid, ppFactory);
 }
 
-HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
+HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 	D3D_DRIVER_TYPE DriverType,
 	HMODULE Software,
 	UINT Flags,
-	const D3D_FEATURE_LEVEL*,
-	UINT,
+	const D3D_FEATURE_LEVEL* pFeatureLevels,
+	UINT FeatureLevels,
 	UINT SDKVersion,
 	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
-	D3D_FEATURE_LEVEL*,
-	ID3D11DeviceContext** ppImmediateContext)
+	D3D_FEATURE_LEVEL* pFeatureLevel,
+	ID3D11DeviceContext** ppImmediateContext,
+	bool& o_streamlineProxy)
 {
-	if (!initialized)
-		Initialize_preDevice();
+	if (!streamlineActive) {
+		logger::info("[Streamline] Streamline was not initialized before calling D3D11CreateDeviceAndSwapChain");
+
+		streamlineActive = false;
+		o_streamlineProxy = false;
+
+		return S_OK;
+	}
 
 	logger::info("[Streamline] Proxying D3D11CreateDeviceAndSwapChain");
 
+	sl::AdapterInfo adapterInfo;
+
+	DXGI_ADAPTER_DESC adapterDesc;
+	pAdapter->GetDesc(&adapterDesc);
+
+	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
+	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+
+	sl::Result res = slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo);
+
+	if (res == sl::Result::eOk) {
+		logger::info("[Streamline] Frame generation is supported on this adapter, proxying D3D11CreateDeviceAndSwapChain");
+	} else {
+		logger::info("[Streamline] Frame generation is not supported on this adapter, not proxying D3D11CreateDeviceAndSwapChain");
+
+		Shutdown();
+
+		streamlineActive = false;
+		o_streamlineProxy = false;
+
+		return S_OK;
+	}
+
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
-
-	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-
-	//Flags |= D3D11_CREATE_DEVICE_DEBUG;
 
 	auto hr = slD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
 		Software,
 		Flags,
-		&featureLevel,
-		1,
+		pFeatureLevels,
+		FeatureLevels,
 		SDKVersion,
 		pSwapChainDesc,
 		ppSwapChain,
 		ppDevice,
-		nullptr,
+		pFeatureLevel,
 		ppImmediateContext);
 
 	Initialize_postDevice();
 
 	viewport = { 0 };
+
+	o_streamlineProxy = true;
 
 	return hr;
 }
@@ -228,6 +268,9 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 
 void Streamline::UpgradeGameResources()
 {
+	if (!streamlineActive)
+		return;
+
 	CreateFrameGenerationResources();
 	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
@@ -240,64 +283,71 @@ void Streamline::UpgradeGameResources()
 	}
 }
 
-void Streamline::CopyColorToSharedBuffer()
+void Streamline::CopyResourcesToSharedBuffers()
 {
+	if (!streamlineActive)
+		return;
+
 	auto& context = State::GetSingleton()->context;
-	auto& swapChain = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
-	ID3D11Resource* swapChainResource;
-	swapChain.SRV->GetResource(&swapChainResource);
-
-	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
-}
-
-void Streamline::CopyDepthToSharedBuffer()
-{
-	auto& context = State::GetSingleton()->context;
-
-	ID3D11RenderTargetView* backupViews[8];
-	ID3D11DepthStencilView* backupDsv;
-	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
-	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
-
-	auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-	auto dispatchCount = Util::GetScreenDispatchCount();
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	{
-		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+		ID3D11Resource* swapChainResource;
+		swapChain.SRV->GetResource(&swapChainResource);
+
+		context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
+	}
+
+	{
+		ID3D11RenderTargetView* backupViews[8];
+		ID3D11DepthStencilView* backupDsv;
+		context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
+		context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
+
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+		auto dispatchCount = Util::GetScreenDispatchCount();
+
+		{
+			ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+			ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
+
+		ID3D11ShaderResourceView* views[1] = { nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
+		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+		ID3D11ComputeShader* shader = nullptr;
+		context->CSSetShader(shader, nullptr, 0);
 
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
+
+		for (int i = 0; i < 8; i++) {
+			if (backupViews[i])
+				backupViews[i]->Release();
+		}
+
+		if (backupDsv)
+			backupDsv->Release();
 	}
-
-	ID3D11ShaderResourceView* views[1] = { nullptr };
-	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-	ID3D11ComputeShader* shader = nullptr;
-	context->CSSetShader(shader, nullptr, 0);
-
-	context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
-
-	for (int i = 0; i < 8; i++) {
-		if (backupViews[i])
-			backupViews[i]->Release();
-	}
-
-	if (backupDsv)
-		backupDsv->Release();
 }
 
 void Streamline::Present()
 {
+	if (!streamlineActive)
+		return;
+
 	static bool currentEnableFrameGeneration = enableFrameGeneration;
 
 	if (currentEnableFrameGeneration != enableFrameGeneration) {
@@ -320,8 +370,6 @@ void Streamline::Present()
 	slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::ePresentStart, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *currentFrame);
-
-	CopyDepthToSharedBuffer();
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
@@ -360,6 +408,9 @@ float GetVerticalFOVRad()
 
 void Streamline::SetConstants()
 {
+	if (!streamlineActive)
+		return;
+
 	auto state = State::GetSingleton();
 
 	auto cameraData = Util::GetCameraData(0);
