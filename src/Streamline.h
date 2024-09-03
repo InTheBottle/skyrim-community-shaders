@@ -83,7 +83,7 @@ public:
 		D3D_FEATURE_LEVEL* pFeatureLevel,
 		ID3D11DeviceContext** ppImmediateContext);
 
-	void SetupFrameGenerationResources();
+	void CreateFrameGenerationResources();
 
 	void UpgradeGameResource(RE::RENDER_TARGET a_target);
 	void UpgradeGameResources();
@@ -110,22 +110,7 @@ public:
 	{
 		static void thunk(int64_t a1)
 		{
-			//// Copy HUD-less texture which is automatically used to mask the UI
-			//auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-			//auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
-			//auto state = State::GetSingleton();
-
-			//auto& context = state->context;
-
-			//ID3D11Resource* swapChainResource;
-			//swapChain.SRV->GetResource(&swapChainResource);
-
-			//state->BeginPerfEvent("HudLessColor Copy");
-			//context->CopyResource(GetSingleton()->HUDLessBuffer->resource.get(), swapChainResource);
-			//state->EndPerfEvent();
-
+			GetSingleton()->CopyColorToSharedBuffer();
 			func(a1);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

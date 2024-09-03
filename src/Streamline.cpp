@@ -1,7 +1,8 @@
 #include "Streamline.h"
 
-#include <Util.h>
 #include <dxgi.h>
+
+#include "Util.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
@@ -20,20 +21,21 @@ void LoggingCallback(sl::LogType type, const char* msg)
 
 void Streamline::Initialize_preDevice()
 {
+	logger::info("[Streamline] Initializing Streamline");
+
 	interposer = LoadLibraryW(L"Data/SKSE/Plugins/Streamline/sl.interposer.dll");
-
+	
 	sl::Preferences pref;
-	sl::Feature myFeatures[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex };
-	pref.featuresToLoad = myFeatures;
-	pref.numFeaturesToLoad = _countof(myFeatures);
 
-	pref.logLevel = sl::LogLevel::eVerbose;
+	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex };
+	pref.featuresToLoad = featuresToLoad;
+	pref.numFeaturesToLoad = _countof(featuresToLoad);
+
+	pref.logLevel = sl::LogLevel::eDefault;
 	pref.logMessageCallback = LoggingCallback;
 
 	const wchar_t* pathsToPlugins[] = { L"Data/SKSE/Plugins/Streamline" };
-
 	pref.pathsToPlugins = pathsToPlugins;
-
 	pref.numPathsToPlugins = _countof(pathsToPlugins);
 
 	pref.engine = sl::EngineType::eCustom;
@@ -63,9 +65,9 @@ void Streamline::Initialize_preDevice()
 	slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
 
 	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
-		logger::error("Failed to initialize Streamline");
+		logger::error("[Streamline] Failed to initialize Streamline");
 	} else {
-		logger::info("Sucessfully initialized Streamline");
+		logger::info("[Streamline] Sucessfully initialized Streamline");
 	}
 
 	initialized = true;
@@ -90,9 +92,9 @@ void Streamline::Initialize_postDevice()
 	reflexOptions.frameLimitUs = 0;
 
 	if (SL_FAILED(res, slReflexSetOptions(reflexOptions))) {
-		logger::error("Failed to set reflex options");
+		logger::error("[Streamline] Failed to set reflex options");
 	} else {
-		logger::info("Sucessfully set reflex options");
+		logger::info("[Streamline] Sucessfully set reflex options");
 	}
 }
 
@@ -100,6 +102,8 @@ HRESULT Streamline::CreateDXGIFactory(REFIID riid, void** ppFactory)
 {
 	if (!initialized)
 		Initialize_preDevice();
+
+	logger::info("[Streamline] Proxying CreateDXGIFactory");
 
 	auto slCreateDXGIFactory1 = reinterpret_cast<decltype(&CreateDXGIFactory1)>(GetProcAddress(interposer, "CreateDXGIFactory1"));
 
@@ -121,6 +125,8 @@ HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 {
 	if (!initialized)
 		Initialize_preDevice();
+
+	logger::info("[Streamline] Proxying D3D11CreateDeviceAndSwapChain");
 
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
 
@@ -149,8 +155,10 @@ HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 	return hr;
 }
 
-void Streamline::SetupFrameGenerationResources()
+void Streamline::CreateFrameGenerationResources()
 {
+	logger::info("[Streamline] Creating frame generation resources");
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
@@ -189,49 +197,9 @@ void Streamline::SetupFrameGenerationResources()
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
-void Streamline::CopyColorToSharedBuffer()
-{
-	auto& context = State::GetSingleton()->context;
-	auto& swapChain = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
-	ID3D11Resource* swapChainResource;
-	swapChain.SRV->GetResource(&swapChainResource);
-
-	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
-}
-
-void Streamline::CopyDepthToSharedBuffer()
-{
-	auto& context = State::GetSingleton()->context;
-	auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-	auto dispatchCount = Util::GetScreenDispatchCount();
-
-	{
-		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-		ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
-
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-	}
-
-	ID3D11ShaderResourceView* views[1] = { nullptr };
-	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-	ID3D11ComputeShader* shader = nullptr;
-	context->CSSetShader(shader, nullptr, 0);
-}
-
 void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 {
-	logger::info("Upgrading game resource {}", magic_enum::enum_name(a_target));
+	logger::info("[Streamline] Upgrading game resource {}", magic_enum::enum_name(a_target));
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
@@ -260,15 +228,71 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 
 void Streamline::UpgradeGameResources()
 {
-	SetupFrameGenerationResources();
+	CreateFrameGenerationResources();
 	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eOn;
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
-		logger::error("Could not enable DLSSG");
+		logger::error("[Streamline] Could not enable DLSSG");
 	}
+}
+
+void Streamline::CopyColorToSharedBuffer()
+{
+	auto& context = State::GetSingleton()->context;
+	auto& swapChain = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+	ID3D11Resource* swapChainResource;
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
+}
+
+void Streamline::CopyDepthToSharedBuffer()
+{
+	auto& context = State::GetSingleton()->context;
+
+	ID3D11RenderTargetView* backupViews[8];
+	ID3D11DepthStencilView* backupDsv;
+	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
+
+	auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	auto dispatchCount = Util::GetScreenDispatchCount();
+
+	{
+		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	}
+
+	ID3D11ShaderResourceView* views[1] = { nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	ID3D11ComputeShader* shader = nullptr;
+	context->CSSetShader(shader, nullptr, 0);
+
+	context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
+
+	for (int i = 0; i < 8; i++) {
+		if (backupViews[i])
+			backupViews[i]->Release();
+	}
+
+	if (backupDsv)
+		backupDsv->Release();
 }
 
 void Streamline::Present()
@@ -281,7 +305,7 @@ void Streamline::Present()
 		options.mode = currentEnableFrameGeneration ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
-			logger::error("Could not set DLSSG");
+			logger::error("[Streamline] Could not set DLSSG");
 		}
 	}
 
@@ -294,7 +318,6 @@ void Streamline::Present()
 	slReflexSetMarker(sl::ReflexMarker::ePresentStart, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *currentFrame);
 
-	CopyColorToSharedBuffer();
 	CopyDepthToSharedBuffer();
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -315,69 +338,73 @@ void Streamline::Present()
 	sl::ResourceTag hudLessTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 	sl::Resource ui = { sl::ResourceType::eTex2d, nullptr, 0 };
-	sl::ResourceTag uiTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+	sl::ResourceTag uiTag = sl::ResourceTag{ &ui, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 	sl::ResourceTag inputs[] = { depthTag, mvecTag, hudLessTag, uiTag };
 	slSetTag(viewport, inputs, _countof(inputs), nullptr);
+}
+
+// https://github.com/PureDark/Skyrim-Upscaler/blob/fa057bb088cf399e1112c1eaba714590c881e462/src/SkyrimUpscaler.cpp#L88
+float GetVerticalFOVRad()
+{
+	static float& fac = (*(float*)(REL::RelocationID(513786, 388785).address()));
+	const auto base = fac;
+	const auto x = base / 1.30322540f;
+	auto state = State::GetSingleton();
+	const auto vFOV = 2 * atan(x / (state->screenSize.x / state->screenSize.y));
+	return vFOV;
 }
 
 void Streamline::SetConstants()
 {
 	auto state = State::GetSingleton();
 
-	sl::Constants consts = {};
-
 	auto cameraData = Util::GetCameraData(0);
-
-	consts.cameraViewToClip = *(sl::float4x4*)&cameraData.viewMat;
+	auto eyePosition = Util::GetEyePosition(0);
 
 	auto clipToCameraView = cameraData.viewMat.Invert();
-	consts.clipToCameraView = *(sl::float4x4*)&clipToCameraView;
-
 	auto cameraToWorld = cameraData.viewProjMatrixUnjittered.Invert();
 	auto cameraToWorldPrev = cameraData.previousViewProjMatrixUnjittered.Invert();
 
-	sl::float4x4 cameraToPrevCamera;
+	float4x4 cameraToPrevCamera;
 
-	calcCameraToPrevCamera(cameraToPrevCamera, *(sl::float4x4*)&cameraToWorld, *(sl::float4x4*)&cameraToWorldPrev);
+	calcCameraToPrevCamera(*(sl::float4x4*)&cameraToPrevCamera, *(sl::float4x4*)&cameraToWorld, *(sl::float4x4*)&cameraToWorldPrev);
 
-	sl::float4x4 prevCameraToCamera;
+	float4x4 prevCameraToCamera = cameraToPrevCamera;
 
-	calcCameraToPrevCamera(prevCameraToCamera, *(sl::float4x4*)&cameraToWorldPrev, *(sl::float4x4*)&cameraToWorld);
+	prevCameraToCamera.Invert();
 
-	consts.clipToPrevClip = cameraToPrevCamera;
-	consts.prevClipToClip = prevCameraToCamera;
+	sl::Constants slConstants = {};
 
-	consts.jitterOffset = { 0, 0 };
-
-	consts.mvecScale = { 1, 1 };
-
-	auto eyePosition = -Util::GetEyePosition(0);
-	consts.cameraPos = *(sl::float3*)&eyePosition;
-
-	consts.cameraUp = *(sl::float3*)&cameraData.viewUp;
-	consts.cameraRight = *(sl::float3*)&cameraData.viewRight;
-	consts.cameraFwd = *(sl::float3*)&cameraData.viewForward;
-
-	consts.cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
-	consts.cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
-
-	consts.cameraFOV = atan(1.0f / cameraData.projMatrixUnjittered.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
-
-	consts.depthInverted = sl::Boolean::eFalse;
-	consts.cameraMotionIncluded = sl::Boolean::eTrue;
-	consts.motionVectors3D = sl::Boolean::eFalse;
-	consts.reset = sl::Boolean::eFalse;
-	consts.orthographicProjection = sl::Boolean::eFalse;
-	consts.motionVectorsDilated = sl::Boolean::eFalse;
-	consts.motionVectorsJittered = sl::Boolean::eFalse;
-	consts.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
+	slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
+	slConstants.cameraFOV = GetVerticalFOVRad();
+	slConstants.cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
+	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
+	slConstants.cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
+	slConstants.cameraPinholeOffset = { 0.f, 0.f };
+	slConstants.cameraPos = *(sl::float3*)&eyePosition;
+	slConstants.cameraFwd = *(sl::float3*)&cameraData.viewForward;
+	slConstants.cameraUp = *(sl::float3*)&cameraData.viewUp;
+	slConstants.cameraRight = *(sl::float3*)&cameraData.viewRight;
+	slConstants.cameraViewToClip = *(sl::float4x4*)&cameraData.viewMat;
+	slConstants.clipToCameraView = *(sl::float4x4*)&clipToCameraView;
+	slConstants.clipToPrevClip = *(sl::float4x4*)&cameraToPrevCamera;
+	slConstants.depthInverted = sl::Boolean::eFalse;
+	slConstants.jitterOffset = { 0, 0 };
+	slConstants.mvecScale = { 1, 1};
+	slConstants.prevClipToClip = *(sl::float4x4*)&prevCameraToCamera;
+	slConstants.reset = sl::Boolean::eFalse;
+	slConstants.motionVectors3D = sl::Boolean::eFalse;
+	slConstants.motionVectorsInvalidValue = FLT_MIN;
+	slConstants.orthographicProjection = sl::Boolean::eFalse;
+	slConstants.motionVectorsDilated = sl::Boolean::eFalse;
+	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
 
 	if (SL_FAILED(res, slGetNewFrameToken(currentFrame, nullptr))) {
-		logger::error("Could not get frame token");
+		logger::error("[Streamline] Could not get frame token");
 	}
 
-	if (SL_FAILED(res, slSetConstants(consts, *currentFrame, viewport))) {
-		logger::error("Could not set constants");
+	if (SL_FAILED(res, slSetConstants(slConstants, *currentFrame, viewport))) {
+		logger::error("[Streamline] Could not set constants");
 	}
 }
