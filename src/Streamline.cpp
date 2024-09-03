@@ -125,7 +125,7 @@ HRESULT Streamline::CreateSwapchain(IDXGIAdapter* pAdapter,
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-	
+
 	//Flags |= D3D11_CREATE_DEVICE_DEBUG;
 
 	auto hr = slD3D11CreateDeviceAndSwapChain(
@@ -197,7 +197,7 @@ void Streamline::CopyColorToSharedBuffer()
 	ID3D11Resource* swapChainResource;
 	swapChain.SRV->GetResource(&swapChainResource);
 
-	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);	
+	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
 }
 
 void Streamline::CopyDepthToSharedBuffer()
@@ -261,7 +261,7 @@ void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
 void Streamline::UpgradeGameResources()
 {
 	SetupFrameGenerationResources();
-//	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
+	//	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eOn;
@@ -274,8 +274,7 @@ void Streamline::UpgradeGameResources()
 void Streamline::Present()
 {
 	static bool currentEnableFrameGeneration = enableFrameGeneration;
-	if (currentEnableFrameGeneration != enableFrameGeneration)
-	{
+	if (currentEnableFrameGeneration != enableFrameGeneration) {
 		currentEnableFrameGeneration = enableFrameGeneration;
 
 		sl::DLSSGOptions options{};
@@ -375,8 +374,7 @@ void Streamline::SetConstants()
 	consts.motionVectorsJittered = sl::Boolean::eFalse;
 	consts.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 
-	if (SL_FAILED(res, slGetNewFrameToken(currentFrame, nullptr)))
-    {
+	if (SL_FAILED(res, slGetNewFrameToken(currentFrame, nullptr))) {
 		logger::error("Could not get frame token");
 	}
 
