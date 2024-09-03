@@ -233,6 +233,7 @@ void Streamline::UpgradeGameResources()
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eAuto;
+	options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 		logger::error("[Streamline] Could not enable DLSSG");
@@ -298,11 +299,13 @@ void Streamline::CopyDepthToSharedBuffer()
 void Streamline::Present()
 {
 	static bool currentEnableFrameGeneration = enableFrameGeneration;
+
 	if (currentEnableFrameGeneration != enableFrameGeneration) {
 		currentEnableFrameGeneration = enableFrameGeneration;
 
 		sl::DLSSGOptions options{};
-		options.mode = currentEnableFrameGeneration ? sl::DLSSGMode::eAuto : sl::DLSSGMode::eOff;
+		options.mode = enableFrameGeneration ? sl::DLSSGMode::eAuto : sl::DLSSGMode::eOff;
+		options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 			logger::error("[Streamline] Could not set DLSSG");
