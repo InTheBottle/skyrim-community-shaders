@@ -21,8 +21,7 @@ void LoggingCallback(sl::LogType type, const char* msg)
 
 void Streamline::DrawSettings()
 {
-	if (ImGui::CollapsingHeader("NVIDIA DLSS", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) 
-	{
+	if (ImGui::CollapsingHeader("NVIDIA DLSS", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
 		const char* frameGenerationModes[] = { "Off", "On", "Auto" };
 		frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
 		ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 2, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
