@@ -51,13 +51,6 @@ float getRCASLuma(float3 rgb)
 	float3 f = Source.Load(int3(DTid.x + 1, DTid.y, 0)).rgb;
 	float3 h = Source.Load(int3(DTid.x, DTid.y + 1, 0)).rgb;
 
-	// Gamma to linear
-	e = pow(e, 2.2);
-	b = pow(b, 2.2);
-	d = pow(d, 2.2);
-	f = pow(f, 2.2);
-	h = pow(h, 2.2);
-
 	// Luma times 2.
 	float bL = getRCASLuma(b);
 	float dL = getRCASLuma(d);
@@ -83,7 +76,7 @@ float getRCASLuma(float3 rgb)
 	float3 hitMin = minRGB * rcp(4.0 * maxRGB);
 	float3 hitMax = (peakC.xxx - maxRGB) * rcp(4.0 * minRGB + peakC.yyy);
 	float3 lobeRGB = max(-hitMin, hitMax);
-	float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0));
+	float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * 0.5;
 
 	// Apply noise removal.
 	lobe *= nz;
@@ -91,9 +84,6 @@ float getRCASLuma(float3 rgb)
 	// Resolve, which needs medium precision rcp approximation to avoid visible tonality changes.
 	float rcpL = rcp(4.0 * lobe + 1.0);
 	float3 output = ((b + d + f + h) * lobe + e) * rcpL;
-
-	// Linear to gamma
-	output = pow(output, 1.0 / 2.2);
 
 	Dest[DTid.xy] = output;
 }
