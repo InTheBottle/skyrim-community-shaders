@@ -16,7 +16,7 @@
 // RCAS is based on the following logic.
 // RCAS uses a 5 tap filter in a cross pattern (same as CAS),
 //    w                n
-//  w 1 w  for taps  w m e 
+//  w 1 w  for taps  w m e
 //    w                s
 // Where 'w' is the negative lobe weight.
 //  output = (w*(n+e+w+s)+m)/(4*w+1)
@@ -39,62 +39,61 @@ RWTexture2D<float3> Dest : register(u0);
 
 float getRCASLuma(float3 rgb)
 {
-    return dot(rgb, float3(0.5, 1.0, 0.5));
+	return dot(rgb, float3(0.5, 1.0, 0.5));
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 DTid : SV_DispatchThreadID)
-{    
-    float3 e = Source.Load(int3(DTid.x, DTid.y, 0)).rgb;
+[numthreads(8, 8, 1)] void main(uint3 DTid
+								: SV_DispatchThreadID) {
+	float3 e = Source.Load(int3(DTid.x, DTid.y, 0)).rgb;
 
-    float3 b = Source.Load(int3(DTid.x, DTid.y - 1, 0)).rgb;
-    float3 d = Source.Load(int3(DTid.x - 1, DTid.y, 0)).rgb;
-    float3 f = Source.Load(int3(DTid.x + 1, DTid.y, 0)).rgb;
-    float3 h = Source.Load(int3(DTid.x, DTid.y + 1, 0)).rgb;
+	float3 b = Source.Load(int3(DTid.x, DTid.y - 1, 0)).rgb;
+	float3 d = Source.Load(int3(DTid.x - 1, DTid.y, 0)).rgb;
+	float3 f = Source.Load(int3(DTid.x + 1, DTid.y, 0)).rgb;
+	float3 h = Source.Load(int3(DTid.x, DTid.y + 1, 0)).rgb;
 
-    // Gamma to linear
-    e = pow(e, 2.2);
-    b = pow(b, 2.2);
-    d = pow(d, 2.2);
-    f = pow(f, 2.2);
-    h = pow(h, 2.2);
+	// Gamma to linear
+	e = pow(e, 2.2);
+	b = pow(b, 2.2);
+	d = pow(d, 2.2);
+	f = pow(f, 2.2);
+	h = pow(h, 2.2);
 
-    // Luma times 2.
-    float bL = getRCASLuma(b);
-    float dL = getRCASLuma(d);
-    float eL = getRCASLuma(e);
-    float fL = getRCASLuma(f);
-    float hL = getRCASLuma(h);
-  
-    // Noise detection.
-    float nz = (bL + dL + fL + hL) * 0.25 - eL;
-    float range = max(max(max(bL, dL), max(hL, fL)), eL) - min(min(min(bL, dL), min(eL, fL)), hL);
-    nz = saturate(abs(nz) * rcp(range));
-    nz = -0.5 * nz + 1.0;
-    
-    // Min and max of ring.
-    float3 minRGB = min(min(b, d), min(f, h));
-    float3 maxRGB = max(max(b, d), max(f, h));
-  
-    // Immediate constants for peak range.
-    float2 peakC = float2(1.0, -4.0);
-  
-    // Limiters, these need to use high precision reciprocal operations.
-    // Decided to use standard rcp for now in hopes of optimizing it
-    float3 hitMin = minRGB * rcp(4.0 * maxRGB);
-    float3 hitMax = (peakC.xxx - maxRGB) * rcp(4.0 * minRGB + peakC.yyy);
-    float3 lobeRGB = max(-hitMin, hitMax);
-    float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0));
-    
-    // Apply noise removal.
-    lobe *= nz;
-  
-    // Resolve, which needs medium precision rcp approximation to avoid visible tonality changes.
-    float rcpL = rcp(4.0 * lobe + 1.0);
-    float3 output = ((b + d + f + h) * lobe + e) * rcpL;
-  
-    // Linear to gamma
-    output = pow(output, 1.0 / 2.2);
+	// Luma times 2.
+	float bL = getRCASLuma(b);
+	float dL = getRCASLuma(d);
+	float eL = getRCASLuma(e);
+	float fL = getRCASLuma(f);
+	float hL = getRCASLuma(h);
 
-    Dest[DTid.xy] = output;
+	// Noise detection.
+	float nz = (bL + dL + fL + hL) * 0.25 - eL;
+	float range = max(max(max(bL, dL), max(hL, fL)), eL) - min(min(min(bL, dL), min(eL, fL)), hL);
+	nz = saturate(abs(nz) * rcp(range));
+	nz = -0.5 * nz + 1.0;
+
+	// Min and max of ring.
+	float3 minRGB = min(min(b, d), min(f, h));
+	float3 maxRGB = max(max(b, d), max(f, h));
+
+	// Immediate constants for peak range.
+	float2 peakC = float2(1.0, -4.0);
+
+	// Limiters, these need to use high precision reciprocal operations.
+	// Decided to use standard rcp for now in hopes of optimizing it
+	float3 hitMin = minRGB * rcp(4.0 * maxRGB);
+	float3 hitMax = (peakC.xxx - maxRGB) * rcp(4.0 * minRGB + peakC.yyy);
+	float3 lobeRGB = max(-hitMin, hitMax);
+	float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0));
+
+	// Apply noise removal.
+	lobe *= nz;
+
+	// Resolve, which needs medium precision rcp approximation to avoid visible tonality changes.
+	float rcpL = rcp(4.0 * lobe + 1.0);
+	float3 output = ((b + d + f + h) * lobe + e) * rcpL;
+
+	// Linear to gamma
+	output = pow(output, 1.0 / 2.2);
+
+	Dest[DTid.xy] = output;
 }

@@ -614,7 +614,7 @@ namespace Hooks
 
 		logger::info("Hooking CreateDXGIFactory");
 		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
-		
+
 		logger::info("Hooking ptrCreateDXGIFactory1");
 		*(uintptr_t*)&ptrCreateDXGIFactory1 = SKSE::PatchIAT(hk_CreateDXGIFactory1, "dxgi.dll", "CreateDXGIFactory1");
 
