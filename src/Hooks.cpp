@@ -610,14 +610,13 @@ namespace Hooks
 		stl::write_thunk_call_6<RegisterClassA_Hook>(REL::VariantID(75591, 77226, 0xDC4B90).address() + REL::VariantOffset(0x8E, 0x15C, 0x99).offset());
 
 		logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-		*(FARPROC*)&ptrD3D11CreateDeviceAndSwapChain = GetProcAddress(GetModuleHandleA("d3d11.dll"), "D3D11CreateDeviceAndSwapChain");
-		SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+		*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 
-		*(FARPROC*)&ptrCreateDXGIFactory = GetProcAddress(GetModuleHandleA("dxgi.dll"), "CreateDXGIFactory");
-		SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
-
-		*(FARPROC*)&ptrCreateDXGIFactory1 = GetProcAddress(GetModuleHandleA("dxgi.dll"), "CreateDXGIFactory1");
-		SKSE::PatchIAT(hk_CreateDXGIFactory1, "dxgi.dll", "CreateDXGIFactory1");
+		logger::info("Hooking CreateDXGIFactory");
+		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
+		
+		logger::info("Hooking ptrCreateDXGIFactory1");
+		*(uintptr_t*)&ptrCreateDXGIFactory1 = SKSE::PatchIAT(hk_CreateDXGIFactory1, "dxgi.dll", "CreateDXGIFactory1");
 
 		logger::info("Hooking BSShaderRenderTargets::Create");
 		*(uintptr_t*)&ptr_BSShaderRenderTargets_Create = Detours::X64::DetourFunction(REL::RelocationID(100458, 107175).address(), (uintptr_t)&hk_BSShaderRenderTargets_Create);
