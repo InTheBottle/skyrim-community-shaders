@@ -183,7 +183,7 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 	sl::AdapterInfo adapterInfo;
 	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
 	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
-	
+
 	if (slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk) {
 		logger::info("[Streamline] Frame generation is supported on this adapter");
 	} else {
