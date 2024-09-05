@@ -23,15 +23,14 @@ ID3D11ComputeShader* Streamline::GetRCASComputeShader()
 {
 	if (!rcasCS) {
 		logger::debug("Compiling Utility.hlsl");
-		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", { }, "cs_5_0");
+		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", {}, "cs_5_0");
 	}
 	return rcasCS;
 }
 
 void Streamline::ClearShaderCache()
 {
-	if (rcasCS)
-	{
+	if (rcasCS) {
 		rcasCS->Release();
 		rcasCS = nullptr;
 	}
@@ -291,8 +290,7 @@ void Streamline::CopyResourcesToSharedBuffers()
 	auto& context = State::GetSingleton()->context;
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-	if (RE::UI::GetSingleton()->GameIsPaused())
-	{
+	if (RE::UI::GetSingleton()->GameIsPaused()) {
 		float clearColor[4] = { 0, 0, 0, 0 };
 		auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
 		context->ClearRenderTargetView(motionVectorsBuffer.RTV, clearColor);
@@ -312,9 +310,7 @@ void Streamline::CopyResourcesToSharedBuffers()
 
 	auto temporal = Util::GetTemporal();
 
-	if (temporal && enableSharpening)
-	{
-		
+	if (temporal && enableSharpening) {
 		{
 			ID3D11ShaderResourceView* views[1] = { swapChain.SRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
@@ -335,7 +331,7 @@ void Streamline::CopyResourcesToSharedBuffers()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
-		
+
 		context->CopyResource(swapChainResource, colorBufferShared->resource.get());
 	} else {
 		context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
