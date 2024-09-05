@@ -162,22 +162,13 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 		return S_OK;
 	}
 
-	logger::info("[Streamline] Proxying D3D11CreateDeviceAndSwapChain");
+	bool featureLoaded = false;
+	slIsFeatureLoaded(sl::kFeatureDLSS_G, featureLoaded);
 
-	sl::AdapterInfo adapterInfo;
-
-	DXGI_ADAPTER_DESC adapterDesc;
-	pAdapter->GetDesc(&adapterDesc);
-
-	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
-	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
-
-	sl::Result res = slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo);
-
-	if (res == sl::Result::eOk) {
-		logger::info("[Streamline] Frame generation is supported on this adapter, proxying D3D11CreateDeviceAndSwapChain");
+	if (featureLoaded) {
+		logger::info("[Streamline] Frame generation feature is loaded");
 	} else {
-		logger::info("[Streamline] Frame generation is not supported on this adapter, not proxying D3D11CreateDeviceAndSwapChain");
+		logger::info("[Streamline] Frame generation feature is not loaded");
 
 		Shutdown();
 
@@ -186,6 +177,28 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 
 		return S_OK;
 	}
+
+	DXGI_ADAPTER_DESC adapterDesc;
+	pAdapter->GetDesc(&adapterDesc);
+
+	sl::AdapterInfo adapterInfo;
+	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
+	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+	
+	if (slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk) {
+		logger::info("[Streamline] Frame generation is supported on this adapter");
+	} else {
+		logger::info("[Streamline] Frame generation is not supported on this adapter");
+
+		Shutdown();
+
+		streamlineActive = false;
+		o_streamlineProxy = false;
+
+		return S_OK;
+	}
+
+	logger::info("[Streamline] Proxying D3D11CreateDeviceAndSwapChain");
 
 	auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
 
