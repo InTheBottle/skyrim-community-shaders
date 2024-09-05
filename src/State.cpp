@@ -105,7 +105,7 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	Deferred::GetSingleton()->SetupResources();
-	Streamline::GetSingleton()->UpgradeGameResources();
+	Streamline::GetSingleton()->SetupFrameGeneration();
 	if (initialized)
 		return;
 	initialized = true;

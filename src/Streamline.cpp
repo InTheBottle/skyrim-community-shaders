@@ -19,6 +19,24 @@ void LoggingCallback(sl::LogType type, const char* msg)
 	}
 }
 
+ID3D11ComputeShader* Streamline::GetRCASComputeShader()
+{
+	if (!rcasCS) {
+		logger::debug("Compiling Utility.hlsl");
+		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", { }, "cs_5_0");
+	}
+	return rcasCS;
+}
+
+void Streamline::ClearShaderCache()
+{
+	if (rcasCS)
+	{
+		rcasCS->Release();
+		rcasCS = nullptr;
+	}
+}
+
 void Streamline::Shutdown()
 {
 	if (SL_FAILED(res, slShutdown())) {
@@ -236,42 +254,12 @@ void Streamline::CreateFrameGenerationResources()
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
-void Streamline::UpgradeGameResource(RE::RENDER_TARGET a_target)
-{
-	logger::info("[Streamline] Upgrading game resource {}", magic_enum::enum_name(a_target));
-
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-	auto& data = renderer->GetRuntimeData().renderTargets[a_target];
-
-	auto& device = State::GetSingleton()->device;
-
-	D3D11_TEXTURE2D_DESC texDesc{};
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-
-	data.texture->GetDesc(&texDesc);
-	data.SRV->GetDesc(&srvDesc);
-	data.RTV->GetDesc(&rtvDesc);
-
-	data.SRV->Release();
-	data.RTV->Release();
-	data.texture->Release();
-
-	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-
-	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
-	DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &srvDesc, &data.SRV));
-	DX::ThrowIfFailed(device->CreateRenderTargetView(data.texture, &rtvDesc, &data.RTV));
-}
-
-void Streamline::UpgradeGameResources()
+void Streamline::SetupFrameGeneration()
 {
 	if (!streamlineActive)
 		return;
 
 	CreateFrameGenerationResources();
-	UpgradeGameResource(RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR);
 
 	sl::DLSSGOptions options{};
 	options.mode = sl::DLSSGMode::eAuto;
@@ -284,7 +272,7 @@ void Streamline::UpgradeGameResources()
 
 void Streamline::CopyResourcesToSharedBuffers()
 {
-	if (!streamlineActive)
+	if (!streamlineActive || !enableFrameGeneration)
 		return;
 
 	auto& context = State::GetSingleton()->context;
@@ -294,27 +282,54 @@ void Streamline::CopyResourcesToSharedBuffers()
 	{
 		float clearColor[4] = { 0, 0, 0, 0 };
 		auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
-		context->ClearUnorderedAccessViewFloat(motionVectorsBuffer.UAV, clearColor);
+		context->ClearRenderTargetView(motionVectorsBuffer.RTV, clearColor);
 	}
 
+	ID3D11RenderTargetView* backupViews[8];
+	ID3D11DepthStencilView* backupDsv;
+	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
+
+	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+	ID3D11Resource* swapChainResource;
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	auto dispatchCount = Util::GetScreenDispatchCount();
+
+	auto temporal = Util::GetTemporal();
+
+	if (temporal && enableSharpening)
 	{
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+		
+		{
+			ID3D11ShaderResourceView* views[1] = { swapChain.SRV };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
+			ID3D11UnorderedAccessView* uavs[1] = { colorBufferShared->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
+			context->CSSetShader(GetRCASComputeShader(), nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
+
+		ID3D11ShaderResourceView* views[1] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11ComputeShader* shader = nullptr;
+		context->CSSetShader(shader, nullptr, 0);
+		
+		context->CopyResource(swapChainResource, colorBufferShared->resource.get());
+	} else {
 		context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
 	}
 
 	{
-		ID3D11RenderTargetView* backupViews[8];
-		ID3D11DepthStencilView* backupDsv;
-		context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
-		context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
-
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-		auto dispatchCount = Util::GetScreenDispatchCount();
 
 		{
 			ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
@@ -336,17 +351,17 @@ void Streamline::CopyResourcesToSharedBuffers()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
-
-		context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
-
-		for (int i = 0; i < 8; i++) {
-			if (backupViews[i])
-				backupViews[i]->Release();
-		}
-
-		if (backupDsv)
-			backupDsv->Release();
 	}
+
+	context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
+
+	for (int i = 0; i < 8; i++) {
+		if (backupViews[i])
+			backupViews[i]->Release();
+	}
+
+	if (backupDsv)
+		backupDsv->Release();
 }
 
 void Streamline::Present()
@@ -385,11 +400,14 @@ void Streamline::Present()
 
 	sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 
+	float2 dynamicScreenSize = Util::ConvertToDynamic(State::GetSingleton()->screenSize);
+	sl::Extent dynamicExtent{ 0, 0, (uint)dynamicScreenSize.x, (uint)dynamicScreenSize.y };
+
 	sl::Resource depth = { sl::ResourceType::eTex2d, depthBufferShared->resource.get(), 0 };
-	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &dynamicExtent };
 
 	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture, 0 };
-	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &dynamicExtent };
 
 	sl::Resource hudLess = { sl::ResourceType::eTex2d, colorBufferShared->resource.get(), 0 };
 	sl::ResourceTag hudLessTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };

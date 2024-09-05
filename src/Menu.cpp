@@ -171,6 +171,7 @@ void Menu::DrawSettings()
 						feature->ClearShaderCache();
 					}
 				}
+				Streamline::GetSingleton()->ClearShaderCache();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
@@ -456,6 +457,7 @@ void Menu::DrawSettings()
 
 		ImGui::Separator();
 		ImGui::Checkbox("Enable Frame Generation", &Streamline::GetSingleton()->enableFrameGeneration);
+		ImGui::Checkbox("Enable Sharpening", &Streamline::GetSingleton()->enableSharpening);
 		ImGui::Separator();
 
 		if (ImGui::BeginTable("Feature Table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {

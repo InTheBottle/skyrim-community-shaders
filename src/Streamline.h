@@ -29,6 +29,7 @@ public:
 	sl::FrameToken* currentFrame;
 
 	bool enableFrameGeneration = true;
+	bool enableSharpening = true;
 
 	HMODULE interposer = NULL;
 
@@ -65,6 +66,10 @@ public:
 	Texture2D* depthBufferShared;
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
+	ID3D11ComputeShader* rcasCS;
+
+	ID3D11ComputeShader* GetRCASComputeShader();
+	void ClearShaderCache();
 
 	void Shutdown();
 
@@ -89,8 +94,7 @@ public:
 
 	void CreateFrameGenerationResources();
 
-	void UpgradeGameResource(RE::RENDER_TARGET a_target);
-	void UpgradeGameResources();
+	void SetupFrameGeneration();
 
 	void CopyResourcesToSharedBuffers();
 
