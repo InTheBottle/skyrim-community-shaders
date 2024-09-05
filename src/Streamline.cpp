@@ -19,12 +19,31 @@ void LoggingCallback(sl::LogType type, const char* msg)
 	}
 }
 
+void Streamline::DrawSettings()
+{
+	if (ImGui::CollapsingHeader("NVIDIA DLSS", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) 
+	{
+		const char* frameGenerationModes[] = { "Off", "On", "Auto" };
+		frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
+		ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 2, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
+		ImGui::SliderFloat("Sharpness", &sharpness, 0.0f, 1.0f, "%.1f");
+	}
+}
+
 ID3D11ComputeShader* Streamline::GetRCASComputeShader()
 {
+	static float currentSharpness = sharpness;
+
+	if (currentSharpness != sharpness)
+		ClearShaderCache();
+
+	currentSharpness = sharpness;
+
 	if (!rcasCS) {
-		logger::debug("Compiling Utility.hlsl");
-		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", {}, "cs_5_0");
+		logger::debug("[Streamline] Compiling RCAS.hls");
+		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", { { "SHARPNESS", std::to_string(sharpness).c_str() } }, "cs_5_0");
 	}
+
 	return rcasCS;
 }
 
@@ -57,7 +76,7 @@ void Streamline::Initialize_preDevice()
 	pref.featuresToLoad = featuresToLoad;
 	pref.numFeaturesToLoad = _countof(featuresToLoad);
 
-	pref.logLevel = sl::LogLevel::eDefault;
+	pref.logLevel = sl::LogLevel::eOff;
 	pref.logMessageCallback = LoggingCallback;
 
 	const wchar_t* pathsToPlugins[] = { L"Data/SKSE/Plugins/Streamline" };
@@ -69,7 +88,6 @@ void Streamline::Initialize_preDevice()
 	pref.projectId = "f8776929-c969-43bd-ac2b-294b4de58aac";
 
 	pref.renderAPI = sl::RenderAPI::eD3D11;
-	pref.flags |= sl::PreferenceFlags::eUseManualHooking;
 
 	// Hook up all of the functions exported by the SL Interposer Library
 	slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
@@ -284,7 +302,7 @@ void Streamline::SetupFrameGeneration()
 
 void Streamline::CopyResourcesToSharedBuffers()
 {
-	if (!streamlineActive || !enableFrameGeneration)
+	if (!streamlineActive || frameGenerationMode == sl::DLSSGMode::eOff)
 		return;
 
 	auto& context = State::GetSingleton()->context;
@@ -310,7 +328,7 @@ void Streamline::CopyResourcesToSharedBuffers()
 
 	auto temporal = Util::GetTemporal();
 
-	if (temporal && enableSharpening) {
+	if (temporal && sharpness > 0.0f) {
 		{
 			ID3D11ShaderResourceView* views[1] = { swapChain.SRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
@@ -378,13 +396,13 @@ void Streamline::Present()
 	if (!streamlineActive)
 		return;
 
-	static bool currentEnableFrameGeneration = enableFrameGeneration;
+	static auto currentFrameGenerationMode = frameGenerationMode;
 
-	if (currentEnableFrameGeneration != enableFrameGeneration) {
-		currentEnableFrameGeneration = enableFrameGeneration;
+	if (currentFrameGenerationMode != frameGenerationMode) {
+		currentFrameGenerationMode = frameGenerationMode;
 
 		sl::DLSSGOptions options{};
-		options.mode = enableFrameGeneration ? sl::DLSSGMode::eAuto : sl::DLSSGMode::eOff;
+		options.mode = frameGenerationMode;
 		options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {

@@ -28,8 +28,8 @@ public:
 	sl::ViewportHandle viewport;
 	sl::FrameToken* currentFrame;
 
-	bool enableFrameGeneration = true;
-	bool enableSharpening = true;
+	sl::DLSSGMode frameGenerationMode = sl::DLSSGMode::eAuto;
+	float sharpness = 0.5f;
 
 	HMODULE interposer = NULL;
 
@@ -67,6 +67,8 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* rcasCS;
+
+	void DrawSettings();
 
 	ID3D11ComputeShader* GetRCASComputeShader();
 	void ClearShaderCache();
