@@ -392,7 +392,7 @@ void Streamline::Present()
 		}
 	}
 
-	// Fake NVIDIA Reflex useage to prevent DLSS FG errors
+	// Fake NVIDIA Reflex to prevent DLSSG errors
 	slReflexSetMarker(sl::ReflexMarker::eInputSample, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *currentFrame);
 	slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *currentFrame);
