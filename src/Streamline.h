@@ -29,7 +29,6 @@ public:
 	sl::FrameToken* currentFrame;
 
 	sl::DLSSGMode frameGenerationMode = sl::DLSSGMode::eAuto;
-	float sharpness = 0.5f;
 
 	HMODULE interposer = NULL;
 
@@ -66,12 +65,8 @@ public:
 	Texture2D* depthBufferShared;
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
-	ID3D11ComputeShader* rcasCS;
 
 	void DrawSettings();
-
-	ID3D11ComputeShader* GetRCASComputeShader();
-	void ClearShaderCache();
 
 	void Shutdown();
 

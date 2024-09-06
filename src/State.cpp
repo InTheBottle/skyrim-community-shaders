@@ -15,6 +15,7 @@
 #include "TruePBR.h"
 
 #include "Streamline.h"
+#include "FidelityFX.h"
 
 void State::Draw()
 {
@@ -272,6 +273,7 @@ void State::PostPostLoad()
 	Deferred::Hooks::Install();
 	TruePBR::GetSingleton()->PostPostLoad();
 	Streamline::InstallHooks();
+	FidelityFX::InstallHooks();
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)
@@ -381,6 +383,8 @@ void State::SetupResources()
 	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 
 	tracyCtx = TracyD3D11Context(device, context);
+
+	FidelityFX::GetSingleton()->Initialize();
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)

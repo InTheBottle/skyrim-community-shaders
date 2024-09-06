@@ -74,6 +74,10 @@ target_link_libraries(
 	unordered_dense::unordered_dense
 	efsw::efsw
 	Tracy::TracyClient
+	debug ${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr2_api_x64d.lib
+	debug ${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr2_api_dx11_x64d.lib
+	optimized ${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr2_api_x64.lib
+	optimized ${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr2_api_dx11_x64.lib
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990

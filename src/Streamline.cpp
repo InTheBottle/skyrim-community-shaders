@@ -26,32 +26,6 @@ void Streamline::DrawSettings()
 		const char* frameGenerationModes[] = { "Off", "On", "Auto" };
 		frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
 		ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 2, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
-		ImGui::SliderFloat("Sharpness", &sharpness, 0.0f, 1.0f, "%.1f");
-	}
-}
-
-ID3D11ComputeShader* Streamline::GetRCASComputeShader()
-{
-	static float currentSharpness = sharpness;
-
-	if (currentSharpness != sharpness)
-		ClearShaderCache();
-
-	currentSharpness = sharpness;
-
-	if (!rcasCS) {
-		logger::debug("[Streamline] Compiling RCAS.hls");
-		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", { { "SHARPNESS", std::to_string(sharpness).c_str() } }, "cs_5_0");
-	}
-
-	return rcasCS;
-}
-
-void Streamline::ClearShaderCache()
-{
-	if (rcasCS) {
-		rcasCS->Release();
-		rcasCS = nullptr;
 	}
 }
 
@@ -324,41 +298,14 @@ void Streamline::CopyResourcesToSharedBuffers()
 	ID3D11Resource* swapChainResource;
 	swapChain.SRV->GetResource(&swapChainResource);
 
-	auto dispatchCount = Util::GetScreenDispatchCount();
-
-	auto temporal = Util::GetTemporal();
-
-	if (temporal && sharpness > 0.0f) {
-		{
-			ID3D11ShaderResourceView* views[1] = { swapChain.SRV };
-			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-			ID3D11UnorderedAccessView* uavs[1] = { colorBufferShared->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->CSSetShader(GetRCASComputeShader(), nullptr, 0);
-
-			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		}
-
-		ID3D11ShaderResourceView* views[1] = { nullptr };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		ID3D11ComputeShader* shader = nullptr;
-		context->CSSetShader(shader, nullptr, 0);
-
-		context->CopyResource(swapChainResource, colorBufferShared->resource.get());
-	} else {
-		context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
-	}
+	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
 
 	{
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 		{
+			auto dispatchCount = Util::GetScreenDispatchCount();
+
 			ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
@@ -446,17 +393,6 @@ void Streamline::Present()
 	slSetTag(viewport, inputs, _countof(inputs), nullptr);
 }
 
-// https://github.com/PureDark/Skyrim-Upscaler/blob/fa057bb088cf399e1112c1eaba714590c881e462/src/SkyrimUpscaler.cpp#L88
-float GetVerticalFOVRad()
-{
-	static float& fac = (*(float*)(REL::RelocationID(513786, 388785).address()));
-	const auto base = fac;
-	const auto x = base / 1.30322540f;
-	auto state = State::GetSingleton();
-	const auto vFOV = 2 * atan(x / (state->screenSize.x / state->screenSize.y));
-	return vFOV;
-}
-
 void Streamline::SetConstants()
 {
 	if (!streamlineActive)
@@ -482,7 +418,7 @@ void Streamline::SetConstants()
 	sl::Constants slConstants = {};
 
 	slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
-	slConstants.cameraFOV = GetVerticalFOVRad();
+	slConstants.cameraFOV = Util::GetVerticalFOVRad();
 	slConstants.cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));

@@ -18,6 +18,7 @@
 #include "TruePBR.h"
 
 #include "Streamline.h"
+#include "FidelityFX.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"
@@ -171,7 +172,6 @@ void Menu::DrawSettings()
 						feature->ClearShaderCache();
 					}
 				}
-				Streamline::GetSingleton()->ClearShaderCache();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
@@ -458,6 +458,7 @@ void Menu::DrawSettings()
 		ImGui::Separator();
 
 		Streamline::GetSingleton()->DrawSettings();
+		FidelityFX::GetSingleton()->DrawSettings();
 
 		ImGui::Separator();
 
