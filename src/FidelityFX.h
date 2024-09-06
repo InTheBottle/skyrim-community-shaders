@@ -1,7 +1,7 @@
 #pragma once
 
-#include <FidelityFX/ffx_fsr2.h>
 #include <FidelityFX/dx11/ffx_fsr2_dx11.h>
+#include <FidelityFX/ffx_fsr2.h>
 
 #include "Buffer.h"
 #include "State.h"
@@ -62,7 +62,7 @@ public:
 		static void thunk(RE::BSImagespaceShaderISTemporalAA* a_shader, RE::BSTriShape* a_null)
 		{
 			auto singleton = GetSingleton();
-			if (singleton->enableSuperResolution && singleton->validTaaPass) 
+			if (singleton->enableSuperResolution && singleton->validTaaPass)
 				singleton->DispatchUpscaling();
 			else
 				func(a_shader, a_null);

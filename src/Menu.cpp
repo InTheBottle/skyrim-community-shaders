@@ -17,8 +17,8 @@
 #include "Deferred.h"
 #include "TruePBR.h"
 
-#include "Streamline.h"
 #include "FidelityFX.h"
+#include "Streamline.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"

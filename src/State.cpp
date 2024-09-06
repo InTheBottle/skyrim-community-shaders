@@ -14,8 +14,8 @@
 #include "Features/TerrainBlending.h"
 #include "TruePBR.h"
 
-#include "Streamline.h"
 #include "FidelityFX.h"
+#include "Streamline.h"
 
 void State::Draw()
 {
