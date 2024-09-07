@@ -46,8 +46,6 @@ FfxErrorCode FidelityFX::Initialize()
 
 	CreateUpscalingResources();
 
-
-
 	return errorCode;
 }
 
@@ -95,21 +93,21 @@ void FidelityFX::ReplaceJitter()
 	auto state = State::GetSingleton();
 
 	const int32_t jitterPhaseCount = ffxFsr2GetJitterPhaseCount(renderWidth, (uint)state->screenSize.x);
-	
+
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	float jitterX = 0;
 	float jitterY = 0;
 	ffxFsr2GetJitterOffset(&jitterX, &jitterY, viewport->frameCount, jitterPhaseCount);
-	
+
 	viewport->projectionPosScaleX = 2.0f * jitterX / float(renderWidth);
 	viewport->projectionPosScaleY = 2.0f * jitterY / float(renderHeight);
 }
 
 void FidelityFX::DispatchUpscaling()
 {
-	(ptr_BSGraphics_SetDirtyStates)(false); // Our hook skips this call so we need to call manually
-	
+	(ptr_BSGraphics_SetDirtyStates)(false);  // Our hook skips this call so we need to call manually
+
 	auto state = State::GetSingleton();
 	state->BeginPerfEvent("DispatchUpscaling");
 
@@ -117,7 +115,7 @@ void FidelityFX::DispatchUpscaling()
 
 	ID3D11ShaderResourceView* backupSrv;
 	context->PSGetShaderResources(0, 1, &backupSrv);
-		
+
 	backupSrv->Release();
 
 	ID3D11RenderTargetView* backupRtv;
@@ -129,7 +127,7 @@ void FidelityFX::DispatchUpscaling()
 
 	if (backupDsv)
 		backupDsv->Release();
-	
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
@@ -151,9 +149,9 @@ void FidelityFX::DispatchUpscaling()
 
 		dispatchParameters.reactive = ffxGetResourceDX11(&fsrContext, nullptr, L"FSR2_ReactiveMap");
 		dispatchParameters.transparencyAndComposition = ffxGetResourceDX11(&fsrContext, nullptr, L"FSR2_TransparencyAndCompositionMap");
-				
+
 		dispatchParameters.output = ffxGetResourceDX11(&fsrContext, upscalingTempTexture->resource.get(), L"FSR2_OutputUpscaledColor", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-			
+
 		auto viewport = RE::BSGraphics::State::GetSingleton();
 		dispatchParameters.jitterOffset.x = viewport->projectionPosScaleX;
 		dispatchParameters.jitterOffset.y = viewport->projectionPosScaleY;
@@ -183,8 +181,6 @@ void FidelityFX::DispatchUpscaling()
 
 	state->EndPerfEvent();
 	context->OMSetRenderTargets(0, nullptr, nullptr);
-
-
 }
 
 void FidelityFX::CopyTAAResource()

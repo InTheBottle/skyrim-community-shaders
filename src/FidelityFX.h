@@ -1,7 +1,7 @@
 #pragma once
 
-#include <FidelityFX/ffx_fsr2.h>
 #include <FidelityFX/dx11/ffx_fsr2_dx11.h>
+#include <FidelityFX/ffx_fsr2.h>
 
 #include "Buffer.h"
 #include "State.h"
@@ -71,8 +71,7 @@ public:
 		static void thunk(RE::BSImagespaceShaderISTemporalAA* a_shader, RE::BSTriShape* a_null)
 		{
 			auto singleton = GetSingleton();
-			if (singleton->enableSuperResolution && singleton->validTaaPass)
-			{
+			if (singleton->enableSuperResolution && singleton->validTaaPass) {
 				GetSingleton()->CopyTAAResource();
 			} else {
 				func(a_shader, a_null);
@@ -117,7 +116,7 @@ public:
 		stl::write_thunk_call<UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate(0xE5, 0xE2, 0x104));
 		stl::write_thunk_call<TAA_BeginTechnique>(REL::RelocationID(100540, 36559).address() + REL::Relocate(0x3E9, 0x841, 0x791));
 		stl::write_thunk_call<TAA_EndTechnique>(REL::RelocationID(100540, 36559).address() + REL::Relocate(0x3F3, 0x841, 0x791));
-	//	stl::write_thunk_call<BSImagespaceShaderISUpsampleDynamicResolution>(REL::RelocationID(100540, 36559).address() + REL::Relocate(0x4D0, 0x841, 0x791));
+		//	stl::write_thunk_call<BSImagespaceShaderISUpsampleDynamicResolution>(REL::RelocationID(100540, 36559).address() + REL::Relocate(0x4D0, 0x841, 0x791));
 		stl::write_vfunc<0x2, BSImagespaceShaderISUpsampleDynamicResolution_SetupTechnique>(RE::VTABLE_BSImagespaceShaderISUpsampleDynamicResolution[0]);
 	}
 };
