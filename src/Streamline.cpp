@@ -22,9 +22,19 @@ void LoggingCallback(sl::LogType type, const char* msg)
 void Streamline::DrawSettings()
 {
 	if (ImGui::CollapsingHeader("NVIDIA DLSS", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
-		const char* frameGenerationModes[] = { "Off", "On", "Auto" };
-		frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
-		ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 2, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
+		if (streamlineActive) {
+			ImGui::Text("Streamline uses a D3D11 to D3D12 proxy");
+			ImGui::Text("Frame Generation always defaults to Auto");
+			ImGui::Text("To disable Frame Generation, disable it in your mod manager");
+
+			const char* frameGenerationModes[] = { "Off", "On", "Auto" };
+			frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
+			ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 2, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
+		} else {
+			ImGui::Text("Streamline uses a D3D11 to D3D12 proxy");
+			ImGui::Text("Streamline is not active due to no available plugins");
+			ImGui::Text("To enable Frame Generation, enable it in your mod manager");
+		}
 	}
 }
 

@@ -17,7 +17,6 @@
 #include "Deferred.h"
 #include "TruePBR.h"
 
-#include "FidelityFX.h"
 #include "Streamline.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
@@ -458,7 +457,6 @@ void Menu::DrawSettings()
 		ImGui::Separator();
 
 		Streamline::GetSingleton()->DrawSettings();
-		FidelityFX::GetSingleton()->DrawSettings();
 
 		ImGui::Separator();
 
