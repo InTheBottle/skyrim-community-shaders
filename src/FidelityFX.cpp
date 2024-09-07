@@ -22,9 +22,13 @@ FfxErrorCode FidelityFX::Initialize()
 	FfxErrorCode errorCode = ffxFsr2GetInterfaceDX11(&initializationParameters.callbacks, state->device, scratchBuffer, scratchBufferSize);
 	FFX_ASSERT(errorCode == FFX_OK);
 
+	currentScaleFactor = ffxFsr2GetUpscaleRatioFromQualityMode(FFX_FSR2_QUALITY_MODE_QUALITY);
+
+	ffxFsr2GetRenderResolutionFromQualityMode(&renderWidth, &renderHeight, (uint)state->screenSize.x, (uint)state->screenSize.y, FFX_FSR2_QUALITY_MODE_QUALITY);
+
 	initializationParameters.device = ffxGetDeviceDX11(state->device);
-	initializationParameters.maxRenderSize.width = (uint)state->screenSize.x;
-	initializationParameters.maxRenderSize.height = (uint)state->screenSize.y;
+	initializationParameters.maxRenderSize.width = renderWidth;
+	initializationParameters.maxRenderSize.height = renderHeight;
 	initializationParameters.displaySize.width = (uint)state->screenSize.x;
 	initializationParameters.displaySize.height = (uint)state->screenSize.y;
 	initializationParameters.flags = FFX_FSR2_ENABLE_AUTO_EXPOSURE;
@@ -38,7 +42,11 @@ FfxErrorCode FidelityFX::Initialize()
 		return errorCode;
 	}
 
+	RE::GetINISetting("bEnableAutoDynamicResolution:Display")->data.b = true;
+
 	CreateUpscalingResources();
+
+
 
 	return errorCode;
 }
@@ -71,6 +79,13 @@ void FidelityFX::CreateUpscalingResources()
 	upscalingTempTexture->CreateUAV(uavDesc);
 }
 
+void FidelityFX::SetDRS(RE::BSGraphics::State* a_state)
+{
+	auto& runtimeData = a_state->GetRuntimeData();
+	runtimeData.dynamicResolutionHeightRatio = 1.0f / currentScaleFactor;
+	runtimeData.dynamicResolutionWidthRatio = 1.0f / currentScaleFactor;
+}
+
 void BSGraphics_SetDirtyStates(bool isCompute);
 
 extern decltype(&BSGraphics_SetDirtyStates) ptr_BSGraphics_SetDirtyStates;
@@ -79,7 +94,7 @@ void FidelityFX::ReplaceJitter()
 {
 	auto state = State::GetSingleton();
 
-	const int32_t jitterPhaseCount = ffxFsr2GetJitterPhaseCount((uint)state->screenSize.x, (uint)state->screenSize.x);
+	const int32_t jitterPhaseCount = ffxFsr2GetJitterPhaseCount(renderWidth, (uint)state->screenSize.x);
 	
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
@@ -87,8 +102,8 @@ void FidelityFX::ReplaceJitter()
 	float jitterY = 0;
 	ffxFsr2GetJitterOffset(&jitterX, &jitterY, viewport->frameCount, jitterPhaseCount);
 	
-	viewport->projectionPosScaleX = 2.0f * jitterX / state->screenSize.x;
-	viewport->projectionPosScaleY = -2.0f * jitterY / state->screenSize.y;
+	viewport->projectionPosScaleX = 2.0f * jitterX / float(renderWidth);
+	viewport->projectionPosScaleY = 2.0f * jitterY / float(renderHeight);
 }
 
 void FidelityFX::DispatchUpscaling()
@@ -143,8 +158,8 @@ void FidelityFX::DispatchUpscaling()
 		dispatchParameters.jitterOffset.x = viewport->projectionPosScaleX;
 		dispatchParameters.jitterOffset.y = viewport->projectionPosScaleY;
 
-		dispatchParameters.motionVectorScale.x = state->screenSize.x;
-		dispatchParameters.motionVectorScale.y = state->screenSize.y;
+		dispatchParameters.motionVectorScale.x = (float)renderWidth;
+		dispatchParameters.motionVectorScale.y = (float)renderHeight;
 		dispatchParameters.reset = false;
 		dispatchParameters.enableSharpening = sharpness > 0.0f;
 		dispatchParameters.sharpness = sharpness;
@@ -153,8 +168,8 @@ void FidelityFX::DispatchUpscaling()
 		dispatchParameters.frameTimeDelta = *g_deltaTime * 1000.0f;
 
 		dispatchParameters.preExposure = 1.0f;
-		dispatchParameters.renderSize.width = (uint)state->screenSize.x;
-		dispatchParameters.renderSize.height = (uint)state->screenSize.y;
+		dispatchParameters.renderSize.width = renderWidth;
+		dispatchParameters.renderSize.height = renderHeight;
 		dispatchParameters.cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
 		dispatchParameters.cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
@@ -166,5 +181,40 @@ void FidelityFX::DispatchUpscaling()
 
 	context->CopyResource(outputTexture, upscalingTempTexture->resource.get());
 
-	state->EndPerfEvent();	
+	state->EndPerfEvent();
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+
+}
+
+void FidelityFX::CopyTAAResource()
+{
+	(ptr_BSGraphics_SetDirtyStates)(false);  // Our hook skips this call so we need to call manually
+
+	auto state = State::GetSingleton();
+
+	auto& context = state->context;
+
+	ID3D11ShaderResourceView* backupSrv;
+	context->PSGetShaderResources(0, 1, &backupSrv);
+
+	backupSrv->Release();
+
+	ID3D11RenderTargetView* backupRtv;
+	ID3D11DepthStencilView* backupDsv;
+	context->OMGetRenderTargets(1, &backupRtv, &backupDsv);
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	backupRtv->Release();
+
+	if (backupDsv)
+		backupDsv->Release();
+
+	ID3D11Resource* inputTexture;
+	backupSrv->GetResource(&inputTexture);
+
+	ID3D11Resource* outputTexture;
+	backupRtv->GetResource(&outputTexture);
+
+	context->CopyResource(outputTexture, inputTexture);
 }
