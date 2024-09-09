@@ -2091,7 +2091,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			endif
 
 	uint numClusteredLights = 0;
-	uint totalLightCount = strictLights[0].NumStrictLights;
+	uint numStrictLights = strictLights[0].NumStrictLights;
+	uint totalLightCount = numStrictLights;
 	uint clusterIndex = 0;
 	uint lightOffset = 0;
 	if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
@@ -2100,15 +2101,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		lightOffset = lightGrid[clusterIndex].offset;
 	}
 
+	numShadowLights = min(numShadowLights, numStrictLights);
+
 	uint contactShadowSteps = round(4.0 * (1.0 - saturate(viewPosition.z / 1024.0)));
 
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
 	{
 		StructuredLight light;
-		if (lightIndex < strictLights[0].NumStrictLights) {
+		if (lightIndex < numStrictLights) {
 			light = strictLights[0].StrictLights[lightIndex];
 		} else {
-			uint clusterIndex = lightList[lightOffset + (lightIndex - strictLights[0].NumStrictLights)];
+			uint clusterIndex = lightList[lightOffset + (lightIndex - numStrictLights)];
 			light = lights[clusterIndex];
 		}
 
