@@ -3,15 +3,12 @@
 #include "Buffer.h"
 #include "State.h"
 
-#pragma warning(push)
-#pragma warning(disable: 5103)
-#include "Streamline/sl.h"
-#include "Streamline/sl_consts.h"
-#include "Streamline/sl_dlss.h"
-#include "Streamline/sl_dlss_g.h"
-#include "Streamline/sl_matrix_helpers.h"
-#include "Streamline/sl_reflex.h"
-#pragma warning(pop)
+#include <sl.h>
+#include <sl_consts.h>
+#include <sl_dlss.h>
+#include <sl_dlss_g.h>
+#include <sl_matrix_helpers.h>
+#include <sl_reflex.h>
 
 class Streamline
 {

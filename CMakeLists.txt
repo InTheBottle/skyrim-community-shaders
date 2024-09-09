@@ -43,6 +43,7 @@ find_package(cppwinrt CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
+add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 target_compile_definitions(
 	${PROJECT_NAME}
@@ -74,6 +75,7 @@ target_link_libraries(
 	unordered_dense::unordered_dense
 	efsw::efsw
 	Tracy::TracyClient
+	Streamline
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
