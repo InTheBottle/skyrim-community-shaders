@@ -1,5 +1,5 @@
-#include "Common.hlsli"
 #include "../Common/FrameBuffer.hlsli"
+#include "Common.hlsli"
 
 cbuffer PerFrame : register(b0)
 {
