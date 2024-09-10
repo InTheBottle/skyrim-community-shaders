@@ -26,7 +26,7 @@ SamplerState samplerPointClamp : register(s0);
 	const static sh2 unitSH = float4(sqrt(4.0 * shPI), 0, 0, 0);
 
 	uint3 cellID = (int3(dtid) - settings.ArrayOrigin.xyz) % ARRAY_DIM;
-	bool isValid = all(cellID >= max(0, settings.ValidMargin.xyz)) && all(cellID <= ARRAY_DIM - 1 + min(0, settings.ValidMargin.xyz));  // check if the cell is newly added
+	bool isValid = all(cellID >= max(0, settings.ValidMargin.xyz)) && all(cellID <= ARRAY_DIM - 1 + min(0, settings.ValidMargin.xyz));  // Check if the cell is newly added
 
 	float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
 	cellCentreMS = cellCentreMS / ARRAY_DIM * ARRAY_SIZE + settings.PosOffset.xyz;
@@ -46,10 +46,10 @@ SamplerState samplerPointClamp : register(s0);
 				float lerpFactor = rcp(accumFrames);
 				sh2 prevProbeSH = unitSH;
 				if (accumFrames > 1)
-					prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+					prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // Inverse confidence
 				occlusionSH = shAdd(shScale(prevProbeSH, 1 - lerpFactor), shScale(occlusionSH, lerpFactor));
 			}
-			occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
+			occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // Confidence fade in
 
 			outProbeArray[dtid] = occlusionSH;
 			outAccumFramesArray[dtid] = accumFrames;
