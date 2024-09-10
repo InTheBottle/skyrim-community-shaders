@@ -1,5 +1,6 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Color.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -160,7 +161,9 @@ PS_OUTPUT main(PS_INPUT input)
 	if (EyePosition.w != 0 && 1e-5 < snowMask) {
 		ao = min(1, SparklesParameters3.x + ao);
 	}
+	composedColor.xyz = GammaToLinear(composedColor.xyz);
 	composedColor.xyz *= ao;
+	composedColor.xyz = LinearToGamma(composedColor.xyz);
 #	endif
 
 	float depth = depthTex.SampleLevel(depthSampler, screenPosition, 0).x;
