@@ -4,8 +4,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility
-)
+	MinSpecularVisibility)
 
 void Skylighting::LoadSettings(json& o_json)
 {
