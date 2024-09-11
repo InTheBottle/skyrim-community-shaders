@@ -44,10 +44,8 @@ float3 Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 scree
 	compareValue.y = mul(transpose(sD.ShadowMapProj[eyeIndex][1]), float4(positionWS, 1)).z;
 
 	float shadow = 0.0;
-	if (sD.EndSplitDistances.z >= GetShadowDepth(positionWS, eyeIndex)) 
-	{
-		for (int i = 0; i < sampleCount; i++)
-		{
+	if (sD.EndSplitDistances.z >= GetShadowDepth(positionWS, eyeIndex)) {
+		for (int i = 0; i < sampleCount; i++) {
 			float3 rnd = R3Modified(i + FrameCount * sampleCount, seed / 4294967295.f);
 
 			// https://stats.stackexchange.com/questions/8021/how-to-generate-uniformly-distributed-points-in-the-3-d-unit-ball
@@ -60,7 +58,7 @@ float3 Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 scree
 			float3 sampleOffset = viewDirection * i * 256 * rcpSampleCount;
 			sampleOffset += float3(r * sin_theta * sincos_phi.x, r * sin_theta * sincos_phi.y, r * cos_theta) * 32;
 
-			uint cascadeIndex = sD.EndSplitDistances.x < GetShadowDepth(positionWS.xyz + viewDirection * dot(sampleOffset, float2(1, 1)), eyeIndex); // Stochastic cascade sampling
+			uint cascadeIndex = sD.EndSplitDistances.x < GetShadowDepth(positionWS.xyz + viewDirection * dot(sampleOffset, float2(1, 1)), eyeIndex);  // Stochastic cascade sampling
 			float3 positionLS = mul(transpose(sD.ShadowMapProj[eyeIndex][cascadeIndex]), float4(positionWS + sampleOffset, 1));
 
 			float4 depths = SharedTexShadowMapSampler.GatherRed(LinearSampler, float3(saturate(positionLS.xy), cascadeIndex), 0);
