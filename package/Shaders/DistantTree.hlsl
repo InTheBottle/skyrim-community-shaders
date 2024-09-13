@@ -216,6 +216,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	dirShadow = ScreenSpaceShadows::GetScreenSpaceShadow(input.Position, screenUV, screenNoise, viewPosition, eyeIndex);
+	dirShadow = lerp(dirShadow, 1.0, 0.2);
 #			endif
 
 #			if defined(TERRAIN_SHADOWS)
