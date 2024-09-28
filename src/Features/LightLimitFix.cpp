@@ -300,7 +300,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 {
 	auto& context = State::GetSingleton()->context;
 	auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator();
-	
+
 	strictLightDataTemp.LightsNear = lightsNear;
 	strictLightDataTemp.LightsFar = lightsFar;
 
@@ -816,7 +816,8 @@ void LightLimitFix::UpdateLights()
 			else
 				updateData.InvProjMatrix[1] = DirectX::XMMatrixInverse(nullptr, Util::GetCameraData(1).projMatrixUnjittered);
 			updateData.LightsNear = lightsNear;
-			updateData.LightsFar = lightsFar;;
+			updateData.LightsFar = lightsFar;
+			;
 
 			lightBuildingCB->Update(updateData);
 
