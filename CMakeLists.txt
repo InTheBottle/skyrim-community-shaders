@@ -43,10 +43,17 @@ find_package(cppwinrt CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
-add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/FidelityFX)
 
 set(NVAPI_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/extern/nvapi/" CACHE STRING "Path to NVAPI include headers/shaders" )
 set(NVAPI_LIBRARY "${CMAKE_SOURCE_DIR}/extern/nvapi/amd64/nvapi64.lib" CACHE STRING "Path to NVAPI .lib file")
+set(FFX_API_VK OFF)
+set(FFX_API_DX12 OFF)
+set(FFX_ALL OFF)
+set(FFX_FSR3 ON)
+set(FFX_FSR ON)
+set(FFX_AUTO_COMPILE_SHADERS 1)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK/sdk)
 
 target_compile_definitions(
 	${PROJECT_NAME}
@@ -79,9 +86,12 @@ target_link_libraries(
 	unordered_dense::unordered_dense
 	efsw::efsw
 	Tracy::TracyClient
-	FidelityFX
 	${NVAPI_LIBRARY}
-	${CMAKE_CURRENT_SOURCE_DIR}/include/FidelityFX/ffx_fsr3_x64.lib
+	ffx_backend_dx11_x64
+	ffx_frameinterpolation_x64
+	ffx_fsr3_x64
+	ffx_fsr3upscaler_x64
+	ffx_opticalflow_x64
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
