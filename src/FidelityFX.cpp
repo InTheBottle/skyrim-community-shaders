@@ -38,7 +38,7 @@ typedef enum Fsr3BackendTypes : uint32_t
 
 // register a DX11 resource to the backend
 FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
-	wchar_t const* ffxResName,
+	[[maybe_unused]] wchar_t const* ffxResName,
 	FfxResourceStates state /*=FFX_RESOURCE_STATE_COMPUTE_READ*/)
 {
 	FfxResource resource = {};
@@ -85,38 +85,33 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 {
 	auto state = State::GetSingleton();
 
-	FfxErrorCode errorCode = 0;
-	FfxInterface ffxFsr3Backends_[FSR3_BACKEND_COUNT] = {};
+	FfxInterface ffxFsrInterface;
 	const auto fsrDevice = ffxGetDeviceDX11(state->device);
 
-	int effectCounts[] = { 1, 1, 2 };
-	for (auto i = 0; i < FSR3_BACKEND_COUNT; i++) {
-		const size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(effectCounts[i]);
-		void* scratchBuffer = calloc(scratchBufferSize, 1);
-		memset(scratchBuffer, 0, scratchBufferSize);
-		errorCode |= ffxGetInterfaceDX11(&ffxFsr3Backends_[i], fsrDevice, scratchBuffer, scratchBufferSize, effectCounts[i]);
-	}
-
+	const size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(FFX_FSR3UPSCALER_CONTEXT_COUNT);
+	void* scratchBuffer = calloc(scratchBufferSize, 1);
+	memset(scratchBuffer, 0, scratchBufferSize);
+	FfxErrorCode errorCode = ffxGetInterfaceDX11(&ffxFsrInterface, fsrDevice, scratchBuffer, scratchBufferSize, FFX_FSR3UPSCALER_CONTEXT_COUNT);
+	
 	if (errorCode == FFX_OK) {
-		logger::info("[FidelityFX] Successfully initialised FSR3 backend interfaces");
+		logger::info("[FidelityFX] Successfully initialised FSR3 backend interface");
 	} else {
-		logger::error("[FidelityFX] Failed to initialise FSR3 backend interfaces!");
+		logger::error("[FidelityFX] Failed to initialise FSR3 backend interface!");
 		return errorCode;
 	}
 
 	FfxFsr3ContextDescription contextDescription;
 	contextDescription.maxRenderSize.width = (uint)state->screenSize.x;
 	contextDescription.maxRenderSize.height = (uint)state->screenSize.y;
-	contextDescription.upscaleOutputSize.width = (uint)state->screenSize.x;
-	contextDescription.upscaleOutputSize.height = (uint)state->screenSize.y;
+	contextDescription.maxUpscaleSize.width = (uint)state->screenSize.x;
+	contextDescription.maxUpscaleSize.height = (uint)state->screenSize.y;
 	contextDescription.displaySize.width = (uint)state->screenSize.x;
 	contextDescription.displaySize.height = (uint)state->screenSize.y;
 	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
 	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
-	contextDescription.backendInterfaceSharedResources = ffxFsr3Backends_[FSR3_BACKEND_SHARED_RESOURCES];
-	contextDescription.backendInterfaceUpscaling = ffxFsr3Backends_[FSR3_BACKEND_UPSCALING];
-	contextDescription.backendInterfaceFrameInterpolation = ffxFsr3Backends_[FSR3_BACKEND_FRAME_INTERPOLATION];
+	contextDescription.backendInterfaceUpscaling = ffxFsrInterface;
+	contextDescription.backendInterfaceFrameInterpolation = ffxFsrInterface;
 
 	errorCode = ffxFsr3ContextCreate(&fsrContext, &contextDescription);
 
@@ -213,7 +208,7 @@ void FidelityFX::Upscale()
 		dispatchParameters.reset = false;
 
 		dispatchParameters.enableSharpening = true;
-		dispatchParameters.sharpness = 0.5;
+		dispatchParameters.sharpness = 1.0f;
 
 		static float* deltaTime = (float*)REL::RelocationID(523660, 410199).address();  // 2F6B948, 30064C8
 		dispatchParameters.frameTimeDelta = *deltaTime * 1000.f;                        // Milliseconds!
@@ -231,7 +226,7 @@ void FidelityFX::Upscale()
 		dispatchParameters.cameraFar = cameraFar;
 		dispatchParameters.cameraNear = cameraNear;
 
-		dispatchParameters.viewSpaceToMetersFactor = 1;
+		dispatchParameters.viewSpaceToMetersFactor = viewScale;
 
 		FfxErrorCode errorCode = ffxFsr3ContextDispatchUpscale(&fsrContext, &dispatchParameters);
 		if (errorCode != FFX_OK) {
