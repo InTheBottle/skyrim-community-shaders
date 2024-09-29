@@ -237,5 +237,4 @@ void FidelityFX::Upscale()
 	context->CopyResource(outputTextureResource, colorInputOutput->resource.get());
 
 	state->EndPerfEvent();
-
 }
