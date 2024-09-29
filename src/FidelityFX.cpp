@@ -92,7 +92,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 	void* scratchBuffer = calloc(scratchBufferSize, 1);
 	memset(scratchBuffer, 0, scratchBufferSize);
 	FfxErrorCode errorCode = ffxGetInterfaceDX11(&ffxFsrInterface, fsrDevice, scratchBuffer, scratchBufferSize, FFX_FSR3UPSCALER_CONTEXT_COUNT);
-	
+
 	if (errorCode == FFX_OK) {
 		logger::info("[FidelityFX] Successfully initialised FSR3 backend interface");
 	} else {
