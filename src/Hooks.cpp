@@ -150,15 +150,7 @@ HRESULT WINAPI hk_IDXGISwapChain_Present(IDXGISwapChain* This, UINT SyncInterval
 {
 	State::GetSingleton()->Reset();
 	Menu::GetSingleton()->DrawOverlay();
-	FidelityFX::GetSingleton()->Present(This, SyncInterval, Flags);
-
-	HRESULT retval;
-
-	if (FidelityFX::GetSingleton()->enableFrameGeneration)
-		retval = (This->*ptr_IDXGISwapChain_Present)(std::max(1u, SyncInterval), 0);
-	else
-		retval = (This->*ptr_IDXGISwapChain_Present)(SyncInterval, Flags);
-
+	HRESULT retval = (This->*ptr_IDXGISwapChain_Present)(SyncInterval, Flags);
 	TracyD3D11Collect(State::GetSingleton()->tracyCtx);
 	return retval;
 }

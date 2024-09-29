@@ -10,7 +10,6 @@ FfxErrorCode FidelityFX::Initialize(uint32_t a_maxContexts)
 	logger::info("[FidelityFX] Initialising");
 
 	const auto fsrDevice = ffxGetDeviceDX11(state->device);
-	const auto scratchSize = ffxGetScratchMemorySizeDX11(a_maxContexts);
 
 	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(a_maxContexts);
 	void* scratchBuffer = malloc(scratchBufferSize);
@@ -56,7 +55,7 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
-void FidelityFX::SetupFrameGenerationResources()
+void FidelityFX::SetupUpscalingResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -76,85 +75,10 @@ void FidelityFX::SetupFrameGenerationResources()
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	swapChainPreviousTexture = new Texture2D(texDesc);
-	swapChainPreviousTexture->CreateSRV(srvDesc);
-	swapChainPreviousTexture->CreateRTV(rtvDesc);
-	swapChainPreviousTexture->CreateUAV(uavDesc);
-
-	swapChainPreviousTextureSwap = new Texture2D(texDesc);
-	swapChainPreviousTextureSwap->CreateSRV(srvDesc);
-	swapChainPreviousTextureSwap->CreateRTV(rtvDesc);
-	swapChainPreviousTextureSwap->CreateUAV(uavDesc);
-
-	swapChainTempTexture = new Texture2D(texDesc);
-	swapChainTempTexture->CreateSRV(srvDesc);
-	swapChainTempTexture->CreateRTV(rtvDesc);
-	swapChainTempTexture->CreateUAV(uavDesc);
-
-	HUDLessColor = new Texture2D(texDesc);
-	HUDLessColor->CreateSRV(srvDesc);
-	HUDLessColor->CreateRTV(rtvDesc);
-	HUDLessColor->CreateUAV(uavDesc);
-
-	{
-		const char textureName[] = "swapChainPreviousTexture";
-		swapChainPreviousTexture->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainPreviousTextureSwap";
-		swapChainPreviousTextureSwap->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainTempTexture";
-		swapChainTempTexture->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "HUDLessColor";
-		HUDLessColor->resource->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainPreviousTextureUAV";
-		swapChainPreviousTexture->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainPreviousTextureSwapUAV";
-		swapChainPreviousTextureSwap->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainTempTextureUAV";
-		swapChainTempTexture->uav.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "HUDLessColorSRV";
-		HUDLessColor->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainPreviousTextureSRV";
-		swapChainPreviousTexture->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainPreviousTextureSwapSRV";
-		swapChainPreviousTextureSwap->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "swapChainTempTextureSRV";
-		swapChainTempTexture->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
-
-	{
-		const char textureName[] = "HUDLessColorSRV";
-		HUDLessColor->srv.get()->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(textureName) - 1, textureName);
-	}
+	colorInputOutput = new Texture2D(texDesc);
+	colorInputOutput->CreateSRV(srvDesc);
+	colorInputOutput->CreateRTV(rtvDesc);
+	colorInputOutput->CreateUAV(uavDesc);
 }
 
 FfxErrorCode FidelityFX::InitializeFSR3()
@@ -187,7 +111,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 	contextDescription.upscaleOutputSize.height = (uint)state->screenSize.y;
 	contextDescription.displaySize.width = (uint)state->screenSize.x;
 	contextDescription.displaySize.height = (uint)state->screenSize.y;
-	contextDescription.flags = FFX_FSR3_ENABLE_AUTO_EXPOSURE;
+	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
 	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
 	contextDescription.backendInterfaceSharedResources = ffxFsr3Backends_[FSR3_BACKEND_SHARED_RESOURCES];
@@ -203,27 +127,7 @@ FfxErrorCode FidelityFX::InitializeFSR3()
 		return errorCode;
 	}
 
-	SetupFrameGenerationResources();
-
-	auto manager = RE::BSGraphics::Renderer::GetSingleton();
-
-	FfxSwapchain ffxSwapChain = reinterpret_cast<void*>(manager->GetRuntimeData().renderWindows->swapChain);
-
-	FfxFrameGenerationConfig frameGenerationConfig;
-	frameGenerationConfig.frameGenerationEnabled = true;
-	frameGenerationConfig.frameGenerationCallback = ffxFsr3DispatchFrameGeneration;
-	frameGenerationConfig.presentCallback = nullptr;
-	frameGenerationConfig.swapChain = ffxSwapChain;
-	frameGenerationConfig.HUDLessColor = ffxGetResource(HUDLessColor->resource.get(), L"FSR3_HUDLessColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-
-	errorCode = ffxFsr3ConfigureFrameGeneration(&fsrContext, &frameGenerationConfig);
-
-	if (errorCode == FFX_OK) {
-		logger::info("[FidelityFX] Successfully initialised frame generation");
-	} else {
-		logger::error("[FidelityFX] Failed to initialise frame generation!");
-		return errorCode;
-	}
+	SetupUpscalingResources();
 
 	return errorCode;
 }
@@ -239,46 +143,80 @@ float GetVerticalFOVRad()
 	return vFOV;
 }
 
-void FidelityFX::DispatchUpscaling()
+void BSGraphics_SetDirtyStates(bool isCompute);
+
+extern decltype(&BSGraphics_SetDirtyStates) ptr_BSGraphics_SetDirtyStates;
+
+void FidelityFX::Upscale()
 {
-	if (enableFrameGeneration) {
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	(ptr_BSGraphics_SetDirtyStates)(false);  // Our hook skips this call so we need to call manually
 
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
+	auto state = State::GetSingleton();
+	state->BeginPerfEvent("Upscaling");
 
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-		auto& motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-		auto& taaMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
+	auto& context = state->context;
 
-		auto state = State::GetSingleton();
+	ID3D11ShaderResourceView* inputTextureSRV;
+	context->PSGetShaderResources(0, 1, &inputTextureSRV);
 
+	inputTextureSRV->Release();
+
+	ID3D11RenderTargetView* outputTextureRTV;
+	ID3D11DepthStencilView* dsv;
+	context->OMGetRenderTargets(1, &outputTextureRTV, &dsv);
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	outputTextureRTV->Release();
+
+	if (dsv)
+		dsv->Release();
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+
+	// Fix motion vectors not resetting when the game is paused
+	if (RE::UI::GetSingleton()->GameIsPaused()) {
+		float clearColor[4] = { 0, 0, 0, 0 };
+		auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
+		context->ClearRenderTargetView(motionVectorsBuffer.RTV, clearColor);
+	}
+
+	ID3D11Resource* inputTextureResource;
+	inputTextureSRV->GetResource(&inputTextureResource);
+
+	ID3D11Resource* outputTextureResource;
+	outputTextureRTV->GetResource(&outputTextureResource);
+
+	context->CopyResource(colorInputOutput->resource.get(), inputTextureResource);
+
+	{
 		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
 
 		dispatchParameters.commandList = dx11CommandList;
-		dispatchParameters.color = ffxGetResource(swapChainResource, L"FSR3_Input_OutputColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-		dispatchParameters.depth = ffxGetResource(depth.texture, L"FSR3_InputDepth", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-		dispatchParameters.motionVectors = ffxGetResource(motionVectors.texture, L"FSR3_InputMotionVectors", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.color = ffxGetResource(colorInputOutput->resource.get(), L"FSR3_Input_OutputColor", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.depth = ffxGetResource(depthTexture.texture, L"FSR3_InputDepth", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.motionVectors = ffxGetResource(motionVectorsTexture.texture, L"FSR3_InputMotionVectors", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.exposure = ffxGetResource(nullptr, L"FSR3_InputExposure", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.upscaleOutput = dispatchParameters.color;
-		dispatchParameters.reactive = ffxGetResource(taaMask.texture, L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-		dispatchParameters.transparencyAndComposition = ffxGetResource(taaMask.texture, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.reactive = ffxGetResource(nullptr, L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+		dispatchParameters.transparencyAndComposition = ffxGetResource(nullptr, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 
-		dispatchParameters.jitterOffset.x = 0;
-		dispatchParameters.jitterOffset.y = 0;
+		static auto gameViewport = RE::BSGraphics::State::GetSingleton();
+		dispatchParameters.jitterOffset.x = gameViewport->projectionPosScaleX;
+		dispatchParameters.jitterOffset.y = gameViewport->projectionPosScaleY;
 
 		dispatchParameters.motionVectorScale.x = state->screenSize.x;
 		dispatchParameters.motionVectorScale.y = state->screenSize.y;
 
 		dispatchParameters.reset = false;
 
-		dispatchParameters.enableSharpening = false;
-		dispatchParameters.sharpness = 0.0;
+		dispatchParameters.enableSharpening = true;
+		dispatchParameters.sharpness = 0.5;
 
-		static float* g_deltaTime = (float*)RELOCATION_ID(523660, 410199).address();  // 2F6B948, 30064C8
-
-		dispatchParameters.frameTimeDelta = *g_deltaTime * 1000.f;  // Milliseconds!
+		static float* deltaTime = (float*)REL::RelocationID(523660, 410199).address();  // 2F6B948, 30064C8
+		dispatchParameters.frameTimeDelta = *deltaTime * 1000.f;                        // Milliseconds!
 
 		dispatchParameters.preExposure = 1.0f;
 
@@ -287,11 +225,11 @@ void FidelityFX::DispatchUpscaling()
 
 		dispatchParameters.cameraFovAngleVertical = GetVerticalFOVRad();
 
-		static float& g_fNear = (*(float*)(RELOCATION_ID(517032, 403540).address() + 0x40));  // 2F26FC0, 2FC1A90
-		static float& g_fFar = (*(float*)(RELOCATION_ID(517032, 403540).address() + 0x44));   // 2F26FC4, 2FC1A94
+		static float& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));  // 2F26FC0, 2FC1A90
+		static float& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));   // 2F26FC4, 2FC1A94
 
-		dispatchParameters.cameraFar = g_fFar;
-		dispatchParameters.cameraNear = g_fNear;
+		dispatchParameters.cameraFar = cameraFar;
+		dispatchParameters.cameraNear = cameraNear;
 
 		dispatchParameters.viewSpaceToMetersFactor = 1;
 
@@ -300,83 +238,9 @@ void FidelityFX::DispatchUpscaling()
 			logger::error("[FidelityFX] Failed to dispatch upscaling!");
 		}
 	}
-}
 
-void FidelityFX::DispatchFrameGeneration()
-{
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+	context->CopyResource(outputTextureResource, colorInputOutput->resource.get());
 
-	ID3D11Resource* swapChainResource;
-	swapChain.SRV->GetResource(&swapChainResource);
+	state->EndPerfEvent();
 
-	FfxResource backbuffer = ffxGetResource(swapChainResource, nullptr, FFX_RESOURCE_STATE_PRESENT);
-	FfxResource backbufferFrameGeneration = ffxGetResource(swapChainTempTexture->resource.get(), nullptr, FFX_RESOURCE_STATE_PRESENT);
-
-	FfxFrameGenerationDispatchDescription fgDesc{};
-	fgDesc.commandList = dx11CommandList;
-	fgDesc.outputs[0] = backbufferFrameGeneration;
-	fgDesc.presentColor = backbuffer;
-	fgDesc.reset = false;
-	fgDesc.numInterpolatedFrames = 1;
-	fgDesc.backBufferTransferFunction = FFX_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
-	fgDesc.minMaxLuminance[0] = 0.0;
-	fgDesc.minMaxLuminance[1] = 200.0;
-
-	FfxErrorCode errorCode = ffxFsr3DispatchFrameGeneration(&fgDesc);
-	if (errorCode != FFX_OK) {
-		logger::error("[FidelityFX] Failed to dispatch frame generation!");
-	}
-}
-
-extern decltype(&IDXGISwapChain::Present) ptr_IDXGISwapChain_Present;
-
-void FidelityFX::Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
-{
-	if (enableFrameGeneration) {
-		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-		auto state = State::GetSingleton();
-
-		auto& context = state->context;
-
-		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
-
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
-
-		state->BeginPerfEvent("FSR Upscaling");
-		DispatchUpscaling();
-		state->EndPerfEvent();
-
-		state->BeginPerfEvent("FSR Frame Generation");
-		DispatchFrameGeneration();
-		state->EndPerfEvent();
-
-		static bool swap = false;
-
-		if (swap) {
-			// Back up current frame
-			context->CopyResource(swapChainPreviousTexture->resource.get(), swapChainResource);
-
-			// Swap current frame with previous frame
-			context->CopyResource(swapChainResource, swapChainPreviousTextureSwap->resource.get());
-
-		} else {
-			// Back up current frame
-			context->CopyResource(swapChainPreviousTextureSwap->resource.get(), swapChainResource);
-
-			// Swap current frame with previous frame
-			context->CopyResource(swapChainResource, swapChainPreviousTexture->resource.get());
-		}
-
-		swap = !swap;
-
-		(This->*ptr_IDXGISwapChain_Present)(std::max(1u, SyncInterval), 0);
-
-		// Swap current frame with interpolated frame
-		context->CopyResource(swapChainResource, swapChainTempTexture->resource.get());
-	}
 }

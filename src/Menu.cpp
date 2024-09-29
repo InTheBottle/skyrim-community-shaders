@@ -459,7 +459,7 @@ void Menu::DrawSettings()
 
 		ImGui::Separator();
 
-		ImGui::Checkbox("Enable Frame Generation", &FidelityFX::GetSingleton()->enableFrameGeneration);
+		ImGui::Checkbox("Enable FSR", &FidelityFX::GetSingleton()->enableUpscaling);
 		ImGui::SliderFloat("View Scale", &FidelityFX::GetSingleton()->viewScale, 0, 1);
 
 		ImGui::Separator();
