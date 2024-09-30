@@ -51,7 +51,7 @@ void XeGTAOFeature::SetupResources()
 	texDesc.Format = DXGI_FORMAT_R8_UNORM;
 	srvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
-	
+
 	workingEdges = new Texture2D(texDesc);
 	workingEdges->CreateSRV(srvDesc);
 	workingEdges->CreateUAV(uavDesc);
@@ -110,7 +110,7 @@ void XeGTAOFeature::GTAO()
 		XeGTAO::GTAOUpdateConstants(consts, (int)state->screenSize.x, (int)state->screenSize.y, settings, &projMatrix._11, true, (usingTAA) ? (gameViewport->frameCount % 256) : (0));
 
 		constantBuffer->Update(consts);
-			
+
 		ID3D11Buffer* buffers[1] = { constantBuffer->CB() };
 
 		context->CSSetConstantBuffers(0, 1, buffers);
@@ -120,18 +120,20 @@ void XeGTAOFeature::GTAO()
 
 	{
 		state->BeginPerfEvent("GTAO Prefilter Depths");
-	
+
 		context->CSSetShader(CSPrefilterDepths16x16, nullptr, 0);
 
 		// input SRVs
-		ID3D11ShaderResourceView* srvs[1]{ inputDepth,};
+		ID3D11ShaderResourceView* srvs[1]{
+			inputDepth,
+		};
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[XE_GTAO_DEPTH_MIP_LEVELS]{ workingDepthsMIPViews[0], workingDepthsMIPViews[1], workingDepthsMIPViews[2], workingDepthsMIPViews[3], workingDepthsMIPViews[4] };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->Dispatch(((uint)state->screenSize.x + 16 - 1) / 16, ((uint)state->screenSize.y + 16 - 1) / 16, 1);
-		
+
 		state->EndPerfEvent();
 	}
 
@@ -142,18 +144,18 @@ void XeGTAOFeature::GTAO()
 
 	{
 		state->BeginPerfEvent("GTAO Main Pass");
-		
+
 		context->CSSetShader(CSGTAOUltra, nullptr, 0);
 
 		// input SRVs
 		ID3D11ShaderResourceView* srvs[2]{ workingDepths->srv.get(), inputNormals };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-		
+
 		ID3D11UnorderedAccessView* uavs[2]{ workingAOTerm->uav.get(), workingEdges->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->Dispatch(((uint)state->screenSize.x + XE_GTAO_NUMTHREADS_X - 1) / XE_GTAO_NUMTHREADS_X, ((uint)state->screenSize.y + XE_GTAO_NUMTHREADS_Y - 1) / XE_GTAO_NUMTHREADS_Y, 1);
-		
+
 		state->EndPerfEvent();
 	}
 
@@ -171,7 +173,7 @@ void XeGTAOFeature::GTAO()
 
 			context->CSSetShader((lastPass) ? (CSDenoiseLastPass) : (CSDenoisePass), nullptr, 0);
 
-			ID3D11ShaderResourceView* srvs[2]{ workingAOTerm->srv.get(), workingEdges->srv.get()};
+			ID3D11ShaderResourceView* srvs[2]{ workingAOTerm->srv.get(), workingEdges->srv.get() };
 			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 			{
