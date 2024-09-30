@@ -10,6 +10,7 @@
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
+#include "Features/XeGTAO.h"
 
 struct DepthStates
 {
@@ -389,11 +390,13 @@ void Deferred::DeferredPasses()
 	auto skylighting = Skylighting::GetSingleton();
 
 	auto ssgi = ScreenSpaceGI::GetSingleton();
+	auto xeGTAO = XeGTAOFeature::GetSingleton();
 
 	auto dispatchCount = Util::GetScreenDispatchCount();
 
 	if (ssgi->loaded) {
 		ssgi->DrawSSGI(prevDiffuseAmbientTexture);
+		xeGTAO->GTAO();
 
 		// Ambient Composite
 		{
@@ -407,7 +410,7 @@ void Deferred::DeferredPasses()
 				normalRoughness.SRV,
 				skylighting->loaded ? depth.depthSRV : nullptr,
 				skylighting->loaded ? skylighting->texProbeArray->srv.get() : nullptr,
-				ssgi->settings.Enabled ? ssgi->texGI[ssgi->outputGIIdx]->srv.get() : nullptr,
+				xeGTAO->outputAO->srv.get(),
 				masks2.SRV,
 			};
 
