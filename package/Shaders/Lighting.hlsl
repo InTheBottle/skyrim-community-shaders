@@ -1010,13 +1010,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 {
 	PS_OUTPUT psout;
 	uint eyeIndex = GetEyeIndexPS(input.Position, VPOSOffset);
+	
+	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
+	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
+	float screenNoise = InterleavedGradientNoise(input.Position.xy, FrameCount);
+
+	bool inWorld = ExtraShaderDescriptor & _InWorld;
+
+	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, viewPosition.z);
+
 #	if defined(SKINNED) || !defined(MODELSPACENORMALS)
 	float3x3 tbn = float3x3(input.TBN0.xyz, input.TBN1.xyz, input.TBN2.xyz);
 
 #		if !defined(TREE_ANIM) && !defined(LOD)
 	// Fix incorrect vertex normals on double-sided meshes
 	if (!frontFace)
-		tbn = -tbn;
+		tbn = lerp(tbn, -tbn, nearFactor);
 #		endif
 
 	float3x3 tbnTr = transpose(tbn);
@@ -1031,11 +1040,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif  // defined (LANDSCAPE)
 #	endif
 
-	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
-	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
-	float screenNoise = InterleavedGradientNoise(input.Position.xy, FrameCount);
 
-	bool inWorld = ExtraShaderDescriptor & _InWorld;
 
 #	if defined(TERRAIN_BLENDING)
 	float depthSampled = TerrainBlending::GetTerrainOffsetDepth(screenUV, eyeIndex);
@@ -1742,8 +1747,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #	endif
 
 	float porosity = 1.0;
-
-	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, viewPosition.z);
 
 #	if defined(SKYLIGHTING)
 #		if defined(VR)
