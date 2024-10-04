@@ -1010,7 +1010,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 {
 	PS_OUTPUT psout;
 	uint eyeIndex = GetEyeIndexPS(input.Position, VPOSOffset);
-	
+
 	float3 viewPosition = mul(CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = ViewToUV(viewPosition, true, eyeIndex);
 	float screenNoise = InterleavedGradientNoise(input.Position.xy, FrameCount);
@@ -1039,8 +1039,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float shininess = SpecularColor.w;
 #		endif  // defined (LANDSCAPE)
 #	endif
-
-
 
 #	if defined(TERRAIN_BLENDING)
 	float depthSampled = TerrainBlending::GetTerrainOffsetDepth(screenUV, eyeIndex);
