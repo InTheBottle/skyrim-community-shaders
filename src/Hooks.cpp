@@ -10,6 +10,10 @@
 
 #include "Streamline.h"
 
+#include "HDR.h"
+
+#include <dxgi1_4.h>
+
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
@@ -205,14 +209,22 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 	[[maybe_unused]] const D3D_FEATURE_LEVEL* pFeatureLevels,
 	[[maybe_unused]] UINT FeatureLevels,
 	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+	DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
+	auto hdr = HDR::GetSingleton();
+	hdr->QueryHDRSupport();
+
+	if (hdr->enabled) {
+		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	}
+
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
-	return ptrD3D11CreateDeviceAndSwapChain(pAdapter,
+	auto result = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
 		DriverType,
 		Software,
 		Flags,
@@ -224,6 +236,14 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
+
+	if (hdr->enabled) {
+		IDXGISwapChain3* pSwapChain3 = nullptr;
+		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
+		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+	}
+
+	return result;
 }
 
 HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
@@ -234,14 +254,21 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	[[maybe_unused]] const D3D_FEATURE_LEVEL* pFeatureLevels,
 	[[maybe_unused]] UINT FeatureLevels,
 	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+	DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
+	auto hdr = HDR::GetSingleton();
+	hdr->QueryHDRSupport();
 
+	if (hdr->enabled) {
+		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	}
+
+	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 	auto result = Streamline::GetSingleton()->CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
@@ -258,7 +285,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	if (SUCCEEDED(result)) {
 		return result;
 	}
-	return ptrD3D11CreateDeviceAndSwapChain(pAdapter,
+	result = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
 		DriverType,
 		Software,
 		Flags,
@@ -270,6 +297,14 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
+
+	if (hdr->enabled) {
+		IDXGISwapChain3* pSwapChain3 = nullptr;
+		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
+		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+	}
+
+	return result;
 }
 
 struct BSShaderRenderTargets_Create
@@ -414,6 +449,28 @@ namespace Hooks
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
 			State::GetSingleton()->ModifyRenderTarget(a_target, a_properties);
+			func(This, a_target, a_properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_ImagespaceTempCopy
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			if (HDR::GetSingleton()->enabled)
+				a_properties->format = RE::BSGraphics::Format::kR10G10B10A2_UNORM;
+			func(This, a_target, a_properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_ImagespaceTempCopy2
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			if (HDR::GetSingleton()->enabled)
+				a_properties->format = RE::BSGraphics::Format::kR10G10B10A2_UNORM;
 			func(This, a_target, a_properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -633,6 +690,10 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_Snow>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x406, 0x409, 0x55e));
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
+
+		// TODO: VR hooks
+		stl::write_thunk_call<CreateRenderTarget_ImagespaceTempCopy>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x62F, 0x62E));
+		stl::write_thunk_call<CreateRenderTarget_ImagespaceTempCopy2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x642, 0x641));
 
 #ifdef TRACY_ENABLE
 		stl::write_thunk_call<Main_Update>(REL::RelocationID(35551, 36544).address() + REL::Relocate(0x11F, 0x160));

@@ -131,13 +131,19 @@ PS_OUTPUT main(PS_INPUT input)
 	// HDR tonemapping
 	float3 srgbColor = ApplyHuePreservingShoulder(ppColor, 0.5);
 
+	srgbColor = ppColor;
+
 #		if defined(FADE)
 	srgbColor = lerp(srgbColor, Fade.xyz, Fade.w);
 #		endif
 
 	srgbColor = FrameBuffer::ToSRGBColor(srgbColor);
+	
+	float3 hdrColor = Color::GammaToLinear(srgbColor);
 
-	psout.Color = float4(srgbColor, 1.0);
+	// Convert the HDR image to the HDR10 color space
+  	float3 bt2020 = BT709ToBT2020(hdrColor);
+	psout.Color = float4(LinearToPQ(bt2020 * (203.0 / 10000.0), 1.0), 1.0);
 
 #	endif
 

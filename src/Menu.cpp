@@ -20,6 +20,7 @@
 
 #include "Streamline.h"
 #include "Upscaling.h"
+#include "HDR.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"
@@ -256,6 +257,7 @@ void Menu::DrawSettings()
 						feature->ClearShaderCache();
 					}
 				}
+				HDR::GetSingleton()->ClearShaderCache();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(

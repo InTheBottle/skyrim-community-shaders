@@ -16,6 +16,7 @@
 
 #include "Streamline.h"
 #include "Upscaling.h"
+#include "HDR.h"
 
 void State::Draw()
 {
@@ -110,6 +111,7 @@ void State::Setup()
 			feature->SetupResources();
 	Deferred::GetSingleton()->SetupResources();
 	Streamline::GetSingleton()->SetupResources();
+	HDR::GetSingleton()->SetupResources();
 	if (initialized)
 		return;
 	initialized = true;
