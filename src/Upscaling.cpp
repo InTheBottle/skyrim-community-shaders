@@ -112,15 +112,13 @@ void Upscaling::CheckResources()
 		if (currentUpscaleMode == UpscaleMethod::kTAA)
 			DestroyUpscalingResources();
 		else if (currentUpscaleMode == UpscaleMethod::kFSR)
-			fidelityFX->DestroyFSRResources();
-		else if (currentUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->CreateFSRResources();
 
 		previousUpscaleMode = currentUpscaleMode;
 	}
 }
 
-ID3D11ComputeShader* Upscaling::GetRCASComputeShader()
+ID3D11ComputeShader* Upscaling::GetRCASCS()
 {
 	static auto previousSharpness = settings.sharpness;
 	auto currentSharpness = settings.sharpness;
@@ -135,20 +133,42 @@ ID3D11ComputeShader* Upscaling::GetRCASComputeShader()
 	}
 
 	if (!rcasCS) {
-		logger::debug("Compiling Utility.hlsl");
-		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\RCAS\\RCAS.hlsl", { { "SHARPNESS", std::format("{}", currentSharpness).c_str() } }, "cs_5_0");
+		logger::debug("Compiling RCAS.hlsl");
+		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/RCAS/RCAS.hlsl", { { "SHARPNESS", std::format("{}", currentSharpness).c_str() } }, "cs_5_0");
 	}
 
 	return rcasCS;
+}
+
+ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
+{
+	if (!encodeTexturesCS) {
+		logger::debug("Compiling EncodeTexturesCS.hlsl");
+		encodeTexturesCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", {}, "cs_5_0");
+	}
+	return encodeTexturesCS;
+}
+
+void Upscaling::UpdateJitter()
+{
+	auto upscaleMethod = GetUpscaleMethod();
+	if (upscaleMethod != UpscaleMethod::kTAA) {
+		static auto gameViewport = RE::BSGraphics::State::GetSingleton();
+
+		ffxFsr3UpscalerGetJitterOffset(&jitter.x, &jitter.y, gameViewport->frameCount, 8);
+
+		gameViewport->projectionPosScaleX = -2.0f * jitter.x / (float)gameViewport->screenWidth;
+		gameViewport->projectionPosScaleY = 2.0f * jitter.y / (float)gameViewport->screenHeight;
+	}
 }
 
 void Upscaling::Upscale()
 {
 	std::lock_guard<std::mutex> lock(settingsMutex);  // Lock for the duration of this function
 
-	auto upscaleMode = GetUpscaleMethod();
+	auto upscaleMethod = GetUpscaleMethod();
 
-	if (upscaleMode == UpscaleMethod::kNONE || upscaleMode == UpscaleMethod::kTAA)
+	if (upscaleMethod == UpscaleMethod::kNONE || upscaleMethod == UpscaleMethod::kTAA)
 		return;
 
 	CheckResources();
@@ -156,7 +176,6 @@ void Upscaling::Upscale()
 	Hooks::BSGraphics_SetDirtyStates::func(false);
 
 	auto state = State::GetSingleton();
-	state->BeginPerfEvent("Upscaling");
 
 	auto& context = state->context;
 
@@ -181,31 +200,65 @@ void Upscaling::Upscale()
 	ID3D11Resource* outputTextureResource;
 	outputTextureRTV->GetResource(&outputTextureResource);
 
-	context->CopyResource(upscalingTempTexture->resource.get(), inputTextureResource);
+	auto dispatchCount = Util::GetScreenDispatchCount(false);
 
-	if (upscaleMode == UpscaleMethod::kDLSS)
-		Streamline::GetSingleton()->Upscale(upscalingTempTexture);
-	else if (upscaleMode == UpscaleMethod::kFSR)
-		FidelityFX::GetSingleton()->Upscale(upscalingTempTexture);
+	{
+		state->BeginPerfEvent("Alpha Mask");
 
-	state->EndPerfEvent();
-
-	if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
-		state->BeginPerfEvent("Sharpening");
-
-		context->CopyResource(inputTextureResource, upscalingTempTexture->resource.get());
+		static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		static auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
 
 		{
-			auto dispatchCount = Util::GetScreenDispatchCount(false);
+			ID3D11ShaderResourceView* views[2] = { temporalAAMask.SRV };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
+			ID3D11UnorderedAccessView* uavs[1] = { alphaMaskTexture->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
+
+		ID3D11ShaderResourceView* views[1] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11ComputeShader* shader = nullptr;
+		context->CSSetShader(shader, nullptr, 0);
+
+		state->EndPerfEvent();
+	}
+
+	{
+		state->BeginPerfEvent("Upscaling");
+
+		context->CopyResource(upscalingTexture->resource.get(), inputTextureResource);
+
+		if (upscaleMethod == UpscaleMethod::kDLSS)
+			Streamline::GetSingleton()->Upscale(upscalingTexture, alphaMaskTexture, (sl::DLSSPreset)settings.dlssPreset);
+		else if (upscaleMethod == UpscaleMethod::kFSR)
+			FidelityFX::GetSingleton()->Upscale(upscalingTexture, alphaMaskTexture, jitter, reset, settings.sharpness);
+
+		state->EndPerfEvent();
+	}
+
+	if (upscaleMethod == UpscaleMethod::kFSR && settings.sharpness > 0.0f) {
+		state->BeginPerfEvent("Sharpening");
+
+		context->CopyResource(inputTextureResource, upscalingTexture->resource.get());
+
+		{
 			{
 				ID3D11ShaderResourceView* views[1] = { inputTextureSRV };
 				context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-				ID3D11UnorderedAccessView* uavs[1] = { upscalingTempTexture->uav.get() };
+				ID3D11UnorderedAccessView* uavs[1] = { upscalingTexture->uav.get() };
 				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-				context->CSSetShader(GetRCASComputeShader(), nullptr, 0);
+				context->CSSetShader(GetRCASCS(), nullptr, 0);
 
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 			}
@@ -223,7 +276,7 @@ void Upscaling::Upscale()
 		state->EndPerfEvent();
 	}
 
-	context->CopyResource(outputTextureResource, upscalingTempTexture->resource.get());
+	context->CopyResource(outputTextureResource, upscalingTexture->resource.get());
 }
 
 void Upscaling::CreateUpscalingResources()
@@ -239,19 +292,34 @@ void Upscaling::CreateUpscalingResources()
 	main.SRV->GetDesc(&srvDesc);
 	main.UAV->GetDesc(&uavDesc);
 
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	srvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	upscalingTempTexture = new Texture2D(texDesc);
-	upscalingTempTexture->CreateSRV(srvDesc);
-	upscalingTempTexture->CreateUAV(uavDesc);
+	upscalingTexture = new Texture2D(texDesc);
+	upscalingTexture->CreateSRV(srvDesc);
+	upscalingTexture->CreateUAV(uavDesc);
+
+	texDesc.Format = DXGI_FORMAT_R8_UNORM;
+	srvDesc.Format = texDesc.Format;
+	uavDesc.Format = texDesc.Format;
+
+	alphaMaskTexture = new Texture2D(texDesc);
+	alphaMaskTexture->CreateSRV(srvDesc);
+	alphaMaskTexture->CreateUAV(uavDesc);
 }
 
 void Upscaling::DestroyUpscalingResources()
 {
-	upscalingTempTexture->srv = nullptr;
-	upscalingTempTexture->uav = nullptr;
-	upscalingTempTexture->resource = nullptr;
-	delete upscalingTempTexture;
+	upscalingTexture->srv = nullptr;
+	upscalingTexture->uav = nullptr;
+	upscalingTexture->resource = nullptr;
+	delete upscalingTexture;
+
+	alphaMaskTexture->srv = nullptr;
+	alphaMaskTexture->uav = nullptr;
+	alphaMaskTexture->resource = nullptr;
+	delete alphaMaskTexture;
 }
