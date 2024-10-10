@@ -111,7 +111,7 @@ void Upscaling::CheckResources()
 
 		if (currentUpscaleMode == UpscaleMethod::kTAA)
 			DestroyUpscalingResources();
-		else if (previousUpscaleMode == UpscaleMethod::kFSR)
+		else if (currentUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->DestroyFSRResources();
 		else if (currentUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->CreateFSRResources();
