@@ -18,9 +18,9 @@
 #include "Deferred.h"
 #include "TruePBR.h"
 
+#include "HDR.h"
 #include "Streamline.h"
 #include "Upscaling.h"
-#include "HDR.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_SKIPKEY "Skip Compilation Key"

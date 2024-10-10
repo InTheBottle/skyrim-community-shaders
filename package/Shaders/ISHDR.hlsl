@@ -138,11 +138,11 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	srgbColor = FrameBuffer::ToSRGBColor(srgbColor);
-	
+
 	float3 hdrColor = Color::GammaToLinear(srgbColor);
 
 	// Convert the HDR image to the HDR10 color space
-  	float3 bt2020 = BT709ToBT2020(hdrColor);
+	float3 bt2020 = BT709ToBT2020(hdrColor);
 	psout.Color = float4(LinearToPQ(bt2020 * (203.0 / 10000.0), 1.0), 1.0);
 
 #	endif

@@ -14,9 +14,9 @@
 #include "Features/TerrainBlending.h"
 #include "TruePBR.h"
 
+#include "HDR.h"
 #include "Streamline.h"
 #include "Upscaling.h"
-#include "HDR.h"
 
 void State::Draw()
 {

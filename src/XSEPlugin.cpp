@@ -2,12 +2,12 @@
 
 #include "Deferred.h"
 #include "FrameAnnotations.h"
+#include "HDR.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Upscaling.h"
-#include "HDR.h"
 
 #include "Features/ExtendedMaterials.h"
 #include "Features/LightLimitFIx/ParticleLights.h"

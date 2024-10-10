@@ -5,8 +5,8 @@
 #include "Hooks.h"
 #include "Util.h"
 
-#include "Upscaling.h"
 #include "HDR.h"
+#include "Upscaling.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
