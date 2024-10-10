@@ -80,7 +80,7 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 		dispatchParameters.upscaleOutput = dispatchParameters.color;
 		dispatchParameters.reactive = ffxGetResource(a_alphaMask->resource.get(), L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.transparencyAndComposition = ffxGetResource(nullptr, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	
+
 		dispatchParameters.motionVectorScale.x = state->isVR ? state->screenSize.x / 2 : state->screenSize.x;
 		dispatchParameters.motionVectorScale.y = state->screenSize.y;
 		dispatchParameters.renderSize.width = (uint)state->screenSize.x;
