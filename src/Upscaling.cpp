@@ -5,8 +5,8 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
-	upscaleMode,
-	upscaleModeNoDLSS,
+	upscaleMethod,
+	upscaleMethodNoDLSS,
 	sharpness,
 	dlssPreset);
 
@@ -20,21 +20,21 @@ void Upscaling::DrawSettings()
 	auto& bTAA = BSImagespaceShaderISTemporalAA->taaEnabled;  // Setting used by shaders
 
 	// Update upscale mode based on TAA setting
-	settings.upscaleMode = bTAA ? (settings.upscaleMode == (uint)UpscaleMode::kNONE ? (uint)UpscaleMode::kTAA : settings.upscaleMode) : (uint)UpscaleMode::kNONE;
+	settings.upscaleMethod = bTAA ? (settings.upscaleMethod == (uint)UpscaleMethod::kNONE ? (uint)UpscaleMethod::kTAA : settings.upscaleMethod) : (uint)UpscaleMethod::kNONE;
 
 	// Display upscaling options in the UI
 	const char* upscaleModes[] = { "Disabled", "Temporal Anti-Aliasing", "AMD FSR 3.1", "NVIDIA DLAA" };
 
 	// Determine available modes
 	bool featureDLSS = streamline->featureDLSS;
-	uint* currentUpscaleMode = featureDLSS ? &settings.upscaleMode : &settings.upscaleModeNoDLSS;
+	uint* currentUpscaleMode = featureDLSS ? &settings.upscaleMethod : &settings.upscaleMethodNoDLSS;
 	uint availableModes = (state->isVR && state->upscalerLoaded) ? (featureDLSS ? 2 : 1) : (featureDLSS ? 3 : 2);
 
 	// Slider for method selection
 	ImGui::SliderInt("Method", (int*)currentUpscaleMode, 0, availableModes, std::format("{}", upscaleModes[(uint)*currentUpscaleMode]).c_str());
 
 	*currentUpscaleMode = std::min(availableModes, (uint)*currentUpscaleMode);
-	bTAA = *currentUpscaleMode != (uint)UpscaleMode::kNONE;
+	bTAA = *currentUpscaleMode != (uint)UpscaleMethod::kNONE;
 
 	// settings for scaleform/ini
 	if (auto iniSettingCollection = RE::INIPrefSettingCollection::GetSingleton()) {
@@ -43,17 +43,17 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	// Check the current upscale mode
-	auto upscaleMode = GetUpscaleMode();
+	// Check the current upscale method
+	auto upscaleMethod = GetUpscaleMethod();
 
 	// Display sharpness slider if applicable
-	if (upscaleMode != UpscaleMode::kTAA && upscaleMode != UpscaleMode::kNONE) {
+	if (upscaleMethod != UpscaleMethod::kTAA && upscaleMethod != UpscaleMethod::kNONE) {
 		ImGui::SliderFloat("Sharpness", &settings.sharpness, 0.0f, 1.0f, "%.1f");
 		settings.sharpness = std::clamp(settings.sharpness, 0.0f, 1.0f);
 	}
 
 	// Display DLSS preset slider if using DLSS
-	if (upscaleMode == UpscaleMode::kDLSS) {
+	if (upscaleMethod == UpscaleMethod::kDLSS) {
 		const char* dlssPresets[] = { "Default", "Preset A", "Preset B", "Preset C", "Preset D", "Preset E", "Preset F" };
 		ImGui::SliderInt("DLSS Preset", (int*)&settings.dlssPreset, 0, 6, std::format("{}", dlssPresets[(uint)settings.dlssPreset]).c_str());
 		settings.dlssPreset = std::min(6u, (uint)settings.dlssPreset);
@@ -87,33 +87,33 @@ void Upscaling::LoadSettings(json& o_json)
 	}
 }
 
-Upscaling::UpscaleMode Upscaling::GetUpscaleMode()
+Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod()
 {
 	auto streamline = Streamline::GetSingleton();
-	return streamline->featureDLSS ? (Upscaling::UpscaleMode)settings.upscaleMode : (Upscaling::UpscaleMode)settings.upscaleModeNoDLSS;
+	return streamline->featureDLSS ? (Upscaling::UpscaleMethod)settings.upscaleMethod : (Upscaling::UpscaleMethod)settings.upscaleMethodNoDLSS;
 }
 
 void Upscaling::CheckResources()
 {
-	static auto previousUpscaleMode = UpscaleMode::kTAA;
-	auto currentUpscaleMode = GetUpscaleMode();
+	static auto previousUpscaleMode = UpscaleMethod::kTAA;
+	auto currentUpscaleMode = GetUpscaleMethod();
 
 	auto streamline = Streamline::GetSingleton();
 	auto fidelityFX = FidelityFX::GetSingleton();
 
 	if (previousUpscaleMode != currentUpscaleMode) {
-		if (previousUpscaleMode == UpscaleMode::kTAA)
+		if (previousUpscaleMode == UpscaleMethod::kTAA)
 			CreateUpscalingResources();
-		else if (previousUpscaleMode == UpscaleMode::kDLSS)
+		else if (previousUpscaleMode == UpscaleMethod::kDLSS)
 			streamline->DestroyDLSSResources();
-		else if (previousUpscaleMode == UpscaleMode::kFSR)
+		else if (previousUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->DestroyFSRResources();
 
-		if (currentUpscaleMode == UpscaleMode::kTAA)
+		if (currentUpscaleMode == UpscaleMethod::kTAA)
 			DestroyUpscalingResources();
-		else if (previousUpscaleMode == UpscaleMode::kFSR)
+		else if (previousUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->DestroyFSRResources();
-		else if (currentUpscaleMode == UpscaleMode::kFSR)
+		else if (currentUpscaleMode == UpscaleMethod::kFSR)
 			fidelityFX->CreateFSRResources();
 
 		previousUpscaleMode = currentUpscaleMode;
@@ -146,9 +146,9 @@ void Upscaling::Upscale()
 {
 	std::lock_guard<std::mutex> lock(settingsMutex);  // Lock for the duration of this function
 
-	auto upscaleMode = GetUpscaleMode();
+	auto upscaleMode = GetUpscaleMethod();
 
-	if (upscaleMode == UpscaleMode::kNONE || upscaleMode == UpscaleMode::kTAA)
+	if (upscaleMode == UpscaleMethod::kNONE || upscaleMode == UpscaleMethod::kTAA)
 		return;
 
 	CheckResources();
@@ -183,14 +183,14 @@ void Upscaling::Upscale()
 
 	context->CopyResource(upscalingTempTexture->resource.get(), inputTextureResource);
 
-	if (upscaleMode == UpscaleMode::kDLSS)
+	if (upscaleMode == UpscaleMethod::kDLSS)
 		Streamline::GetSingleton()->Upscale(upscalingTempTexture);
-	else if (upscaleMode == UpscaleMode::kFSR)
+	else if (upscaleMode == UpscaleMethod::kFSR)
 		FidelityFX::GetSingleton()->Upscale(upscalingTempTexture);
 
 	state->EndPerfEvent();
 
-	if (GetUpscaleMode() == UpscaleMode::kDLSS) {
+	if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
 		state->BeginPerfEvent("Sharpening");
 
 		context->CopyResource(inputTextureResource, upscalingTempTexture->resource.get());
@@ -233,22 +233,18 @@ void Upscaling::CreateUpscalingResources()
 
 	D3D11_TEXTURE2D_DESC texDesc{};
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
 	main.texture->GetDesc(&texDesc);
 	main.SRV->GetDesc(&srvDesc);
-	main.RTV->GetDesc(&rtvDesc);
 	main.UAV->GetDesc(&uavDesc);
 
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	srvDesc.Format = texDesc.Format;
-	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
 	upscalingTempTexture = new Texture2D(texDesc);
 	upscalingTempTexture->CreateSRV(srvDesc);
-	upscalingTempTexture->CreateRTV(rtvDesc);
 	upscalingTempTexture->CreateUAV(uavDesc);
 }
 
@@ -256,8 +252,6 @@ void Upscaling::DestroyUpscalingResources()
 {
 	upscalingTempTexture->srv = nullptr;
 	upscalingTempTexture->uav = nullptr;
-	upscalingTempTexture->rtv = nullptr;
-	upscalingTempTexture->dsv = nullptr;
 	upscalingTempTexture->resource = nullptr;
 	delete upscalingTempTexture;
 }

@@ -17,7 +17,7 @@ public:
 
 	inline std::string GetShortName() { return "Upscaling"; }
 
-	enum class UpscaleMode
+	enum class UpscaleMethod
 	{
 		kNONE,
 		kTAA,
@@ -27,8 +27,8 @@ public:
 
 	struct Settings
 	{
-		uint upscaleMode = (uint)UpscaleMode::kDLSS;
-		uint upscaleModeNoDLSS = (uint)UpscaleMode::kFSR;
+		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
+		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
 		float sharpness = 0.5f;
 		uint dlssPreset = (uint)sl::DLSSPreset::eDefault;
 	};
@@ -39,7 +39,7 @@ public:
 	void SaveSettings(json& o_json);
 	void LoadSettings(json& o_json);
 
-	UpscaleMode GetUpscaleMode();
+	UpscaleMethod GetUpscaleMethod();
 
 	void CheckResources();
 
@@ -71,8 +71,8 @@ public:
 		static void thunk(RE::BSImagespaceShaderISTemporalAA* a_shader, RE::BSTriShape* a_null)
 		{
 			auto singleton = GetSingleton();
-			auto upscaleMode = singleton->GetUpscaleMode();
-			if ((upscaleMode != UpscaleMode::kTAA && upscaleMode != UpscaleMode::kNONE) && singleton->validTaaPass)
+			auto upscaleMode = singleton->GetUpscaleMethod();
+			if ((upscaleMode != UpscaleMethod::kTAA && upscaleMode != UpscaleMethod::kNONE) && singleton->validTaaPass)
 				singleton->Upscale();
 			else
 				func(a_shader, a_null);
