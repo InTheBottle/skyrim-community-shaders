@@ -518,11 +518,11 @@ void Streamline::UpdateConstants()
 	prevCameraToCamera.Invert();
 
 	sl::Constants slConstants = {};
-					
-	if (state->isVR){
+
+	if (state->isVR) {
 		slConstants.cameraAspectRatio = (state->screenSize.x * 0.5f) / state->screenSize.y;
 	} else {
-		slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;	
+		slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 	}
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
 
