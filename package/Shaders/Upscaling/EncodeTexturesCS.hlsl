@@ -4,7 +4,7 @@ RWTexture2D<float> AlphaMask : register(u0);
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
 								: SV_DispatchThreadID) {
-	float2 taaMask = TAAMask[dispatchID.xy];	
+	float2 taaMask = TAAMask[dispatchID.xy];
 
 	float alphaMask = taaMask.x * 0.5;
 	alphaMask = lerp(alphaMask, 1.0, taaMask.y);

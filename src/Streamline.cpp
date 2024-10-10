@@ -520,7 +520,7 @@ void Streamline::UpdateConstants()
 	sl::Constants slConstants = {};
 	slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
-	
+
 	static auto& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
 	static auto& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
 
