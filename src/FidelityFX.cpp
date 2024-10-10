@@ -65,8 +65,9 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 	static auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	static auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
 
-	static auto gameViewport = RE::BSGraphics::State::GetSingleton();
 	static auto context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
+
+	auto state = State::GetSingleton();
 
 	{
 		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
@@ -79,11 +80,12 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 		dispatchParameters.upscaleOutput = dispatchParameters.color;
 		dispatchParameters.reactive = ffxGetResource(a_alphaMask->resource.get(), L"FSR3_InputReactiveMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 		dispatchParameters.transparencyAndComposition = ffxGetResource(nullptr, L"FSR3_TransparencyAndCompositionMap", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	
+		dispatchParameters.motionVectorScale.x = state->isVR ? state->screenSize.x / 2 : state->screenSize.x;
+		dispatchParameters.motionVectorScale.y = state->screenSize.y;
+		dispatchParameters.renderSize.width = (uint)state->screenSize.x;
+		dispatchParameters.renderSize.height = (uint)state->screenSize.y;
 
-		dispatchParameters.motionVectorScale.x = (float)gameViewport->screenWidth;
-		dispatchParameters.motionVectorScale.y = (float)gameViewport->screenHeight;
-		dispatchParameters.renderSize.width = gameViewport->screenWidth;
-		dispatchParameters.renderSize.height = gameViewport->screenHeight;
 		dispatchParameters.jitterOffset.x = -a_jitter.x;
 		dispatchParameters.jitterOffset.y = -a_jitter.y;
 
