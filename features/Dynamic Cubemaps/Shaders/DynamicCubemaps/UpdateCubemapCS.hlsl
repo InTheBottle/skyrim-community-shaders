@@ -92,13 +92,13 @@ float smoothbumpstep(float edge0, float edge1, float x)
 		float3 color = 0.0;
 		float3 position = 0.0;
 		float weight = 0.0;
-		
+
 		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
 		uv = Stereo::ConvertToStereoUV(uv, 0);
 
 		float depth = DepthTexture.SampleLevel(LinearSampler, uv, 0);
 		float linearDepth = DeferredShared::GetScreenDepth(depth);
-		
+
 		if (linearDepth > 16.5) {  // Ignore objects which are too close
 			half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
 			positionCS = mul(CameraViewProjInverse[0], positionCS);
