@@ -44,7 +44,7 @@ public:
 			auto hdr = GetSingleton();
 			if (!hdr->enabled)
 				return func(a1);
-		
+
 			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(renderTargets, shadowState)
 
