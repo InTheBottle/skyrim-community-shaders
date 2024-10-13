@@ -200,7 +200,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 hdrColor = Color::GammaToLinear(ppColor);
 
-	float peakWhite = 1000.0 / 100.0;
+	float peakWhite = 1000.0 / 203.0;
 
 	float shoulder = Color::GammaToLinear(0.5);
 	shoulder /= peakWhite;
@@ -222,7 +222,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// Convert the HDR image to the HDR10 color space
 	float3 bt2020 = BT709ToBT2020(hdrColor);
-	psout.Color = float4(LinearToPQ(bt2020 * (100.0 / 10000.0), 1.0), 1.0);
+	psout.Color = float4(LinearToPQ(bt2020 * (203.0 / 10000.0), 1.0), 1.0);
 
 #	endif
 
