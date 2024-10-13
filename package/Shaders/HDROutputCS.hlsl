@@ -16,7 +16,11 @@ RWTexture2D<float4> HDRTexture : register(u0);
 
 	float4 ui = UI[dispatchID.xy];
 
-	float3 finalLinearColor = (ui.xyz * 2.0) + backbuffer * (1.0 - ui.w);
+	ui.xyz = Color::GammaToLinear(ui.xyz);
+	ui.xyz *= 200.0 / 100.0;
+	ui.xyz = Color::LinearToGamma(ui.xyz);
+
+	float3 finalLinearColor = ui.xyz + backbuffer * (1.0 - ui.w);
 
 	finalLinearColor = sign(finalLinearColor) * Color::GammaToLinear(abs(finalLinearColor));
 	finalLinearColor = BT709ToBT2020(finalLinearColor);
