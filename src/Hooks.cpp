@@ -219,7 +219,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 	hdr->QueryHDRSupport();
 
 	if (hdr->enabled) {
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	}
 
@@ -240,7 +240,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 	if (hdr->enabled) {
 		IDXGISwapChain3* pSwapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
-		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
 	}
 
 	return result;
@@ -264,7 +264,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	hdr->QueryHDRSupport();
 
 	if (hdr->enabled) {
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	}
 
@@ -301,7 +301,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	if (hdr->enabled) {
 		IDXGISwapChain3* pSwapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
-		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
 	}
 
 	return result;
@@ -459,7 +459,7 @@ namespace Hooks
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
 			if (HDR::GetSingleton()->enabled)
-				a_properties->format = RE::BSGraphics::Format::kR10G10B10A2_UNORM;
+				a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
 			func(This, a_target, a_properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -470,7 +470,7 @@ namespace Hooks
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
 			if (HDR::GetSingleton()->enabled)
-				a_properties->format = RE::BSGraphics::Format::kR10G10B10A2_UNORM;
+				a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
 			func(This, a_target, a_properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

@@ -33,7 +33,7 @@ void HDR::SetupResources()
 	uiTexture->CreateRTV(rtvDesc);
 	uiTexture->CreateUAV(uavDesc);
 
-	texDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+	texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
@@ -42,6 +42,12 @@ void HDR::SetupResources()
 	hdrTexture->CreateSRV(srvDesc);
 	hdrTexture->CreateRTV(rtvDesc);
 	hdrTexture->CreateUAV(uavDesc);
+
+	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	swapChain.SRV = hdrTexture->srv.get();
+	swapChain.RTV = hdrTexture->rtv.get();
 }
 
 void HDR::ClearShaderCache()
@@ -71,8 +77,7 @@ void HDR::HDROutput()
 		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 		{
-			ID3D11ShaderResourceView* srvs[2]{
-				swapChain.SRV,
+			ID3D11ShaderResourceView* srvs[1]{
 				uiTexture->srv.get()
 			};
 
@@ -89,9 +94,6 @@ void HDR::HDROutput()
 
 			context->Dispatch(dispatchX, dispatchY, 1);
 		}
-
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
 
 		context->CopyResource(swapChainResource, hdrTexture->resource.get());
 	}

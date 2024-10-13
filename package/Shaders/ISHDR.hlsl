@@ -220,11 +220,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	hdrColor = Color::GammaToLinear(hdrColor);
 
-	hdrColor = ExtendGamut(hdrColor, 0.2);
-
-	// Convert the HDR image to the HDR10 color space
-	float3 bt2020 = BT709ToBT2020(hdrColor);
-	psout.Color = float4(LinearToPQ(bt2020 * (203.0 / 10000.0), 1.0), 1.0);
+	hdrColor = sign(hdrColor) * Color::LinearToGamma(abs(hdrColor));
+	
+	psout.Color = float4(hdrColor, 1.0);
 
 #	endif
 

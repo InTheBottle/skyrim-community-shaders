@@ -27,6 +27,8 @@ public:
 
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 
+	ID3D11Resource* swapChainResource;
+
 	void SetupResources();
 	void ClearShaderCache();
 
@@ -122,10 +124,25 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct BSGraphics_Begin_Unk
+	{
+		static void thunk(int64_t a1, int64_t a2)
+		{
+			func(a1, a2);
+			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+			auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+			swapChain.SRV = GetSingleton()->hdrTexture->srv.get();
+			swapChain.RTV = GetSingleton()->hdrTexture->rtv.get();
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+
+	};
+
 	static void InstallHooks()
 	{
 		stl::write_thunk_call<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x7E, 0x83, 0x17F));
 		stl::write_thunk_call<MenuManagerDrawInterfaceEndHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x277, 0x2EA, 0x17F));
 		stl::write_thunk_call<RenderMenuImagespace>(REL::RelocationID(51855, 52727).address() + REL::Relocate(0x7A1, 0x7A4, 0x17F));
+		stl::write_thunk_call<BSGraphics_Begin_Unk>(REL::RelocationID(75460, 52727).address() + REL::Relocate(0x1D3, 0x7A4, 0x17F));
 	}
 };
