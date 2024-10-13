@@ -248,7 +248,7 @@ PS_OUTPUT main(PS_INPUT input)
 	positionWS = mul(CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 	positionWS.w = 1;
-	
+
 	float2 screenMotionVector = GetSSMotionVector(positionWS, positionWS, eyeIndex);
 
 	psout.MotionVectors = float4(screenMotionVector, 0, psout.Color.w);
