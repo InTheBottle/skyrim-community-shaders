@@ -135,7 +135,6 @@ public:
 			swapChain.RTV = GetSingleton()->hdrTexture->rtv.get();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
-
 	};
 
 	static void InstallHooks()
