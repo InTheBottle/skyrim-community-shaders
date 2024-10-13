@@ -65,7 +65,7 @@ void HDR::HDROutput()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& context = State::GetSingleton()->context;
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+	auto& swapChain = renderer->GetRuntimeData().renderTargets[backbuffer];
 
 	if (swapChain.SRV) {
 		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets

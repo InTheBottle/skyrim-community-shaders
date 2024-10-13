@@ -34,7 +34,8 @@ public:
 
 	void HDROutput();
 
-	RE::BSGraphics::RenderTargetData framebuffer;
+	RE::RENDER_TARGET backbuffer;
+	RE::BSGraphics::RenderTargetData backbufferData;
 
 	struct MenuManagerDrawInterfaceStartHook
 	{
@@ -43,16 +44,20 @@ public:
 			auto hdr = GetSingleton();
 			if (!hdr->enabled)
 				return func(a1);
+		
+			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+			GET_INSTANCE_MEMBER(renderTargets, shadowState)
+
+			hdr->backbuffer = renderTargets[0];
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+			auto& data = renderer->GetRuntimeData().renderTargets[hdr->backbuffer];
 
-			hdr->framebuffer = data;
+			hdr->backbufferData = data;
 
-			data.RTV = GetSingleton()->uiTexture->rtv.get();
+			data.RTV = hdr->uiTexture->rtv.get();
 
-			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -76,7 +81,7 @@ public:
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER] = GetSingleton()->framebuffer;
+			renderer->GetRuntimeData().renderTargets[hdr->backbuffer] = GetSingleton()->backbufferData;
 
 			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
@@ -85,7 +90,7 @@ public:
 
 			GetSingleton()->HDROutput();
 
-			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER].RTV, nullptr);
+			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[hdr->backbuffer].RTV, nullptr);
 
 			func(a1);
 		}
@@ -104,14 +109,14 @@ public:
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+			auto& data = renderer->GetRuntimeData().renderTargets[hdr->backbuffer];
 
-			data = GetSingleton()->framebuffer;
+			data = hdr->backbufferData;
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
 			func(a1, a3, er8_0);
 
-			data.RTV = GetSingleton()->uiTexture->rtv.get();
+			data.RTV = hdr->uiTexture->rtv.get();
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
