@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "FrameAnnotations.h"
+#include "HDR.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -84,6 +85,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				Deferred::Hooks::Install();
 				TruePBR::GetSingleton()->PostPostLoad();
 				Upscaling::InstallHooks();
+				HDR::InstallHooks();
 				Hooks::Install();
 				FrameAnnotations::OnPostPostLoad();
 

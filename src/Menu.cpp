@@ -18,6 +18,7 @@
 #include "Deferred.h"
 #include "TruePBR.h"
 
+#include "HDR.h"
 #include "Streamline.h"
 #include "Upscaling.h"
 
@@ -244,6 +245,7 @@ void Menu::DrawSettings()
 						feature->ClearShaderCache();
 					}
 				}
+				HDR::GetSingleton()->ClearShaderCache();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
