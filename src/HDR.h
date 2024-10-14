@@ -25,19 +25,23 @@ public:
 	Texture2D* uiTexture = nullptr;
 	Texture2D* hdrTexture = nullptr;
 
+	ID3D11ComputeShader* uiBlendCS = nullptr;
+	ID3D11ComputeShader* GetUIBlendCS();
+
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
+	ID3D11ComputeShader* GetHDROutputCS();
 
 	ID3D11Resource* swapChainResource;
 
 	void SetupResources();
+	void CheckSwapchain();
 	void ClearShaderCache();
 
-	ID3D11ComputeShader* GetHDROutputCS();
-
+	void UIBlend();
 	void HDROutput();
 
-	RE::RENDER_TARGET backbuffer;
-	RE::BSGraphics::RenderTargetData backbufferData;
+	RE::RENDER_TARGET framebuffer;
+	RE::BSGraphics::RenderTargetData framebufferData;
 
 	struct MenuManagerDrawInterfaceStartHook
 	{
@@ -47,19 +51,17 @@ public:
 			if (!hdr->enabled)
 				return func(a1);
 
-			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-			GET_INSTANCE_MEMBER(renderTargets, shadowState)
+			hdr->framebuffer = RE::RENDER_TARGET::kFRAMEBUFFER;
 
-			hdr->backbuffer = renderTargets[0];
+			static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+			auto& data = renderer->GetRuntimeData().renderTargets[hdr->framebuffer];
 
-			auto& data = renderer->GetRuntimeData().renderTargets[hdr->backbuffer];
-
-			hdr->backbufferData = data;
+			hdr->framebufferData = data;
 
 			data.RTV = hdr->uiTexture->rtv.get();
 
+			static auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -83,16 +85,16 @@ public:
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			renderer->GetRuntimeData().renderTargets[hdr->backbuffer] = GetSingleton()->backbufferData;
+			renderer->GetRuntimeData().renderTargets[hdr->framebuffer] = GetSingleton()->framebufferData;
 
 			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
-			GetSingleton()->HDROutput();
+			GetSingleton()->UIBlend();
 
-			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[hdr->backbuffer].RTV, nullptr);
+			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[hdr->framebuffer].RTV, nullptr);
 
 			func(a1);
 		}
@@ -111,9 +113,9 @@ public:
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-			auto& data = renderer->GetRuntimeData().renderTargets[hdr->backbuffer];
+			auto& data = renderer->GetRuntimeData().renderTargets[hdr->framebuffer];
 
-			data = hdr->backbufferData;
+			data = hdr->framebufferData;
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
 			func(a1, a3, er8_0);
@@ -129,13 +131,23 @@ public:
 		static void thunk(int64_t a1, int64_t a2)
 		{
 			func(a1, a2);
+			GetSingleton()->CheckSwapchain();
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 			auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 			swapChain.SRV = GetSingleton()->hdrTexture->srv.get();
 			swapChain.RTV = GetSingleton()->hdrTexture->rtv.get();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
+	struct BSGraphics_End_Unk
+	{
+		static void thunk(int32_t a1)
+		{
+			GetSingleton()->HDROutput();
+			func(a1);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
 	static void InstallHooks()
@@ -144,5 +156,6 @@ public:
 		stl::write_thunk_call<MenuManagerDrawInterfaceEndHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x277, 0x2EA, 0x17F));
 		stl::write_thunk_call<RenderMenuImagespace>(REL::RelocationID(51855, 52727).address() + REL::Relocate(0x7A1, 0x7A4, 0x17F));
 		stl::write_thunk_call<BSGraphics_Begin_Unk>(REL::RelocationID(75460, 52727).address() + REL::Relocate(0x1D3, 0x7A4, 0x17F));
+		stl::write_thunk_call<BSGraphics_End_Unk>(REL::RelocationID(75461, 52727).address() + REL::Relocate(0x9, 0x7A4, 0x17F));
 	}
 };

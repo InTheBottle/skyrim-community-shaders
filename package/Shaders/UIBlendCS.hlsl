@@ -9,9 +9,13 @@ RWTexture2D<float4> FrameBuffer : register(u0);
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
 								: SV_DispatchThreadID) {
 	float3 framebuffer = FrameBuffer[dispatchID.xy];
+	float4 ui = UI[dispatchID.xy];
 
-	framebuffer = sign(framebuffer) * Color::GammaToLinear(abs(framebuffer));
-	framebuffer *= 203.0 / 80.0;
+	ui.xyz = Color::GammaToLinear(ui.xyz);
+	ui.xyz *= 200.0 / 100.0;
+	ui.xyz = Color::LinearToGamma(ui.xyz);
+
+	framebuffer = ui.xyz + framebuffer * (1.0 - ui.w);
 
 	FrameBuffer[dispatchID.xy] = float4(framebuffer, 1.0);
 };

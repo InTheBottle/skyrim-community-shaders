@@ -42,20 +42,39 @@ void HDR::SetupResources()
 	hdrTexture->CreateSRV(srvDesc);
 	hdrTexture->CreateRTV(rtvDesc);
 	hdrTexture->CreateUAV(uavDesc);
+}
 
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-	swapChain.SRV->GetResource(&swapChainResource);
 
-	swapChain.SRV = hdrTexture->srv.get();
-	swapChain.RTV = hdrTexture->rtv.get();
+void HDR::CheckSwapchain()
+{
+	if (!swapChainResource) {
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+		if (swapChain.SRV) {
+			swapChain.SRV->GetResource(&swapChainResource);
+		}
+	}
 }
 
 void HDR::ClearShaderCache()
 {
+	if (uiBlendCS) {
+		uiBlendCS->Release();
+		uiBlendCS = nullptr;
+	}
 	if (hdrOutputCS) {
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
 	}
+}
+
+ID3D11ComputeShader* HDR::GetUIBlendCS()
+{
+	if (!uiBlendCS) {
+		logger::debug("Compiling UIBlendCS.hlsl");
+		uiBlendCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\UIBlendCS.hlsl", {}, "cs_5_0"));
+	}
+	return uiBlendCS;
 }
 
 ID3D11ComputeShader* HDR::GetHDROutputCS()
@@ -67,37 +86,62 @@ ID3D11ComputeShader* HDR::GetHDROutputCS()
 	return hdrOutputCS;
 }
 
-void HDR::HDROutput()
+void HDR::UIBlend()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto& context = State::GetSingleton()->context;
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[backbuffer];
+	static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	static auto& context = State::GetSingleton()->context;
+	static auto& swapChain = renderer->GetRuntimeData().renderTargets[framebuffer];
 
-	if (swapChain.SRV) {
-		context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
-		{
-			ID3D11ShaderResourceView* srvs[1]{
-				uiTexture->srv.get()
-			};
+	if (swapChain.SRV)
+	{
+		ID3D11ShaderResourceView* srvs[1]{
+			uiTexture->srv.get()
+		};
 
-			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-			ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-			context->CSSetShader(GetHDROutputCS(), nullptr, 0);
+		context->CSSetShader(GetUIBlendCS(), nullptr, 0);
 
-			float2 resolution = State::GetSingleton()->screenSize;
-			uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
-			uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
+		float2 resolution = State::GetSingleton()->screenSize;
+		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
+		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
 
-			context->Dispatch(dispatchX, dispatchY, 1);
-		}
-
-		context->CopyResource(swapChainResource, hdrTexture->resource.get());
+		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
 	FLOAT clearColor[4] = { 0, 0, 0, 0 };
 	context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
+}
+
+void HDR::HDROutput()
+{
+	static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	static auto& context = State::GetSingleton()->context;
+	static auto& swapChain = renderer->GetRuntimeData().renderTargets[framebuffer];
+
+	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+
+	{
+		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(GetHDROutputCS(), nullptr, 0);
+
+		float2 resolution = State::GetSingleton()->screenSize;
+		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
+		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	context->CopyResource(swapChainResource, hdrTexture->resource.get()); // Copy fake swapchain into real one
+
+	swapChain = framebufferData; // Reset framebuffer
+
+	context->OMSetRenderTargets(1, &swapChain.RTV, nullptr);  // Set render target
 }
