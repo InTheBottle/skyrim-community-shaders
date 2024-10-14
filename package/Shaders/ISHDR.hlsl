@@ -215,11 +215,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	hdrColor = FrameBuffer::ToSRGBColor(hdrColor);
-
-	hdrColor = Color::GammaToLinear(hdrColor);
-
-	hdrColor = sign(hdrColor) * Color::LinearToGamma(abs(hdrColor));
-
+	
 	psout.Color = float4(hdrColor, 1.0);
 
 #	endif
