@@ -200,6 +200,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 hdrColor = Color::GammaToLinear(ppColor);
 
+	hdrColor = pow(hdrColor, 1.0 / 1.25);
+	hdrColor = lerp(Color::RGBToLuminance(hdrColor), hdrColor, 1.05);
+
 	float peakWhite = 1000.0 / 203.0;
 
 	float shoulder = Color::GammaToLinear(0.5);
