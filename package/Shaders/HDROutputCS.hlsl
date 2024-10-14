@@ -13,7 +13,7 @@ RWTexture2D<float4> Output : register(u0);
 
 	framebuffer = Color::GammaToLinear(framebuffer);
 	framebuffer *= peakWhite;
-	
+
 	framebuffer = BT709ToBT2020(framebuffer);
  	framebuffer = LinearToPQ(framebuffer * 203.0, 10000.0);
 

@@ -104,7 +104,7 @@ void HDR::UIBlend()
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	if (swapChain.SRV) {
-		ID3D11ShaderResourceView* srvs[1]{ uiTexture->srv.get()};
+		ID3D11ShaderResourceView* srvs[1]{ uiTexture->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
