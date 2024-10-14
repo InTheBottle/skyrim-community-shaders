@@ -44,7 +44,6 @@ void HDR::SetupResources()
 	hdrTexture->CreateUAV(uavDesc);
 }
 
-
 void HDR::CheckSwapchain()
 {
 	if (!swapChainResource) {
@@ -94,8 +93,7 @@ void HDR::UIBlend()
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
-	if (swapChain.SRV)
-	{
+	if (swapChain.SRV) {
 		ID3D11ShaderResourceView* srvs[1]{
 			uiTexture->srv.get()
 		};
@@ -139,9 +137,9 @@ void HDR::HDROutput()
 		context->Dispatch(dispatchX, dispatchY, 1);
 	}
 
-	context->CopyResource(swapChainResource, hdrTexture->resource.get()); // Copy fake swapchain into real one
+	context->CopyResource(swapChainResource, hdrTexture->resource.get());  // Copy fake swapchain into real one
 
-	swapChain = framebufferData; // Reset framebuffer
+	swapChain = framebufferData;  // Reset framebuffer
 
 	context->OMSetRenderTargets(1, &swapChain.RTV, nullptr);  // Set render target
 }
