@@ -215,6 +215,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
+	DXGI_ADAPTER_DESC adapterDesc;
+	pAdapter->GetDesc(&adapterDesc);
+	State::GetSingleton()->SetAdapterDescription(adapterDesc.Description);
+  
 	auto hdr = HDR::GetSingleton();
 	hdr->QueryHDRSupport();
 
@@ -260,6 +264,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
+	DXGI_ADAPTER_DESC adapterDesc;
+	pAdapter->GetDesc(&adapterDesc);
+	State::GetSingleton()->SetAdapterDescription(adapterDesc.Description);
+  
 	auto hdr = HDR::GetSingleton();
 	hdr->QueryHDRSupport();
 
