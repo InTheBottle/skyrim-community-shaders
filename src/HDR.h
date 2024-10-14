@@ -24,6 +24,7 @@ public:
 
 	Texture2D* uiTexture = nullptr;
 	Texture2D* hdrTexture = nullptr;
+	Texture2D* outputTexture = nullptr;
 
 	ID3D11ComputeShader* uiBlendCS = nullptr;
 	ID3D11ComputeShader* GetUIBlendCS();

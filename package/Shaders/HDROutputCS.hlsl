@@ -2,16 +2,20 @@
 #include "Common/Color.hlsli"
 #include "Common/DICETonemapper.hlsli"
 
-Texture2D<float4> UI : register(t0);
-
-RWTexture2D<float4> FrameBuffer : register(u0);
+Texture2D<float4> Input : register(t0);
+RWTexture2D<float4> Output : register(u0);
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID
 								: SV_DispatchThreadID) {
-	float3 framebuffer = FrameBuffer[dispatchID.xy];
+	float3 framebuffer = Input[dispatchID.xy];
 
-	framebuffer = sign(framebuffer) * Color::GammaToLinear(abs(framebuffer));
-	framebuffer *= 203.0 / 80.0;
+	float peakWhite = 1000.0 / 203.0;
 
-	FrameBuffer[dispatchID.xy] = float4(framebuffer, 1.0);
+	framebuffer = Color::GammaToLinear(framebuffer);
+	framebuffer *= peakWhite;
+	
+	framebuffer = BT709ToBT2020(framebuffer);
+ 	framebuffer = LinearToPQ(framebuffer * (203.0 / 10000.0), 1.0);
+
+	Output[dispatchID.xy] = float4(framebuffer, 1.0);
 };

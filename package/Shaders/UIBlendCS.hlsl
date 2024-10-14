@@ -11,8 +11,14 @@ RWTexture2D<float4> FrameBuffer : register(u0);
 	float3 framebuffer = FrameBuffer[dispatchID.xy];
 	float4 ui = UI[dispatchID.xy];
 
+	float peakWhite = 1000.0 / 203.0;
+
+	framebuffer = Color::GammaToLinear(framebuffer);
+	framebuffer *= peakWhite;
+	framebuffer = Color::LinearToGamma(framebuffer);
+
 	ui.xyz = Color::GammaToLinear(ui.xyz);
-	ui.xyz *= 200.0 / 100.0;
+	ui.xyz *= 203.0 / 100.0;
 	ui.xyz = Color::LinearToGamma(ui.xyz);
 
 	// Apply the Reinhard tonemapper on any background color in excess, to avoid it burning it through the UI.
@@ -21,6 +27,10 @@ RWTexture2D<float4> FrameBuffer : register(u0);
 	framebuffer = min(1.0, framebuffer) + lerp(tonemappedBackgroundColor, excessBackgroundColor, 1.0 - ui.a);
 
 	framebuffer = ui.xyz + framebuffer * (1.0 - ui.a);
+
+	framebuffer = Color::GammaToLinear(framebuffer);
+	framebuffer /= peakWhite;
+	framebuffer = Color::LinearToGamma(framebuffer);
 
 	FrameBuffer[dispatchID.xy] = float4(framebuffer, 1.0);
 };

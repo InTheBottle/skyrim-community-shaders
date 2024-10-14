@@ -33,7 +33,7 @@ void HDR::SetupResources()
 	uiTexture->CreateRTV(rtvDesc);
 	uiTexture->CreateUAV(uavDesc);
 
-	texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	texDesc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
@@ -42,6 +42,16 @@ void HDR::SetupResources()
 	hdrTexture->CreateSRV(srvDesc);
 	hdrTexture->CreateRTV(rtvDesc);
 	hdrTexture->CreateUAV(uavDesc);
+
+	texDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+	srvDesc.Format = texDesc.Format;
+	rtvDesc.Format = texDesc.Format;
+	uavDesc.Format = texDesc.Format;
+
+	outputTexture = new Texture2D(texDesc);
+	outputTexture->CreateSRV(srvDesc);
+	outputTexture->CreateRTV(rtvDesc);
+	outputTexture->CreateUAV(uavDesc);
 }
 
 void HDR::CheckSwapchain()
@@ -94,10 +104,7 @@ void HDR::UIBlend()
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	if (swapChain.SRV) {
-		ID3D11ShaderResourceView* srvs[1]{
-			uiTexture->srv.get()
-		};
-
+		ID3D11ShaderResourceView* srvs[1]{ uiTexture->srv.get()};
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
@@ -105,11 +112,14 @@ void HDR::UIBlend()
 
 		context->CSSetShader(GetUIBlendCS(), nullptr, 0);
 
-		float2 resolution = State::GetSingleton()->screenSize;
-		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
-		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
+		auto dispatchCount = Util::GetScreenDispatchCount(false);
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 
-		context->Dispatch(dispatchX, dispatchY, 1);
+		srvs[0] = nullptr;
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		uavs[0] = nullptr;
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 	}
 
 	FLOAT clearColor[4] = { 0, 0, 0, 0 };
@@ -125,19 +135,25 @@ void HDR::HDROutput()
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	{
-		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
+		ID3D11ShaderResourceView* srvs[1]{ hdrTexture->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[1]{ outputTexture->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(GetHDROutputCS(), nullptr, 0);
 
-		float2 resolution = State::GetSingleton()->screenSize;
-		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
-		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
+		auto dispatchCount = Util::GetScreenDispatchCount(false);
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 
-		context->Dispatch(dispatchX, dispatchY, 1);
+		srvs[0] = nullptr;
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		uavs[0] = nullptr;
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 	}
 
-	context->CopyResource(swapChainResource, hdrTexture->resource.get());  // Copy fake swapchain into real one
+	context->CopyResource(swapChainResource, outputTexture->resource.get());  // Copy fake swapchain into real one
 
 	swapChain = framebufferData;  // Reset framebuffer
 
