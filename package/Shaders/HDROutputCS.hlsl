@@ -15,7 +15,7 @@ RWTexture2D<float4> Output : register(u0);
 	framebuffer *= peakWhite;
 
 	framebuffer = BT709ToBT2020(framebuffer);
- 	framebuffer = LinearToPQ(framebuffer * 203.0, 10000.0);
+	framebuffer = LinearToPQ(framebuffer * 203.0, 10000.0);
 
 	Output[dispatchID.xy] = float4(framebuffer, 1.0);
 };
