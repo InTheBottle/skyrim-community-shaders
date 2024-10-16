@@ -609,7 +609,7 @@ void State::UpdateSharedData()
 			data.InMapMenu = ui->IsMenuOpen(RE::MapMenu::MENU_NAME);
 		else
 			data.InMapMenu = true;
-		
+
 		data.HDRData = HDR::GetSingleton()->GetHDRData();
 
 		sharedDataCB->Update(data);

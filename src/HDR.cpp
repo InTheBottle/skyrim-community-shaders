@@ -33,8 +33,7 @@ bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLu
 
 void HDR::QueryHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface)
 {
-	if (GetHDRMaxLuminance(a_swapChainInterface, maxLuminance))
-	{
+	if (GetHDRMaxLuminance(a_swapChainInterface, maxLuminance)) {
 		peakWhite = (int)maxLuminance;
 	}
 }
@@ -156,7 +155,7 @@ void HDR::HDROutput()
 		ID3D11UnorderedAccessView* uavs[1]{ outputTexture->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		ID3D11Buffer* cbs[1]{ hdrDataCB->CB()};
+		ID3D11Buffer* cbs[1]{ hdrDataCB->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 
 		context->CSSetShader(GetHDROutputCS(), nullptr, 0);

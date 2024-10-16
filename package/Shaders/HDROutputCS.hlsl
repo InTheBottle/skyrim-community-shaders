@@ -30,12 +30,12 @@ cbuffer PerFrame : register(b0)
 	float3 excessBackgroundColor = framebuffer - min(1.0, framebuffer);
 	float3 tonemappedBackgroundColor = excessBackgroundColor / (1.0 + excessBackgroundColor);
 	framebuffer = min(1.0, framebuffer) + lerp(tonemappedBackgroundColor, excessBackgroundColor, 1.0 - ui.a);
-	
+
 	// Blend UI
 	framebuffer = ui.xyz + framebuffer * (1.0 - ui.a);
-	
+
 	framebuffer = Color::GammaToLinear(framebuffer);
-	
+
 	// Scale framebuffer to game brightness
 	framebuffer *= HDRData.z;
 
