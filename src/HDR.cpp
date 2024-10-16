@@ -34,8 +34,7 @@ bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLu
 
 void HDR::QueryDisplayPeakBrightness(IDXGISwapChain3* a_swapChainInterface)
 {
-	if (GetHDRMaxLuminance(a_swapChainInterface, reportedDisplayPeakBrightness))
-	{
+	if (GetHDRMaxLuminance(a_swapChainInterface, reportedDisplayPeakBrightness)) {
 		displayPeakBrightness = (int)reportedDisplayPeakBrightness;
 	}
 }
