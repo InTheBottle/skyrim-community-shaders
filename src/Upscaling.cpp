@@ -2,6 +2,7 @@
 
 #include "Hooks.h"
 #include "Util.h"
+#include "HDR.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -332,7 +333,7 @@ void Upscaling::CreateUpscalingResources()
 
 	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	texDesc.Format = HDR::GetSingleton()->enabled ? DXGI_FORMAT_R16G16B16A16_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
 	srvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 

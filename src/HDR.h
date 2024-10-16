@@ -38,10 +38,8 @@ public:
 	void CheckSwapchain();
 	void ClearShaderCache();
 
-	void UIBlend();
 	void HDROutput();
 
-	RE::RENDER_TARGET framebuffer;
 	RE::BSGraphics::RenderTargetData framebufferData;
 
 	struct MenuManagerDrawInterfaceStartHook
@@ -52,11 +50,10 @@ public:
 			if (!hdr->enabled)
 				return func(a1);
 
-			hdr->framebuffer = RE::RENDER_TARGET::kFRAMEBUFFER;
 
 			static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			auto& data = renderer->GetRuntimeData().renderTargets[hdr->framebuffer];
+			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
 			hdr->framebufferData = data;
 
@@ -66,8 +63,6 @@ public:
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-
-			State::GetSingleton()->context->OMSetRenderTargets(1, &data.RTV, nullptr);
 
 			func(a1);
 		}
@@ -86,16 +81,12 @@ public:
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-			renderer->GetRuntimeData().renderTargets[hdr->framebuffer] = GetSingleton()->framebufferData;
+			renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER] = hdr->framebufferData;
 
 			auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-
-			GetSingleton()->UIBlend();
-
-			State::GetSingleton()->context->OMSetRenderTargets(1, &renderer->GetRuntimeData().renderTargets[hdr->framebuffer].RTV, nullptr);
 
 			func(a1);
 		}
@@ -114,7 +105,7 @@ public:
 			GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-			auto& data = renderer->GetRuntimeData().renderTargets[hdr->framebuffer];
+			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
 			data = hdr->framebufferData;
 			stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -132,11 +123,14 @@ public:
 		static void thunk(int64_t a1, int64_t a2)
 		{
 			func(a1, a2);
-			GetSingleton()->CheckSwapchain();
+			auto hdr = GetSingleton();
+			if (!hdr->enabled)
+				return;
+			hdr->CheckSwapchain();
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 			auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-			swapChain.SRV = GetSingleton()->hdrTexture->srv.get();
-			swapChain.RTV = GetSingleton()->hdrTexture->rtv.get();
+			swapChain.SRV = hdr->hdrTexture->srv.get();
+			swapChain.RTV = hdr->hdrTexture->rtv.get();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

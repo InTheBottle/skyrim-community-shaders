@@ -95,47 +95,16 @@ ID3D11ComputeShader* HDR::GetHDROutputCS()
 	return hdrOutputCS;
 }
 
-void HDR::UIBlend()
-{
-	static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	static auto& context = State::GetSingleton()->context;
-	static auto& swapChain = renderer->GetRuntimeData().renderTargets[framebuffer];
-
-	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
-
-	if (swapChain.SRV) {
-		ID3D11ShaderResourceView* srvs[1]{ uiTexture->srv.get() };
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-
-		ID3D11UnorderedAccessView* uavs[1]{ hdrTexture->uav.get() };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		context->CSSetShader(GetUIBlendCS(), nullptr, 0);
-
-		auto dispatchCount = Util::GetScreenDispatchCount(false);
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-
-		srvs[0] = nullptr;
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-
-		uavs[0] = nullptr;
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-	}
-
-	FLOAT clearColor[4] = { 0, 0, 0, 0 };
-	context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
-}
-
 void HDR::HDROutput()
 {
 	static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	static auto& context = State::GetSingleton()->context;
-	static auto& swapChain = renderer->GetRuntimeData().renderTargets[framebuffer];
+	static auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	{
-		ID3D11ShaderResourceView* srvs[1]{ hdrTexture->srv.get() };
+		ID3D11ShaderResourceView* srvs[2]{ hdrTexture->srv.get(), uiTexture->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[1]{ outputTexture->uav.get() };
@@ -147,15 +116,20 @@ void HDR::HDROutput()
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 
 		srvs[0] = nullptr;
+		srvs[1] = nullptr;
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		uavs[0] = nullptr;
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 	}
 
-	context->CopyResource(swapChainResource, outputTexture->resource.get());  // Copy fake swapchain into real one
+	// Copy fake swapchain into real one
+	context->CopyResource(swapChainResource, outputTexture->resource.get());
 
-	swapChain = framebufferData;  // Reset framebuffer
+	// Reset UI buffer
+	float clearColor[4] = { 0, 0, 0, 0 };
+	context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
 
-	context->OMSetRenderTargets(1, &swapChain.RTV, nullptr);  // Set render target
+	// Set render target for compatibility
+	context->OMSetRenderTargets(1, &swapChain.RTV, nullptr);
 }
