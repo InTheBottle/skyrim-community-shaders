@@ -1,8 +1,8 @@
 #include "Upscaling.h"
 
+#include "HDR.h"
 #include "Hooks.h"
 #include "Util.h"
-#include "HDR.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,

@@ -22,10 +22,10 @@ RWTexture2D<float4> HDROutput : register(u0);
 	float3 excessBackgroundColor = framebuffer - min(1.0, framebuffer);
 	float3 tonemappedBackgroundColor = excessBackgroundColor / (1.0 + excessBackgroundColor);
 	framebuffer = min(1.0, framebuffer) + lerp(tonemappedBackgroundColor, excessBackgroundColor, 1.0 - ui.a);
-	
+
 	// Blend UI
 	framebuffer = ui.xyz + framebuffer * (1.0 - ui.a);
-	
+
 	framebuffer = Color::GammaToLinear(framebuffer);
 	framebuffer = BT709ToBT2020(framebuffer);
 	framebuffer = LinearToPQ(framebuffer * 100.0, 10000.0);
