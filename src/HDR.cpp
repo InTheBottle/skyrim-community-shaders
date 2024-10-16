@@ -59,7 +59,7 @@ void HDR::DrawSettings()
 		QueryDisplayPeakBrightness(swapChain3);
 	}
 
-	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 400, (int)reportedDisplayPeakBrightness);
+	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 400, 10000);
 	ImGui::SliderInt("Game Brightness (nits)", &gameBrightness, 100, 400);
 	ImGui::SliderInt("UI Brightness (nits)", &uiBrightness, 100, 400);
 
