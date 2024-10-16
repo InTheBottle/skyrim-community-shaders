@@ -272,7 +272,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	hdr->QueryHDRSupport();
 
 	pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;	
+	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 	auto result = Streamline::GetSingleton()->CreateDeviceAndSwapChain(
