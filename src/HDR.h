@@ -26,9 +26,6 @@ public:
 	Texture2D* hdrTexture = nullptr;
 	Texture2D* outputTexture = nullptr;
 
-	ID3D11ComputeShader* uiBlendCS = nullptr;
-	ID3D11ComputeShader* GetUIBlendCS();
-
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 	ID3D11ComputeShader* GetHDROutputCS();
 
@@ -49,7 +46,6 @@ public:
 			auto hdr = GetSingleton();
 			if (!hdr->enabled)
 				return func(a1);
-
 
 			static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
@@ -123,9 +119,11 @@ public:
 		static void thunk(int64_t a1, int64_t a2)
 		{
 			func(a1, a2);
+
 			auto hdr = GetSingleton();
 			if (!hdr->enabled)
 				return;
+
 			hdr->CheckSwapchain();
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 			auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
