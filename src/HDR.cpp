@@ -7,6 +7,7 @@ bool HDR::QueryHDRSupport()
 	return true;
 }
 
+// https://github.com/EndlesslyFlowering/Starfield-Luma/blob/master/Plugin/src/Utils.cpp#L240
 // Only works if HDR is enaged on the monitor that contains the swapchain
 bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLuminance)
 {
@@ -31,29 +32,41 @@ bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLu
 	return true;
 }
 
-void HDR::QueryHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface)
+void HDR::QueryDisplayPeakBrightness(IDXGISwapChain3* a_swapChainInterface)
 {
-	if (GetHDRMaxLuminance(a_swapChainInterface, maxLuminance))
+	if (GetHDRMaxLuminance(a_swapChainInterface, reportedDisplayPeakBrightness))
 	{
-		peakWhite = (int)maxLuminance;
+		displayPeakBrightness = (int)reportedDisplayPeakBrightness;
 	}
 }
 
 void HDR::DrawSettings()
 {
-	ImGui::SliderInt("Peak White", &peakWhite, 200, maxLuminance);
-	ImGui::SliderInt("Game Brightness", &gameBrightness, 100, peakWhite);
-	ImGui::SliderInt("UI Brightness", &uiBrightness, 100, peakWhite);
+	if (ImGui::Button("Reset HDR Settings", { -1, 0 })) {
+		reportedDisplayPeakBrightness = 400;
+		displayPeakBrightness = 400;
+		gameBrightness = 200;
+		uiBrightness = 200;
 
-	gameBrightness = std::min(gameBrightness, peakWhite);
-	uiBrightness = std::min(uiBrightness, peakWhite);
+		IDXGISwapChain3* swapChain3 = nullptr;
+		DX::ThrowIfFailed(State::GetSingleton()->swapChain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		QueryDisplayPeakBrightness(swapChain3);
+	}
+
+	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 300, (int)reportedDisplayPeakBrightness);
+	ImGui::SliderInt("Game Brightness (nits)", &gameBrightness, 100, 300);
+	ImGui::SliderInt("UI Brightness (nits)", &uiBrightness, 100, 300);
+
+	gameBrightness = std::min(gameBrightness, displayPeakBrightness);
+	uiBrightness = std::min(uiBrightness, displayPeakBrightness);
 }
 
 float4 HDR::GetHDRData()
 {
 	float4 data;
 	data.x = (float)enabled;
-	data.y = (float)peakWhite;
+	data.y = (float)displayPeakBrightness;
 	data.z = (float)gameBrightness;
 	data.w = (float)uiBrightness;
 	return data;

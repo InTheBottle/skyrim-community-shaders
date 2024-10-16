@@ -431,6 +431,8 @@ void State::SetupResources()
 	screenSize = { (float)texDesc.Width, (float)texDesc.Height };
 	context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
 	device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
+	swapChain = reinterpret_cast<IDXGISwapChain*>(renderer->GetCurrentRenderWindow()->swapChain);
+
 	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 
 	tracyCtx = TracyD3D11Context(device, context);

@@ -242,10 +242,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 		ppImmediateContext);
 
 	if (hdr->enabled) {
-		IDXGISwapChain3* pSwapChain3 = nullptr;
-		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
-		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-		hdr->QueryHDRMaxLuminance(pSwapChain3);
+		IDXGISwapChain3* swapChain3 = nullptr;
+		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		hdr->QueryDisplayPeakBrightness(swapChain3);
 	}
 
 	return result;
@@ -293,10 +293,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppImmediateContext);
 	if (SUCCEEDED(result)) {
 		if (hdr->enabled) {
-			IDXGISwapChain3* pSwapChain3 = nullptr;
-			DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
-			pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-			hdr->QueryHDRMaxLuminance(pSwapChain3);
+			IDXGISwapChain3* swapChain3 = nullptr;
+			DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+			swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+			hdr->QueryDisplayPeakBrightness(swapChain3);
 		}
 		return result;
 	}
@@ -314,10 +314,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppImmediateContext);
 
 	if (hdr->enabled) {
-		IDXGISwapChain3* pSwapChain3 = nullptr;
-		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
-		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-		hdr->QueryHDRMaxLuminance(pSwapChain3);
+		IDXGISwapChain3* swapChain3 = nullptr;
+		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		hdr->QueryDisplayPeakBrightness(swapChain3);
 	}
 
 	return result;

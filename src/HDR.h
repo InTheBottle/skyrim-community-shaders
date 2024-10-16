@@ -20,13 +20,13 @@ public:
 
 	bool enabled = true;
 
-	float maxLuminance = 1000;
-	int peakWhite = 1000;
+	float reportedDisplayPeakBrightness = 400;
+	int displayPeakBrightness = 400;
 	int gameBrightness = 200;
 	int uiBrightness = 200;
 
 	bool QueryHDRSupport();
-	void QueryHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface);
+	void QueryDisplayPeakBrightness(IDXGISwapChain3* a_swapChainInterface);
 
 	void DrawSettings();
 
