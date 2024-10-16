@@ -1,5 +1,7 @@
 #include "HDR.h"
 
+#include <codecvt>
+
 #include "State.h"
 
 bool HDR::QueryHDRSupport()
@@ -9,54 +11,52 @@ bool HDR::QueryHDRSupport()
 
 // https://github.com/EndlesslyFlowering/Starfield-Luma/blob/master/Plugin/src/Utils.cpp#L240
 // Only works if HDR is enaged on the monitor that contains the swapchain
-bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLuminance)
+void HDR::UpdateDisplayReport()
 {
+	IDXGISwapChain3* swapChain3 = nullptr;
+	DX::ThrowIfFailed(State::GetSingleton()->swapChain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+
 	IDXGIOutput* output = nullptr;
-	if (FAILED(a_swapChainInterface->GetContainingOutput(&output))) {
-		return false;
+	if (FAILED(swapChain3->GetContainingOutput(&output))) {
+		reportedDisplayName = "";
+		reportedDisplayPeakBrightness = 400;
+		return;
 	}
 
 	IDXGIOutput6* output6 = nullptr;
 	if (FAILED(output->QueryInterface(&output6))) {
-		return false;
+		reportedDisplayName = "";
+		reportedDisplayPeakBrightness = 400;
+		return;
 	}
 
 	DXGI_OUTPUT_DESC1 desc1;
 	if (FAILED(output6->GetDesc1(&desc1))) {
-		return false;
+		reportedDisplayName = "";
+		reportedDisplayPeakBrightness = 400;
+		return;
 	}
 
-	// Note: this might end up being outdated if a new display is added/removed,
-	// or if HDR is toggled on them after swapchain creation (though it seems to be consistent between SDR and HDR).
-	a_outMaxLuminance = desc1.MaxLuminance;
+	reportedDisplayPeakBrightness = desc1.MaxLuminance;
 
-	// HDR is not supported (this only works if HDR is enaged on the monitor that currently contains the swapchain)
-	if (desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 && desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
-		return false;
-	}
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+	reportedDisplayName = converter.to_bytes(desc1.DeviceName);
 
-	return true;
-}
-
-void HDR::QueryDisplayPeakBrightness(IDXGISwapChain3* a_swapChainInterface)
-{
-	if (GetHDRMaxLuminance(a_swapChainInterface, reportedDisplayPeakBrightness)) {
+	if (desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 || desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
 		displayPeakBrightness = (int)reportedDisplayPeakBrightness;
 	}
 }
 
 void HDR::DrawSettings()
 {
+	ImGui::Checkbox("HDR Enabled", &enabled);
+
 	if (ImGui::Button("Reset HDR Settings", { -1, 0 })) {
-		reportedDisplayPeakBrightness = 400;
 		displayPeakBrightness = 400;
 		gameBrightness = 200;
 		uiBrightness = 200;
 
-		IDXGISwapChain3* swapChain3 = nullptr;
-		DX::ThrowIfFailed(State::GetSingleton()->swapChain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
-		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-		QueryDisplayPeakBrightness(swapChain3);
+		UpdateDisplayReport();
 	}
 
 	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 400, 10000);
@@ -124,6 +124,8 @@ void HDR::SetupResources()
 	outputTexture->CreateUAV(uavDesc);
 
 	hdrDataCB = new ConstantBuffer(ConstantBufferDesc<HDRDataCB>());
+
+	UpdateDisplayReport();
 }
 
 void HDR::CheckSwapchain()
@@ -152,6 +154,17 @@ ID3D11ComputeShader* HDR::GetHDROutputCS()
 		hdrOutputCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\HDROutputCS.hlsl", {}, "cs_5_0"));
 	}
 	return hdrOutputCS;
+}
+
+void HDR::SetColorSpace()
+{
+	IDXGISwapChain3* swapChain3 = nullptr;
+	DX::ThrowIfFailed(State::GetSingleton()->swapChain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
+	if (enabled) {
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+	} else {
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
+	}
 }
 
 void HDR::HDROutput()

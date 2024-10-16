@@ -245,7 +245,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 		IDXGISwapChain3* swapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
 		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-		hdr->QueryDisplayPeakBrightness(swapChain3);
 	}
 
 	return result;
@@ -272,10 +271,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	auto hdr = HDR::GetSingleton();
 	hdr->QueryHDRSupport();
 
-	if (hdr->enabled) {
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	}
+	pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;	
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 	auto result = Streamline::GetSingleton()->CreateDeviceAndSwapChain(
@@ -296,7 +293,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			IDXGISwapChain3* swapChain3 = nullptr;
 			DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
 			swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-			hdr->QueryDisplayPeakBrightness(swapChain3);
 		}
 		return result;
 	}
@@ -317,7 +313,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		IDXGISwapChain3* swapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swapChain3));
 		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-		hdr->QueryDisplayPeakBrightness(swapChain3);
 	}
 
 	return result;
@@ -474,8 +469,7 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			if (HDR::GetSingleton()->enabled)
-				a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
+			a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
 			func(This, a_target, a_properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -485,8 +479,7 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			if (HDR::GetSingleton()->enabled)
-				a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
+			a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
 			func(This, a_target, a_properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

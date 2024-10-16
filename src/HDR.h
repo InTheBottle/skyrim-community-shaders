@@ -20,13 +20,15 @@ public:
 
 	bool enabled = true;
 
+	std::string reportedDisplayName = "";
 	float reportedDisplayPeakBrightness = 400;
+
 	int displayPeakBrightness = 400;
 	int gameBrightness = 200;
 	int uiBrightness = 200;
 
 	bool QueryHDRSupport();
-	void QueryDisplayPeakBrightness(IDXGISwapChain3* a_swapChainInterface);
+	void UpdateDisplayReport();
 
 	void DrawSettings();
 
@@ -52,6 +54,7 @@ public:
 	void CheckSwapchain();
 	void ClearShaderCache();
 
+	void SetColorSpace();
 	void HDROutput();
 
 	RE::BSGraphics::RenderTargetData framebufferData;
@@ -135,9 +138,11 @@ public:
 	{
 		static void thunk(int64_t a1, int64_t a2)
 		{
+			auto hdr = GetSingleton();
+			hdr->SetColorSpace();
+
 			func(a1, a2);
 
-			auto hdr = GetSingleton();
 			if (!hdr->enabled)
 				return;
 
@@ -154,7 +159,10 @@ public:
 	{
 		static void thunk(int32_t a1)
 		{
-			GetSingleton()->HDROutput();
+			auto hdr = GetSingleton();
+			if (!hdr->enabled)
+				return;
+			hdr->HDROutput();
 			func(a1);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

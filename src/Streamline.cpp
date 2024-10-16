@@ -305,7 +305,7 @@ void Streamline::SetupResources()
 			copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 		}
 
-		texDesc.Format = HDR::GetSingleton()->enabled ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
@@ -455,7 +455,7 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
 		dlssOptions.outputWidth = (uint)state->screenSize.x;
 		dlssOptions.outputHeight = (uint)state->screenSize.y;
-		dlssOptions.colorBuffersHDR = HDR::GetSingleton()->enabled ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+		dlssOptions.colorBuffersHDR = sl::Boolean::eTrue;
 		dlssOptions.preExposure = 1.0f;
 		dlssOptions.sharpness = 0.0f;
 

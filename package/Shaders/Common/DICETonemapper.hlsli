@@ -147,6 +147,8 @@ float3 ICtCpToRGB(float3 col)
 // Only compress luminance starting at a certain point. Dimmer inputs are passed through without modification.
 float3 ApplyHuePreservingShoulder(float3 col, float linearSegmentEnd = 0.25)
 {
+	col = Color::LinearToGamma(col);
+
 	float3 ictcp = RGBToICtCp(col);
 
 	// Hue-preserving range compression requires desaturation in order to achieve a natural look. We adaptively desaturate the input based on its luminance.
@@ -167,6 +169,8 @@ float3 ApplyHuePreservingShoulder(float3 col, float linearSegmentEnd = 0.25)
 	ictcpMapped.yz = lerp(ictcpMapped.yz, ictcp.yz * ictcpMapped.x / max(1e-3, ictcp.x), postCompressionSaturationBoost);
 
 	col = ICtCpToRGB(ictcpMapped);
+	
+	col = Color::GammaToLinear(col);
 
 	return col;
 }
