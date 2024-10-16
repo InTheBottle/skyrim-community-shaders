@@ -50,7 +50,6 @@ public:
 			if (!hdr->enabled)
 				return func(a1);
 
-
 			static auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 			auto& data = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
