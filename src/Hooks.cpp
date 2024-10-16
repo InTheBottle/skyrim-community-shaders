@@ -291,6 +291,11 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		pFeatureLevel,
 		ppImmediateContext);
 	if (SUCCEEDED(result)) {
+		if (hdr->enabled) {
+			IDXGISwapChain3* pSwapChain3 = nullptr;
+			DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
+			pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		}
 		return result;
 	}
 	result = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
