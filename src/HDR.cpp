@@ -54,9 +54,9 @@ void HDR::DrawSettings()
 		QueryDisplayPeakBrightness(swapChain3);
 	}
 
-	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 300, (int)reportedDisplayPeakBrightness);
-	ImGui::SliderInt("Game Brightness (nits)", &gameBrightness, 100, 300);
-	ImGui::SliderInt("UI Brightness (nits)", &uiBrightness, 100, 300);
+	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 400, (int)reportedDisplayPeakBrightness);
+	ImGui::SliderInt("Game Brightness (nits)", &gameBrightness, 100, 400);
+	ImGui::SliderInt("UI Brightness (nits)", &uiBrightness, 100, 400);
 
 	gameBrightness = std::min(gameBrightness, displayPeakBrightness);
 	uiBrightness = std::min(uiBrightness, displayPeakBrightness);
