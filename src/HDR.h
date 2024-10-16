@@ -4,10 +4,10 @@
 #include <dxgi1_6.h>
 
 #include "Buffer.h"
-#include "State.h"
-#include "Util.h"
 #include "Deferred.h"
 #include "Menu.h"
+#include "State.h"
+#include "Util.h"
 
 class HDR
 {
