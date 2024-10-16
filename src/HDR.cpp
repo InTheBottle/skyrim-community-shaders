@@ -42,7 +42,7 @@ void HDR::UpdateDisplayReport()
 	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
 	reportedDisplayName = converter.to_bytes(desc1.DeviceName);
 
-	if (desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 || desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
+	if (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 || desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
 		displayPeakBrightness = (int)reportedDisplayPeakBrightness;
 	}
 }
@@ -62,9 +62,6 @@ void HDR::DrawSettings()
 	ImGui::SliderInt("Display Peak Brightness (nits)", &displayPeakBrightness, 400, 10000);
 	ImGui::SliderInt("Game Brightness (nits)", &gameBrightness, 100, 400);
 	ImGui::SliderInt("UI Brightness (nits)", &uiBrightness, 100, 400);
-
-	gameBrightness = std::min(gameBrightness, displayPeakBrightness);
-	uiBrightness = std::min(uiBrightness, displayPeakBrightness);
 }
 
 float4 HDR::GetHDRData()
