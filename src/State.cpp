@@ -73,6 +73,7 @@ void State::Draw()
 
 					static Util::FrameChecker frameChecker;
 					if (frameChecker.isNewFrame()) {
+						UpdateSharedDataBasic();
 						ID3D11Buffer* buffers[3] = { permutationCB->CB(), sharedDataCB->CB(), featureDataCB->CB() };
 						context->PSSetConstantBuffers(4, 3, buffers);
 					}
@@ -547,6 +548,23 @@ void State::SetAdapterDescription(const std::wstring& description)
 	adapterDescription = converter.to_bytes(description);
 }
 
+void State::UpdateSharedDataBasic()
+{
+	{
+		SharedDataCB data{};
+
+		data.BufferDim = { screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
+		data.Timer = timer;
+
+		auto viewport = RE::BSGraphics::State::GetSingleton();
+
+		data.FrameCount = viewport->frameCount * Util::GetTemporal();
+		data.HDRData = HDR::GetSingleton()->GetHDRData();
+
+		sharedDataCB->Update(data);
+	}
+}
+
 void State::UpdateSharedData()
 {
 	{
@@ -573,11 +591,7 @@ void State::UpdateSharedData()
 		data.Timer = timer;
 
 		auto viewport = RE::BSGraphics::State::GetSingleton();
-
-		auto bTAA = !isVR ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled :
-		                    imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
-
-		data.FrameCount = viewport->frameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
+		data.FrameCount = viewport->frameCount * Util::GetTemporal();
 
 		for (int i = -2; i <= 2; i++) {
 			for (int k = -2; k <= 2; k++) {
@@ -595,6 +609,8 @@ void State::UpdateSharedData()
 			data.InMapMenu = ui->IsMenuOpen(RE::MapMenu::MENU_NAME);
 		else
 			data.InMapMenu = true;
+		
+		data.HDRData = HDR::GetSingleton()->GetHDRData();
 
 		sharedDataCB->Update(data);
 	}

@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Buffer.h"
+#include <dxgi1_4.h>
+#include <dxgi1_6.h>
 
+#include "Buffer.h"
 #include "State.h"
 #include "Util.h"
-
 #include "Deferred.h"
-
 #include "Menu.h"
 
 class HDR
@@ -20,7 +20,24 @@ public:
 
 	bool enabled = true;
 
+	float maxLuminance = 1000;
+	int peakWhite = 1000;
+	int gameBrightness = 200;
+	int uiBrightness = 200;
+
 	bool QueryHDRSupport();
+	void QueryHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface);
+
+	void DrawSettings();
+
+	struct alignas(16) HDRDataCB
+	{
+		float4 HDRData;
+	};
+
+	ConstantBuffer* hdrDataCB = nullptr;
+
+	float4 GetHDRData();
 
 	Texture2D* uiTexture = nullptr;
 	Texture2D* hdrTexture = nullptr;

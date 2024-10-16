@@ -18,6 +18,7 @@ cbuffer SharedData : register(b5)
 	uint FrameCount;
 	bool InInterior;  // If the area lacks a directional shadow light e.g. the sun or moon
 	bool InMapMenu;   // If the world/local map is open (note that the renderer is still deferred here)
+	float4 HDRData;
 };
 
 struct GrassLightingSettings

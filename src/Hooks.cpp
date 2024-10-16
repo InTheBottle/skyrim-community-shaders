@@ -245,6 +245,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
 		IDXGISwapChain3* pSwapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
 		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		hdr->QueryHDRMaxLuminance(pSwapChain3);
 	}
 
 	return result;
@@ -295,6 +296,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			IDXGISwapChain3* pSwapChain3 = nullptr;
 			DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
 			pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+			hdr->QueryHDRMaxLuminance(pSwapChain3);
 		}
 		return result;
 	}
@@ -315,6 +317,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		IDXGISwapChain3* pSwapChain3 = nullptr;
 		DX::ThrowIfFailed((*ppSwapChain)->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&pSwapChain3));
 		pSwapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		hdr->QueryHDRMaxLuminance(pSwapChain3);
 	}
 
 	return result;

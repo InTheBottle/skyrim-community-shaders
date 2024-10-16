@@ -7,6 +7,58 @@ bool HDR::QueryHDRSupport()
 	return true;
 }
 
+// Only works if HDR is enaged on the monitor that contains the swapchain
+bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLuminance)
+{
+	IDXGIOutput* output = nullptr;
+	if (FAILED(a_swapChainInterface->GetContainingOutput(&output))) {
+		return false;
+	}
+
+	IDXGIOutput6* output6 = nullptr;
+	if (FAILED(output->QueryInterface(&output6))) {
+		return false;
+	}
+
+	DXGI_OUTPUT_DESC1 desc1;
+	if (FAILED(output6->GetDesc1(&desc1))) {
+		return false;
+	}
+
+	// Note: this might end up being outdated if a new display is added/removed,
+	// or if HDR is toggled on them after swapchain creation.
+	a_outMaxLuminance = desc1.MaxLuminance;
+	return true;
+}
+
+void HDR::QueryHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface)
+{
+	if (GetHDRMaxLuminance(a_swapChainInterface, maxLuminance))
+	{
+		peakWhite = (int)maxLuminance;
+	}
+}
+
+void HDR::DrawSettings()
+{
+	ImGui::SliderInt("Peak White", &peakWhite, 200, maxLuminance);
+	ImGui::SliderInt("Game Brightness", &gameBrightness, 100, peakWhite);
+	ImGui::SliderInt("UI Brightness", &uiBrightness, 100, peakWhite);
+
+	gameBrightness = std::min(gameBrightness, peakWhite);
+	uiBrightness = std::min(uiBrightness, peakWhite);
+}
+
+float4 HDR::GetHDRData()
+{
+	float4 data;
+	data.x = (float)enabled;
+	data.y = (float)peakWhite;
+	data.z = (float)gameBrightness;
+	data.w = (float)uiBrightness;
+	return data;
+}
+
 void HDR::SetupResources()
 {
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -52,6 +104,8 @@ void HDR::SetupResources()
 	outputTexture->CreateSRV(srvDesc);
 	outputTexture->CreateRTV(rtvDesc);
 	outputTexture->CreateUAV(uavDesc);
+
+	hdrDataCB = new ConstantBuffer(ConstantBufferDesc<HDRDataCB>());
 }
 
 void HDR::CheckSwapchain()
@@ -67,23 +121,10 @@ void HDR::CheckSwapchain()
 
 void HDR::ClearShaderCache()
 {
-	if (uiBlendCS) {
-		uiBlendCS->Release();
-		uiBlendCS = nullptr;
-	}
 	if (hdrOutputCS) {
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
 	}
-}
-
-ID3D11ComputeShader* HDR::GetUIBlendCS()
-{
-	if (!uiBlendCS) {
-		logger::debug("Compiling UIBlendCS.hlsl");
-		uiBlendCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\UIBlendCS.hlsl", {}, "cs_5_0"));
-	}
-	return uiBlendCS;
 }
 
 ID3D11ComputeShader* HDR::GetHDROutputCS()
@@ -104,11 +145,19 @@ void HDR::HDROutput()
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	{
+		HDRDataCB data = { GetHDRData() };
+		hdrDataCB->Update(data);
+	}
+
+	{
 		ID3D11ShaderResourceView* srvs[2]{ hdrTexture->srv.get(), uiTexture->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[1]{ outputTexture->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11Buffer* cbs[1]{ hdrDataCB->CB()};
+		context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 
 		context->CSSetShader(GetHDROutputCS(), nullptr, 0);
 
@@ -121,6 +170,9 @@ void HDR::HDROutput()
 
 		uavs[0] = nullptr;
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		cbs[0] = nullptr;
+		context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 	}
 
 	// Copy fake swapchain into real one

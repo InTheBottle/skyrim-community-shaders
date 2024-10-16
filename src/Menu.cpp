@@ -698,6 +698,9 @@ void Menu::DrawDisplaySettings()
 	if (!REL::Module::IsVR() && ImGui::CollapsingHeader("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
 		Streamline::GetSingleton()->DrawSettings();
 	}
+	if (!REL::Module::IsVR() && ImGui::CollapsingHeader("High Dynamic Range", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+		HDR::GetSingleton()->DrawSettings();
+	}
 }
 
 void Menu::DrawFooter()

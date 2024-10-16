@@ -2,6 +2,7 @@
 #include "Common/DICETonemapper.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/SharedData.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -205,7 +206,7 @@ PS_OUTPUT main(PS_INPUT input)
 	hdrColor = pow(hdrColor, 1.0 / 1.25);
 	hdrColor = lerp(Color::RGBToLuminance(hdrColor), hdrColor, 1.05);
 
-	float peakWhite = 1000.0 / 203.0;
+	float peakWhite = HDRData.y / HDRData.z;
 
 	float shoulder = Color::GammaToLinear(0.5);
 	shoulder /= peakWhite;

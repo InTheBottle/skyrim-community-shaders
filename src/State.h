@@ -104,6 +104,8 @@ public:
 
 	void SetAdapterDescription(const std::wstring& description);
 
+	void UpdateSharedDataBasic();
+
 	bool extendedFrameAnnotations = false;
 
 	uint lastVertexDescriptor = 0;
@@ -146,6 +148,7 @@ public:
 		uint FrameCount;
 		uint InInterior;
 		uint InMapMenu;
+		float4 HDRData;
 	};
 
 	ConstantBuffer* sharedDataCB = nullptr;
