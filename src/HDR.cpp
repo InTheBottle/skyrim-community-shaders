@@ -27,8 +27,14 @@ bool GetHDRMaxLuminance(IDXGISwapChain3* a_swapChainInterface, float& a_outMaxLu
 	}
 
 	// Note: this might end up being outdated if a new display is added/removed,
-	// or if HDR is toggled on them after swapchain creation.
+	// or if HDR is toggled on them after swapchain creation (though it seems to be consistent between SDR and HDR).
 	a_outMaxLuminance = desc1.MaxLuminance;
+
+	// HDR is not supported (this only works if HDR is enaged on the monitor that currently contains the swapchain)
+	if (desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 && desc1.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
+		return false;
+	}
+
 	return true;
 }
 
