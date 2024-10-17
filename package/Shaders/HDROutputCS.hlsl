@@ -89,7 +89,6 @@ float3 ExtendGamut(float3 color, float extendGamutAmount)
 
 	// Scale framebuffer and UI brightness relative to game brightness
 	framebuffer = Color::GammaToLinear(framebuffer);
-	framebuffer = ExtendGamut(framebuffer, 0.2);
 	framebuffer *= HDRData.y / HDRData.z;
 	framebuffer = Color::LinearToGamma(framebuffer);
 
@@ -110,6 +109,7 @@ float3 ExtendGamut(float3 color, float extendGamutAmount)
 	// Scale framebuffer to game brightness
 	framebuffer *= HDRData.z;
 
+	framebuffer = ExtendGamut(framebuffer, 0.2);
 	framebuffer = BT709ToBT2020(framebuffer);
 	framebuffer = LinearToPQ(framebuffer, 10000.0);
 
