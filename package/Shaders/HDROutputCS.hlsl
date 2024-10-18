@@ -88,9 +88,9 @@ float3 ExtendGamut(float3 color, float extendGamutAmount)
 	float4 ui = UI[dispatchID.xy];
 
 	// Scale framebuffer and UI brightness relative to game brightness
-    framebuffer = Color::GammaToLinearSafe(framebuffer);
-    // framebuffer = ExtendGamut(framebuffer, 0.2);
-    framebuffer *= HDRData.y / HDRData.z;
+	framebuffer = Color::GammaToLinearSafe(framebuffer);
+	// framebuffer = ExtendGamut(framebuffer, 0.2);
+	framebuffer *= HDRData.y / HDRData.z;
 	framebuffer = Color::LinearToGammaSafe(framebuffer);
 
 	ui.xyz = Color::GammaToLinear(ui.xyz);

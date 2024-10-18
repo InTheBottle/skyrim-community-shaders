@@ -169,7 +169,7 @@ float3 ApplyHuePreservingShoulder(float3 col, float linearSegmentEnd = 0.25)
 	ictcpMapped.yz = lerp(ictcpMapped.yz, ictcp.yz * ictcpMapped.x / max(1e-3, ictcp.x), postCompressionSaturationBoost);
 
 	col = ICtCpToRGB(ictcpMapped);
-	
+
 	col = Color::GammaToLinearSafe(col);
 
 	return col;

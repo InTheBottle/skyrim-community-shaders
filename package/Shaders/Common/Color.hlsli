@@ -32,16 +32,16 @@ namespace Color
 	{
 		return pow(abs(color), 1.0 / 2.2);
 	}
-	
-    float3 GammaToLinearSafe(float3 color)
-    {
-        return sign(color) * pow(abs(color), 2.2);
-    }
 
-    float3 LinearToGammaSafe(float3 color)
-    {
-        return sign(color) * pow(abs(color), 1.0 / 2.2);
-    }
+	float3 GammaToLinearSafe(float3 color)
+	{
+		return sign(color) * pow(abs(color), 2.2);
+	}
+
+	float3 LinearToGammaSafe(float3 color)
+	{
+		return sign(color) * pow(abs(color), 1.0 / 2.2);
+	}
 
 }
 
