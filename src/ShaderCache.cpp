@@ -1640,6 +1640,8 @@ namespace SIE
 				{ "BSImagespaceShaderISSnowSSS", static_cast<uint32_t>(ISSnowSSS) },
 				{ "BSImagespaceShaderISSAOBlurH", static_cast<uint32_t>(ISSAOBlurH) },
 				{ "BSImagespaceShaderISSAOBlurV", static_cast<uint32_t>(ISSAOBlurV) },
+				{ "BSImagespaceShaderISTemporalAA", static_cast<uint32_t>(ISTemporalAA) },
+
 				{ "BSImagespaceShaderISUnderwaterMask", static_cast<uint32_t>(ISUnderwaterMask) },
 				{ "BSImagespaceShaderISApplyVolumetricLighting", static_cast<uint32_t>(ISApplyVolumetricLighting) },
 				{ "BSImagespaceShaderReflectionsRayTracing", static_cast<uint32_t>(ISReflectionsRayTracing) },
