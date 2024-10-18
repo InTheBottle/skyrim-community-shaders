@@ -106,6 +106,12 @@ namespace FrameBuffer
 		return pow(linearColor, FrameParams.x);
 	}
 
+	float3 ToSRGBColorSafe(float3 linearColor)
+	{
+		return sign(linearColor) * pow(abs(linearColor), FrameParams.x);
+	}
+
+
 	float3 WorldToView(float3 x, bool is_position = true, uint a_eyeIndex = 0)
 	{
 		float4 newPosition = float4(x, (float)is_position);
