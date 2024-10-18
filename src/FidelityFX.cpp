@@ -44,7 +44,7 @@ void FidelityFX::CreateFSRResources()
 	contextDescription.maxUpscaleSize.height = (uint)state->screenSize.y;
 	contextDescription.displaySize.width = (uint)state->screenSize.x;
 	contextDescription.displaySize.height = (uint)state->screenSize.y;
-	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
+	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE | FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
 	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
 	contextDescription.backendInterfaceUpscaling = fsrInterface;
