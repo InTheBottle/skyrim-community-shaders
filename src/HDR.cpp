@@ -100,7 +100,7 @@ void HDR::SetupResources()
 	uiTexture->CreateRTV(rtvDesc);
 	uiTexture->CreateUAV(uavDesc);
 
-	texDesc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+	texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;

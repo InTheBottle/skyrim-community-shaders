@@ -429,8 +429,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			State::GetSingleton()->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.supportUnorderedAccess = true;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -439,8 +440,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			State::GetSingleton()->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.supportUnorderedAccess = true;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -449,8 +451,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			State::GetSingleton()->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.supportUnorderedAccess = true;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -459,8 +462,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			State::GetSingleton()->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.supportUnorderedAccess = true;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -469,8 +473,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -479,8 +484,53 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			a_properties->format = RE::BSGraphics::Format::kR16G16B16A16_UNORM;
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_LDRBlurSwap
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_LDRDownsample
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	
+	struct CreateRenderTarget_TemporalAAAccumulation0
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_TemporalAAAccumulation1
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format = RE::BSGraphics::Format::kR16G16B16A16_FLOAT;
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -703,6 +753,10 @@ namespace Hooks
 		// TODO: VR hooks
 		stl::write_thunk_call<CreateRenderTarget_ImagespaceTempCopy>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x62F, 0x62E));
 		stl::write_thunk_call<CreateRenderTarget_ImagespaceTempCopy2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x642, 0x641));
+		stl::write_thunk_call<CreateRenderTarget_LDRBlurSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x529, 0x528));
+		stl::write_thunk_call<CreateRenderTarget_LDRDownsample>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB2E, 0xB2E));
+		stl::write_thunk_call<CreateRenderTarget_TemporalAAAccumulation0>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xE68, 0xE6A));
+		stl::write_thunk_call<CreateRenderTarget_TemporalAAAccumulation1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xE7E, 0xE80));
 
 #ifdef TRACY_ENABLE
 		stl::write_thunk_call<Main_Update>(REL::RelocationID(35551, 36544).address() + REL::Relocate(0x11F, 0x160));
