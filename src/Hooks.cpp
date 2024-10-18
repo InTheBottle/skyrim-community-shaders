@@ -512,7 +512,7 @@ namespace Hooks
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
-	
+
 	struct CreateRenderTarget_TemporalAAAccumulation0
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
