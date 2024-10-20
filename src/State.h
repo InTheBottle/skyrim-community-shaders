@@ -158,6 +158,7 @@ public:
 	ID3D11DeviceContext* context = nullptr;
 	ID3D11Device* device = nullptr;
 	IDXGISwapChain* swapChain = nullptr;
+	HWND hWnd = NULL;
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context
 
