@@ -522,7 +522,7 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float4 screenPo
 	float4 lightFadeMul = 1.0.xxxx - saturate(PLightingRadiusInverseSquared * lightDistanceSquared);
 
 	float3 color = 0.0;
-	float angleShadow = saturate(DirLightDirectionShared.z * DirLightDirectionShared.z);
+	float angleShadow = saturate(DirLightDirectionShared.z) * saturate(DirLightDirectionShared.z);
 
 #		if defined(EFFECT_SHADOWS)
 	if (InMapMenu)
