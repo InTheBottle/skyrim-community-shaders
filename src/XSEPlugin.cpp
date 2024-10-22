@@ -1,10 +1,12 @@
 #include "Hooks.h"
 
+#include "Deferred.h"
 #include "FrameAnnotations.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
+#include "Upscaling.h"
 
 #include "Features/ExtendedMaterials.h"
 #include "Features/LightLimitFIx/ParticleLights.h"
@@ -77,7 +79,13 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			if (errors.empty()) {
-				State::GetSingleton()->PostPostLoad();
+				auto state = State::GetSingleton();
+				state->PostPostLoad();  // state should load first so basic information is populated
+				Deferred::Hooks::Install();
+				TruePBR::GetSingleton()->PostPostLoad();
+				if (!state->IsFeatureDisabled("Upscaling")) {
+					Upscaling::InstallHooks();
+				}
 				Hooks::Install();
 				FrameAnnotations::OnPostPostLoad();
 
@@ -133,7 +141,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {
-		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.146.0", true);
+		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.155.0", true);
 	}
 
 	auto messaging = SKSE::GetMessagingInterface();
@@ -157,8 +165,7 @@ bool Load()
 		}
 	}
 
-	if (errors.empty() && !REL::Module::IsVR())
+	if (errors.empty())
 		Hooks::InstallD3DHooks();
-
 	return true;
 }
