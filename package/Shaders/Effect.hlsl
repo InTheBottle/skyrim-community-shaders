@@ -524,7 +524,7 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float4 screenPo
 	float3 color = 0.0;
 	float angleShadow = saturate(DirLightDirectionShared.z * DirLightDirectionShared.z);
 
-#			if defined(EFFECT_SHADOWS)
+#		if defined(EFFECT_SHADOWS)
 	if (InMapMenu)
 		color = DirLightColorShared * angleShadow;
 	else if (!InInterior && (ExtraShaderDescriptor & _InWorld))
