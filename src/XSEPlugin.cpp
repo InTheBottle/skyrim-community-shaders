@@ -6,6 +6,7 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Upscaling.h"
+#include "Globals.h"
 
 
 #define DLLEXPORT __declspec(dllexport)
@@ -154,6 +155,8 @@ bool Load()
 
 	auto messaging = SKSE::GetMessagingInterface();
 	messaging->RegisterListener("SKSE", MessageHandler);
+
+	globals::ReInit();
 
 	auto state = globals::state;
 	state->Load();
