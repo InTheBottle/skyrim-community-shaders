@@ -723,7 +723,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #				endif  // SKYLIGHTING
 
-#				if defined(DEFERRED) && defined(SSGI)
+#				if defined(SSGI)
 	diffuseColor += directionalAmbientColorDirect;
 #				else
 	diffuseColor += directionalAmbientColor;
@@ -905,7 +905,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #			endif  // SKYLIGHTING
 
-#			if defined(DEFERRED) && defined(SSGI)
+#			if defined(SSGI)
 	diffuseColor += directionalAmbientColorDirect;
 #			else
 	diffuseColor += directionalAmbientColor;
