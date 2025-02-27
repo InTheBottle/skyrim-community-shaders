@@ -6,10 +6,11 @@
 
 #include <ffx_api.h>
 #include <ffx_api_loader.h>
+#include <ffx_api_types.h>
+#include <ffx/ffx_api_dx12.h>
 
 #include "Buffer.h"
 #include "State.h"
-
 
 class FidelityFX
 {
