@@ -10,7 +10,6 @@
 #include "Buffer.h"
 #include "State.h"
 
-
 class FidelityFX
 {
 public:
@@ -23,7 +22,7 @@ public:
 	HMODULE dll = NULL;
 
 	ffxFunctions* fidelityFXDX12;
-	
+
 	FfxFsr3Context fsrContext;
 
 	void Init();
