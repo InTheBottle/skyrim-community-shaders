@@ -4,8 +4,12 @@
 #include <FidelityFX/host/ffx_fsr3.h>
 #include <FidelityFX/host/ffx_interface.h>
 
+#include <ffx_api.h>
+#include <ffx_api_loader.h>
+
 #include "Buffer.h"
 #include "State.h"
+
 
 class FidelityFX
 {
@@ -16,7 +20,13 @@ public:
 		return &singleton;
 	}
 
+	HMODULE dll = NULL;
+
+	ffxFunctions* fidelityFXDX12;
+	
 	FfxFsr3Context fsrContext;
+
+	void Init();
 
 	void CreateFSRResources();
 	void DestroyFSRResources();

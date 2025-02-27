@@ -23,6 +23,12 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
+void FidelityFX::Init()
+{
+	dll = LoadLibrary(L"Data\\SKSE\\Plugins\\FidelityFX\\amd_fidelityfx_dx12.dll");
+	ffxLoadFunctions(fidelityFXDX12, dll);
+}
+
 void FidelityFX::CreateFSRResources()
 {
 	auto state = State::GetSingleton();

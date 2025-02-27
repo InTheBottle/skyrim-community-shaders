@@ -9,6 +9,7 @@
 #include "ShaderTools/BSShaderHooks.h"
 
 #include "Streamline.h"
+#include "FidelityFX.h"
 
 #include "DX12SwapChain.h"
 #include "VariableCache.h"
@@ -812,6 +813,10 @@ namespace Hooks
 		//	auto state = State::GetSingleton();
 
 		streamline->LoadInterposer();
+
+		auto fidelityFX = FidelityFX::GetSingleton();
+
+		fidelityFX->Init();
 
 		*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
