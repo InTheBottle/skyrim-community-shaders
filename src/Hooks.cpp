@@ -271,14 +271,6 @@ HRESULT WINAPI hk_CreateDXGIFactory(REFIID, void** ppFactory)
 	//return hr;
 }
 
-decltype(&ID3D11DeviceContext::ClearState) ptrClearState;
-
-void WINAPI hk_ClearState(ID3D11DeviceContext* This)
-{
-	DX12SwapChain::GetSingleton()->BeginFrame();
-	(This->*ptrClearState)();
-}
-
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
 
 HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainNoStreamline(
@@ -462,7 +454,6 @@ namespace Hooks
 				stl::detour_vfunc<15, ID3D11Device_CreatePixelShader>(globals::d3d::device);
 			}
 			globals::menu->Init();
-			*(uintptr_t*)&ptrClearState = Detours::X64::DetourClassVTable(*(uintptr_t*)globals::d3d::context, &hk_ClearState, 110);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

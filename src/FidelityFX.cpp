@@ -88,12 +88,8 @@ void FidelityFX::Present()
 
 	configParameters.frameGenerationEnabled = enableFrameGeneration;
 	configParameters.flags = 0;
-	//configParameters.flags |= m_DrawFrameGenerationDebugTearLines ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_TEAR_LINES : 0;
-	//configParameters.flags |= m_DrawFrameGenerationDebugResetIndicators ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_RESET_INDICATORS : 0;
-	//configParameters.flags |= m_DrawFrameGenerationDebugView ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_VIEW : 0;
 	configParameters.HUDLessColor = ffxApiGetResourceDX12(upscaling->colorBufferShared12.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 	configParameters.allowAsyncWorkloads = false;
-	// assume symmetric letterbox
 
 	auto swapChain = DX12SwapChain::GetSingleton();
 
