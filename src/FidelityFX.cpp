@@ -62,7 +62,7 @@ void FidelityFX::CreateFrameGenerationResources()
 	ffx::CreateContextDescFrameGeneration createFg{};
 	createFg.displaySize = { swapChain->swapChainDesc.Width, swapChain->swapChainDesc.Height };
 	createFg.maxRenderSize = createFg.displaySize;
-	createFg.flags = 0;
+	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
 	createFg.backBufferFormat = FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
 	ffx::CreateBackendDX12Desc createBackend{};
@@ -75,23 +75,21 @@ void FidelityFX::CreateFrameGenerationResources()
 
 void FidelityFX::Present()
 {
-	// Update frame generation config
-
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = globals::upscaling;
+	auto swapChain = DX12SwapChain::GetSingleton();
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
 	configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
 		return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
 	};
+
 	configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
 	configParameters.frameGenerationEnabled = enableFrameGeneration;
 	configParameters.flags = 0;
 	configParameters.HUDLessColor = ffxApiGetResourceDX12(upscaling->colorBufferShared12.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
-	configParameters.allowAsyncWorkloads = false;
-
-	auto swapChain = DX12SwapChain::GetSingleton();
+	configParameters.allowAsyncWorkloads = true;
 
 	configParameters.generationRect.left = (swapChain->swapChainDesc.Width - swapChain->swapChainDesc.Width) / 2;
 	configParameters.generationRect.top = (swapChain->swapChainDesc.Height - swapChain->swapChainDesc.Height) / 2;
