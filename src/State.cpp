@@ -2,33 +2,26 @@
 
 #include <codecvt>
 
-#include <magic_enum.hpp>
 #include <pystring/pystring.h>
-
-#include "Menu.h"
-#include "ShaderCache.h"
-
-#include "Feature.h"
 
 #include "Deferred.h"
 #include "Features/CloudShadows.h"
 #include "Features/TerrainBlending.h"
-#include "TruePBR.h"
-
+#include "Menu.h"
+#include "ShaderCache.h"
 #include "Streamline.h"
+#include "TruePBR.h"
 #include "Upscaling.h"
-
-#include "VariableCache.h"
 
 void State::Draw()
 {
-	auto variableCache = VariableCache::GetSingleton();
-	auto shaderCache = variableCache->shaderCache;
-	auto deferred = variableCache->deferred;
-	auto terrainBlending = variableCache->terrainBlending;
-	auto cloudShadows = variableCache->cloudShadows;
-	auto truePBR = variableCache->truePBR;
-	auto smState = variableCache->smState;
+	auto shaderCache = globals::shaderCache;
+	auto deferred = globals::deferred;
+	auto terrainBlending = globals::features::terrainBlending;
+	auto cloudShadows = globals::features::cloudShadows;
+	auto truePBR = globals::truePBR;
+	auto smState = globals::game::smState;
+	auto context = globals::d3d::context;
 
 	if (shaderCache->IsEnabled()) {
 		if (terrainBlending->loaded)
@@ -39,15 +32,23 @@ void State::Draw()
 
 		truePBR->SetShaderResouces(context);
 
-		if (auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator()) {
-			// Set an unused bit to indicate if we are rendering an object in the main rendering passes
-			if (accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0]) {
-				currentExtraDescriptor |= (uint32_t)ExtraShaderDescriptors::InWorld;
+		if (!deferred->inReflections) {
+			if (auto accumulator = RE::BSGraphics::BSShaderAccumulator::GetCurrentAccumulator()) {
+				// Set an unused bit to indicate if we are rendering an object in the main rendering passes
+				if (accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0]) {
+					currentExtraDescriptor |= (uint32_t)ExtraShaderDescriptors::InWorld;
+				}
 			}
 		}
 
+		if (deferred->inReflections)
+			currentExtraDescriptor |= (uint32_t)ExtraShaderDescriptors::IsReflections;
+
 		if (deferred->inDecals)
 			currentExtraDescriptor |= (uint32_t)ExtraShaderDescriptors::IsDecal;
+
+		if (isTree)
+			currentExtraDescriptor |= (uint32_t)ExtraShaderDescriptors::IsTree;
 
 		if (forceUpdatePermutationBuffer || currentPixelDescriptor != lastPixelDescriptor || currentExtraDescriptor != lastExtraDescriptor) {
 			PermutationCB data{};
@@ -102,7 +103,7 @@ void State::Reset()
 	for (auto* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			feature->Reset();
-	if (!RE::UI::GetSingleton()->GameIsPaused())
+	if (!globals::game::ui->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
 	lastModifiedPixelDescriptor = 0;
 	lastModifiedVertexDescriptor = 0;
@@ -110,20 +111,21 @@ void State::Reset()
 	lastVertexDescriptor = 0;
 	initialized = false;
 	forceUpdatePermutationBuffer = true;
+	frameCount++;
 }
 
 void State::Setup()
 {
-	TruePBR::GetSingleton()->SetupResources();
+	globals::truePBR->SetupResources();
 	SetupResources();
 	for (auto* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			feature->SetupResources();
-	Deferred::GetSingleton()->SetupResources();
-	//Streamline::GetSingleton()->SetupResources();
+	globals::deferred->SetupResources();
+	//globals::streamline->SetupResources();
 	FidelityFX::GetSingleton()->CreateFrameGenerationResources();
 	if (!upscalerLoaded)
-		Upscaling::GetSingleton()->CreateUpscalingResources();
+		globals::upscaling->CreateUpscalingResources();
 	if (initialized)
 		return;
 	initialized = true;
@@ -133,19 +135,19 @@ static const std::string& GetConfigPath(State::ConfigMode a_configMode)
 {
 	switch (a_configMode) {
 	case State::ConfigMode::USER:
-		return State::GetSingleton()->userConfigPath;
+		return globals::state->userConfigPath;
 	case State::ConfigMode::TEST:
-		return State::GetSingleton()->testConfigPath;
+		return globals::state->testConfigPath;
 	case State::ConfigMode::DEFAULT:
 	default:
-		return State::GetSingleton()->defaultConfigPath;
+		return globals::state->defaultConfigPath;
 	}
 }
 
 void State::Load(ConfigMode a_configMode, bool a_allowReload)
 {
 	ConfigMode configMode = a_configMode;
-	auto& shaderCache = SIE::ShaderCache::Instance();
+	auto shaderCache = globals::shaderCache;
 	json settings;
 	bool errorDetected = false;
 
@@ -201,24 +203,24 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		if (settings["Menu"].is_object()) {
 			logger::info("Loading 'Menu' settings");
-			Menu::GetSingleton()->Load(settings["Menu"]);
+			globals::menu->Load(settings["Menu"]);
 		}
 
 		if (settings["Advanced"].is_object()) {
 			logger::info("Loading 'Advanced' settings");
 			json& advanced = settings["Advanced"];
 			if (advanced["Dump Shaders"].is_boolean())
-				shaderCache.SetDump(advanced["Dump Shaders"]);
+				shaderCache->SetDump(advanced["Dump Shaders"]);
 			if (advanced["Log Level"].is_number_integer())
 				logLevel = static_cast<spdlog::level::level_enum>((int)advanced["Log Level"]);
 			if (advanced["Shader Defines"].is_string())
 				SetDefines(advanced["Shader Defines"]);
 			if (advanced["Compiler Threads"].is_number_integer())
-				shaderCache.compilationThreadCount = std::clamp(advanced["Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+				shaderCache->compilationThreadCount = std::clamp(advanced["Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
 			if (advanced["Background Compiler Threads"].is_number_integer())
-				shaderCache.backgroundCompilationThreadCount = std::clamp(advanced["Background Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+				shaderCache->backgroundCompilationThreadCount = std::clamp(advanced["Background Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
 			if (advanced["Use FileWatcher"].is_boolean())
-				shaderCache.SetFileWatcher(advanced["Use FileWatcher"]);
+				shaderCache->SetFileWatcher(advanced["Use FileWatcher"]);
 			if (advanced["Frame Annotations"].is_boolean())
 				frameAnnotations = advanced["Frame Annotations"];
 		}
@@ -228,13 +230,13 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			json& general = settings["General"];
 
 			if (general["Enable Shaders"].is_boolean())
-				shaderCache.SetEnabled(general["Enable Shaders"]);
+				shaderCache->SetEnabled(general["Enable Shaders"]);
 
 			if (general["Enable Disk Cache"].is_boolean())
-				shaderCache.SetDiskCache(general["Enable Disk Cache"]);
+				shaderCache->SetDiskCache(general["Enable Disk Cache"]);
 
 			if (general["Enable Async"].is_boolean())
-				shaderCache.SetAsync(general["Enable Async"]);
+				shaderCache->SetAsync(general["Enable Async"]);
 		}
 
 		if (settings["Replace Original Shaders"].is_object()) {
@@ -271,7 +273,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			}
 		}
 
-		auto upscaling = Upscaling::GetSingleton();
+		auto upscaling = globals::upscaling;
 		auto& upscalingJson = settings[upscaling->GetShortName()];
 		if (upscalingJson.is_object()) {
 			logger::info("Loading Upscaling settings");
@@ -283,6 +285,20 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			}
 		} else {
 			logger::warn("Missing settings for Upscaling, using default.");
+		}
+
+		auto streamline = globals::streamline;
+		auto& streamlineJson = settings[streamline->GetShortName()];
+		if (streamlineJson.is_object()) {
+			logger::info("Loading Streamline settings");
+			try {
+				streamline->LoadSettings(streamlineJson);
+			} catch (...) {
+				logger::warn("Invalid settings for Streamline, using default.");
+				streamline->RestoreDefaultSettings();
+			}
+		} else {
+			logger::warn("Missing settings for Streamline, using default.");
 		}
 
 		for (auto* feature : Feature::GetFeatureList()) {
@@ -323,7 +339,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 void State::Save(ConfigMode a_configMode)
 {
-	const auto& shaderCache = SIE::ShaderCache::Instance();
+	const auto shaderCache = globals::shaderCache;
 	std::string configPath = GetConfigPath(a_configMode);
 	std::ofstream o{ configPath };
 
@@ -342,28 +358,32 @@ void State::Save(ConfigMode a_configMode)
 
 	json settings;
 
-	Menu::GetSingleton()->Save(settings["Menu"]);
+	globals::menu->Save(settings["Menu"]);
 
 	json advanced;
-	advanced["Dump Shaders"] = shaderCache.IsDump();
+	advanced["Dump Shaders"] = shaderCache->IsDump();
 	advanced["Log Level"] = logLevel;
 	advanced["Shader Defines"] = shaderDefinesString;
-	advanced["Compiler Threads"] = shaderCache.compilationThreadCount;
-	advanced["Background Compiler Threads"] = shaderCache.backgroundCompilationThreadCount;
-	advanced["Use FileWatcher"] = shaderCache.UseFileWatcher();
+	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
+	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
+	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	settings["Advanced"] = advanced;
 
 	json general;
-	general["Enable Shaders"] = shaderCache.IsEnabled();
-	general["Enable Disk Cache"] = shaderCache.IsDiskCache();
-	general["Enable Async"] = shaderCache.IsAsync();
+	general["Enable Shaders"] = shaderCache->IsEnabled();
+	general["Enable Disk Cache"] = shaderCache->IsDiskCache();
+	general["Enable Async"] = shaderCache->IsAsync();
 
 	settings["General"] = general;
 
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = globals::upscaling;
 	auto& upscalingJson = settings[upscaling->GetShortName()];
 	upscaling->SaveSettings(upscalingJson);
+
+	auto streamline = globals::streamline;
+	auto& streamlineJson = settings[streamline->GetShortName()];
+	streamline->SaveSettings(streamlineJson);
 
 	json originalShaders;
 	for (int classIndex = 0; classIndex < RE::BSShader::Type::Total - 1; ++classIndex) {
@@ -486,12 +506,12 @@ void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::B
 
 void State::SetupResources()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto renderer = globals::game::renderer;
 
 	permutationCB = new ConstantBuffer(ConstantBufferDesc<PermutationCB>());
 	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
 
-	auto [data, size] = GetFeatureBufferData();
+	auto [data, size] = GetFeatureBufferData(false);
 	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
 	delete[] data;
 
@@ -500,20 +520,17 @@ void State::SetupResources()
 	D3D11_TEXTURE2D_DESC texDesc{};
 	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
 
-	isVR = REL::Module::IsVR();
 	screenSize = { (float)texDesc.Width, (float)texDesc.Height };
-	context = reinterpret_cast<ID3D11DeviceContext*>(renderer->GetRuntimeData().context);
-	device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
-	context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
+	globals::d3d::context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 
-	featureLevel = device->GetFeatureLevel();
+	featureLevel = globals::d3d::device->GetFeatureLevel();
 
-	tracyCtx = TracyD3D11Context(device, context);
+	tracyCtx = TracyD3D11Context(globals::d3d::device, globals::d3d::context);
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
 {
-	auto deferred = VariableCache::GetSingleton()->deferred;
+	auto deferred = globals::deferred;
 
 	if (a_shader.shaderType.get() != RE::BSShader::Type::Utility && a_shader.shaderType.get() != RE::BSShader::Type::ImageSpace) {
 		switch (a_shader.shaderType.get()) {
@@ -641,22 +658,22 @@ void State::SetAdapterDescription(const std::wstring& description)
 	adapterDescription = converter.to_bytes(description);
 }
 
-void State::UpdateSharedData()
+void State::UpdateSharedData(bool a_inWorld, bool a_prepass)
 {
 	{
 		SharedDataCB data{};
 
-		const auto& shaderManager = RE::BSShaderManager::State::GetSingleton();
-		const RE::NiTransform& dalcTransform = shaderManager.directionalAmbientTransform;
+		const auto shaderManager = globals::game::smState;
+		const RE::NiTransform& dalcTransform = shaderManager->directionalAmbientTransform;
 		Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
 
-		auto shadowSceneNode = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+		auto shadowSceneNode = shaderManager->shadowSceneNode[0];
 		auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
 
 		data.DirLightColor = { dirLight->GetLightRuntimeData().diffuse.red, dirLight->GetLightRuntimeData().diffuse.green, dirLight->GetLightRuntimeData().diffuse.blue, 1.0f };
 
 		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		data.DirLightColor *= !isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+		data.DirLightColor *= !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
 
 		const auto& direction = dirLight->GetWorldDirection();
 		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };
@@ -666,47 +683,57 @@ void State::UpdateSharedData()
 		data.BufferDim = { screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
 
-		auto viewport = RE::BSGraphics::State::GetSingleton();
+		auto bTAA = !globals::game::isVR ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled :
+		                                   imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
 
-		auto bTAA = !isVR ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled :
-		                    imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled;
+		data.FrameCount = frameCount * (bTAA || globals::state->upscalerLoaded);
+		data.FrameCountAlwaysActive = frameCount;
 
-		data.FrameCount = viewport->frameCount * (bTAA || State::GetSingleton()->upscalerLoaded);
-		data.FrameCountAlwaysActive = viewport->frameCount;
-
-		for (int i = -2; i <= 2; i++) {
-			for (int k = -2; k <= 2; k++) {
-				int waterTile = (i + 2) + ((k + 2) * 5);
-				data.WaterData[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
+		if (a_inWorld) {
+			for (int i = -2; i <= 2; i++) {
+				for (int k = -2; k <= 2; k++) {
+					int waterTile = (i + 2) + ((k + 2) * 5);
+					data.WaterData[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
+				}
 			}
 		}
 
-		if (auto sky = RE::Sky::GetSingleton())
+		if (auto sky = globals::game::sky) {
 			data.InInterior = sky->mode.get() != RE::Sky::Mode::kFull;
-		else
+			data.HideSky = !data.InInterior && sky->flags.any(RE::Sky::Flags::kHideSky);
+		} else {
 			data.InInterior = true;
+			data.HideSky = true;
+		}
 
-		if (auto ui = RE::UI::GetSingleton())
+		if (auto ui = globals::game::ui)
 			data.InMapMenu = ui->IsMenuOpen(RE::MapMenu::MENU_NAME);
 		else
 			data.InMapMenu = true;
+
+		if (!globals::game::isVR && bTAA && (a_inWorld || a_prepass)) {
+			auto renderSize = Util::ConvertToDynamic(screenSize);
+			data.MipBias = std::log2f(renderSize.x / screenSize.x) - 1.0f;
+		} else {
+			data.MipBias = 0;
+		}
 
 		sharedDataCB->Update(data);
 	}
 
 	{
-		auto [data, size] = GetFeatureBufferData();
+		auto [data, size] = GetFeatureBufferData(a_inWorld);
 
 		featureDataCB->Update(data, size);
 
 		delete[] data;
 	}
 
-	const auto& depth = RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto terrainBlending = TerrainBlending::GetSingleton();
+	const auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto terrainBlending = globals::features::terrainBlending;
 	auto srv = (terrainBlending->loaded ? terrainBlending->blendedDepthTexture16->srv.get() : depth.depthSRV);
 
-	context->PSSetShaderResources(17, 1, &srv);
+	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
 }
 
 void State::ClearDisabledFeatures()

@@ -42,6 +42,9 @@ public:
 	bool featureDLSS = false;
 	bool featureDLSSG = false;
 	bool featureReflex = false;
+	bool featureNIS = false;
+
+	double refreshRate = 60.0;
 
 	bool reflex = true;
 
@@ -64,7 +67,13 @@ public:
 		return frameToken;
 	}
 
-	sl::DLSSGMode frameGenerationMode = sl::DLSSGMode::eOn;
+	struct Settings
+	{
+		sl::DLSSGMode frameGenerationMode = sl::DLSSGMode::eOn;
+		int frameLimitMode = 0;
+	};
+
+	Settings settings{};
 
 	HMODULE interposer = NULL;
 
@@ -100,6 +109,10 @@ public:
 	PFun_slReflexSleep* slReflexSleep{};
 	PFun_slReflexSetOptions* slReflexSetOptions{};
 
+	// NIS specific functions
+	PFun_slNISSetOptions* slNISSetOptions{};
+	PFun_slNISGetState* slNISGetState{};
+
 	PFun_slReflexSetCameraData* slReflexSetCameraData{};
 	PFun_slReflexGetPredictedCameraData* slReflexGetPredictedCameraData{};
 
@@ -109,7 +122,7 @@ public:
 
 	void LoadInterposer();
 	void Initialize();
-	void PostDevice();
+	void PostDevice(DXGI_SWAP_CHAIN_DESC* a_swapChainDesc);
 
 	HRESULT CreateDXGIFactory(REFIID riid, void** ppFactory);
 
@@ -120,7 +133,7 @@ public:
 		const D3D_FEATURE_LEVEL* pFeatureLevels,
 		UINT FeatureLevels,
 		UINT SDKVersion,
-		const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+		DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 		IDXGISwapChain** ppSwapChain,
 		ID3D11Device** ppDevice,
 		D3D_FEATURE_LEVEL* pFeatureLevel,
@@ -128,30 +141,40 @@ public:
 
 	void SetupResources();
 
-	void CopyResourcesToSharedBuffers();
 	void Present();
 
-	void Upscale(Texture2D* a_color, Texture2D* a_alphaMask, sl::DLSSPreset a_preset);
+	void Upscale(Texture2D* a_color, Texture2D* a_alphaMask, sl::DLSSPreset a_preset, float a_sharpness);
+	void Sharpen(Texture2D* a_sharpenTexture, float a_sharpness);
 	void UpdateConstants();
+
+	void SaveSettings(json& o_json);
+	void LoadSettings(json& o_json);
+
+	void RestoreDefaultSettings();
 
 	void DestroyDLSSResources();
 
-	struct Main_RenderWorld
+	void BeginFrame();
+
+	struct Main_Update_Start
 	{
-		static void thunk(bool a1)
+		static void thunk(INT64 a_unk)
 		{
-			auto state = State::GetSingleton();
-			if (!state->isVR || !state->upscalerLoaded) {
-				// With upscaler, VR hangs on this function, specifically at slSetConstants
-				GetSingleton()->UpdateConstants();
-			}
-			func(a1);
+			GetSingleton()->BeginFrame();
+			func(a_unk);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	static void InstallHooks()
+	struct Main_RenderWorld
 	{
-		//	stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
-	}
+		static void thunk(bool a1);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	static void InstallHooks(){
+		//stl::write_thunk_call<Main_Update_Start>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x1E, 0x3E, 0x33));
+		//stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
+		//stl::write_thunk_call<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x7E, 0x83, 0x97));
+	};
 };

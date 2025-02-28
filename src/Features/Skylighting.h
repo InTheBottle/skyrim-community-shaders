@@ -1,10 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-#include "Feature.h"
-#include "State.h"
-#include "Util.h"
-
 struct Skylighting : Feature
 {
 	static Skylighting* GetSingleton()
@@ -38,9 +33,9 @@ struct Skylighting : Feature
 
 	struct Settings
 	{
-		float MaxZenith = 3.1415926f / 4.f;  // 45 deg
+		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
-		float MinSpecularVisibility = 0.01f;
+		float MinSpecularVisibility = 0.1f;
 		float SSGIAmbientDimmer = 1.0f;
 	} settings;
 
@@ -61,7 +56,7 @@ struct Skylighting : Feature
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
-	SkylightingCB GetCommonBufferData();
+	SkylightingCB GetCommonBufferData(bool a_inWorld);
 
 	winrt::com_ptr<ID3D11SamplerState> comparisonSampler = nullptr;
 
@@ -74,14 +69,13 @@ struct Skylighting : Feature
 
 	// misc parameters
 	uint probeArrayDims[3] = { 256, 256, 128 };
-	float occlusionDistance = 4096.f * 3.f;  // 3 cells
+	float occlusionDistance = 4096.f * 2.5f;  // 5 ugrids
 
 	// cached variables
 	bool queuedResetSkylighting = true;
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;
-	uint forceFrames = 255 * 4;
 	uint frameCount = 0;
 
 	void ResetSkylighting();
@@ -115,6 +109,12 @@ struct Skylighting : Feature
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct SetViewFrustumVR
+	{
+		static void thunk(RE::NiCamera* a_camera, RE::NiFrustum* a_frustum, uint a_eyeIndex);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Event handler
 	class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 	{
@@ -133,7 +133,7 @@ struct Skylighting : Feature
 		static bool Register()
 		{
 			static MenuOpenCloseEventHandler singleton;
-			auto ui = RE::UI::GetSingleton();
+			auto ui = globals::game::ui;
 
 			if (!ui) {
 				logger::error("UI event source not found");

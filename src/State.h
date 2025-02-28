@@ -7,7 +7,6 @@
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
-#include "Util.h"
 #include <FeatureBuffer.h>
 
 class State
@@ -118,15 +117,19 @@ public:
 	uint lastExtraDescriptor = 0;
 	bool forceUpdatePermutationBuffer = true;
 
+	bool isTree = false;
+
 	enum class ExtraShaderDescriptors : uint32_t
 	{
 		InWorld = 1 << 0,
-		IsBeastRace = 1 << 1,
-		EffectShadows = 1 << 2,
-		IsDecal = 1 << 3
+		IsReflections = 1 << 1,
+		IsBeastRace = 1 << 2,
+		EffectShadows = 1 << 3,
+		IsDecal = 1 << 4,
+		IsTree = 1 << 5
 	};
 
-	void UpdateSharedData();
+	void UpdateSharedData(bool a_inWorld, bool a_prepass);
 
 	struct alignas(16) PermutationCB
 	{
@@ -151,19 +154,19 @@ public:
 		uint FrameCountAlwaysActive;
 		uint InInterior;
 		uint InMapMenu;
-		float3 pad0;
+		uint HideSky;
+		float MipBias;
+		float pad0;
 	};
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
 
 	Util::FrameChecker frameChecker;
+	uint frameCount = 0;
 
 	// Skyrim constants
-	bool isVR = false;
 	float2 screenSize = {};
-	ID3D11DeviceContext* context = nullptr;
-	ID3D11Device* device = nullptr;
 	D3D_FEATURE_LEVEL featureLevel;
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context

@@ -1,12 +1,19 @@
 #include "Streamline.h"
 
 #include <dxgi.h>
+#include <dxgi1_3.h>
 
 #include "Hooks.h"
+#include "State.h"
 #include "Util.h"
 
 #include "DX12SwapChain.h"
 #include "Upscaling.h"
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	Streamline::Settings,
+	frameLimitMode,
+	frameGenerationMode);
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
@@ -25,17 +32,17 @@ void LoggingCallback(sl::LogType type, const char* msg)
 
 void Streamline::DrawSettings()
 {
-	auto state = State::GetSingleton();
-	if (!state->isVR) {
+	if (!globals::game::isVR) {
 		ImGui::Text("Frame Generation uses a D3D11 to D3D12 proxy which can create compatibility issues");
 		ImGui::Text("Frame Generation can only be enabled or disabled in the mod manager, it can only be temporarily toggled in-game");
 
 		if (ImGui::TreeNodeEx("NVIDIA DLSS Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::Text("Requires an NVIDIA GeForce RTX 40 Series or newer");
+			ImGui::Text("Requires an NVIDIA GeForce RTX 40/50 Series or newer");
 			if (featureDLSSG) {
 				const char* frameGenerationModes[] = { "Off", "On" };
-				ImGui::SliderInt("Frame Generation", (int*)&frameGenerationMode, 0, 1, std::format("{}", frameGenerationModes[(uint)frameGenerationMode]).c_str());
-				frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)frameGenerationMode);
+				ImGui::SliderInt("Frame Limit (Refresh Rate)", (int*)&settings.frameLimitMode, 0, 1, std::format("{}", frameGenerationModes[(uint)settings.frameLimitMode]).c_str());
+				ImGui::SliderInt("Frame Generation", (int*)&settings.frameGenerationMode, 0, 1, std::format("{}", frameGenerationModes[(uint)settings.frameGenerationMode]).c_str());
+				settings.frameGenerationMode = (sl::DLSSGMode)std::min(2u, (uint)settings.frameGenerationMode);
 			} else {
 			}
 			ImGui::TreePop();
@@ -51,7 +58,7 @@ void Streamline::DrawSettings()
 
 void Streamline::LoadInterposer()
 {
-	if (State::GetSingleton()->IsFeatureDisabled("Frame Generation")) {
+	if (globals::state->IsFeatureDisabled("Frame Generation")) {
 		return;
 	}
 
@@ -70,7 +77,7 @@ void Streamline::Initialize()
 
 	sl::Preferences pref;
 
-	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL };
+	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeatureNIS, sl::kFeaturePCL };
 	pref.featuresToLoad = featuresToLoad;
 	pref.numFeaturesToLoad = _countof(featuresToLoad);
 
@@ -112,7 +119,7 @@ void Streamline::Initialize()
 	}
 }
 
-void Streamline::PostDevice()
+void Streamline::PostDevice(DXGI_SWAP_CHAIN_DESC* a_swapChainDesc)
 {
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction
 
@@ -136,6 +143,22 @@ void Streamline::PostDevice()
 		slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetCameraData", (void*&)slReflexSetCameraData);
 	}
 
+	if (featureNIS) {
+		slGetFeatureFunction(sl::kFeatureNIS, "slNISSetOptions", (void*&)slNISSetOptions);
+		slGetFeatureFunction(sl::kFeatureNIS, "slNISGetState", (void*&)slNISGetState);
+	}
+
+	MONITORINFOEX monitorInfo = {};
+	monitorInfo.cbSize = sizeof(MONITORINFOEX);
+
+	HMONITOR monitor = MonitorFromWindow(a_swapChainDesc->OutputWindow, MONITOR_DEFAULTTONEAREST);
+	GetMonitorInfo(monitor, &monitorInfo);
+
+	DEVMODE devMode = {};
+	devMode.dmSize = sizeof(DEVMODE);
+
+	EnumDisplaySettings(monitorInfo.szDevice, ENUM_CURRENT_SETTINGS, &devMode);
+	refreshRate = devMode.dmDisplayFrequency;
 	slGetFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker2);
 }
 
@@ -156,7 +179,7 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 	const D3D_FEATURE_LEVEL* pFeatureLevels,
 	UINT FeatureLevels,
 	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+	DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
 	IDXGISwapChain** ppSwapChain,
 	ID3D11Device** ppDevice,
 	D3D_FEATURE_LEVEL* pFeatureLevel,
@@ -209,14 +232,30 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 		}
 	}
 
+	slIsFeatureLoaded(sl::kFeatureNIS, featureNIS);
+	if (featureReflex) {
+		logger::info("[Streamline] NIS feature is loaded");
+		featureReflex = slIsFeatureSupported(sl::kFeatureNIS, adapterInfo) == sl::Result::eOk;
+	} else {
+		logger::info("[Streamline] NIS feature is not loaded");
+		sl::FeatureRequirements featureRequirements;
+		sl::Result result = slGetFeatureRequirements(sl::kFeatureNIS, featureRequirements);
+		if (result != sl::Result::eOk) {
+			logger::info("[Streamline] NIS feature failed to load due to: {}", magic_enum::enum_name(result));
+		}
+	}
+
 	logger::info("[Streamline] DLSS {} available", featureDLSS ? "is" : "is not");
 	logger::info("[Streamline] DLSSG {} available", featureDLSSG && !REL::Module::IsVR() ? "is" : "is not");
 	logger::info("[Streamline] Reflex {} available", featureReflex ? "is" : "is not");
+	logger::info("[Streamline] NIS {} available", featureNIS ? "is" : "is not");
 
 	HRESULT hr = S_OK;
 
 	if (featureDLSSG && !REL::Module::IsVR()) {
 		logger::info("[Streamline] Proxying D3D11CreateDeviceAndSwapChain to add D3D12 swapchain");
+
+		pSwapChainDesc->Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
 		auto slD3D11CreateDeviceAndSwapChain = reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain"));
 
@@ -251,7 +290,7 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 		slSetD3DDevice(*ppDevice);
 	}
 
-	PostDevice();
+	PostDevice(pSwapChainDesc);
 
 	return hr;
 }
@@ -292,13 +331,14 @@ void Streamline::Present()
 
 	UpdateConstants();
 
-	static auto currentFrameGenerationMode = frameGenerationMode;
+	static auto currentFrameGenerationMode = sl::DLSSGMode::eOff;
 
-	if (currentFrameGenerationMode != frameGenerationMode) {
-		currentFrameGenerationMode = frameGenerationMode;
+	if (currentFrameGenerationMode != settings.frameGenerationMode) {
+		currentFrameGenerationMode = settings.frameGenerationMode;
 
 		sl::DLSSGOptions options{};
-		options.mode = frameGenerationMode;
+		options.mode = settings.frameGenerationMode;
+		options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 		//options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
@@ -317,14 +357,14 @@ void Streamline::Present()
 		//slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *frameToken);
 	}
 
+	auto state = globals::state;
 	//auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 	//auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
 
-	auto state = State::GetSingleton();
-
 	sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 
+	float2 dynamicScreenSize = Util::ConvertToDynamic(state->screenSize);
 	auto context = DX12SwapChain::GetSingleton()->commandList.get();
 
 	{
@@ -335,7 +375,6 @@ void Streamline::Present()
 		slSetTag(viewport, inputs, _countof(inputs), context);
 	}
 
-	float2 dynamicScreenSize = Util::ConvertToDynamic(State::GetSingleton()->screenSize);
 	sl::Extent dynamicExtent{ 0, 0, (uint)dynamicScreenSize.x, (uint)dynamicScreenSize.y };
 
 	auto upscaling = Upscaling::GetSingleton();
@@ -353,17 +392,18 @@ void Streamline::Present()
 	sl::ResourceTag uiTag = sl::ResourceTag{ &ui, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 	sl::ResourceTag inputs[] = { depthTag, mvecTag, hudLessTag, uiTag };
+	slSetTag(viewport, inputs, _countof(inputs), globals::d3d::context);
 
 	slSetTag(viewport, inputs, _countof(inputs), context);
 }
 
-void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset)
+void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset, float a_sharpness)
 {
 	UpdateConstants();
 
-	auto state = State::GetSingleton();
+	auto state = globals::state;
 
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto renderer = globals::game::renderer;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -393,8 +433,6 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 		}
 	}
 
-	auto context = DX12SwapChain::GetSingleton()->commandList.get();
-
 	{
 		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 
@@ -414,13 +452,74 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 		sl::ResourceTag alphaTag = sl::ResourceTag{ &alpha, sl::kBufferTypeBiasCurrentColorHint, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag, depthTag, mvecTag, alphaTag };
-		slSetTag(viewport, resourceTags, _countof(resourceTags), context);
+		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
+	}
+
+	sl::ViewportHandle view(viewport);
+	const sl::BaseStructure* inputs[] = { &view };
+	slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
+
+	{
+		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
+
+		sl::Resource colorIn = { sl::ResourceType::eTex2d, a_upscaleTexture->resource.get(), 0 };
+		sl::Resource colorOut = { sl::ResourceType::eTex2d, a_upscaleTexture->resource.get(), 0 };
+
+		sl::ResourceTag colorInTag = sl::ResourceTag{ &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+		sl::ResourceTag colorOutTag = sl::ResourceTag{ &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+
+		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag };
+		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
+	}
+
+	{
+		sl::NISOptions nisOptions{};
+		nisOptions.mode = sl::NISMode::eSharpen;
+		nisOptions.hdrMode = sl::NISHDR::eNone;
+		nisOptions.sharpness = a_sharpness / 3.0f;
+
+		if (SL_FAILED(result, slNISSetOptions(viewport, nisOptions))) {
+			logger::critical("[Streamline] Could not set NIS options");
+		}
+	}
+
+	slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
+}
+
+void Streamline::Sharpen(Texture2D* a_sharpenTexture, float a_sharpness)
+{
+	UpdateConstants();
+
+	auto state = globals::state;
+
+	{
+		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
+
+		sl::Resource colorIn = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
+		sl::Resource colorOut = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
+
+		sl::ResourceTag colorInTag = sl::ResourceTag{ &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+		sl::ResourceTag colorOutTag = sl::ResourceTag{ &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+
+		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag };
+		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
+	}
+
+	{
+		sl::NISOptions nisOptions{};
+		nisOptions.mode = sl::NISMode::eSharpen;
+		nisOptions.hdrMode = sl::NISHDR::eNone;
+		nisOptions.sharpness = a_sharpness * 0.5f;
+
+		if (SL_FAILED(result, slNISSetOptions(viewport, nisOptions))) {
+			logger::critical("[Streamline] Could not set NIS options");
+		}
 	}
 
 	sl::ViewportHandle view(viewport);
 	const sl::BaseStructure* inputs[] = { &view };
 
-	slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), context);
+	slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
 }
 
 void Streamline::UpdateConstants()
@@ -429,7 +528,7 @@ void Streamline::UpdateConstants()
 	if (!frameChecker.IsNewFrame())
 		return;
 
-	auto state = State::GetSingleton();
+	auto state = globals::state;
 
 	auto cameraData = Util::GetCameraData(0);
 	auto eyePosition = Util::GetEyePosition(0);
@@ -448,7 +547,7 @@ void Streamline::UpdateConstants()
 
 	sl::Constants slConstants = {};
 
-	if (state->isVR) {
+	if (globals::game::isVR) {
 		slConstants.cameraAspectRatio = (state->screenSize.x * 0.5f) / state->screenSize.y;
 	} else {
 		slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
@@ -472,12 +571,12 @@ void Streamline::UpdateConstants()
 	slConstants.clipToPrevClip = *(sl::float4x4*)&cameraToPrevCamera;
 	slConstants.depthInverted = sl::Boolean::eFalse;
 
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = globals::upscaling;
 	auto jitter = upscaling->jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	slConstants.reset = upscaling->reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
-	slConstants.mvecScale = { (state->isVR ? 0.5f : 1.0f), 1 };
+	slConstants.mvecScale = { (globals::game::isVR ? 0.5f : 1.0f), 1 };
 	slConstants.prevClipToClip = *(sl::float4x4*)&prevCameraToCamera;
 	slConstants.motionVectors3D = sl::Boolean::eTrue;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;
@@ -492,10 +591,62 @@ void Streamline::UpdateConstants()
 	}
 }
 
+void Streamline::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
+void Streamline::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void Streamline::RestoreDefaultSettings()
+{
+	settings = {};
+}
+
 void Streamline::DestroyDLSSResources()
 {
 	sl::DLSSOptions dlssOptions{};
 	dlssOptions.mode = sl::DLSSMode::eOff;
 	slDLSSSetOptions(viewport, dlssOptions);
 	slFreeResources(sl::kFeatureDLSS, viewport);
+}
+
+static void TimerSleepQPC(int64_t targetQPC)
+{
+	LARGE_INTEGER currentQPC;
+	do {
+		QueryPerformanceCounter(&currentQPC);
+	} while (currentQPC.QuadPart < targetQPC);
+}
+
+void Streamline::BeginFrame()
+{
+	if (featureDLSSG && settings.frameGenerationMode == sl::DLSSGMode::eOn && settings.frameLimitMode) {
+		LARGE_INTEGER qpf;
+		QueryPerformanceFrequency(&qpf);
+
+		double bestRefreshRate = refreshRate - (refreshRate * refreshRate) / 3600.0;
+		int64_t targetFrameTicks = int64_t(double(qpf.QuadPart) / (bestRefreshRate * 0.5));
+
+		static LARGE_INTEGER lastFrame = {};
+		LARGE_INTEGER timeNow;
+		QueryPerformanceCounter(&timeNow);
+		int64_t delta = timeNow.QuadPart - lastFrame.QuadPart;
+		if (delta < targetFrameTicks) {
+			TimerSleepQPC(lastFrame.QuadPart + targetFrameTicks);
+		}
+		QueryPerformanceCounter(&lastFrame);
+	}
+}
+
+void Streamline::Main_RenderWorld::thunk(bool a1)
+{
+	if (!globals::game::isVR || !globals::state->upscalerLoaded) {
+		// With upscaler, VR hangs on this function, specifically at slSetConstants
+		globals::streamline->UpdateConstants();
+	}
+	func(a1);
 }

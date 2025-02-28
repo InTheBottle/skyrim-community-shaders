@@ -1,8 +1,6 @@
 #include "GrassCollision.h"
 
 #include "State.h"
-#include "Util.h"
-#include "VariableCache.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GrassCollision::Settings,
@@ -44,7 +42,7 @@ static bool GetShapeBound(RE::NiAVObject* a_node, RE::NiPoint3& centerPos, float
 		centerPos = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
 
 		const RE::hkpShape* shape = hkpRigid->collidable.GetShape();
-		if (shape) {
+		if (shape && shape->type == RE::hkpShapeType::kCapsule) {
 			float upExtent = shape->GetMaximumProjection(RE::hkVector4{ 0.0f, 0.0f, 1.0f, 0.0f }) * RE::bhkWorld::GetWorldScaleInverse();
 			float downExtent = shape->GetMaximumProjection(RE::hkVector4{ 0.0f, 0.0f, -1.0f, 0.0f }) * RE::bhkWorld::GetWorldScaleInverse();
 			auto z_extent = (upExtent + downExtent) / 2.0f;
@@ -81,7 +79,7 @@ static bool GetShapeBound(RE::bhkNiCollisionObject* Colliedobj, RE::NiPoint3& ce
 		centerPos = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
 
 		const RE::hkpShape* shape = hkpRigid->collidable.GetShape();
-		if (shape) {
+		if (shape && shape->type == RE::hkpShapeType::kCapsule) {
 			float upExtent = shape->GetMaximumProjection(RE::hkVector4{ 0.0f, 0.0f, 1.0f, 0.0f }) * RE::bhkWorld::GetWorldScaleInverse();
 			float downExtent = shape->GetMaximumProjection(RE::hkVector4{ 0.0f, 0.0f, -1.0f, 0.0f }) * RE::bhkWorld::GetWorldScaleInverse();
 			auto z_extent = (upExtent + downExtent) / 2.0f;
@@ -133,7 +131,8 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 			break;
 		if (auto root = actor->Get3D(false)) {
 			auto position = actor->GetPosition();
-			if (cameraPosition.GetDistance(position) > 1024)  // Check against distance
+			float distance = cameraPosition.GetDistance(position);
+			if (distance > 2048.0f)  // Cull against distance
 				continue;
 
 			activeActorCount++;
@@ -141,6 +140,8 @@ void GrassCollision::UpdateCollisions(PerFrame& perFrameData)
 				RE::NiPoint3 centerPos;
 				float radius;
 				if (GetShapeBound(a_object, centerPos, radius)) {
+					if (radius < distance * 0.01f)
+						return RE::BSVisit::BSVisitControl::kContinue;
 					radius *= 2.0f;
 					CollisionData data{};
 					RE::NiPoint3 eyePosition{};
@@ -181,7 +182,7 @@ void GrassCollision::Update()
 		updatePerFrame = false;
 	}
 
-	auto& context = State::GetSingleton()->context;
+	auto context = globals::d3d::context;
 
 	static Util::FrameChecker frameChecker;
 	if (frameChecker.IsNewFrame()) {
@@ -233,6 +234,6 @@ bool GrassCollision::HasShaderDefine(RE::BSShader::Type shaderType)
 
 void GrassCollision::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
-	VariableCache::GetSingleton()->grassCollision->Update();
+	globals::features::grassCollision->Update();
 	func(This, Pass, RenderFlags);
 }

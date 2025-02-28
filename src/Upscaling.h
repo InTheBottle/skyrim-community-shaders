@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-#include "State.h"
-
 #include "FidelityFX.h"
 #include "Streamline.h"
 
@@ -45,7 +42,7 @@ public:
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kTAA;
 		uint upscaleMethodNoFSR = (uint)UpscaleMethod::kTAA;
 		float sharpness = 0.5f;
-		uint dlssPreset = (uint)sl::DLSSPreset::ePresetC;
+		uint dlssPreset = (uint)sl::DLSSPreset::ePresetE;
 	};
 
 	Settings settings;

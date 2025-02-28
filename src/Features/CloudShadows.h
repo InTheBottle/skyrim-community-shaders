@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-#include "Feature.h"
-
 struct CloudShadows : Feature
 {
 	static CloudShadows* GetSingleton()
@@ -10,6 +7,14 @@ struct CloudShadows : Feature
 		static CloudShadows singleton;
 		return &singleton;
 	}
+
+	struct alignas(16) Settings
+	{
+		float Opacity = 0.8f;
+		float pad[3];
+	};
+
+	Settings settings;
 
 	virtual inline std::string GetName() override { return "Cloud Shadows"; }
 	virtual inline std::string GetShortName() override { return "CloudShadows"; }
@@ -20,14 +25,26 @@ struct CloudShadows : Feature
 	void SkyShaderHacks();
 
 	Texture2D* texCubemapCloudOcc = nullptr;
+	Texture2D* texCubemapCloudOccCopy = nullptr;
+
 	ID3D11RenderTargetView* cubemapCloudOccRTVs[6] = { nullptr };
+	ID3D11RenderTargetView* cubemapCloudOccCopyRTVs[6] = { nullptr };
+
 	ID3D11BlendState* cloudShadowBlendState = nullptr;
 
 	virtual void SetupResources() override;
 
+	virtual void DrawSettings() override;
+
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+
+	virtual void RestoreDefaultSettings() override;
+
 	void CheckResourcesSide(int side);
 	void ModifySky(RE::BSRenderPass* Pass);
 
+	virtual void ReflectionsPrepass() override;
 	virtual void EarlyPrepass() override;
 
 	virtual inline void PostPostLoad() override { Hooks::Install(); }

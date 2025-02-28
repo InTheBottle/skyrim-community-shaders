@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-#include "Feature.h"
-
 struct ScreenSpaceGI : Feature
 {
 	static ScreenSpaceGI* GetSingleton()
@@ -49,22 +46,22 @@ struct ScreenSpaceGI : Feature
 		bool EnableGI = true;
 		bool EnableExperimentalSpecularGI = false;
 		// performance/quality
-		uint NumSlices = 5;
+		uint NumSlices = 2;
 		uint NumSteps = 8;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter
 		// visual
 		float MinScreenRadius = 0.01f;
-		float AORadius = 100.f;
-		float GIRadius = 400.f;
-		float Thickness = 75.f;
+		float AORadius = 256.f;
+		float GIRadius = 256.f;
+		float Thickness = 16.f;
 		float2 DepthFadeRange = { 4e4, 5e4 };
 		// gi
-		float GISaturation = .9f;
+		float GISaturation = 0.9f;
 		bool EnableGIBounce = true;
-		float GIBounceFade = .3f;
+		float GIBounceFade = 1.0f;
 		float GIDistanceCompensation = 0.f;
 		// mix
-		float AOPower = 2.f;
+		float AOPower = 1.0f;
 		float GIStrength = 1.5f;
 		// denoise
 		bool EnableTemporalDenoiser = true;
@@ -72,7 +69,7 @@ struct ScreenSpaceGI : Feature
 		float DepthDisocclusion = .1f;
 		float NormalDisocclusion = .1f;
 		uint MaxAccumFrames = 16;
-		float BlurRadius = 5.f;
+		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
 	} settings;
 

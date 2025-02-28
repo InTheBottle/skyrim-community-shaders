@@ -1,10 +1,32 @@
 #include "CloudShadows.h"
 
-#include "State.h"
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CloudShadows::Settings,
+	Opacity)
 
-#include "Deferred.h"
-#include "Util.h"
-#include "VariableCache.h"
+void CloudShadows::DrawSettings()
+{
+	ImGui::SliderFloat("Opacity", &settings.Opacity, 0.0f, 1.0f, "%.1f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text(
+			"Higher values make cloud shadows darker.");
+	}
+}
+
+void CloudShadows::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void CloudShadows::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
+void CloudShadows::RestoreDefaultSettings()
+{
+	settings = {};
+}
 
 void CloudShadows::CheckResourcesSide(int side)
 {
@@ -12,7 +34,7 @@ void CloudShadows::CheckResourcesSide(int side)
 	if (!frame_checker[side].IsNewFrame())
 		return;
 
-	auto& context = State::GetSingleton()->context;
+	auto context = globals::d3d::context;
 
 	float black[4] = { 0, 0, 0, 0 };
 	context->ClearRenderTargetView(cubemapCloudOccRTVs[side], black);
@@ -21,9 +43,8 @@ void CloudShadows::CheckResourcesSide(int side)
 void CloudShadows::SkyShaderHacks()
 {
 	if (overrideSky) {
-		auto variableCache = VariableCache::GetSingleton();
-		auto renderer = variableCache->renderer;
-		auto context = variableCache->context;
+		auto renderer = globals::game::renderer;
+		auto context = globals::d3d::context;
 
 		auto reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGET_CUBEMAP::kREFLECTIONS];
 
@@ -60,7 +81,7 @@ void CloudShadows::SkyShaderHacks()
 
 void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 {
-	auto shadowState = VariableCache::GetSingleton()->shadowState;
+	auto shadowState = globals::game::shadowState;
 
 	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
 
@@ -74,13 +95,31 @@ void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 	}
 }
 
+void CloudShadows::ReflectionsPrepass()
+{
+	Util::FrameChecker frameChecker;
+	if (frameChecker.IsNewFrame()) {
+		if ((RE::Sky::GetSingleton()->mode.get() != RE::Sky::Mode::kFull) ||
+			!RE::Sky::GetSingleton()->currentClimate)
+			return;
+
+		auto context = globals::d3d::context;
+
+		context->CopyResource(texCubemapCloudOccCopy->resource.get(), texCubemapCloudOcc->resource.get());
+
+		ID3D11ShaderResourceView* srv = texCubemapCloudOccCopy->srv.get();
+		context->PSSetShaderResources(25, 1, &srv);
+		context->CSSetShaderResources(25, 1, &srv);
+	}
+}
+
 void CloudShadows::EarlyPrepass()
 {
-	if ((RE::Sky::GetSingleton()->mode.get() != RE::Sky::Mode::kFull) ||
-		!RE::Sky::GetSingleton()->currentClimate)
+	if ((globals::game::sky->mode.get() != RE::Sky::Mode::kFull) ||
+		!globals::game::sky->currentClimate)
 		return;
 
-	auto& context = State::GetSingleton()->context;
+	auto context = globals::d3d::context;
 
 	ID3D11ShaderResourceView* srv = texCubemapCloudOcc->srv.get();
 	context->PSSetShaderResources(25, 1, &srv);
@@ -89,8 +128,8 @@ void CloudShadows::EarlyPrepass()
 
 void CloudShadows::SetupResources()
 {
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-	auto& device = State::GetSingleton()->device;
+	auto renderer = globals::game::renderer;
+	auto device = globals::d3d::device;
 
 	{
 		auto reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGET_CUBEMAP::kREFLECTIONS];
@@ -111,6 +150,15 @@ void CloudShadows::SetupResources()
 			reflections.cubeSideRTV[i]->GetDesc(&rtvDesc);
 			rtvDesc.Format = texDesc.Format;
 			DX::ThrowIfFailed(device->CreateRenderTargetView(texCubemapCloudOcc->resource.get(), &rtvDesc, cubemapCloudOccRTVs + i));
+		}
+
+		texCubemapCloudOccCopy = new Texture2D(texDesc);
+		texCubemapCloudOccCopy->CreateSRV(srvDesc);
+
+		for (int i = 0; i < 6; ++i) {
+			reflections.cubeSideRTV[i]->GetDesc(&rtvDesc);
+			rtvDesc.Format = texDesc.Format;
+			DX::ThrowIfFailed(device->CreateRenderTargetView(texCubemapCloudOccCopy->resource.get(), &rtvDesc, cubemapCloudOccCopyRTVs + i));
 		}
 	}
 	{
@@ -133,6 +181,6 @@ void CloudShadows::SetupResources()
 
 void CloudShadows::Hooks::BSSkyShader_SetupMaterial::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
-	VariableCache::GetSingleton()->cloudShadows->ModifySky(Pass);
+	globals::features::cloudShadows->ModifySky(Pass);
 	func(This, Pass, RenderFlags);
 }
