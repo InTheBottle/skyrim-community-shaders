@@ -1,13 +1,29 @@
 #pragma once
 
+#include "Buffer.h"
+#include "State.h"
+
+#include <d3d11_4.h>
+#include <d3d12.h>
+
 #define NV_WINDOWS
+
+#pragma warning(push)
+#pragma warning(disable: 4471)
+// Streamline Core
 #include <sl.h>
 #include <sl_consts.h>
+#include <sl_hooks.h>
+#include <sl_version.h>
+
+// Streamline Features
+#include <sl_deepdvc.h>
 #include <sl_dlss.h>
 #include <sl_dlss_g.h>
 #include <sl_matrix_helpers.h>
 #include <sl_nis.h>
 #include <sl_reflex.h>
+#pragma warning(pop)
 
 class Streamline
 {
@@ -30,8 +46,26 @@ public:
 
 	double refreshRate = 60.0;
 
+	bool reflex = true;
+
 	sl::ViewportHandle viewport{ 0 };
 	sl::FrameToken* frameToken;
+	sl::FrameToken* frameTokenPrevious;
+
+	PFun_slGetNewFrameToken* slGetNewFrameToken{};
+
+	uint32_t frameID = 1;
+
+	sl::FrameToken* GetFrameToken(uint32_t a_frameID)
+	{
+		static uint32_t lastframeID = 0;
+		if (lastframeID < a_frameID) {
+			slGetNewFrameToken(frameToken, &a_frameID);
+			frameTokenPrevious = frameToken;
+		}
+		lastframeID = frameID;
+		return frameToken;
+	}
 
 	struct Settings
 	{
@@ -59,7 +93,6 @@ public:
 	PFun_slSetConstants* slSetConstants{};
 	PFun_slGetNativeInterface* slGetNativeInterface{};
 	PFun_slGetFeatureFunction* slGetFeatureFunction{};
-	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
 
 	// DLSS specific functions
@@ -73,7 +106,6 @@ public:
 
 	// Reflex specific functions
 	PFun_slReflexGetState* slReflexGetState{};
-	PFun_slReflexSetMarker* slReflexSetMarker{};
 	PFun_slReflexSleep* slReflexSleep{};
 	PFun_slReflexSetOptions* slReflexSetOptions{};
 
@@ -83,8 +115,10 @@ public:
 
 	Texture2D* colorBufferShared;
 	Texture2D* depthBufferShared;
+	PFun_slReflexSetCameraData* slReflexSetCameraData{};
+	PFun_slReflexGetPredictedCameraData* slReflexGetPredictedCameraData{};
 
-	ID3D11ComputeShader* copyDepthToSharedBufferCS;
+	PFun_slPCLSetMarker* slPCLSetMarker2{};
 
 	void DrawSettings();
 
@@ -153,8 +187,7 @@ public:
 
 	static void InstallHooks()
 	{
-		stl::write_thunk_call<Main_Update_Start>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x1E, 0x3E, 0x33));
-		stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
-		stl::write_thunk_call<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x7E, 0x83, 0x97));
-	}
+		//stl::write_thunk_call<Main_Update_Start>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x1E, 0x3E, 0x33));
+		//stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
+		//stl::write_thunk_call<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084).address() + REL::Relocate(0x7E, 0x83, 0x97));
 };

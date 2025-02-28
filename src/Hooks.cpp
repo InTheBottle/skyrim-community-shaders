@@ -5,8 +5,16 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
-#include "Streamline.h"
 #include "TruePBR.h"
+#include "Util.h"
+
+#include "ShaderTools/BSShaderHooks.h"
+
+#include "FidelityFX.h"
+#include "Streamline.h"
+
+#include "DX12SwapChain.h"
+#include "VariableCache.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
@@ -197,6 +205,9 @@ struct IDXGISwapChain_Present
 			Flags |= DXGI_PRESENT_ALLOW_TEARING;
 		}
 
+		State::GetSingleton()->Reset();
+		Menu::GetSingleton()->DrawOverlay();
+		//Streamline::GetSingleton()->Present();
 		auto retval = func(This, SyncInterval, Flags);
 		TracyD3D11Collect(globals::state->tracyCtx);
 		return retval;
@@ -242,7 +253,32 @@ decltype(&CreateDXGIFactory) ptrCreateDXGIFactory;
 
 HRESULT WINAPI hk_CreateDXGIFactory(REFIID, void** ppFactory)
 {
-	return globals::streamline->CreateDXGIFactory(__uuidof(IDXGIFactory1), ppFactory);
+	return ptrCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory);
+
+	//if (SUCCEEDED(ptrCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory))) {
+	//	return S_OK;
+	//}
+
+	//if (SUCCEEDED(ptrCreateDXGIFactory(__uuidof(IDXGIFactory3), ppFactory))) {
+	//	return S_OK;
+	//}
+
+	//if (SUCCEEDED(ptrCreateDXGIFactory(__uuidof(IDXGIFactory2), ppFactory))) {
+	//	return S_OK;
+	//}
+
+	//auto hr = ptrCreateDXGIFactory(__uuidof(IDXGIFactory), ppFactory);
+
+	//return hr;
+}
+
+decltype(&ID3D11DeviceContext::ClearState) ptrClearState;
+
+void WINAPI hk_ClearState(ID3D11DeviceContext* This)
+{
+	DX12SwapChain::GetSingleton()->BeginFrame();
+	;
+	(This->*ptrClearState)();
 }
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
@@ -300,6 +336,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
 	auto result = globals::streamline->CreateDeviceAndSwapChain(
+	auto proxy = DX12SwapChain::GetSingleton();
+
+	proxy->CreateD3D12Device(pAdapter);
+
+	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
+
+	D3D11CreateDevice(
 		pAdapter,
 		DriverType,
 		Software,
@@ -307,26 +350,50 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		&featureLevel,
 		1,
 		SDKVersion,
-		pSwapChainDesc,
-		ppSwapChain,
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
-	if (SUCCEEDED(result)) {
-		return result;
-	}
-	return ptrD3D11CreateDeviceAndSwapChain(pAdapter,
-		DriverType,
-		Software,
-		Flags,
-		&featureLevel,
-		1,
-		SDKVersion,
-		pSwapChainDesc,
-		ppSwapChain,
-		ppDevice,
-		pFeatureLevel,
-		ppImmediateContext);
+
+	proxy->SetD3D11Device(*ppDevice);
+	proxy->SetD3D11DeviceContext(*ppImmediateContext);
+
+	proxy->CreateSwapChain(pAdapter, *pSwapChainDesc);
+
+	proxy->CreateInterop();
+
+	*ppSwapChain = proxy->GetSwapChainProxy();
+
+	return S_OK;
+
+	//const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;  // Create a device with only the latest feature level
+	//auto result = Streamline::GetSingleton()->CreateDeviceAndSwapChain(
+	//	pAdapter,
+	//	DriverType,
+	//	Software,
+	//	Flags,
+	//	&featureLevel,
+	//	1,
+	//	SDKVersion,
+	//	pSwapChainDesc,
+	//	ppSwapChain,
+	//	ppDevice,
+	//	pFeatureLevel,
+	//	ppImmediateContext);
+	//if (SUCCEEDED(result)) {
+	//	return result;
+	//}
+	//return ptrD3D11CreateDeviceAndSwapChain(pAdapter,
+	//	DriverType,
+	//	Software,
+	//	Flags,
+	//	&featureLevel,
+	//	1,
+	//	SDKVersion,
+	//	pSwapChainDesc,
+	//	ppSwapChain,
+	//	ppDevice,
+	//	pFeatureLevel,
+	//	ppImmediateContext);
 }
 
 struct BSShaderRenderTargets_Create
@@ -400,6 +467,9 @@ namespace Hooks
 				stl::detour_vfunc<15, ID3D11Device_CreatePixelShader>(globals::d3d::device);
 			}
 			globals::menu->Init();
+			*(uintptr_t*)&ptrClearState = Detours::X64::DetourClassVTable(*(uintptr_t*)context, &hk_ClearState, 110);
+
+			VariableCache::GetSingleton()->OnInit();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -813,21 +883,29 @@ namespace Hooks
 	void InstallD3DHooks()
 	{
 		auto streamline = globals::streamline;
-		auto state = globals::state;
 
 		streamline->LoadInterposer();
 
-		if (streamline->interposer && !state->IsFeatureDisabled("Frame Generation")) {
-			Streamline::InstallHooks();
+		auto fidelityFX = FidelityFX::GetSingleton();
 
-			logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-			*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+		fidelityFX->Init();
 
-			logger::info("Hooking CreateDXGIFactory");
-			*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
-		} else if (!state->IsFeatureDisabled("Upscaling")) {
-			logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-			*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainNoStreamline, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
-		}
+		*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
+
+		Streamline::InstallHooks();
+
+		//if (streamline->interposer && !state->IsFeatureDisabled("Frame Generation")) {
+		//	Streamline::InstallHooks();
+
+		//	logger::info("Hooking D3D11CreateDeviceAndSwapChain");
+		//	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+
+		//	logger::info("Hooking CreateDXGIFactory");
+		//	*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
+		//} else if (!state->IsFeatureDisabled("Upscaling")) {
+		//	logger::info("Hooking D3D11CreateDeviceAndSwapChain");
+		//	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainNoStreamline, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+		//}
 	}
 }

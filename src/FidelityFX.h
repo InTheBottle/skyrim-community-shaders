@@ -4,6 +4,15 @@
 #include <FidelityFX/host/ffx_fsr3.h>
 #include <FidelityFX/host/ffx_interface.h>
 
+#include <dx12/ffx_api_dx12.h>
+#include <ffx_api.hpp>
+#include <ffx_api_loader.h>
+#include <ffx_api_types.h>
+#include <ffx_framegeneration.hpp>
+
+#include "Buffer.h"
+#include "State.h"
+
 class FidelityFX
 {
 public:
@@ -13,7 +22,21 @@ public:
 		return &singleton;
 	}
 
+	HMODULE dll = NULL;
+
+	ffxContext frameGenContext;
+
 	FfxFsr3Context fsrContext;
+
+	void DrawSettings();
+
+	void Init();
+
+	void WrapSwapChain();
+
+	void CreateFrameGenerationResources();
+
+	void Present();
 
 	void CreateFSRResources();
 	void DestroyFSRResources();

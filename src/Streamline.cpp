@@ -5,6 +5,9 @@
 
 #include "Hooks.h"
 #include "State.h"
+#include "Util.h"
+
+#include "DX12SwapChain.h"
 #include "Upscaling.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -44,6 +47,8 @@ void Streamline::DrawSettings()
 			}
 			ImGui::TreePop();
 		}
+		ImGui::Checkbox("reflex", &reflex);
+
 		if (ImGui::TreeNodeEx("AMD FSR 3.1 Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Text("Not currently supported");
 			ImGui::TreePop();
@@ -72,20 +77,20 @@ void Streamline::Initialize()
 
 	sl::Preferences pref;
 
-	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeatureNIS };
+	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeatureNIS, sl::kFeaturePCL };
 	pref.featuresToLoad = featuresToLoad;
 	pref.numFeaturesToLoad = _countof(featuresToLoad);
 
-	pref.logLevel = sl::LogLevel::eOff;
+	pref.logLevel = sl::LogLevel::eVerbose;
 	pref.logMessageCallback = LoggingCallback;
 	pref.showConsole = false;
 
 	pref.engine = sl::EngineType::eCustom;
 	pref.engineVersion = "1.0.0";
 	pref.projectId = "f8776929-c969-43bd-ac2b-294b4de58aac";
-	pref.flags |= sl::PreferenceFlags::eUseManualHooking;
+	//pref.flags |= sl::PreferenceFlags::eUseDXGIFactoryProxy;
 
-	pref.renderAPI = sl::RenderAPI::eD3D11;
+	pref.renderAPI = sl::RenderAPI::eD3D12;
 
 	// Hook up all of the functions exported by the SL Interposer Library
 	slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
@@ -131,9 +136,11 @@ void Streamline::PostDevice(DXGI_SWAP_CHAIN_DESC* a_swapChainDesc)
 
 	if (featureReflex) {
 		slGetFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-		slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetMarker", (void*&)slReflexSetMarker);
+		//slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetMarker", (void*&)slReflexSetMarker);
 		slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
 		slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
+		slGetFeatureFunction(sl::kFeatureReflex, "slReflexGetPredictedCameraData", (void*&)slReflexGetPredictedCameraData);
+		slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetCameraData", (void*&)slReflexSetCameraData);
 	}
 
 	if (featureNIS) {
@@ -152,6 +159,7 @@ void Streamline::PostDevice(DXGI_SWAP_CHAIN_DESC* a_swapChainDesc)
 
 	EnumDisplaySettings(monitorInfo.szDevice, ENUM_CURRENT_SETTINGS, &devMode);
 	refreshRate = devMode.dmDisplayFrequency;
+	slGetFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker2);
 }
 
 HRESULT Streamline::CreateDXGIFactory(REFIID riid, void** ppFactory)
@@ -289,12 +297,24 @@ HRESULT Streamline::CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter,
 
 void Streamline::SetupResources()
 {
+	if (featureDLSSG && !REL::Module::IsVR()) {
+		sl::DLSSGOptions options{};
+		options.mode = sl::DLSSGMode::eOn;
+		//options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
+
+		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
+			logger::critical("[Streamline] Could not enable DLSSG");
+		} else {
+			logger::info("[Streamline] Successfully enabled DLSSG");
+		}
+	}
+
 	if (featureReflex) {
 		sl::ReflexOptions reflexOptions{};
-		reflexOptions.mode = sl::ReflexMode::eLowLatencyWithBoost;
+		reflexOptions.mode = reflex ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eOff;
 		reflexOptions.useMarkersToOptimize = false;
 		reflexOptions.virtualKey = 0;
-		reflexOptions.frameLimitUs = 0;
+		reflexOptions.frameLimitUs = int(1000000. / 30.);
 
 		if (SL_FAILED(res, slReflexSetOptions(reflexOptions))) {
 			logger::error("[Streamline] Failed to set reflex options");
@@ -302,105 +322,6 @@ void Streamline::SetupResources()
 			logger::info("[Streamline] Successfully set reflex options");
 		}
 	}
-
-	if (featureDLSS || (featureDLSSG && !REL::Module::IsVR())) {
-		logger::info("[Streamline] Creating resources");
-
-		auto renderer = globals::game::renderer;
-		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-
-		D3D11_TEXTURE2D_DESC texDesc{};
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-
-		main.texture->GetDesc(&texDesc);
-		main.SRV->GetDesc(&srvDesc);
-		main.RTV->GetDesc(&rtvDesc);
-		main.UAV->GetDesc(&uavDesc);
-
-		if (featureDLSSG && !REL::Module::IsVR()) {
-			texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-
-			texDesc.Format = DXGI_FORMAT_R16_UNORM;
-			srvDesc.Format = texDesc.Format;
-			rtvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-
-			depthBufferShared = new Texture2D(texDesc);
-			depthBufferShared->CreateUAV(uavDesc);
-
-			copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
-		}
-
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		srvDesc.Format = texDesc.Format;
-		rtvDesc.Format = texDesc.Format;
-		uavDesc.Format = texDesc.Format;
-
-		colorBufferShared = new Texture2D(texDesc);
-	}
-}
-
-void Streamline::CopyResourcesToSharedBuffers()
-{
-	if (!(featureDLSSG && !REL::Module::IsVR()) || settings.frameGenerationMode == sl::DLSSGMode::eOff)
-		return;
-
-	auto context = globals::d3d::context;
-	auto renderer = globals::game::renderer;
-
-	ID3D11RenderTargetView* backupViews[8];
-	ID3D11DepthStencilView* backupDsv;
-	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
-	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
-
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
-	ID3D11Resource* swapChainResource;
-	swapChain.SRV->GetResource(&swapChainResource);
-
-	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
-
-	{
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-		{
-			auto dispatchCount = Util::GetScreenDispatchCount(true);
-
-			ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
-			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-			ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
-
-			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		}
-
-		ID3D11ShaderResourceView* views[1] = { nullptr };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		ID3D11ComputeShader* shader = nullptr;
-		context->CSSetShader(shader, nullptr, 0);
-	}
-
-	context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
-
-	for (int i = 0; i < 8; i++) {
-		if (backupViews[i])
-			backupViews[i]->Release();
-	}
-
-	if (backupDsv)
-		backupDsv->Release();
 }
 
 void Streamline::Present()
@@ -418,6 +339,8 @@ void Streamline::Present()
 		sl::DLSSGOptions options{};
 		options.mode = settings.frameGenerationMode;
 		options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
+		options.mode = frameGenerationMode;
+		//options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
 		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 			logger::error("[Streamline] Could not set DLSSG");
@@ -426,32 +349,46 @@ void Streamline::Present()
 
 	if (featureReflex) {
 		// Fake NVIDIA Reflex to prevent DLSSG errors
-		slReflexSetMarker(sl::ReflexMarker::eInputSample, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::ePresentStart, *frameToken);
-		slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::eInputSample, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::ePresentStart, *frameToken);
+		//slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *frameToken);
 	}
 
 	auto renderer = globals::game::renderer;
 	auto state = globals::state;
+	//auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-	auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
+	//auto& motionVectorsBuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR];
 
 	sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 
 	float2 dynamicScreenSize = Util::ConvertToDynamic(state->screenSize);
+	auto context = DX12SwapChain::GetSingleton()->commandList.get();
+
+	{
+		// tag backbuffer resource mainly to pass extent data and therefore resource can be nullptr.
+		// If the viewport extent is invalid - set extent to null. This informs streamline that full resource extent needs to be used
+		sl::ResourceTag backBufferResourceTag = sl::ResourceTag{ nullptr, sl::kBufferTypeBackbuffer, sl::ResourceLifecycle{}, nullptr };
+		sl::ResourceTag inputs[] = { backBufferResourceTag };
+		slSetTag(viewport, inputs, _countof(inputs), context);
+	}
+
+	float2 dynamicScreenSize = Util::ConvertToDynamic(State::GetSingleton()->screenSize);
 	sl::Extent dynamicExtent{ 0, 0, (uint)dynamicScreenSize.x, (uint)dynamicScreenSize.y };
 
-	sl::Resource depth = { sl::ResourceType::eTex2d, depthBufferShared->resource.get(), 0 };
+	auto upscaling = Upscaling::GetSingleton();
+
+	sl::Resource depth = { sl::ResourceType::eTex2d, upscaling->depthBufferShared12.get(), 0 };
 	sl::ResourceTag depthTag = sl::ResourceTag{ &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &dynamicExtent };
 
-	sl::Resource mvec = { sl::ResourceType::eTex2d, motionVectorsBuffer.texture, 0 };
+	sl::Resource mvec = { sl::ResourceType::eTex2d, DX12SwapChain::GetSingleton()->renderTargetsD3D12[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR].d3d12Resource.get(), 0 };
 	sl::ResourceTag mvecTag = sl::ResourceTag{ &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &dynamicExtent };
 
-	sl::Resource hudLess = { sl::ResourceType::eTex2d, colorBufferShared->resource.get(), 0 };
+	sl::Resource hudLess = { sl::ResourceType::eTex2d, upscaling->colorBufferShared12.get(), 0 };
 	sl::ResourceTag hudLessTag = sl::ResourceTag{ &hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 	sl::Resource ui = { sl::ResourceType::eTex2d, nullptr, 0 };
@@ -459,6 +396,8 @@ void Streamline::Present()
 
 	sl::ResourceTag inputs[] = { depthTag, mvecTag, hudLessTag, uiTag };
 	slSetTag(viewport, inputs, _countof(inputs), globals::d3d::context);
+
+	slSetTag(viewport, inputs, _countof(inputs), context);
 }
 
 void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset, float a_sharpness)
@@ -496,6 +435,8 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 			logger::critical("[Streamline] Could not enable DLSS");
 		}
 	}
+
+	auto context = DX12SwapChain::GetSingleton()->commandList.get();
 
 	{
 		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
@@ -578,6 +519,7 @@ void Streamline::Sharpen(Texture2D* a_sharpenTexture, float a_sharpness)
 		if (SL_FAILED(result, slNISSetOptions(viewport, nisOptions))) {
 			logger::critical("[Streamline] Could not set NIS options");
 		}
+		slSetTag(viewport, resourceTags, _countof(resourceTags), context);
 	}
 
 	sl::ViewportHandle view(viewport);
@@ -648,10 +590,7 @@ void Streamline::UpdateConstants()
 	slConstants.motionVectorsDilated = sl::Boolean::eFalse;
 	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
 
-	if (SL_FAILED(res, slGetNewFrameToken(frameToken, nullptr))) {
-		logger::error("[Streamline] Could not get frame token");
-		return;
-	}
+	GetFrameToken(frameID);
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, viewport))) {
 		logger::error("[Streamline] Could not set constants");

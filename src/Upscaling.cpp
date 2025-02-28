@@ -1,5 +1,6 @@
 #include "Upscaling.h"
 
+#include "DX12SwapChain.h"
 #include "Hooks.h"
 #include "State.h"
 
@@ -437,4 +438,137 @@ void Upscaling::InstallHooks()
 	} else {
 		logger::info("[Upscaling] Not installing hooks due to Skyrim Upscaler");
 	}
+}
+
+void Upscaling::CreateFrameGenerationResources()
+{
+	logger::info("[Frame Generation] Creating resources");
+
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+	D3D11_TEXTURE2D_DESC texDesc{};
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+
+	main.texture->GetDesc(&texDesc);
+	main.SRV->GetDesc(&srvDesc);
+	main.RTV->GetDesc(&rtvDesc);
+	main.UAV->GetDesc(&uavDesc);
+
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+
+	texDesc.Format = DXGI_FORMAT_R16_UNORM;
+	srvDesc.Format = texDesc.Format;
+	rtvDesc.Format = texDesc.Format;
+	uavDesc.Format = texDesc.Format;
+
+	depthBufferShared = new Texture2D(texDesc);
+	depthBufferShared->CreateSRV(srvDesc);
+	depthBufferShared->CreateRTV(rtvDesc);
+	depthBufferShared->CreateUAV(uavDesc);
+
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Streamline\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+
+	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	srvDesc.Format = texDesc.Format;
+	rtvDesc.Format = texDesc.Format;
+	uavDesc.Format = texDesc.Format;
+
+	colorBufferShared = new Texture2D(texDesc);
+	colorBufferShared->CreateSRV(srvDesc);
+	colorBufferShared->CreateRTV(rtvDesc);
+	colorBufferShared->CreateUAV(uavDesc);
+
+	{
+		IDXGIResource1* dxgiResource = nullptr;
+		DX::ThrowIfFailed(colorBufferShared->resource->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
+
+		HANDLE sharedHandle = nullptr;
+		DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(
+			nullptr,
+			DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+			nullptr,
+			&sharedHandle));
+
+		DX::ThrowIfFailed(DX12SwapChain::GetSingleton()->d3d12Device->OpenSharedHandle(
+			sharedHandle,
+			IID_PPV_ARGS(&colorBufferShared12)));
+
+		CloseHandle(sharedHandle);
+	}
+
+	{
+		IDXGIResource1* dxgiResource = nullptr;
+		DX::ThrowIfFailed(depthBufferShared->resource->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
+
+		HANDLE sharedHandle = nullptr;
+		DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(
+			nullptr,
+			DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+			nullptr,
+			&sharedHandle));
+
+		DX::ThrowIfFailed(DX12SwapChain::GetSingleton()->d3d12Device->OpenSharedHandle(
+			sharedHandle,
+			IID_PPV_ARGS(&depthBufferShared12)));
+
+		CloseHandle(sharedHandle);
+	}
+}
+
+void Upscaling::CopyResourcesToSharedBuffers()
+{
+	auto& context = State::GetSingleton()->context;
+	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+
+	ID3D11RenderTargetView* backupViews[8];
+	ID3D11DepthStencilView* backupDsv;
+	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
+
+	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+
+	ID3D11Resource* swapChainResource;
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	context->CopyResource(colorBufferShared->resource.get(), swapChainResource);
+
+	{
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+		{
+			auto dispatchCount = Util::GetScreenDispatchCount(true);
+
+			ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+			ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
+
+		ID3D11ShaderResourceView* views[1] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11ComputeShader* shader = nullptr;
+		context->CSSetShader(shader, nullptr, 0);
+	}
+
+	context->OMSetRenderTargets(8, backupViews, backupDsv);  // Restore all bound render targets
+
+	for (int i = 0; i < 8; i++) {
+		if (backupViews[i])
+			backupViews[i]->Release();
+	}
+
+	if (backupDsv)
+		backupDsv->Release();
 }
