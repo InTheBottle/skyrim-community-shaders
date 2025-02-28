@@ -2,7 +2,7 @@
 #include <dxgi1_6.h>
 
 #include "Features/TerrainBlending.h"
-#include <Streamline.h>
+#include <FidelityFX.h>
 
 void DX12SwapChain::CacheFramebuffer()
 {
@@ -19,35 +19,35 @@ void DX12SwapChain::Main_RenderDepth::thunk(bool a1, bool a2)
 
 void DX12SwapChain::UpdateFrameBuffer()
 {
-	auto cameraViewInverseAdjusted = frameBufferCached.CameraViewInverse.Transpose();
-	cameraViewInverseAdjusted._41 += frameBufferCached.CameraPosAdjust.x;
-	cameraViewInverseAdjusted._42 += frameBufferCached.CameraPosAdjust.y;
-	cameraViewInverseAdjusted._43 += frameBufferCached.CameraPosAdjust.z;
+	//auto cameraViewInverseAdjusted = frameBufferCached.CameraViewInverse.Transpose();
+	//cameraViewInverseAdjusted._41 += frameBufferCached.CameraPosAdjust.x;
+	//cameraViewInverseAdjusted._42 += frameBufferCached.CameraPosAdjust.y;
+	//cameraViewInverseAdjusted._43 += frameBufferCached.CameraPosAdjust.z;
 
-	auto worldToViewMatrix = cameraViewInverseAdjusted.Invert();
-	auto viewToClipMatrix = frameBufferCached.CameraProjUnjittered.Transpose();
+	//auto worldToViewMatrix = cameraViewInverseAdjusted.Invert();
+	//auto viewToClipMatrix = frameBufferCached.CameraProjUnjittered.Transpose();
 
-	static auto prevRenderedWorldToViewMatrix = worldToViewMatrix;
-	static auto prevRenderedViewToClipMatrix = viewToClipMatrix;
+	//static auto prevRenderedWorldToViewMatrix = worldToViewMatrix;
+	//static auto prevRenderedViewToClipMatrix = viewToClipMatrix;
 
-	sl::ReflexCameraData inCameraData{};
-	inCameraData.worldToViewMatrix = *(sl::float4x4*)&worldToViewMatrix;
-	inCameraData.prevRenderedWorldToViewMatrix = *(sl::float4x4*)&prevRenderedWorldToViewMatrix;
-	inCameraData.viewToClipMatrix = *(sl::float4x4*)&viewToClipMatrix;
-	inCameraData.prevRenderedViewToClipMatrix = *(sl::float4x4*)&prevRenderedViewToClipMatrix;
+	//sl::ReflexCameraData inCameraData{};
+	//inCameraData.worldToViewMatrix = *(sl::float4x4*)&worldToViewMatrix;
+	//inCameraData.prevRenderedWorldToViewMatrix = *(sl::float4x4*)&prevRenderedWorldToViewMatrix;
+	//inCameraData.viewToClipMatrix = *(sl::float4x4*)&viewToClipMatrix;
+	//inCameraData.prevRenderedViewToClipMatrix = *(sl::float4x4*)&prevRenderedViewToClipMatrix;
 
-	auto streamline = Streamline::GetSingleton();
-	auto frameToken = streamline->frameTokenPrevious;
-	static uint32_t lastFrameID = 0;
+	//auto streamline = Streamline::GetSingleton();
+	//auto frameToken = streamline->frameTokenPrevious;
+	//static uint32_t lastFrameID = 0;
 
-	if (frameToken && streamline->frameID > lastFrameID) {
-		prevRenderedWorldToViewMatrix = worldToViewMatrix;
-		prevRenderedViewToClipMatrix = viewToClipMatrix;
-		if (sl::Result::eOk != streamline->slReflexSetCameraData(streamline->viewport, *frameToken, inCameraData)) {
-			logger::error("error");
-		}
-		lastFrameID = streamline->frameID;
-	}
+	//if (frameToken && streamline->frameID > lastFrameID) {
+	//	prevRenderedWorldToViewMatrix = worldToViewMatrix;
+	//	prevRenderedViewToClipMatrix = viewToClipMatrix;
+	//	if (sl::Result::eOk != streamline->slReflexSetCameraData(streamline->viewport, *frameToken, inCameraData)) {
+	//		logger::error("error");
+	//	}
+	//	lastFrameID = streamline->frameID;
+	//}
 }
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* adapter)
@@ -57,13 +57,13 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* adapter)
 	//	debugController->EnableDebugLayer();
 	//}
 
-	auto streamline = Streamline::GetSingleton();
-	auto slD3D12CreateDevice = reinterpret_cast<decltype(&D3D12CreateDevice)>(GetProcAddress(streamline->interposer, "D3D12CreateDevice"));
+	//auto streamline = Streamline::GetSingleton();
+	//auto slD3D12CreateDevice = reinterpret_cast<decltype(&D3D12CreateDevice)>(GetProcAddress(streamline->interposer, "D3D12CreateDevice"));
 
-	streamline->featureDLSSG = true;
-	streamline->featureReflex = true;
+	//streamline->featureDLSSG = true;
+	//streamline->featureReflex = true;
 
-	DX::ThrowIfFailed(slD3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&d3d12Device)));
+	DX::ThrowIfFailed(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&d3d12Device)));
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -74,42 +74,44 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* adapter)
 	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.get(), nullptr, IID_PPV_ARGS(&commandList)));
 	DX::ThrowIfFailed(commandList->Close());
 
-	streamline->slSetD3DDevice(d3d12Device.get());
+	//streamline->slSetD3DDevice(d3d12Device.get());
 
-	DXGI_ADAPTER_DESC adapterDesc;
-	adapter->GetDesc(&adapterDesc);
+	//DXGI_ADAPTER_DESC adapterDesc;
+	//adapter->GetDesc(&adapterDesc);
 
-	sl::AdapterInfo adapterInfo;
-	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
-	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+	//sl::AdapterInfo adapterInfo;
+	//adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
+	//adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
 
-	streamline->slIsFeatureLoaded(sl::kFeatureDLSS_G, streamline->featureDLSSG);
-	if (streamline->featureDLSSG && !REL::Module::IsVR()) {
-		logger::info("[Streamline] DLSSG feature is loaded");
-		streamline->featureDLSSG = streamline->slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk;
-	} else {
-		logger::info("[Streamline] DLSSG feature is not loaded");
-		sl::FeatureRequirements featureRequirements;
-		sl::Result result = streamline->slGetFeatureRequirements(sl::kFeatureDLSS_G, featureRequirements);
-		if (result != sl::Result::eOk) {
-			logger::info("[Streamline] DLSSG feature failed to load due to: {}", magic_enum::enum_name(result));
-		}
-	}
+	//streamline->slIsFeatureLoaded(sl::kFeatureDLSS_G, streamline->featureDLSSG);
+	//if (streamline->featureDLSSG && !REL::Module::IsVR()) {
+	//	logger::info("[Streamline] DLSSG feature is loaded");
+	//	streamline->featureDLSSG = streamline->slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk;
+	//} else {
+	//	logger::info("[Streamline] DLSSG feature is not loaded");
+	//	sl::FeatureRequirements featureRequirements;
+	//	sl::Result result = streamline->slGetFeatureRequirements(sl::kFeatureDLSS_G, featureRequirements);
+	//	if (result != sl::Result::eOk) {
+	//		logger::info("[Streamline] DLSSG feature failed to load due to: {}", magic_enum::enum_name(result));
+	//	}
+	//}
 
-	streamline->slIsFeatureLoaded(sl::kFeatureReflex, streamline->featureReflex);
-	if (streamline->featureReflex) {
-		logger::info("[Streamline] Reflex feature is loaded");
-		streamline->featureReflex = streamline->slIsFeatureSupported(sl::kFeatureReflex, adapterInfo) == sl::Result::eOk;
-	} else {
-		logger::info("[Streamline] Reflex feature is not loaded");
-		sl::FeatureRequirements featureRequirements;
-		sl::Result result = streamline->slGetFeatureRequirements(sl::kFeatureReflex, featureRequirements);
-		if (result != sl::Result::eOk) {
-			logger::info("[Streamline] Reflex feature failed to load due to: {}", magic_enum::enum_name(result));
-		}
-	}
-	streamline->PostDevice();
+	//streamline->slIsFeatureLoaded(sl::kFeatureReflex, streamline->featureReflex);
+	//if (streamline->featureReflex) {
+	//	logger::info("[Streamline] Reflex feature is loaded");
+	//	streamline->featureReflex = streamline->slIsFeatureSupported(sl::kFeatureReflex, adapterInfo) == sl::Result::eOk;
+	//} else {
+	//	logger::info("[Streamline] Reflex feature is not loaded");
+	//	sl::FeatureRequirements featureRequirements;
+	//	sl::Result result = streamline->slGetFeatureRequirements(sl::kFeatureReflex, featureRequirements);
+	//	if (result != sl::Result::eOk) {
+	//		logger::info("[Streamline] Reflex feature failed to load due to: {}", magic_enum::enum_name(result));
+	//	}
+	//}
+	//streamline->PostDevice();
 }
+
+winrt::com_ptr<IDXGISwapChain4> swapChainy;
 
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
@@ -135,7 +137,11 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 		&swapChainDesc,
 		&fullscreenDesc,
 		nullptr,
-		(IDXGISwapChain1**)swapChain.put()));
+		(IDXGISwapChain1**)swapChainy.put()));
+
+	swapChain = swapChainy.get();
+
+	FidelityFX::GetSingleton()->WrapSwapChain();
 }
 
 void DX12SwapChain::CreateInterop()
@@ -154,7 +160,7 @@ void DX12SwapChain::CreateInterop()
 	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&d3d12OnlyFence)));
 	fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-	swapChainProxy = new DXGISwapChainProxy(swapChain.get());
+	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
 	D3D11_TEXTURE2D_DESC texDesc11{};
 	texDesc11.Width = swapChainDesc.Width;
@@ -187,8 +193,8 @@ void DX12SwapChain::SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context)
 {
 	DX::ThrowIfFailed(a_d3d11Context->QueryInterface(IID_PPV_ARGS(&d3d11Context)));
 
-	stl::detour_vfunc<14, ID3D11DeviceContext_Map>(a_d3d11Context);
-	stl::detour_vfunc<15, ID3D11DeviceContext_Unmap>(a_d3d11Context);
+	//stl::detour_vfunc<14, ID3D11DeviceContext_Map>(a_d3d11Context);
+	//stl::detour_vfunc<15, ID3D11DeviceContext_Unmap>(a_d3d11Context);
 }
 
 HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
@@ -216,7 +222,9 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), currentSharedFenceValue));
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), currentSharedFenceValue));
 
-	Streamline::GetSingleton()->Present();
+	FidelityFX::GetSingleton()->Present();
+
+	//Streamline::GetSingleton()->Present();
 
 	currentSharedFenceValue++;
 
@@ -257,12 +265,12 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 	ID3D12CommandList* commandLists[] = { commandList.get() };
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
-	auto streamline = Streamline::GetSingleton();
+	//auto streamline = Streamline::GetSingleton();
 
-	auto frameToken = streamline->GetFrameToken(streamline->frameID);
+	//auto frameToken = streamline->GetFrameToken(streamline->frameID);
 
-	streamline->slPCLSetMarker2(sl::PCLMarker::eRenderSubmitEnd, *frameToken);
-	streamline->slPCLSetMarker2(sl::PCLMarker::ePresentStart, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::eRenderSubmitEnd, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::ePresentStart, *frameToken);
 
 	//    float4x4 worldToViewMatrix;
 	//float4x4 viewToClipMatrix;
@@ -320,7 +328,7 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 
 	auto hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
-	streamline->slPCLSetMarker2(sl::PCLMarker::ePresentEnd, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::ePresentEnd, *frameToken);
 
 	DX::ThrowIfFailed(commandQueue->Signal(d3d12OnlyFence.get(), currentSharedFenceValue));
 
@@ -328,7 +336,7 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 	DX::ThrowIfFailed(d3d12OnlyFence->SetEventOnCompletion(currentSharedFenceValue, fenceEvent));
 	WaitForSingleObjectEx(fenceEvent, INFINITE, FALSE);
 
-	frameToken = streamline->GetFrameToken(++streamline->frameID);
+	//frameToken = streamline->GetFrameToken(++streamline->frameID);
 
 	//sl::ReflexPredictedCameraData outCameraData;
 	//if (sl::Result::eOk == streamline->slReflexGetPredictedCameraData(streamline->viewport, *frameToken, outCameraData))
@@ -341,11 +349,11 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 	//	streamline->slReflexSetCameraData(streamline->viewport, *frameToken, inCameraData);
 	//}
 
-	streamline->slReflexSleep(*frameToken);
+	//streamline->slReflexSleep(*frameToken);
 
-	streamline->slPCLSetMarker2(sl::PCLMarker::eSimulationStart, *frameToken);
-	streamline->slPCLSetMarker2(sl::PCLMarker::eSimulationEnd, *frameToken);
-	streamline->slPCLSetMarker2(sl::PCLMarker::eRenderSubmitStart, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::eSimulationStart, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::eSimulationEnd, *frameToken);
+	//streamline->slPCLSetMarker2(sl::PCLMarker::eRenderSubmitStart, *frameToken);
 
 	return hr;
 }

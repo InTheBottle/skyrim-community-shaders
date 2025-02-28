@@ -28,13 +28,15 @@ public:
 
 	FfxFsr3Context fsrContext;
 
+	void DrawSettings();
+
 	void Init();
 
 	void WrapSwapChain();
 
 	void CreateFrameGenerationResources();
 
-	void ConfigureFrameGeneration();
+	void Present();
 
 	void CreateFSRResources();
 	void DestroyFSRResources();

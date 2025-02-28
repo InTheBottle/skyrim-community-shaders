@@ -106,7 +106,7 @@ public:
 	winrt::com_ptr<ID3D12CommandAllocator> commandAllocator;
 	winrt::com_ptr<ID3D12GraphicsCommandList> commandList;
 
-	winrt::com_ptr<IDXGISwapChain4> swapChain;
+	IDXGISwapChain4* swapChain;
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
 	WrappedResource* swapChainBufferWrapped = nullptr;

@@ -10,7 +10,14 @@
 
 ffxFunctions ffxModule;
 
-FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
+bool enableFrameGeneration = true;
+
+void FidelityFX::DrawSettings()
+{
+	ImGui::Checkbox("Enable Frame Generation", &enableFrameGeneration);
+}
+
+	FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	[[maybe_unused]] wchar_t const* ffxResName,
 	FfxResourceStates state /*=FFX_RESOURCE_STATE_COMPUTE_READ*/)
 {
@@ -40,12 +47,15 @@ void FidelityFX::WrapSwapChain()
 	auto swapChain = DX12SwapChain::GetSingleton();
 
 	ffx::CreateContextDescFrameGenerationSwapChainWrapDX12 desc{};
-	desc.swapchain = swapChain->swapChain.put();
+	desc.swapchain = &swapChain->swapChain;
 	desc.gameQueue = swapChain->commandQueue.get();
 
 	ffx::Context swapChainContext{};
 
-	ffx::CreateContext(swapChainContext, nullptr, desc);
+	if (ffx::CreateContext(swapChainContext, nullptr, desc) != ffx::ReturnCode::Ok)
+	{
+		logger::critical("[FidelityFX] Failed to create swap chain context!");
+	}
 }
 
 void FidelityFX::CreateFrameGenerationResources()
@@ -61,10 +71,13 @@ void FidelityFX::CreateFrameGenerationResources()
 	ffx::CreateBackendDX12Desc createBackend{};
 	createBackend.device = swapChain->d3d12Device.get();
 
-	ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend);
+	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend) != ffx::ReturnCode::Ok)
+	{
+		logger::critical("[FidelityFX] Failed to create frame generation context!");
+	}
 }
 
-void FidelityFX::ConfigureFrameGeneration()
+void FidelityFX::Present()
 {
 	// Update frame generation config
 
@@ -72,7 +85,12 @@ void FidelityFX::ConfigureFrameGeneration()
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	configParameters.frameGenerationEnabled = true;
+	configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
+		return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+	};
+	configParameters.frameGenerationCallbackUserContext = &frameGenContext;
+
+	configParameters.frameGenerationEnabled = enableFrameGeneration;
 	configParameters.flags = 0;
 	//configParameters.flags |= m_DrawFrameGenerationDebugTearLines ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_TEAR_LINES : 0;
 	//configParameters.flags |= m_DrawFrameGenerationDebugResetIndicators ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_RESET_INDICATORS : 0;
@@ -88,46 +106,49 @@ void FidelityFX::ConfigureFrameGeneration()
 	configParameters.generationRect.width = swapChain->swapChainDesc.Width;
 	configParameters.generationRect.height = swapChain->swapChainDesc.Height;
 
-	configParameters.frameGenerationCallback = nullptr;
-	configParameters.frameGenerationCallbackUserContext = nullptr;
-	
 	configParameters.onlyPresentGenerated = false;
 
 	static uint64_t frameID = 0;
 	configParameters.frameID = frameID;
 
-	configParameters.swapChain = swapChain->swapChain.get();
+	configParameters.swapChain = swapChain->swapChain;
 
-	ffx::Configure(frameGenContext, configParameters);
+	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
+		logger::critical("[FidelityFX] Failed to configure frame generation!");
+	}
 
-	ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
+	if (enableFrameGeneration) {
+		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
-	dispatchParameters.commandList = swapChain->commandList.get();
+		dispatchParameters.commandList = swapChain->commandList.get();
 
-	dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
-	dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
-	dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
-	dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
-	dispatchParameters.jitterOffset.x = 0;
-	dispatchParameters.jitterOffset.y = 0;
+		dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
+		dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
+		dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
+		dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
+		dispatchParameters.jitterOffset.x = 0;
+		dispatchParameters.jitterOffset.y = 0;
 
-	static float& deltaTime = (*(float*)REL::RelocationID(523660, 410199).address());
-	dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+		static float& deltaTime = (*(float*)REL::RelocationID(523660, 410199).address());
+		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
 
-	static float& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
-	static float& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
-	dispatchParameters.cameraFar = cameraFar;
-	dispatchParameters.cameraNear = cameraNear;
+		static float& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
+		static float& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
+		dispatchParameters.cameraFar = cameraFar;
+		dispatchParameters.cameraNear = cameraNear;
 
-	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
-	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 
-	dispatchParameters.frameID = frameID;
+		dispatchParameters.frameID = frameID;
 
-	dispatchParameters.depth = ffxApiGetResourceDX12(upscaling->depthBufferShared12.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
-	dispatchParameters.motionVectors = ffxApiGetResourceDX12(swapChain->renderTargetsD3D12[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR].d3d12Resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
-	
-	ffx::Dispatch(frameGenContext, dispatchParameters);
+		dispatchParameters.depth = ffxApiGetResourceDX12(upscaling->depthBufferShared12.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+		dispatchParameters.motionVectors = ffxApiGetResourceDX12(swapChain->renderTargetsD3D12[RE::RENDER_TARGETS::RENDER_TARGET::kMOTION_VECTOR].d3d12Resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+
+		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
+			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
+		}
+	}
 
 	frameID++;
 }

@@ -120,7 +120,8 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	Deferred::GetSingleton()->SetupResources();
-	Streamline::GetSingleton()->SetupResources();
+	//Streamline::GetSingleton()->SetupResources();
+	FidelityFX::GetSingleton()->CreateFrameGenerationResources();
 	if (!upscalerLoaded)
 		Upscaling::GetSingleton()->CreateUpscalingResources();
 	if (initialized)

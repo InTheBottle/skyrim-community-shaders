@@ -224,7 +224,7 @@ decltype(&CreateDXGIFactory) ptrCreateDXGIFactory;
 
 HRESULT WINAPI hk_CreateDXGIFactory(REFIID, void** ppFactory)
 {
-	return Streamline::GetSingleton()->CreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory);
+	return ptrCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory);
 
 	//if (SUCCEEDED(ptrCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory))) {
 	//	return S_OK;

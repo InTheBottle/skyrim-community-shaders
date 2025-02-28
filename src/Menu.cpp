@@ -964,7 +964,7 @@ void Menu::DrawDisplaySettings()
 
 		const std::vector<std::pair<std::string, std::function<void()>>> features = {
 			{ "Upscaling", []() { Upscaling::GetSingleton()->DrawSettings(); } },
-			{ "Frame Generation", []() { Streamline::GetSingleton()->DrawSettings(); } }
+			{ "Frame Generation", []() { FidelityFX::GetSingleton()->DrawSettings(); } }
 		};
 
 		for (const auto& [featureName, drawFunc] : features) {
