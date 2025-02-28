@@ -22,14 +22,6 @@ public:
 	winrt::com_ptr<ID3D12Resource> resource;
 };
 
-struct RenderTargetDataD3D12
-{
-public:
-	static RenderTargetDataD3D12 ConvertD3D11TextureToD3D12(RE::BSGraphics::RenderTargetData* rtData, ID3D12Device* a_d3d12Device);
-
-	winrt::com_ptr<ID3D12Resource> d3d12Resource;
-};
-
 struct DXGISwapChainProxy : IDXGISwapChain
 {
 public:

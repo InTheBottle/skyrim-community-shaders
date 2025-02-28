@@ -16,8 +16,6 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* adapter)
 	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.get(), nullptr, IID_PPV_ARGS(&commandList)));
 }
 
-winrt::com_ptr<IDXGISwapChain4> swapChainy;
-
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	IDXGIFactory4* dxgiFactory;
@@ -36,15 +34,17 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
 	fullscreenDesc.Windowed = TRUE;
 
+	winrt::com_ptr<IDXGISwapChain4> swapChainCOM;
+
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
 		commandQueue.get(),
 		a_swapChainDesc.OutputWindow,
 		&swapChainDesc,
 		&fullscreenDesc,
 		nullptr,
-		(IDXGISwapChain1**)swapChainy.put()));
+		(IDXGISwapChain1**)swapChainCOM.put()));
 
-	swapChain = swapChainy.get();
+	swapChain = swapChainCOM.detach();
 
 	FidelityFX::GetSingleton()->WrapSwapChain();
 }
