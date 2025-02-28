@@ -234,15 +234,15 @@ void Streamline::Present()
 	static auto currentFrameGenerationMode = sl::DLSSGMode::eOff;
 
 	//if (currentFrameGenerationMode != settings.frameGenerationMode) {
-		currentFrameGenerationMode = settings.frameGenerationMode;
+	currentFrameGenerationMode = settings.frameGenerationMode;
 
-		sl::DLSSGOptions options{};
-		options.mode = sl::DLSSGMode::eOn;
-		options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
+	sl::DLSSGOptions options{};
+	options.mode = sl::DLSSGMode::eOn;
+	options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 
-		if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
-			logger::error("[Streamline] Could not set DLSSG");
-		}
+	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
+		logger::error("[Streamline] Could not set DLSSG");
+	}
 	//}
 
 	auto state = globals::state;
