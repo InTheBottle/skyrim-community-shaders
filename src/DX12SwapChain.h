@@ -86,6 +86,10 @@ public:
 
 	HANDLE frameLatencyWaitableObject = nullptr;
 
+	LARGE_INTEGER qpf;
+
+	double refreshRate = 0;
+
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
@@ -99,4 +103,6 @@ public:
 
 	HRESULT GetBuffer(void** ppSurface);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
+	void FrameLimiter();
+	double GetRefreshRate();
 };

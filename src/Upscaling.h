@@ -44,6 +44,7 @@ public:
 		float sharpness = 0.5f;
 		uint dlssPreset = (uint)sl::DLSSPreset::ePresetJ;
 		uint frameGenerationMode = 1;
+		uint frameLimitMode = 1;
 	};
 
 	Settings settings;

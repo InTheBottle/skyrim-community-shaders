@@ -87,6 +87,7 @@ void Upscaling::DrawSettings()
 	if (state->featureLevel && !globals::game::isVR) {
 		if (ImGui::TreeNodeEx("AMD FSR 3.1 Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
 			const char* frameGenerationModes[] = { "Disabled", "Enabled" };
+			ImGui::SliderInt("Frame Limit (Refresh Rate)", (int*)&settings.frameLimitMode, 0, 1, std::format("{}", frameGenerationModes[(uint)settings.frameLimitMode]).c_str());
 			ImGui::SliderInt("Frame Generation", (int*)&settings.frameGenerationMode, 0, 1, std::format("{}", frameGenerationModes[(uint)settings.frameGenerationMode]).c_str());
 			ImGui::TreePop();
 		}
