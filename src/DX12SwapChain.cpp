@@ -81,8 +81,6 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
 	swapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
-	swapChainBufferWrappedDummy[0] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
-	swapChainBufferWrappedDummy[1] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -116,8 +114,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// Wait for D3D11 work to finish
 	auto index = swapChain->GetCurrentBackBufferIndex();
 
-	d3d11Context->CopyResource(swapChainBufferWrappedDummy[index]->resource11, swapChainBufferWrapped->resource11);
-
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), currentSharedFenceValue));
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), currentSharedFenceValue));
 	currentSharedFenceValue++;
@@ -127,7 +123,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	// Copy D3D11 result to D3D12
 	{
-		auto fakeSwapChain = swapChainBufferWrappedDummy[index]->resource.get();
+		auto fakeSwapChain = swapChainBufferWrapped->resource.get();
 		auto realSwapchain = swapChainBuffer.get();
 		{
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
@@ -152,16 +148,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	ID3D12CommandList* commandLists[] = { commandList.get() };
 	commandQueue->ExecuteCommandLists(1, commandLists);
+	
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12OnlyFence.get(), currentSharedFenceValue));
+	DX::ThrowIfFailed(d3d12Fence->SetEventOnCompletion(currentSharedFenceValue, fenceEvent));
 
 	auto hr = swapChain->Present(SyncInterval, Flags);
 
-	if (globals::upscaling->settings.frameGenerationMode) {
-		swapChain->SetMaximumFrameLatency(1);
-		auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
-		WaitForSingleObject(frameLatencyWaitableObject, 1000);
-	} else {
-		swapChain->SetMaximumFrameLatency(0);
-	}
+	WaitForSingleObject(fenceEvent, 500);
 
 	// New frame, reset
 	DX::ThrowIfFailed(commandAllocator->Reset());
