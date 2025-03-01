@@ -33,7 +33,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+	swapChainDesc.Flags = a_swapChainDesc.Flags;
 
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
 	fullscreenDesc.Windowed = TRUE;
@@ -108,7 +108,7 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 	return S_OK;
 }
 
-HRESULT DX12SwapChain::Present(UINT, UINT)
+HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 {
 	// Wait for D3D11 work to finish
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), currentSharedFenceValue));
@@ -148,14 +148,11 @@ HRESULT DX12SwapChain::Present(UINT, UINT)
 	ID3D12CommandList* commandLists[] = { commandList.get() };
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
-	auto hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
-
-	// Signal D3D12 work is done
-	DX::ThrowIfFailed(commandQueue->Signal(d3d12OnlyFence.get(), currentSharedFenceValue));
-
-	// Wait until the fence has been processed.
-	DX::ThrowIfFailed(d3d12OnlyFence->SetEventOnCompletion(currentSharedFenceValue, fenceEvent));
-	WaitForSingleObjectEx(fenceEvent, INFINITE, FALSE);
+	auto hr = swapChain->Present(SyncInterval, Flags);
+	
+	swapChain->SetMaximumFrameLatency(1);
+	auto waitable = swapChain->GetFrameLatencyWaitableObject();
+	WaitForSingleObject(waitable, 1000);
 
 	// New frame, reset
 	DX::ThrowIfFailed(commandAllocator->Reset());
