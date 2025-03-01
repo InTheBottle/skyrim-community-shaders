@@ -33,7 +33,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	swapChainDesc.Flags = a_swapChainDesc.Flags;
+	swapChainDesc.Flags = a_swapChainDesc.Flags | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
 	fullscreenDesc.Windowed = TRUE;
@@ -154,9 +154,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	auto hr = swapChain->Present(SyncInterval, Flags);
 
-	swapChain->SetMaximumFrameLatency(1);
-	auto waitable = swapChain->GetFrameLatencyWaitableObject();
-	WaitForSingleObject(waitable, 1000);
+	auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
+	WaitForSingleObject(frameLatencyWaitableObject, 1000);
 
 	// New frame, reset
 	DX::ThrowIfFailed(commandAllocator->Reset());
