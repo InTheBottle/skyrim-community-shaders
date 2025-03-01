@@ -67,8 +67,8 @@ public:
 
 	winrt::com_ptr<ID3D12Device> d3d12Device;
 	winrt::com_ptr<ID3D12CommandQueue> commandQueue;
-	winrt::com_ptr<ID3D12CommandAllocator> commandAllocator;
-	winrt::com_ptr<ID3D12GraphicsCommandList4> commandList;
+	winrt::com_ptr<ID3D12CommandAllocator> commandAllocators[2];
+	winrt::com_ptr<ID3D12GraphicsCommandList4> commandLists[2];
 
 	IDXGISwapChain4* swapChain;
 
@@ -81,10 +81,10 @@ public:
 	winrt::com_ptr<ID3D11Fence> d3d11Fence;
 	winrt::com_ptr<ID3D12Fence> d3d12Fence;
 
-	UINT64 fenceValue = 1;
+	UINT frameIndex = 0;
+	UINT64 fenceValues[2]{ 0, 0 };
 
-	winrt::com_ptr<ID3D12Fence> d3d12OnlyFence;
-	HANDLE fenceEvent = nullptr;
+	HANDLE frameLatencyWaitableObject = nullptr;
 
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
@@ -98,8 +98,5 @@ public:
 	void SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context);
 
 	HRESULT GetBuffer(void** ppSurface);
-
-	bool needsReset = true;
-
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 };

@@ -70,7 +70,7 @@ void FidelityFX::Present()
 {
 	auto upscaling = globals::upscaling;
 	auto swapChain = DX12SwapChain::GetSingleton();
-	auto commandList = swapChain->commandList.get();
+	auto commandList = swapChain->commandLists[swapChain->frameIndex].get();
 
 	auto hudlessColor = upscaling->colorBufferShared12.get();
 	auto depth = upscaling->depthBufferShared12.get();

@@ -14,11 +14,18 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 
 	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
-	DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator)));
-	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.get(), nullptr, IID_PPV_ARGS(&commandList)));
+	DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[0])));
+	DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[1])));
+
+	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[0].get(), nullptr, IID_PPV_ARGS(&commandLists[0])));
+	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[1].get(), nullptr, IID_PPV_ARGS(&commandLists[1])));
+
+	commandLists[0]->Close();
+	commandLists[1]->Close();
 
 	if (globals::streamline->initialized)
 		globals::streamline->CheckFeatures(a_adapter);
+
 }
 
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
@@ -51,7 +58,12 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 
 	swapChain = swapChainCOM.detach();
 
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+
 	FidelityFX::GetSingleton()->WrapSwapChain();
+	
+	swapChain->SetMaximumFrameLatency(1);
+	frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
 }
 
 void DX12SwapChain::CreateInterop()
@@ -61,9 +73,6 @@ void DX12SwapChain::CreateInterop()
 	DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fence.get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
 	DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence)));
 	CloseHandle(sharedFenceHandle);
-
-	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&d3d12OnlyFence)));
-	fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
@@ -114,15 +123,18 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// Wait for D3D11 work to finish
 	d3d11Context->Flush();
 
+	// New frame, reset
+	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+
 	// Signal fence from D3D11
-	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
+	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValues[frameIndex]));
 	
 	// Wait for D3D11 to finish on D3D12 side
-	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
+	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValues[frameIndex]));
 
 	winrt::com_ptr<ID3D12Resource> swapChainBuffer;
-	auto index = swapChain->GetCurrentBackBufferIndex();
-	DX::ThrowIfFailed(swapChain->GetBuffer(index, IID_PPV_ARGS(&swapChainBuffer)));
+	DX::ThrowIfFailed(swapChain->GetBuffer(frameIndex, IID_PPV_ARGS(&swapChainBuffer)));
 
 	// Copy shared texture to swapchain buffer
 	{
@@ -132,51 +144,37 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapchain, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST));
-			commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 		}
 
-		commandList->CopyResource(realSwapchain, fakeSwapChain);
+		commandLists[frameIndex]->CopyResource(realSwapchain, fakeSwapChain);
 
 		{
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON));
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapchain, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
-			commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 		}
 	}
 
 	FidelityFX::GetSingleton()->Present();
 
-	DX::ThrowIfFailed(commandList->Close());
+	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
 
-	ID3D12CommandList* commandLists[] = { commandList.get() };
-	commandQueue->ExecuteCommandLists(1, commandLists);
-	
-	// Signal and increment fence value
-	commandQueue->Signal(d3d12Fence.get(), fenceValue);
-
-	// Wait for GPU to finish before presenting
-	if (d3d12Fence->GetCompletedValue() < fenceValue - 1) {
-		d3d12Fence->SetEventOnCompletion(fenceValue - 1, fenceEvent);
-		WaitForSingleObject(fenceEvent, 500);
-	}
-
-	fenceValue++;
+	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
+	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
 	auto hr = swapChain->Present(SyncInterval, Flags);
 
-	// Use FSR waitable latency object
-	if (globals::upscaling->settings.frameGenerationMode) {
-		swapChain->SetMaximumFrameLatency(1);
-		auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
-		WaitForSingleObject(frameLatencyWaitableObject, 500);
-	} else {
-		swapChain->SetMaximumFrameLatency(0);
-	}
+	// Schedule a Signal command in the queue.
+	const UINT64 currentFenceValue = fenceValues[frameIndex];
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), currentFenceValue));
 
-	// New frame, reset
-	DX::ThrowIfFailed(commandAllocator->Reset());
-	DX::ThrowIfFailed(commandList->Reset(commandAllocator.get(), nullptr));
+	// Update the frame index.
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	// Set the fence value for the next frame.
+	fenceValues[frameIndex] = currentFenceValue + 1;
 
 	return hr;
 }
