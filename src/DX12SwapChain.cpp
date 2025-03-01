@@ -153,7 +153,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
 	auto hr = swapChain->Present(SyncInterval, Flags);
-	
+
 	swapChain->SetMaximumFrameLatency(1);
 	auto waitable = swapChain->GetFrameLatencyWaitableObject();
 	WaitForSingleObject(waitable, 1000);
