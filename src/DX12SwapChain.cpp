@@ -116,7 +116,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	// Signal fence from D3D11
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
-	
+
 	// Wait for D3D11 to finish on D3D12 side
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
 
@@ -151,7 +151,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	ID3D12CommandList* commandLists[] = { commandList.get() };
 	commandQueue->ExecuteCommandLists(1, commandLists);
-	
+
 	// Signal and increment fence value
 	commandQueue->Signal(d3d12Fence.get(), fenceValue);
 
