@@ -124,7 +124,7 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 	return S_OK;
 }
 
-HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
+HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 {
 	// Wait for D3D11 work to finish
 	d3d11Context->Flush();
@@ -178,7 +178,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
 	// Present the frame
-	DX::ThrowIfFailed(swapChain->Present(upscaling->settings.vsyncMode ? std::max(1u, SyncInterval) : 0, upscaling->settings.vsyncMode ? Flags : DXGI_PRESENT_ALLOW_TEARING));
+	DX::ThrowIfFailed(swapChain->Present(upscaling->settings.vsyncMode ? std::max(1u, SyncInterval) : 0, upscaling->settings.vsyncMode ? 0 : DXGI_PRESENT_ALLOW_TEARING));
 
 	// Wait for the frame to finish to minimise latency
 	WaitForSingleObject(frameLatencyWaitableObject, 500);
