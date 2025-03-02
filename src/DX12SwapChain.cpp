@@ -125,7 +125,7 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 }
 
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
-{	
+{
 	// Wait for D3D11 work to finish
 	d3d11Context->Flush();
 

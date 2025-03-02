@@ -76,7 +76,7 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	if ( a_useFrameGeneration) {
+	if (a_useFrameGeneration) {
 		configParameters.frameGenerationEnabled = true;
 
 		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
@@ -114,7 +114,7 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
 	uiConfig.uiResource = ffxApiGetResourceDX12(swapChain->uiBuffersWrapped[swapChain->frameIndex]->resource.get());
 	uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA;
-	
+
 	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure UI composition!");
 	}
