@@ -329,6 +329,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppImmediateContext);
 
 	if (globals::streamline->initialized) {
+		globals::streamline->CheckFeatures(pAdapter);
 		globals::streamline->slSetD3DDevice(*ppDevice);
 		globals::streamline->PostDevice();
 	}

@@ -41,7 +41,7 @@ public:
 		uint upscaleMethod = (uint)UpscaleMethod::kTAA;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kTAA;
 		uint upscaleMethodNoFSR = (uint)UpscaleMethod::kTAA;
-		float sharpness = 0.5f;
+		float sharpness = 0.3f;
 		uint dlssPreset = (uint)sl::DLSSPreset::ePresetJ;
 		uint vsyncMode = 0;
 		uint frameLimitMode = 1;
@@ -58,9 +58,6 @@ public:
 	UpscaleMethod GetUpscaleMethod();
 
 	void CheckResources();
-
-	ID3D11ComputeShader* rcasCS;
-	ID3D11ComputeShader* GetRCASCS();
 
 	ID3D11ComputeShader* encodeTexturesCS;
 	ID3D11ComputeShader* GetEncodeTexturesCS();

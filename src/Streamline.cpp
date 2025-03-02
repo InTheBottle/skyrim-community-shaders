@@ -40,7 +40,7 @@ void Streamline::LoadInterposer()
 
 	sl::Preferences pref;
 
-	sl::Feature featuresToLoad[] = { sl::kFeatureDLSS };
+	sl::Feature featuresToLoad[] = { sl::kFeatureNIS, sl::kFeatureDLSS };
 	pref.featuresToLoad = featuresToLoad;
 	pref.numFeaturesToLoad = _countof(featuresToLoad);
 
@@ -91,6 +91,19 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
 	adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
 
+	slIsFeatureLoaded(sl::kFeatureNIS, featureNIS);
+	if (featureNIS) {
+		logger::info("[Streamline] NIS feature is loaded");
+		featureNIS = slIsFeatureSupported(sl::kFeatureNIS, adapterInfo) == sl::Result::eOk;
+	} else {
+		logger::info("[Streamline] NIS feature is not loaded");
+		sl::FeatureRequirements featureRequirements;
+		sl::Result result = slGetFeatureRequirements(sl::kFeatureNIS, featureRequirements);
+		if (result != sl::Result::eOk) {
+			logger::info("[Streamline] NIS feature failed to load due to: {}", magic_enum::enum_name(result));
+		}
+	}
+
 	slIsFeatureLoaded(sl::kFeatureDLSS, featureDLSS);
 	if (featureDLSS) {
 		logger::info("[Streamline] DLSS feature is loaded");
@@ -112,11 +125,53 @@ void Streamline::PostDevice()
 {
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction
 
+	if (featureNIS) {
+		slGetFeatureFunction(sl::kFeatureNIS, "slNISSetOptions", (void*&)slNISSetOptions);
+		slGetFeatureFunction(sl::kFeatureNIS, "slNISGetState", (void*&)slNISGetState);
+	}
+
 	if (featureDLSS) {
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", (void*&)slDLSSGetOptimalSettings);
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", (void*&)slDLSSGetState);
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
 	}
+}
+
+void Streamline::Sharpen(Texture2D* a_sharpenTexture, float a_sharpness)
+{
+	auto state = globals::state;
+
+	{
+		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
+
+		sl::Resource colorIn = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
+		sl::Resource colorOut = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
+
+		sl::ResourceTag colorInTag = sl::ResourceTag{ &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+		sl::ResourceTag colorOutTag = sl::ResourceTag{ &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+
+		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag };
+		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
+	}
+
+	{
+		sl::NISOptions nisOptions{};
+		nisOptions.mode = sl::NISMode::eSharpen;
+		nisOptions.hdrMode = sl::NISHDR::eNone;
+		nisOptions.sharpness = a_sharpness;
+
+		if (SL_FAILED(result, slNISSetOptions(viewport, nisOptions))) {
+			logger::critical("[Streamline] Could not set NIS options");
+		}
+	}
+
+	sl::ViewportHandle view(viewport);
+	const sl::BaseStructure* inputs[] = { &view };
+
+	sl::FrameToken* frameToken;
+	slGetNewFrameToken(frameToken, nullptr);
+
+	slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
 }
 
 void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset)
