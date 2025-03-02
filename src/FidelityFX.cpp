@@ -226,7 +226,7 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 		dispatchParameters.cameraFar = cameraFar;
 		dispatchParameters.cameraNear = cameraNear;
 
-		dispatchParameters.enableSharpening = false;
+		dispatchParameters.enableSharpening = true;
 		dispatchParameters.sharpness = 0.0f;
 
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();

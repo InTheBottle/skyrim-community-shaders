@@ -497,7 +497,7 @@ void Upscaling::CreateFrameGenerationResources()
 		CloseHandle(sharedHandle);
 	}
 
-	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
 void Upscaling::CopyResourcesToSharedBuffers()
