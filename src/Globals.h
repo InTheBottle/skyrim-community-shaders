@@ -77,6 +77,7 @@ namespace globals
 		extern RE::GameSettingCollection* gameSettingCollection;
 		extern float* cameraNear;
 		extern float* cameraFar;
+		extern float* deltaTime;
 		extern RE::BSUtilityShader* utilityShader;
 		extern RE::Sky* sky;
 		extern RE::UI* ui;

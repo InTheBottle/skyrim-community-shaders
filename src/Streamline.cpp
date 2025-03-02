@@ -253,12 +253,8 @@ void Streamline::UpdateConstants()
 	}
 
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
-
-	static auto& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
-	static auto& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
-
-	slConstants.cameraNear = cameraNear;
-	slConstants.cameraFar = cameraFar;
+	slConstants.cameraNear = *globals::game::cameraNear;
+	slConstants.cameraFar = *globals::game::cameraFar;
 
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.cameraPinholeOffset = { 0.f, 0.f };

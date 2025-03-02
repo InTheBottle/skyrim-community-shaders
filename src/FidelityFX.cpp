@@ -131,13 +131,10 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 		dispatchParameters.jitterOffset.x = -jitter.x;
 		dispatchParameters.jitterOffset.y = -jitter.y;
 
-		static float& deltaTime = (*(float*)REL::RelocationID(523660, 410199).address());
-		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 
-		static float& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
-		static float& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
-		dispatchParameters.cameraFar = cameraFar;
-		dispatchParameters.cameraNear = cameraNear;
+		dispatchParameters.cameraFar = *globals::game::cameraFar;
+		dispatchParameters.cameraNear = *globals::game::cameraNear;
 
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
@@ -218,13 +215,10 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 		dispatchParameters.jitterOffset.x = -a_jitter.x;
 		dispatchParameters.jitterOffset.y = -a_jitter.y;
 
-		static float& deltaTime = (*(float*)REL::RelocationID(523660, 410199).address());
-		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 
-		static float& cameraNear = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x40));
-		static float& cameraFar = (*(float*)(REL::RelocationID(517032, 403540).address() + 0x44));
-		dispatchParameters.cameraFar = cameraFar;
-		dispatchParameters.cameraNear = cameraNear;
+		dispatchParameters.cameraFar = *globals::game::cameraFar;
+		dispatchParameters.cameraNear = *globals::game::cameraNear;
 
 		dispatchParameters.enableSharpening = true;
 		dispatchParameters.sharpness = 0.0f;
