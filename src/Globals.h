@@ -24,6 +24,7 @@ struct TruePBR;
 class Menu;
 class Streamline;
 class Upscaling;
+class DX12SwapChain;
 
 namespace SIE
 {
@@ -98,6 +99,7 @@ namespace globals
 	extern SIE::ShaderCache* shaderCache;
 	extern Streamline* streamline;
 	extern Upscaling* upscaling;
+	extern DX12SwapChain* dx12SwapChain;
 
 	void ReInit();
 	void OnDataLoaded();

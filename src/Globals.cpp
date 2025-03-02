@@ -8,6 +8,7 @@
 #include "State.h"
 #include "Streamline.h"
 #include "Upscaling.h"
+#include "DX12SwapChain.h"
 
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
@@ -97,6 +98,7 @@ namespace globals
 	SIE::ShaderCache* shaderCache = nullptr;
 	Streamline* streamline = nullptr;
 	Upscaling* upscaling = nullptr;
+	DX12SwapChain* dx12SwapChain = nullptr;
 
 	void ReInit()
 	{
@@ -134,6 +136,7 @@ namespace globals
 		truePBR = TruePBR::GetSingleton();
 		streamline = Streamline::GetSingleton();
 		upscaling = Upscaling::GetSingleton();
+		dx12SwapChain = DX12SwapChain::GetSingleton();
 
 		features::cloudShadows = CloudShadows::GetSingleton();
 		features::dynamicCubemaps = DynamicCubemaps::GetSingleton();

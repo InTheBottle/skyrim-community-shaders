@@ -94,7 +94,7 @@ void Upscaling::DrawSettings()
 
 			const char* toggleModes[] = { "Disabled", "Enabled" };
 
-			if (DX12SwapChain::GetSingleton()->swapChain) {
+			if (globals::dx12SwapChain->swapChain) {
 				ImGui::SliderInt("V-Sync", (int*)&settings.vsyncMode, 0, 1, std::format("{}", toggleModes[settings.vsyncMode]).c_str());
 
 				if (settings.vsyncMode)
@@ -373,7 +373,7 @@ void Upscaling::CreateUpscalingResources()
 	alphaMaskTexture->CreateSRV(srvDesc);
 	alphaMaskTexture->CreateUAV(uavDesc);
 
-	if (DX12SwapChain::GetSingleton()->swapChain)
+	if (globals::dx12SwapChain->swapChain)
 		CreateFrameGenerationResources();
 }
 
@@ -454,7 +454,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(DX12SwapChain::GetSingleton()->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&colorBufferShared12)));
 
@@ -472,7 +472,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(DX12SwapChain::GetSingleton()->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&depthBufferShared12)));
 
@@ -490,7 +490,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(DX12SwapChain::GetSingleton()->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&motionVectorBufferShared12)));
 
@@ -502,7 +502,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::CopyResourcesToSharedBuffers()
 {
-	if (!DX12SwapChain::GetSingleton()->swapChain)
+	if (!globals::dx12SwapChain->swapChain)
 		return;
 
 	auto& context = globals::d3d::context;

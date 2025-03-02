@@ -36,7 +36,7 @@ void FidelityFX::LoadFFX()
 
 void FidelityFX::SetupFrameGeneration()
 {
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = globals::dx12SwapChain;
 
 	ffx::CreateContextDescFrameGeneration createFg{};
 	createFg.displaySize = { swapChain->swapChainDesc.Width, swapChain->swapChainDesc.Height };
@@ -63,7 +63,7 @@ void FidelityFX::SetupFrameGeneration()
 void FidelityFX::Present(bool a_useFrameGeneration)
 {
 	auto upscaling = globals::upscaling;
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = globals::dx12SwapChain;
 	auto commandList = swapChain->commandLists[swapChain->frameIndex].get();
 
 	auto HUDLessColor = upscaling->colorBufferShared12.get();

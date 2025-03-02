@@ -274,7 +274,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	if (pSwapChainDesc->Windowed)
 		fidelityFX->LoadFFX();
 
-	auto proxy = DX12SwapChain::GetSingleton();
+	auto proxy = globals::dx12SwapChain;
 
 	bool shouldProxy = false;
 
