@@ -12,8 +12,8 @@
 
 #include "FidelityFX.h"
 #include "Streamline.h"
-
 #include "DX12SwapChain.h"
+#include "Upscaling.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
@@ -281,7 +281,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	// Check that the FFX DLL is present
 	if (fidelityFX->module) {
 		// Check that the monitor is HFR
-		if (proxy->GetRefreshRate(pSwapChainDesc->OutputWindow) >= 120) {
+		if (Upscaling::GetSingleton()->settings.frameGenerationForceEnable || proxy->GetRefreshRate(pSwapChainDesc->OutputWindow) >= 120) {
 			shouldProxy = true;
 		}
 	}

@@ -46,6 +46,7 @@ public:
 		uint vsyncMode = 0;
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
+		uint frameGenerationForceEnable = 0;
 	};
 
 	Settings settings;
