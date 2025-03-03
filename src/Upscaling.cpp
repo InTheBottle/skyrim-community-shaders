@@ -284,7 +284,7 @@ void Upscaling::Upscale()
 		context->CopyResource(upscalingTexture->resource.get(), inputTextureResource);
 
 		if (upscaleMethod == UpscaleMethod::kDLSS)
-			globals::streamline->Upscale(upscalingTexture, alphaMaskTexture, settings.dlssPreset == 0 ? sl::DLSSPreset::ePresetJ : sl::DLSSPreset::ePresetE);
+			globals::streamline->Upscale(upscalingTexture, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
 		else if (upscaleMethod == UpscaleMethod::kFSR)
 			FidelityFX::GetSingleton()->Upscale(upscalingTexture, alphaMaskTexture, jitter, reset);
 
