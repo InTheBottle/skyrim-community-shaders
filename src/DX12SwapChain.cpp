@@ -62,6 +62,8 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
 
 	QueryPerformanceFrequency(&qpf);
+
+	refreshRate = GetRefreshRate(a_swapChainDesc.OutputWindow);
 }
 
 void DX12SwapChain::CreateInterop()
@@ -209,7 +211,7 @@ static void TimerSleepQPC(int64_t targetQPC)
 
 void DX12SwapChain::FrameLimiter(bool a_useFrameGeneration)
 {
-	double bestRefreshRate = refreshRate - 1;
+	double bestRefreshRate = refreshRate - (refreshRate * refreshRate) / 3600.0;
 
 	int64_t targetFrameTicks = int64_t(double(qpf.QuadPart) / (bestRefreshRate * (a_useFrameGeneration ? 0.5 : 1.0)));
 
