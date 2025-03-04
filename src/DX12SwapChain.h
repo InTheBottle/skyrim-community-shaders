@@ -99,6 +99,8 @@ public:
 
 	double refreshRate = 0;
 
+	float resolutionScale = 0.5f;
+
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);

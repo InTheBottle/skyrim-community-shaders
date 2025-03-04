@@ -247,65 +247,76 @@ void Upscaling::Upscale()
 
 	CheckResources();
 
-	auto state = globals::state;
-
 	auto context = globals::d3d::context;
 
-	auto inputTexture = DX12SwapChain::GetSingleton()->swapChainBuffer->resource.get();
-	auto outputTexture = DX12SwapChain::GetSingleton()->upscaledSwapChainBufferWrapped->resource11;
+	auto swapChain = globals::dx12SwapChain;
 
-	auto dispatchCount = Util::GetScreenDispatchCount(false);
+	auto inputTexture = swapChain->swapChainBuffer->resource.get();
+	auto outputTexture = swapChain->upscaledSwapChainBufferWrapped->resource11;
 
-	{
-		state->BeginPerfEvent("Alpha Mask");
+	context->CopySubresourceRegion(
+		outputTexture,       
+		0,                     
+		0,                   
+		0,                   
+		0,                        
+		inputTexture,      
+		0,                      
+		nullptr                  
+	);
 
-		static auto renderer = globals::game::renderer;
-		static auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
+	//auto dispatchCount = Util::GetScreenDispatchCount(false);
 
-		{
-			ID3D11ShaderResourceView* views[1] = { temporalAAMask.SRV };
-			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+	//{
+	//	state->BeginPerfEvent("Alpha Mask");
 
-			ID3D11UnorderedAccessView* uavs[1] = { alphaMaskTexture->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	//	static auto renderer = globals::game::renderer;
+	//	static auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
 
-			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
+	//	{
+	//		ID3D11ShaderResourceView* views[1] = { temporalAAMask.SRV };
+	//		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		}
+	//		ID3D11UnorderedAccessView* uavs[1] = { alphaMaskTexture->uav.get() };
+	//		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		ID3D11ShaderResourceView* views[1] = { nullptr };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+	//		context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	//		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	//	}
 
-		ID3D11ComputeShader* shader = nullptr;
-		context->CSSetShader(shader, nullptr, 0);
+	//	ID3D11ShaderResourceView* views[1] = { nullptr };
+	//	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		state->EndPerfEvent();
-	}
+	//	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+	//	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	{
-		state->BeginPerfEvent("Upscaling");
+	//	ID3D11ComputeShader* shader = nullptr;
+	//	context->CSSetShader(shader, nullptr, 0);
 
-		if (upscaleMethod == UpscaleMethod::kDLSS)
-			globals::streamline->Upscale(inputTexture, outputTexture, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
-		else if (upscaleMethod == UpscaleMethod::kFSR)
-			FidelityFX::GetSingleton()->Upscale(inputTexture, outputTexture, alphaMaskTexture, jitter, reset);
+	//	state->EndPerfEvent();
+	//}
 
-		reset = false;
+	//{
+	//	state->BeginPerfEvent("Upscaling");
 
-		state->EndPerfEvent();
-	}
+	//	if (upscaleMethod == UpscaleMethod::kDLSS)
+	//		globals::streamline->Upscale(inputTexture, outputTexture, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
+	//	else if (upscaleMethod == UpscaleMethod::kFSR)
+	//		FidelityFX::GetSingleton()->Upscale(inputTexture, outputTexture, alphaMaskTexture, jitter, reset);
 
-	if (settings.sharpness > 0.0f) {
-		state->BeginPerfEvent("Sharpening");
+	//	reset = false;
 
-		globals::streamline->Sharpen(outputTexture, settings.sharpness);
+	//	state->EndPerfEvent();
+	//}
 
-		state->EndPerfEvent();
-	}
+	//if (settings.sharpness > 0.0f) {
+	//	state->BeginPerfEvent("Sharpening");
+
+	//	globals::streamline->Sharpen(outputTexture, settings.sharpness);
+
+	//	state->EndPerfEvent();
+	//}
 }
 
 void Upscaling::CreateUpscalingResources()

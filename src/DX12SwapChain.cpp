@@ -42,13 +42,6 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.Flags = a_swapChainDesc.Flags;
 
-	renderSize = { (float)swapChainDesc.Width, (float)swapChainDesc.Height };
-
-	swapChainDesc.Width *= 2;
-	swapChainDesc.Height *= 2;
-
-	outputSize = { (float)swapChainDesc.Width, (float)swapChainDesc.Height };
-
 	winrt::com_ptr<IDXGISwapChain4> swapChainCOM;
 
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
@@ -61,6 +54,12 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 
 	swapChain = swapChainCOM.detach();
 
+	outputSize = { float(swapChainDesc.Width), float(swapChainDesc.Height) };
+
+	renderSize = outputSize * resolutionScale;
+
+	PostInitD3D();
+
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	FidelityFX::GetSingleton()->SetupFrameGeneration();
@@ -71,19 +70,6 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	QueryPerformanceFrequency(&qpf);
 
 	refreshRate = GetRefreshRate(a_swapChainDesc.OutputWindow);
-
-	// Adjust window rect
-	RECT rc = { 0, 0, static_cast<LONG>(swapChainDesc.Width), static_cast<LONG>(swapChainDesc.Height) };
-	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-
-	// Resize window
-	SetWindowPos(
-		a_swapChainDesc.OutputWindow,
-		nullptr,
-		0, 0,
-		rc.right - rc.left,
-		rc.bottom - rc.top,
-		SWP_NOMOVE | SWP_NOZORDER);
 }
 
 void DX12SwapChain::CreateInterop()
@@ -99,8 +85,8 @@ void DX12SwapChain::CreateInterop()
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
 	D3D11_TEXTURE2D_DESC texDesc11{};
-	texDesc11.Width = swapChainDesc.Width;
-	texDesc11.Height = swapChainDesc.Height;
+	texDesc11.Width = (uint)renderSize.x;
+	texDesc11.Height = (uint)renderSize.y;
 	texDesc11.MipLevels = 1;
 	texDesc11.ArraySize = 1;
 	texDesc11.Format = swapChainDesc.Format;
@@ -134,8 +120,8 @@ void DX12SwapChain::CreateInterop()
 	rtvDesc.Texture2D.MipSlice = 0;
 	swapChainBuffer->CreateRTV(rtvDesc);
 
-	texDesc11.Width *= 2;
-	texDesc11.Height *= 2;
+	texDesc11.Width = (uint)outputSize.x;
+	texDesc11.Height = (uint)outputSize.y;
 	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
 	upscaledSwapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
@@ -468,8 +454,10 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetFullscreenState(_Out_opt_ BOOL*
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDesc(_Out_ DXGI_SWAP_CHAIN_DESC* pDesc)
 {
 	swapChain->GetDesc(pDesc);
-	pDesc->BufferDesc.Width /= 2;
-	pDesc->BufferDesc.Height /= 2;
+
+	pDesc->BufferDesc.Width = (UINT)globals::dx12SwapChain->renderSize.x;
+	pDesc->BufferDesc.Height = (UINT)globals::dx12SwapChain->renderSize.y;
+
 	return S_OK;
 }
 
@@ -519,8 +507,9 @@ void DX12SwapChain::PostInitD3D()
 	static uint32_t* g_height = (uint32_t*)REL::RelocationID(525003, 411484).address();   // 302C8B8, 30C6DB8
 	static uint32_t* g_xRight = (uint32_t*)REL::RelocationID(525004, 411485).address();   // 302C8BC, 30C6DBC
 	static uint32_t* g_yBottom = (uint32_t*)REL::RelocationID(525005, 411486).address();  // 302C8C0, 30C6DC0
-	*g_width = (uint32_t)outputSize.x;
-	*g_height = (uint32_t)outputSize.y;
+
+	*g_width = (uint32_t)renderSize.x;
+	*g_height = (uint32_t)renderSize.y;
 	*g_xRight = *g_width;
 	*g_yBottom = *g_height;
 }

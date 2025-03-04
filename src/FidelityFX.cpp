@@ -39,8 +39,8 @@ void FidelityFX::SetupFrameGeneration()
 	auto swapChain = globals::dx12SwapChain;
 
 	ffx::CreateContextDescFrameGeneration createFg{};
-	createFg.displaySize = { swapChain->swapChainDesc.Width, swapChain->swapChainDesc.Height };
-	createFg.maxRenderSize = createFg.displaySize;
+	createFg.displaySize = { (uint)swapChain->renderSize.x, (uint)swapChain->renderSize.y };
+	createFg.maxRenderSize = { (uint)swapChain->outputSize.x, (uint)swapChain->outputSize.y };
 	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
 	createFg.backBufferFormat = FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
@@ -98,10 +98,10 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	configParameters.allowAsyncWorkloads = true;
 	configParameters.flags = 0;
 
-	configParameters.generationRect.left = (swapChain->swapChainDesc.Width - swapChain->swapChainDesc.Width) / 2;
-	configParameters.generationRect.top = (swapChain->swapChainDesc.Height - swapChain->swapChainDesc.Height) / 2;
-	configParameters.generationRect.width = swapChain->swapChainDesc.Width;
-	configParameters.generationRect.height = swapChain->swapChainDesc.Height;
+	configParameters.generationRect.left = (uint)(swapChain->renderSize.x - swapChain->outputSize.x) / 2;
+	configParameters.generationRect.top = (uint)(swapChain->renderSize.y - swapChain->outputSize.y) / 2;
+	configParameters.generationRect.width = (uint)swapChain->outputSize.x;
+	configParameters.generationRect.height = (uint)swapChain->outputSize.y;
 
 	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure frame generation!");
@@ -120,21 +120,21 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 		dispatchParameters.commandList = commandList;
 
-		dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
-		dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
-		dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
-		dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
+		dispatchParameters.motionVectorScale.x = swapChain->renderSize.x;
+		dispatchParameters.motionVectorScale.y = swapChain->renderSize.y;
+		dispatchParameters.renderSize.width = (uint)swapChain->renderSize.x;
+		dispatchParameters.renderSize.height = (uint)swapChain->renderSize.y;
 
 		auto gameViewport = globals::game::graphicsState;
 
 		float2 jitter;
 
 		if (globals::game::isVR)
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width);
+			jitter.x = -gameViewport->projectionPosScaleX * swapChain->renderSize.x;
 		else
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width) / 2.0f;
+			jitter.x = -gameViewport->projectionPosScaleX * swapChain->renderSize.x / 2.0f;
 
-		jitter.y = gameViewport->projectionPosScaleY * (float)swapChain->swapChainDesc.Height / 2.0f;
+		jitter.y = gameViewport->projectionPosScaleY * swapChain->renderSize.y / 2.0f;
 
 		dispatchParameters.jitterOffset.x = -jitter.x;
 		dispatchParameters.jitterOffset.y = -jitter.y;
@@ -162,8 +162,6 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 void FidelityFX::CreateFSRResources()
 {
-	auto state = globals::state;
-
 	auto fsrDevice = ffxGetDeviceDX11(globals::d3d::device);
 
 	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(FFX_FSR3UPSCALER_CONTEXT_COUNT);
@@ -174,13 +172,15 @@ void FidelityFX::CreateFSRResources()
 	if (ffxGetInterfaceDX11(&fsrInterface, fsrDevice, scratchBuffer, scratchBufferSize, FFX_FSR3UPSCALER_CONTEXT_COUNT) != FFX_OK)
 		logger::critical("[FidelityFX] Failed to initialize FSR3 backend interface!");
 
+	auto swapChain = DX12SwapChain::GetSingleton();
+
 	FfxFsr3ContextDescription contextDescription;
-	contextDescription.maxRenderSize.width = (uint)state->screenSize.x;
-	contextDescription.maxRenderSize.height = (uint)state->screenSize.y;
-	contextDescription.maxUpscaleSize.width = (uint)state->screenSize.x;
-	contextDescription.maxUpscaleSize.height = (uint)state->screenSize.y;
-	contextDescription.displaySize.width = (uint)state->screenSize.x;
-	contextDescription.displaySize.height = (uint)state->screenSize.y;
+	contextDescription.maxRenderSize.width = (uint)swapChain->renderSize.x;
+	contextDescription.maxRenderSize.height = (uint)swapChain->renderSize.x;
+	contextDescription.maxUpscaleSize.width = (uint)swapChain->outputSize.x;
+	contextDescription.maxUpscaleSize.height = (uint)swapChain->outputSize.y;
+	contextDescription.displaySize.width = (uint)swapChain->outputSize.x;
+	contextDescription.displaySize.height = (uint)swapChain->outputSize.y;
 	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
 	contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
 
