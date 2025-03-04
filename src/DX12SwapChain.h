@@ -75,7 +75,13 @@ public:
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
 
-	WrappedResource* swapChainBufferWrapped;
+	float2 renderSize;
+	float2 outputSize;
+
+	Texture2D* swapChainBuffer;
+
+	WrappedResource* upscaledSwapChainBufferWrapped;
+
 	WrappedResource* uiBuffersWrapped[2];
 
 	winrt::com_ptr<ID3D11Device5> d3d11Device;
@@ -113,6 +119,8 @@ public:
 	double GetRefreshRate(HWND a_window);
 
 	void SetUIBuffer();
+
+	void PostInitD3D();
 
 	struct MenuManagerDrawInterfaceStartHook
 	{

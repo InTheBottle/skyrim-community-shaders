@@ -37,5 +37,5 @@ public:
 
 	void CreateFSRResources();
 	void DestroyFSRResources();
-	void Upscale(ID3D11Texture2D* a_color, Texture2D* a_alphaMask, float2 a_jitter, bool a_reset);
+	void Upscale(ID3D11Texture2D* a_inputTexture, ID3D11Texture2D* a_outputTexture, Texture2D* a_alphaMask, float2 a_jitter, bool a_reset);
 };

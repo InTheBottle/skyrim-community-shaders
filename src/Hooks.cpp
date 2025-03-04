@@ -429,6 +429,8 @@ namespace Hooks
 				stl::detour_vfunc<15, ID3D11Device_CreatePixelShader>(globals::d3d::device);
 			}
 			globals::menu->Init();
+
+			DX12SwapChain::GetSingleton()->PostInitD3D();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

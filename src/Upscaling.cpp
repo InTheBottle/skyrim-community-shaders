@@ -251,7 +251,8 @@ void Upscaling::Upscale()
 
 	auto context = globals::d3d::context;
 
-	auto swapChain = DX12SwapChain::GetSingleton()->swapChainBufferWrapped->resource11;
+	auto inputTexture = DX12SwapChain::GetSingleton()->swapChainBuffer->resource.get();
+	auto outputTexture = DX12SwapChain::GetSingleton()->upscaledSwapChainBufferWrapped->resource11;
 
 	auto dispatchCount = Util::GetScreenDispatchCount(false);
 
@@ -289,9 +290,9 @@ void Upscaling::Upscale()
 		state->BeginPerfEvent("Upscaling");
 
 		if (upscaleMethod == UpscaleMethod::kDLSS)
-			globals::streamline->Upscale(swapChain, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
+			globals::streamline->Upscale(inputTexture, outputTexture, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
 		else if (upscaleMethod == UpscaleMethod::kFSR)
-			FidelityFX::GetSingleton()->Upscale(swapChain, alphaMaskTexture, jitter, reset);
+			FidelityFX::GetSingleton()->Upscale(inputTexture, outputTexture, alphaMaskTexture, jitter, reset);
 
 		reset = false;
 
@@ -301,7 +302,7 @@ void Upscaling::Upscale()
 	if (settings.sharpness > 0.0f) {
 		state->BeginPerfEvent("Sharpening");
 
-		globals::streamline->Sharpen(swapChain, settings.sharpness);
+		globals::streamline->Sharpen(outputTexture, settings.sharpness);
 
 		state->EndPerfEvent();
 	}

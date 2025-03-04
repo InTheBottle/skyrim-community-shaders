@@ -74,7 +74,7 @@ public:
 
 	void Sharpen(ID3D11Texture2D* a_sharpenTexture, float a_sharpness);
 
-	void Upscale(ID3D11Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset);
+	void Upscale(ID3D11Texture2D* a_inputTexture, ID3D11Texture2D* a_outputTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset);
 
 	void UpdateConstants();
 

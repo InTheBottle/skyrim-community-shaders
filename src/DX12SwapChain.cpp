@@ -42,6 +42,13 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.Flags = a_swapChainDesc.Flags;
 
+	renderSize = { (float)swapChainDesc.Width, (float)swapChainDesc.Height };
+
+	swapChainDesc.Width *= 2;
+	swapChainDesc.Height *= 2;
+
+	outputSize = { (float)swapChainDesc.Width, (float)swapChainDesc.Height };
+
 	winrt::com_ptr<IDXGISwapChain4> swapChainCOM;
 
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
@@ -64,6 +71,19 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	QueryPerformanceFrequency(&qpf);
 
 	refreshRate = GetRefreshRate(a_swapChainDesc.OutputWindow);
+
+	// Adjust window rect
+	RECT rc = { 0, 0, static_cast<LONG>(swapChainDesc.Width), static_cast<LONG>(swapChainDesc.Height) };
+	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+
+	// Resize window
+	SetWindowPos(
+		a_swapChainDesc.OutputWindow,
+		nullptr,
+		0, 0,
+		rc.right - rc.left,
+		rc.bottom - rc.top,
+		SWP_NOMOVE | SWP_NOZORDER);
 }
 
 void DX12SwapChain::CreateInterop()
@@ -89,9 +109,36 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.Usage = D3D11_USAGE_DEFAULT;
 	texDesc11.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS;
 	texDesc11.CPUAccessFlags = 0;
+	texDesc11.MiscFlags = 0;
+
+	globals::d3d::device = d3d11Device.get();
+
+	swapChainBuffer = new Texture2D(texDesc11);
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = texDesc11.Format;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+	swapChainBuffer->CreateSRV(srvDesc);
+
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = texDesc11.Format;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+	uavDesc.Texture2D.MipSlice = 0;
+	swapChainBuffer->CreateUAV(uavDesc);
+
+	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+	rtvDesc.Format = texDesc11.Format;
+	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+	rtvDesc.Texture2D.MipSlice = 0;
+	swapChainBuffer->CreateRTV(rtvDesc);
+
+	texDesc11.Width *= 2;
+	texDesc11.Height *= 2;
 	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
-	swapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+	upscaledSwapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
 
 	for (int i = 0; i < 2; i++) {
 		uiBuffersWrapped[i] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
@@ -120,7 +167,7 @@ void DX12SwapChain::SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context)
 
 HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 {
-	*ppSurface = swapChainBufferWrapped->resource11;
+	*ppSurface = swapChainBuffer->resource.get();
 	return S_OK;
 }
 
@@ -142,13 +189,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 	// Wait for D3D11 to finish on D3D12 side
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fences[frameIndex].get(), fenceValues[frameIndex]));
 
-	winrt::com_ptr<ID3D12Resource> swapChainBuffer;
-	DX::ThrowIfFailed(swapChain->GetBuffer(frameIndex, IID_PPV_ARGS(&swapChainBuffer)));
+	winrt::com_ptr<ID3D12Resource> currentSwapChainBuffer;
+	DX::ThrowIfFailed(swapChain->GetBuffer(frameIndex, IID_PPV_ARGS(&currentSwapChainBuffer)));
 
 	// Copy shared texture to swap chain buffer
 	{
-		auto fakeSwapChain = swapChainBufferWrapped->resource.get();
-		auto realSwapChain = swapChainBuffer.get();
+		auto fakeSwapChain = upscaledSwapChainBufferWrapped->resource.get();
+		auto realSwapChain = currentSwapChainBuffer.get();
 		{
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
@@ -190,7 +237,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 	// Update the frame index.
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER].RTV = swapChainBufferWrapped->rtv;
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER].RTV = swapChainBuffer->rtv.get();
 
 	return S_OK;
 }
@@ -420,7 +467,10 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetFullscreenState(_Out_opt_ BOOL*
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDesc(_Out_ DXGI_SWAP_CHAIN_DESC* pDesc)
 {
-	return swapChain->GetDesc(pDesc);
+	swapChain->GetDesc(pDesc);
+	pDesc->BufferDesc.Width /= 2;
+	pDesc->BufferDesc.Height /= 2;
+	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
@@ -461,6 +511,18 @@ void DX12SwapChain::SetUIBuffer()
 	data.RTV = uiBuffersWrapped[frameIndex]->rtv;
 
 	d3d11Context->OMSetRenderTargets(1, &data.RTV, nullptr);
+}
+
+void DX12SwapChain::PostInitD3D()
+{
+	static uint32_t* g_width = (uint32_t*)REL::RelocationID(525002, 411483).address();    // 302C8B4, 30C6DB4
+	static uint32_t* g_height = (uint32_t*)REL::RelocationID(525003, 411484).address();   // 302C8B8, 30C6DB8
+	static uint32_t* g_xRight = (uint32_t*)REL::RelocationID(525004, 411485).address();   // 302C8BC, 30C6DBC
+	static uint32_t* g_yBottom = (uint32_t*)REL::RelocationID(525005, 411486).address();  // 302C8C0, 30C6DC0
+	*g_width = (uint32_t)outputSize.x;
+	*g_height = (uint32_t)outputSize.y;
+	*g_xRight = *g_width;
+	*g_yBottom = *g_height;
 }
 
 void DX12SwapChain::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
