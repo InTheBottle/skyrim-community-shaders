@@ -86,6 +86,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				Upscaling::InstallHooks();
 				Hooks::Install();
 				FrameAnnotations::OnPostPostLoad();
+				DX12SwapChain::InstallHooks();
 
 				auto shaderCache = globals::shaderCache;
 
