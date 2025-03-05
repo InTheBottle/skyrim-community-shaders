@@ -171,15 +171,49 @@ void Streamline::Sharpen(Texture2D* a_sharpenTexture, float a_sharpness)
 	sl::FrameToken* frameToken;
 	slGetNewFrameToken(frameToken, nullptr);
 
-	slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
+	if (SL_FAILED(result, slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context))) {
+		logger::critical("[Streamline] Could not evaluate NIS");
+	}
 }
 
 void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset)
 {
-	UpdateConstants();
-
 	auto state = globals::state;
 
+	sl::Constants slConstants = {};
+
+	if (globals::game::isVR) {
+		slConstants.cameraAspectRatio = (state->screenSize.x * 0.5f) / state->screenSize.y;
+	} else {
+		slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
+	}
+
+	slConstants.cameraFOV = Util::GetVerticalFOVRad();
+	slConstants.cameraNear = *globals::game::cameraNear;
+	slConstants.cameraFar = *globals::game::cameraFar;
+
+	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
+	slConstants.cameraPinholeOffset = { 0.f, 0.f };
+	slConstants.depthInverted = sl::Boolean::eFalse;
+
+	auto upscaling = globals::upscaling;
+	auto jitter = upscaling->jitter;
+	slConstants.jitterOffset = { -jitter.x, -jitter.y };
+	slConstants.reset = upscaling->reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+
+	slConstants.mvecScale = { (globals::game::isVR ? 0.5f : 1.0f), 1 };
+	slConstants.motionVectors3D = sl::Boolean::eTrue;
+	slConstants.motionVectorsInvalidValue = FLT_MIN;
+	slConstants.orthographicProjection = sl::Boolean::eFalse;
+	slConstants.motionVectorsDilated = sl::Boolean::eFalse;
+	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
+
+	sl::FrameToken* frameToken;
+	slGetNewFrameToken(frameToken, nullptr);
+
+	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, viewport))) {
+		logger::error("[Streamline] Could not set constants");
+	}
 	auto renderer = globals::game::renderer;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
@@ -232,52 +266,9 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
 	}
 
-	sl::FrameToken* frameToken;
-	slGetNewFrameToken(frameToken, nullptr);
-
 	sl::ViewportHandle view(viewport);
 	const sl::BaseStructure* inputs[] = { &view };
 	slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), globals::d3d::context);
-}
-
-void Streamline::UpdateConstants()
-{
-	auto state = globals::state;
-
-	sl::Constants slConstants = {};
-
-	if (globals::game::isVR) {
-		slConstants.cameraAspectRatio = (state->screenSize.x * 0.5f) / state->screenSize.y;
-	} else {
-		slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
-	}
-
-	slConstants.cameraFOV = Util::GetVerticalFOVRad();
-	slConstants.cameraNear = *globals::game::cameraNear;
-	slConstants.cameraFar = *globals::game::cameraFar;
-
-	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
-	slConstants.cameraPinholeOffset = { 0.f, 0.f };
-	slConstants.depthInverted = sl::Boolean::eFalse;
-
-	auto upscaling = globals::upscaling;
-	auto jitter = upscaling->jitter;
-	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	slConstants.reset = upscaling->reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-
-	slConstants.mvecScale = { (globals::game::isVR ? 0.5f : 1.0f), 1 };
-	slConstants.motionVectors3D = sl::Boolean::eTrue;
-	slConstants.motionVectorsInvalidValue = FLT_MIN;
-	slConstants.orthographicProjection = sl::Boolean::eFalse;
-	slConstants.motionVectorsDilated = sl::Boolean::eFalse;
-	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
-
-	sl::FrameToken* frameToken;
-	slGetNewFrameToken(frameToken, nullptr);
-
-	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, viewport))) {
-		logger::error("[Streamline] Could not set constants");
-	}
 }
 
 void Streamline::DestroyDLSSResources()
