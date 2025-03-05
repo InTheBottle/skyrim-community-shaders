@@ -11,6 +11,9 @@
 
 #include <FidelityFX/host/backends/dx12/d3dx12.h>
 
+#include "reshade/reshade_api.hpp"
+#include <reshade/reshade.hpp>
+
 class WrappedResource
 {
 public:
@@ -93,6 +96,7 @@ public:
 	double refreshRate = 0;
 
 	DXGISwapChainProxy* swapChainProxy = nullptr;
+	reshade::api::effect_runtime* reshadeRuntime = nullptr;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);

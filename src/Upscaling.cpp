@@ -3,6 +3,7 @@
 #include "DX12SwapChain.h"
 #include "Hooks.h"
 #include "State.h"
+#include <reshade/reshade.hpp>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -530,6 +531,9 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::CopyResourcesToSharedBuffers()
 {
+	if (globals::dx12SwapChain->reshadeRuntime)
+		reshade::update_and_present_effect_runtime(globals::dx12SwapChain->reshadeRuntime);
+
 	if (!globals::dx12SwapChain->swapChain || !settings.frameGenerationMode || RE::UI::GetSingleton()->GameIsPaused())
 		return;
 
