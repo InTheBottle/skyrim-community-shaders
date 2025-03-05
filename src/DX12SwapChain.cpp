@@ -5,6 +5,9 @@
 #include "Streamline.h"
 #include "Upscaling.h"
 
+#include "reshade/reshade_api.hpp"
+#include <reshade/reshade.hpp>
+
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
@@ -92,6 +95,8 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
 	swapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+	reshade::api::effect_runtime* runtime;
+	reshade::create_effect_runtime(reshade::api::device_api::d3d11, d3d11Device.get(), d3d11Context.get(), swapChainProxy, "ReShade", &runtime);
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -190,6 +195,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 
 	return S_OK;
 }
+
 
 HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
 {
@@ -353,7 +359,10 @@ DXGISwapChainProxy::DXGISwapChainProxy(IDXGISwapChain4* a_swapChain)
 /****IUknown****/
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::QueryInterface(REFIID riid, void** ppvObj)
 {
-	return swapChain->QueryInterface(riid, ppvObj);
+	auto ret = swapChain->QueryInterface(riid, ppvObj);
+	if (*ppvObj)
+		*ppvObj = this;
+	return ret;
 }
 
 ULONG STDMETHODCALLTYPE DXGISwapChainProxy::AddRef()
