@@ -57,6 +57,12 @@ public:
 	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
 
+	// SL hooks
+	decltype(&CreateDXGIFactory) slCreateDXGIFactory{};
+	decltype(&D3D11CreateDeviceAndSwapChain) slD3D11CreateDeviceAndSwapChain{};
+	decltype(&D3D11CreateDevice) slD3D11CreateDevice{};
+	decltype(&D3D12CreateDevice) slD3D12CreateDevice{};
+
 	// NIS specific functions
 	PFun_slNISSetOptions* slNISSetOptions{};
 	PFun_slNISGetState* slNISGetState{};

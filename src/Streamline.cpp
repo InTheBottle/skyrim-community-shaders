@@ -53,9 +53,19 @@ void Streamline::LoadInterposer()
 	pref.projectId = "f8776929-c969-43bd-ac2b-294b4de58aac";
 
 	pref.renderAPI = sl::RenderAPI::eD3D11;
+	pref.flags = sl::PreferenceFlags::eUseManualHooking | sl::PreferenceFlags::eAllowOTA | sl::PreferenceFlags::eLoadDownloadedPlugins | sl::PreferenceFlags::eUseDXGIFactoryProxy;
 
 	// Hook up all of the functions exported by the SL Interposer Library
 	slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
+
+	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
+		logger::critical("[Streamline] Failed to initialize Streamline");
+		return;
+	} else {
+		initialized = true;
+		logger::info("[Streamline] Successfully initialized Streamline");
+	}
+
 	slShutdown = (PFun_slShutdown*)GetProcAddress(interposer, "slShutdown");
 	slIsFeatureSupported = (PFun_slIsFeatureSupported*)GetProcAddress(interposer, "slIsFeatureSupported");
 	slIsFeatureLoaded = (PFun_slIsFeatureLoaded*)GetProcAddress(interposer, "slIsFeatureLoaded");
@@ -73,12 +83,10 @@ void Streamline::LoadInterposer()
 	slGetNewFrameToken = (PFun_slGetNewFrameToken*)GetProcAddress(interposer, "slGetNewFrameToken");
 	slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
 
-	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
-		logger::critical("[Streamline] Failed to initialize Streamline");
-	} else {
-		initialized = true;
-		logger::info("[Streamline] Successfully initialized Streamline");
-	}
+	slCreateDXGIFactory = (decltype(&CreateDXGIFactory))GetProcAddress(interposer, "CreateDXGIFactory");
+	slD3D11CreateDeviceAndSwapChain = (decltype(&D3D11CreateDeviceAndSwapChain))GetProcAddress(interposer, "D3D11CreateDeviceAndSwapChain");
+	slD3D11CreateDevice = (decltype(&D3D11CreateDevice))GetProcAddress(interposer, "D3D11CreateDevice");
+	slD3D12CreateDevice = (decltype(&D3D12CreateDevice))GetProcAddress(interposer, "D3D12CreateDevice");
 }
 
 void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)

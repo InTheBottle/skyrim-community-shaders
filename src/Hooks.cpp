@@ -243,6 +243,8 @@ decltype(&CreateDXGIFactory) ptrCreateDXGIFactory;
 
 HRESULT WINAPI hk_CreateDXGIFactory(REFIID, void** ppFactory)
 {
+	if (globals::streamline->initialized)
+		return globals::streamline->slCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory);
 	return ptrCreateDXGIFactory(__uuidof(IDXGIFactory4), ppFactory);
 }
 
@@ -311,17 +313,30 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	if (shouldProxy) {
 		proxy->CreateD3D12Device(pAdapter);
 
-		D3D11CreateDevice(
-			pAdapter,
-			DriverType,
-			Software,
-			Flags,
-			&featureLevel,
-			1,
-			SDKVersion,
-			ppDevice,
-			pFeatureLevel,
-			ppImmediateContext);
+		if (globals::streamline->initialized)
+			globals::streamline->slD3D11CreateDevice(
+				pAdapter,
+				DriverType,
+				Software,
+				Flags,
+				&featureLevel,
+				1,
+				SDKVersion,
+				ppDevice,
+				pFeatureLevel,
+				ppImmediateContext);
+		else
+			D3D11CreateDevice(
+				pAdapter,
+				DriverType,
+				Software,
+				Flags,
+				&featureLevel,
+				1,
+				SDKVersion,
+				ppDevice,
+				pFeatureLevel,
+				ppImmediateContext);
 
 		proxy->SetD3D11Device(*ppDevice);
 		proxy->SetD3D11DeviceContext(*ppImmediateContext);
@@ -332,25 +347,45 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 		*ppSwapChain = proxy->GetSwapChainProxy();
 
+		if (globals::streamline->initialized) {
+			globals::streamline->CheckFeatures(pAdapter);
+			globals::streamline->PostDevice();
+		}
+
 		return S_OK;
 	}
 
-	auto ret = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
-		DriverType,
-		Software,
-		Flags,
-		&featureLevel,
-		1,
-		SDKVersion,
-		pSwapChainDesc,
-		ppSwapChain,
-		ppDevice,
-		pFeatureLevel,
-		ppImmediateContext);
+	HRESULT ret;
+
+	if (globals::streamline->initialized)
+		ret = globals::streamline->slD3D11CreateDeviceAndSwapChain(pAdapter,
+			DriverType,
+			Software,
+			Flags,
+			&featureLevel,
+			1,
+			SDKVersion,
+			pSwapChainDesc,
+			ppSwapChain,
+			ppDevice,
+			pFeatureLevel,
+			ppImmediateContext);
+	else
+		ret = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
+			DriverType,
+			Software,
+			Flags,
+			&featureLevel,
+			1,
+			SDKVersion,
+			pSwapChainDesc,
+			ppSwapChain,
+			ppDevice,
+			pFeatureLevel,
+			ppImmediateContext);
 
 	if (globals::streamline->initialized) {
 		globals::streamline->CheckFeatures(pAdapter);
-		globals::streamline->slSetD3DDevice(*ppDevice);
 		globals::streamline->PostDevice();
 	}
 
