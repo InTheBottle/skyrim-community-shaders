@@ -13,7 +13,6 @@
 #include <sl.h>
 #include <sl_consts.h>
 #include <sl_dlss.h>
-#include <sl_nis.h>
 #include <sl_version.h>
 #pragma warning(pop)
 
@@ -57,10 +56,6 @@ public:
 	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
 
-	// NIS specific functions
-	PFun_slNISSetOptions* slNISSetOptions{};
-	PFun_slNISGetState* slNISGetState{};
-
 	// DLSS specific functions
 	PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
 	PFun_slDLSSGetState* slDLSSGetState{};
@@ -71,8 +66,6 @@ public:
 	void CheckFeatures(IDXGIAdapter* a_adapter);
 
 	void PostDevice();
-
-	void Sharpen(Texture2D* a_sharpenTexture, float a_sharpness);
 
 	void Upscale(Texture2D* a_color, Texture2D* a_alphaMask, sl::DLSSPreset a_preset);
 

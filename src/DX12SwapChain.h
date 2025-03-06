@@ -96,7 +96,11 @@ public:
 	double refreshRate = 0;
 
 	DXGISwapChainProxy* swapChainProxy = nullptr;
-	reshade::api::effect_runtime* reshadeRuntime = nullptr;
+
+	reshade::api::effect_runtime* reShadeRuntime = nullptr;
+
+	reshade::api::resource_view reshadeSwapChainRTV;
+	reshade::api::resource_view reshadeSwapChainRTVsRGB;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
@@ -108,6 +112,7 @@ public:
 	void SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context);
 
 	HRESULT GetBuffer(void** ppSurface);
+	void RenderReShadeEffects();
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 

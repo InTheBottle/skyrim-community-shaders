@@ -325,8 +325,6 @@ void Upscaling::Upscale()
 	if (settings.sharpness > 0.0f) {
 		state->BeginPerfEvent("Sharpening");
 
-		globals::streamline->Sharpen(upscalingTexture, settings.sharpness);
-
 		state->EndPerfEvent();
 	}
 
@@ -361,7 +359,6 @@ void Upscaling::SharpenTAA()
 		state->BeginPerfEvent("Sharpening");
 
 		context->CopyResource(upscalingTexture->resource.get(), outputTextureResource);
-		globals::streamline->Sharpen(upscalingTexture, settings.sharpness);
 
 		state->EndPerfEvent();
 
@@ -531,10 +528,12 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::CopyResourcesToSharedBuffers()
 {
-	if (globals::dx12SwapChain->reshadeRuntime)
-		reshade::update_and_present_effect_runtime(globals::dx12SwapChain->reshadeRuntime);
+	if (!globals::dx12SwapChain->swapChain)
+		return;
 
-	if (!globals::dx12SwapChain->swapChain || !settings.frameGenerationMode || RE::UI::GetSingleton()->GameIsPaused())
+	globals::dx12SwapChain->RenderReShadeEffects();
+
+	if (!settings.frameGenerationMode || RE::UI::GetSingleton()->GameIsPaused())
 		return;
 
 	auto& context = globals::d3d::context;

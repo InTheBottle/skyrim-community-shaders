@@ -125,54 +125,10 @@ void Streamline::PostDevice()
 {
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction
 
-	if (featureNIS) {
-		slGetFeatureFunction(sl::kFeatureNIS, "slNISSetOptions", (void*&)slNISSetOptions);
-		slGetFeatureFunction(sl::kFeatureNIS, "slNISGetState", (void*&)slNISGetState);
-	}
-
 	if (featureDLSS) {
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", (void*&)slDLSSGetOptimalSettings);
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", (void*&)slDLSSGetState);
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
-	}
-}
-
-void Streamline::Sharpen(Texture2D* a_sharpenTexture, float a_sharpness)
-{
-	auto state = globals::state;
-
-	{
-		sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
-
-		sl::Resource colorIn = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
-		sl::Resource colorOut = { sl::ResourceType::eTex2d, a_sharpenTexture->resource.get(), 0 };
-
-		sl::ResourceTag colorInTag = sl::ResourceTag{ &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
-		sl::ResourceTag colorOutTag = sl::ResourceTag{ &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
-
-		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag };
-		slSetTag(viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
-	}
-
-	{
-		sl::NISOptions nisOptions{};
-		nisOptions.mode = sl::NISMode::eSharpen;
-		nisOptions.hdrMode = sl::NISHDR::eNone;
-		nisOptions.sharpness = a_sharpness * 0.3f;
-
-		if (SL_FAILED(result, slNISSetOptions(viewport, nisOptions))) {
-			logger::critical("[Streamline] Could not set NIS options");
-		}
-	}
-
-	sl::ViewportHandle view(viewport);
-	const sl::BaseStructure* inputs[] = { &view };
-
-	sl::FrameToken* frameToken;
-	slGetNewFrameToken(frameToken, nullptr);
-
-	if (SL_FAILED(result, slEvaluateFeature(sl::kFeatureNIS, *frameToken, inputs, _countof(inputs), globals::d3d::context))) {
-		logger::critical("[Streamline] Could not evaluate NIS");
 	}
 }
 
