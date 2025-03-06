@@ -144,9 +144,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 bool Load()
 {
-	SetEnvironmentVariableW(L"RESHADE_DISABLE_GRAPHICS_HOOK", L"1");
-	LoadLibraryW(L"ReShade64.dll");
-
 	if (REL::Module::IsVR()) {
 		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.160.0", true);
 	}
