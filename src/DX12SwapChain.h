@@ -113,6 +113,7 @@ public:
 
 	HRESULT GetBuffer(void** ppSurface);
 	void RenderReShadeEffects();
+	void UpdateReShadeEffects();
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 

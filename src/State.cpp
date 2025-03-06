@@ -12,6 +12,7 @@
 #include "Streamline.h"
 #include "TruePBR.h"
 #include "Upscaling.h"
+#include "DX12SwapChain.h"
 
 void State::Draw()
 {
@@ -124,6 +125,8 @@ void State::Setup()
 	globals::deferred->SetupResources();
 	if (!upscalerLoaded)
 		globals::upscaling->CreateUpscalingResources();
+	if (globals::dx12SwapChain->swapChain)
+		globals::dx12SwapChain->UpdateReShadeEffects();
 	if (initialized)
 		return;
 	initialized = true;

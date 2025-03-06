@@ -137,6 +137,20 @@ void DX12SwapChain::RenderReShadeEffects()
 		reShadeRuntime->render_effects(reShadeRuntime->get_command_queue()->get_immediate_command_list(), reshadeSwapChainRTV, reshadeSwapChainRTVsRGB);
 	}
 }
+void DX12SwapChain::UpdateReShadeEffects()
+{
+	auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	
+	auto depthRTV = reshade::api::resource_view{ reinterpret_cast<uintptr_t>(depth.depthSRV) };
+	reShadeRuntime->update_texture_bindings("DEPTH", depthRTV, depthRTV);
+
+	reShadeRuntime->enumerate_uniform_variables(nullptr, [](reshade::api::effect_runtime* runtime, reshade::api::effect_uniform_variable variable) {
+		char source[32];
+		if (runtime->get_annotation_string_from_uniform_variable(variable, "source", source) &&
+			std::strcmp(source, "bufready_depth") == 0)
+			runtime->set_uniform_value_bool(variable, true);
+	});
+}
 
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 {
