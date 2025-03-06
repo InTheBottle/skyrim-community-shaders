@@ -220,11 +220,11 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 
 ID3D11ComputeShader* Upscaling::GetRCASCS()
 {
-	float sharpenessRemapped = (-2.0f * settings.sharpness) + 2.0f;
-	sharpenessRemapped = exp2(-sharpenessRemapped);
+	float sharpnessRemapped = (-2.0f * settings.sharpness) + 2.0f;
+	sharpnessRemapped = exp2(-sharpnessRemapped);
 
-	static auto previousSharpness = sharpenessRemapped;
-	auto currentSharpness = sharpenessRemapped;
+	static auto previousSharpness = sharpnessRemapped;
+	auto currentSharpness = sharpnessRemapped;
 
 	if (previousSharpness != currentSharpness) {
 		previousSharpness = currentSharpness;
