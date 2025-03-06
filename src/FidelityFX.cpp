@@ -188,7 +188,7 @@ void FidelityFX::DestroyFSRResources()
 		logger::critical("[FidelityFX] Failed to destroy FSR3 context!");
 }
 
-void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_jitter, bool a_reset)
+void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_jitter, bool a_reset, float a_sharpness)
 {
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -221,7 +221,7 @@ void FidelityFX::Upscale(Texture2D* a_color, Texture2D* a_alphaMask, float2 a_ji
 		dispatchParameters.cameraNear = *globals::game::cameraNear;
 
 		dispatchParameters.enableSharpening = true;
-		dispatchParameters.sharpness = 0.0f;
+		dispatchParameters.sharpness = a_sharpness;
 
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;

@@ -218,6 +218,31 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 	return encodeTexturesCS;
 }
 
+ID3D11ComputeShader* Upscaling::GetRCASCS()
+{
+	float sharpenessRemapped = (-2.0f * settings.sharpness) + 2.0f;
+	sharpenessRemapped = exp2(-sharpenessRemapped);
+
+	static auto previousSharpness = sharpenessRemapped;
+	auto currentSharpness = sharpenessRemapped;
+
+	if (previousSharpness != currentSharpness) {
+		previousSharpness = currentSharpness;
+
+		if (rcasCS) {
+			rcasCS->Release();
+			rcasCS = nullptr;
+		}
+	}
+
+	if (!rcasCS) {
+		logger::debug("Compiling RCAS.hlsl");
+		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/RCAS/RCAS.hlsl", { { "SHARPNESS", std::format("{}", currentSharpness).c_str() } }, "cs_5_0");
+	}
+
+	return rcasCS;
+}
+
 void Upscaling::UpdateJitter()
 {
 	auto upscaleMethod = GetUpscaleMethod();
@@ -315,15 +340,41 @@ void Upscaling::Upscale()
 		if (upscaleMethod == UpscaleMethod::kDLSS)
 			globals::streamline->Upscale(upscalingTexture, alphaMaskTexture, settings.dlssPreset == 0 ? (sl::DLSSPreset)11u : sl::DLSSPreset::ePresetE);
 		else if (upscaleMethod == UpscaleMethod::kFSR)
-			FidelityFX::GetSingleton()->Upscale(upscalingTexture, alphaMaskTexture, jitter, reset);
+			FidelityFX::GetSingleton()->Upscale(upscalingTexture, alphaMaskTexture, jitter, reset, settings.sharpness);
 
 		reset = false;
 
 		state->EndPerfEvent();
 	}
 
-	if (settings.sharpness > 0.0f) {
+
+	if (upscaleMethod != UpscaleMethod::kFSR) {
 		state->BeginPerfEvent("Sharpening");
+
+		context->CopyResource(inputTextureResource, upscalingTexture->resource.get());
+
+		{
+			{
+				ID3D11ShaderResourceView* views[1] = { inputTextureSRV };
+				context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+				ID3D11UnorderedAccessView* uavs[1] = { upscalingTexture->uav.get() };
+				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+				context->CSSetShader(GetRCASCS(), nullptr, 0);
+
+				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			}
+
+			ID3D11ShaderResourceView* views[1] = { nullptr };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+			ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			ID3D11ComputeShader* shader = nullptr;
+			context->CSSetShader(shader, nullptr, 0);
+		}
 
 		state->EndPerfEvent();
 	}
@@ -333,39 +384,72 @@ void Upscaling::Upscale()
 
 void Upscaling::SharpenTAA()
 {
-	if (settings.sharpness > 0.0f) {
-		std::lock_guard<std::mutex> lock(settingsMutex);  // Lock for the duration of this function
+	std::lock_guard<std::mutex> lock(settingsMutex);  // Lock for the duration of this function
 
-		CheckResources();
+	CheckResources();
 
-		auto state = globals::state;
-		auto context = globals::d3d::context;
+	auto state = State::GetSingleton();
 
-		ID3D11RenderTargetView* outputTextureRTV;
-		ID3D11DepthStencilView* dsv;
-		context->OMGetRenderTargets(1, &outputTextureRTV, &dsv);
-		context->OMSetRenderTargets(0, nullptr, nullptr);
+	auto context = globals::d3d::context;
 
-		outputTextureRTV->Release();
+	ID3D11ShaderResourceView* inputTextureSRV;
+	context->PSGetShaderResources(0, 1, &inputTextureSRV);
 
-		if (dsv)
-			dsv->Release();
+	inputTextureSRV->Release();
 
-		ID3D11Resource* outputTextureResource;
-		outputTextureRTV->GetResource(&outputTextureResource);
+	ID3D11RenderTargetView* outputTextureRTV;
+	ID3D11DepthStencilView* dsv;
+	context->OMGetRenderTargets(1, &outputTextureRTV, &dsv);
+	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-		auto dispatchCount = Util::GetScreenDispatchCount(false);
+	outputTextureRTV->Release();
 
-		state->BeginPerfEvent("Sharpening");
+	if (dsv)
+		dsv->Release();
 
-		context->CopyResource(upscalingTexture->resource.get(), outputTextureResource);
+	ID3D11Resource* inputTextureResource;
+	inputTextureSRV->GetResource(&inputTextureResource);
 
-		state->EndPerfEvent();
+	ID3D11Resource* outputTextureResource;
+	outputTextureRTV->GetResource(&outputTextureResource);
 
-		context->CopyResource(outputTextureResource, upscalingTexture->resource.get());
+	auto dispatchCount = Util::GetScreenDispatchCount(false);
 
-		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
+	state->BeginPerfEvent("Sharpening");
+
+	context->CopyResource(inputTextureResource, outputTextureResource);
+
+	{
+		{
+			ID3D11ShaderResourceView* views[1] = { inputTextureSRV };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+			ID3D11UnorderedAccessView* uavs[1] = { upscalingTexture->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			context->CSSetShader(GetRCASCS(), nullptr, 0);
+
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
+
+		ID3D11ShaderResourceView* views[1] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		ID3D11ComputeShader* shader = nullptr;
+		context->CSSetShader(shader, nullptr, 0);
 	}
+
+	state->EndPerfEvent();
+
+	context->CopyResource(outputTextureResource, upscalingTexture->resource.get());
+
+	auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 }
 
 void Upscaling::CreateUpscalingResources()
