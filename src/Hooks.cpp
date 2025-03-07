@@ -291,7 +291,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			shouldProxy = false;
 
 	auto refreshRate = proxy->GetRefreshRate(pSwapChainDesc->OutputWindow);
-	
+
 	if (shouldProxy) {
 		if (upscaling->settings.frameGenerationMode)
 			if (refreshRate >= 120)
@@ -314,7 +314,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 		if (streamline->featureDLSSG) {
 			logger::info("[Frame Generation] Using D3D12 proxy via Streamline");
-		
+
 			auto ret = streamline->slD3D11CreateDeviceAndSwapChain(pAdapter,
 				DriverType,
 				Software,
@@ -331,7 +331,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			upscaling->d3d12Interop = true;
 
 			streamline->PostDevice();
-			
+
 			return ret;
 
 		} else {

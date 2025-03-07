@@ -180,7 +180,6 @@ void Streamline::PostDevice()
 	}
 }
 
-
 void Streamline::CheckFrameConstants()
 {
 	if (frameChecker.IsNewFrame()) {
@@ -221,7 +220,6 @@ void Streamline::CheckFrameConstants()
 		}
 	}
 }
-
 
 void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl::DLSSPreset a_preset)
 {
