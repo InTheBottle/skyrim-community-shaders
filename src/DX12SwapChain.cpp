@@ -125,16 +125,21 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 {;
-	// New frame, reset
-	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
-	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
-
 	// Update fence value
 	fenceValues[frameIndex]++;
 
 	// Wait for D3D11 to finish
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValues[frameIndex]));
+
+	// Simulate Present on D3D11
+	d3d11Context->Flush();
+
+	// WAit for D3D11
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValues[frameIndex]));
+
+	// New frame, reset
+	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 
 	// Copy shared texture to swap chain buffer
 	{
