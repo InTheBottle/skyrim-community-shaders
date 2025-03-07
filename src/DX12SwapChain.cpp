@@ -119,9 +119,6 @@ HRESULT DX12SwapChain::Present(UINT, UINT Flags)
 	// Wait for D3D11 to finish
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValues[frameIndex]));
 
-	// Simulate Present on D3D11
-	d3d11Context->Flush();
-
 	// Wait for D3D11
 	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValues[frameIndex]));
 
