@@ -647,8 +647,7 @@ void Upscaling::CopyBuffersToSharedResources()
 		context->CSSetShader(shader, nullptr, 0);
 	}
 
-	if (!useHUDLess)
-	{
+	if (!useHUDLess){
 		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 		ID3D11Resource* swapChainResource;
 		swapChain.SRV->GetResource(&swapChainResource);
@@ -665,19 +664,12 @@ void Upscaling::PostDisplay()
 	if (!d3d12Interop || !settings.frameGenerationMode)
 		return;
 
-	auto& context = globals::d3d::context;
-	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-
-	ID3D11RenderTargetView* backupViews[8];
-	ID3D11DepthStencilView* backupDsv;
-	context->OMGetRenderTargets(8, backupViews, &backupDsv);  // Backup bound render targets
-	context->OMSetRenderTargets(0, nullptr, nullptr);         // Unbind all bound render targets
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
 
 	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-
 	ID3D11Resource* swapChainResource;
 	swapChain.SRV->GetResource(&swapChainResource);
-
 	context->CopyResource(HUDLessBufferShared->resource.get(), swapChainResource);
 
 	useHUDLess = true;
