@@ -4,12 +4,12 @@
 
 #include "DX12SwapChain.h"
 #include "Deferred.h"
+#include "FidelityFX.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Streamline.h"
 #include "Upscaling.h"
-#include "FidelityFX.h"
 
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
