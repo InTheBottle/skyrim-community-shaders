@@ -155,7 +155,7 @@ bool Load()
 
 	auto messaging = SKSE::GetMessagingInterface();
 	messaging->RegisterListener("SKSE", MessageHandler);
-	
+
 	globals::OnInit();
 	globals::ReInit();
 
