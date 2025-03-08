@@ -209,15 +209,12 @@ struct IDXGISwapChain_Present
 		menu->DrawOverlay();
 
 		BOOL fullscreen = FALSE;
-        ((IDXGISwapChain*)This)->GetFullscreenState(&fullscreen, nullptr);
-        if (fullscreen || SyncInterval)
-        {
-            Flags &= ~DXGI_PRESENT_ALLOW_TEARING;
-        }
-        else if (SyncInterval == 0)
-        {
-            Flags |= DXGI_PRESENT_ALLOW_TEARING;
-        }
+		((IDXGISwapChain*)This)->GetFullscreenState(&fullscreen, nullptr);
+		if (fullscreen || SyncInterval) {
+			Flags &= ~DXGI_PRESENT_ALLOW_TEARING;
+		} else if (SyncInterval == 0) {
+			Flags |= DXGI_PRESENT_ALLOW_TEARING;
+		}
 
 		auto retval = func(This, SyncInterval, Flags);
 
@@ -300,13 +297,12 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	DX::ThrowIfFailed(pAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
 
 	BOOL allowTearing = FALSE;
-    DX::ThrowIfFailed(dxgiFactory->CheckFeatureSupport(
-        DXGI_FEATURE_PRESENT_ALLOW_TEARING,
-        &allowTearing,
-        sizeof(allowTearing)
-    ));
+	DX::ThrowIfFailed(dxgiFactory->CheckFeatureSupport(
+		DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+		&allowTearing,
+		sizeof(allowTearing)));
 
-	if (allowTearing){
+	if (allowTearing) {
 		pSwapChainDesc->Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 	} else {
 		pSwapChainDesc->Flags &= ~DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
