@@ -103,7 +103,8 @@ namespace globals
 	extern Upscaling* upscaling;
 	extern DX12SwapChain* dx12SwapChain;
 	extern FidelityFX* fidelityFX;
-
+	
+	void OnInit();
 	void ReInit();
 	void OnDataLoaded();
 }
