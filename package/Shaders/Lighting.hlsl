@@ -2303,17 +2303,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 		float skylightingBoost = skylightingDiffuse * saturate(worldSpaceNormal.z);
 
-#				if defined(SOFT_LIGHTING)
+#		if defined(SOFT_LIGHTING)
 		skylightingBoost += GetSoftLightMultiplier(worldSpaceNormal.z) * rimSoftLightColor.xyz;
-#				endif
+#		endif
 
-#				if defined(RIM_LIGHTING)
+#		if defined(RIM_LIGHTING)
 		skylightingBoost += GetRimLightMultiplier(float3(0, 0, -1), worldSpaceViewDirection, worldSpaceNormal.xyz) * rimSoftLightColor.xyz;
-#				endif
+#		endif
 
-#				if defined(BACK_LIGHTING)
+#		if defined(BACK_LIGHTING)
 		skylightingBoost += saturate(-worldSpaceNormal.z) * backLightColor.xyz;
-#				endif
+#		endif
 
 		skylightingBoost *= (1.0 - SharedData::skylightingSettings.MinDiffuseVisibility);
 

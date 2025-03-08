@@ -717,7 +717,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 		float lightBacklighting = 1.0 + saturate(-lightNoL);
 
 		float skylightingBoost = skylightingDiffuse * wrappedLight * (1.0 - SharedData::skylightingSettings.MinDiffuseVisibility);
-		
+
 		sss += lightBacklighting * skylightingDiffuse * saturate(-lightAngle) * (1.0 - SharedData::skylightingSettings.MinDiffuseVisibility);
 
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
