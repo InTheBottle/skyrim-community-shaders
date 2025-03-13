@@ -46,6 +46,10 @@ find_package(Tracy CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 include(FidelityFX-SDK)
 
+
+add_subdirectory(extern/KickstartRT)
+
+
 target_compile_definitions(
 	${PROJECT_NAME}
 	PRIVATE
@@ -78,6 +82,7 @@ target_link_libraries(
 	Tracy::TracyClient
 	Streamline
 	d3d12.lib
+	KickstartRT_core_DX12
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990

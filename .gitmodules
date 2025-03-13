@@ -7,3 +7,6 @@
 [submodule "extern/Streamline-DX12"]
 	path = extern/Streamline-DX12
 	url = https://github.com/NVIDIAGameWorks/Streamline.git
+[submodule "extern/KickstartRT"]
+	path = extern/KickstartRT
+	url = https://github.com/NVIDIAGameWorks/KickstartRT.git
