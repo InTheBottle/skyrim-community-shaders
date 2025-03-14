@@ -46,6 +46,8 @@ find_package(Tracy CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 include(FidelityFX-SDK)
 
+option(KickstartRT_SDK_WITH_NRD "Include NRD as part of the SDK. Supported for all backends." OFF)
+option(KickstartRT_SDK_WITH_VULKAN "Enable the Vulkan version of SDK" OFF)
 
 add_subdirectory(extern/KickstartRT)
 
