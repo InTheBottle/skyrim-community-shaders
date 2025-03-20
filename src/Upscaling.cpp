@@ -584,7 +584,6 @@ void Upscaling::CreateFrameGenerationResources()
 			CloseHandle(sharedHandle);
 		}
 	}
-		
 
 	{
 		IDXGIResource1* dxgiResource = nullptr;

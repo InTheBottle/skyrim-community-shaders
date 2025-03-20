@@ -33,7 +33,7 @@ void XeSS::Init()
 
 	if (FAILED(xessD3D12Init(m_xessContext, &params)))
 		logger::error("Unable to initialize XeSS context");
-		
+
 	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, dx12SwapChain->commandAllocators[dx12SwapChain->frameIndex].get(), nullptr, IID_PPV_ARGS(&commandList)));
 	DX::ThrowIfFailed(commandList->Close());
 }
