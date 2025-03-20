@@ -516,6 +516,11 @@ void Upscaling::CreateFrameGenerationResources()
 	HUDLessBufferShared->CreateRTV(rtvDesc);
 	HUDLessBufferShared->CreateUAV(uavDesc);
 
+	upscaleBufferShared = new Texture2D(texDesc);
+	upscaleBufferShared->CreateSRV(srvDesc);
+	upscaleBufferShared->CreateRTV(rtvDesc);
+	upscaleBufferShared->CreateUAV(uavDesc);
+
 	texDesc.Format = DXGI_FORMAT_R32_FLOAT;
 	srvDesc.Format = texDesc.Format;
 	rtvDesc.Format = texDesc.Format;
@@ -559,6 +564,27 @@ void Upscaling::CreateFrameGenerationResources()
 			CloseHandle(sharedHandle);
 		}
 	}
+
+	{
+		IDXGIResource1* dxgiResource = nullptr;
+		DX::ThrowIfFailed(upscaleBufferShared->resource->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
+
+		if (globals::dx12SwapChain->swapChain) {
+			HANDLE sharedHandle = nullptr;
+			DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(
+				nullptr,
+				DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+				nullptr,
+				&sharedHandle));
+
+			DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
+				sharedHandle,
+				IID_PPV_ARGS(&upscaleBufferShared12)));
+
+			CloseHandle(sharedHandle);
+		}
+	}
+		
 
 	{
 		IDXGIResource1* dxgiResource = nullptr;

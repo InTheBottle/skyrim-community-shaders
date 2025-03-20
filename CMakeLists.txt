@@ -44,6 +44,8 @@ find_package(unordered_dense CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
+add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/xess)
+
 include(FidelityFX-SDK)
 
 target_compile_definitions(
@@ -78,6 +80,7 @@ target_link_libraries(
 	Tracy::TracyClient
 	Streamline
 	d3d12.lib
+	xess
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990

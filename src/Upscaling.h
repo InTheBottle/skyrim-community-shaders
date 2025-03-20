@@ -75,10 +75,12 @@ public:
 	Texture2D* HUDLessBufferShared;
 	Texture2D* depthBufferShared;
 	Texture2D* motionVectorBufferShared;
+	Texture2D* upscaleBufferShared;
 
 	winrt::com_ptr<ID3D12Resource> HUDLessBufferShared12;
 	winrt::com_ptr<ID3D12Resource> depthBufferShared12;
 	winrt::com_ptr<ID3D12Resource> motionVectorBufferShared12;
+	winrt::com_ptr<ID3D12Resource> upscaleBufferShared12;
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
