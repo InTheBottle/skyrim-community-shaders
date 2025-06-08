@@ -159,8 +159,8 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 		ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
 
-		static auto viewMatrix = globals::upscaling->frameBufferCached.CameraViewInverse.Transpose();
-		static auto cameraViewToClip = globals::upscaling->frameBufferCached.CameraProjUnjittered.Transpose();
+		auto viewMatrix = globals::upscaling->frameBufferCached.CameraViewInverse.Transpose();
+		auto cameraViewToClip = globals::upscaling->frameBufferCached.CameraProjUnjittered.Transpose();
 
 		cameraConfig.cameraRight[0] = viewMatrix._11;
 		cameraConfig.cameraRight[1] = viewMatrix._12;
