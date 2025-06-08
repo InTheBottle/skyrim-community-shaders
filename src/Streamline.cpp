@@ -185,10 +185,11 @@ void Streamline::PostDevice()
 	}
 }
 
+
 void Streamline::CheckFrameConstants()
 {
 	if (frameChecker.IsNewFrame() && globals::streamline->initialized) {
-		slGetNewFrameToken(frameToken, nullptr);
+		slGetNewFrameToken(frameToken, &globals::state->frameCount);
 
 		auto state = globals::state;
 
@@ -324,14 +325,8 @@ void Streamline::Present()
 
 	auto state = globals::state;
 
-	// Fake NVIDIA Reflex to prevent DLSSG errors
-	slReflexSetMarker(sl::ReflexMarker::eInputSample, *frameToken);
-	slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *frameToken);
 	slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *frameToken);
 	slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *frameToken);
-	slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *frameToken);
-	slReflexSetMarker(sl::ReflexMarker::ePresentStart, *frameToken);
-	slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *frameToken);
 
 	sl::Extent fullExtent{ 0, 0, (uint)state->screenSize.x, (uint)state->screenSize.y };
 

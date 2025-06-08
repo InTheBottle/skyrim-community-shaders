@@ -222,7 +222,21 @@ struct IDXGISwapChain_Present
 			}
 		}
 
-		auto retval = func(This, SyncInterval, Flags);
+		HRESULT retval = S_OK;
+
+		if (globals::streamline->featureReflex) {
+			sl::FrameToken* frameToken;
+			globals::streamline->slGetNewFrameToken(frameToken, &globals::state->frameCount);
+
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *frameToken);
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::ePresentStart, *frameToken);
+
+			retval = func(This, SyncInterval, Flags);
+
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *frameToken);
+		} else {
+			retval = func(This, SyncInterval, Flags);
+		}
 
 		TracyD3D11Collect(state->tracyCtx);
 
@@ -454,6 +468,36 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 	return ret;
 }
+
+struct Main_Update_Begin
+{
+	static void thunk(RE::PlayerCharacter* a_player)
+	{
+		if (globals::streamline->featureReflex) {
+			sl::FrameToken* frameToken;
+			globals::streamline->slGetNewFrameToken(frameToken, &globals::state->frameCount);
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::eInputSample, *frameToken);
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *frameToken);
+		}
+		func(a_player);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+struct Main_Update_Swap
+{
+	static void thunk(void* This)
+	{
+		if (globals::streamline->featureReflex) {
+			sl::FrameToken* frameToken;
+			globals::streamline->slGetNewFrameToken(frameToken, &globals::state->frameCount);
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *frameToken);
+			globals::streamline->slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *frameToken);
+		}
+		func(This);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
 
 struct BSShaderRenderTargets_Create
 {
@@ -1032,6 +1076,11 @@ namespace Hooks
 			PatchMemory(
 				REL::Relocation<std::uintptr_t>(renderPassCacheCtor, 0x191 - 2).address(),
 				reinterpret_cast<const uint8_t*>(&passCountSE), 4);
+		}
+
+		if (!REL::Module::IsVR()) {
+			stl::write_thunk_call<Main_Update_Begin>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x53, 0x6E));
+			stl::write_thunk_call<Main_Update_Swap>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x5D2, 0xA92));
 		}
 	}
 
