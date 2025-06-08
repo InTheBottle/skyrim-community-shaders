@@ -204,15 +204,15 @@ void Streamline::CheckFrameConstants()
 		slConstants.cameraNear = *globals::game::cameraNear;
 		slConstants.cameraFar = *globals::game::cameraFar;
 
-		auto viewMatrix = frameBufferCached.CameraViewInverse.Transpose();
-		auto cameraViewToClip = frameBufferCached.CameraProjUnjittered.Transpose();
+		auto viewMatrix = globals::upscaling->frameBufferCached.CameraViewInverse.Transpose();
+		auto cameraViewToClip = globals::upscaling->frameBufferCached.CameraProjUnjittered.Transpose();
 
 		slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 		slConstants.cameraPinholeOffset = { 0.f, 0.f };
 		slConstants.cameraRight = { viewMatrix._11, viewMatrix._12, viewMatrix._13 };
 		slConstants.cameraUp = { viewMatrix._21, viewMatrix._22, viewMatrix._23 };
 		slConstants.cameraFwd = { viewMatrix._31, viewMatrix._32, viewMatrix._33 };
-		slConstants.cameraPos = *(sl::float3*)&frameBufferCached.CameraPosAdjust;
+		slConstants.cameraPos = *(sl::float3*)&globals::upscaling->frameBufferCached.CameraPosAdjust;
 		slConstants.cameraViewToClip = *(sl::float4x4*)&cameraViewToClip;
 		slConstants.depthInverted = sl::Boolean::eFalse;
 
@@ -360,34 +360,4 @@ void Streamline::DestroyDLSSResources()
 	dlssOptions.mode = sl::DLSSMode::eOff;
 	slDLSSSetOptions(viewport, dlssOptions);
 	slFreeResources(sl::kFeatureDLSS, viewport);
-}
-
-void Streamline::InstallHooks(ID3D11DeviceContext* a_context)
-{
-	stl::detour_vfunc<14, ID3D11DeviceContext_Map>(a_context);
-	stl::detour_vfunc<15, ID3D11DeviceContext_Unmap>(a_context);
-}
-
-HRESULT Streamline::ID3D11DeviceContext_Map::thunk(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource)
-{
-	HRESULT hr = func(This, pResource, Subresource, MapType, MapFlags, pMappedResource);
-	if (hr == S_OK) {
-		if (*globals::game::perFrame.get() == pResource)
-			globals::streamline->mappedFrameBuffer = pMappedResource;
-	}
-	return hr;
-}
-
-void Streamline::ID3D11DeviceContext_Unmap::thunk(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Subresource)
-{
-	if (*globals::game::perFrame.get() == pResource && globals::streamline->mappedFrameBuffer)
-		globals::streamline->CacheFramebuffer();
-	func(This, pResource, Subresource);
-}
-
-void Streamline::CacheFramebuffer()
-{
-	auto frameBuffer = (FrameBuffer*)mappedFrameBuffer->pData;
-	frameBufferCached = *frameBuffer;
-	mappedFrameBuffer = nullptr;
 }

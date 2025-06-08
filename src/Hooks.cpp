@@ -376,7 +376,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			upscaling->d3d12Interop = true;
 
 			streamline->PostDevice();
-			streamline->InstallHooks(*ppImmediateContext);
+			upscaling->InstallD3DHooks(*ppImmediateContext);
 
 			IDXGIFactory* factory = nullptr;
 			if (SUCCEEDED((*ppSwapChain)->GetParent(IID_PPV_ARGS(&factory)))) {

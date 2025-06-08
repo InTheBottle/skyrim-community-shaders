@@ -110,44 +110,73 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	}
 
 	if (a_useFrameGeneration) {
-		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
+		{
+			ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
-		dispatchParameters.commandList = commandList;
+			dispatchParameters.commandList = commandList;
 
-		dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
-		dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
-		dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
-		dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
+			dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
+			dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
+			dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
+			dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
 
-		auto gameViewport = globals::game::graphicsState;
+			auto gameViewport = globals::game::graphicsState;
 
-		float2 jitter;
+			float2 jitter;
 
-		if (globals::game::isVR)
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width);
-		else
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width) / 2.0f;
+			if (globals::game::isVR)
+				jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width);
+			else
+				jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width) / 2.0f;
 
-		jitter.y = gameViewport->projectionPosScaleY * (float)swapChain->swapChainDesc.Height / 2.0f;
+			jitter.y = gameViewport->projectionPosScaleY * (float)swapChain->swapChainDesc.Height / 2.0f;
 
-		dispatchParameters.jitterOffset.x = -jitter.x;
-		dispatchParameters.jitterOffset.y = -jitter.y;
+			dispatchParameters.jitterOffset.x = -jitter.x;
+			dispatchParameters.jitterOffset.y = -jitter.y;
 
-		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
+			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 
-		dispatchParameters.cameraFar = *globals::game::cameraFar;
-		dispatchParameters.cameraNear = *globals::game::cameraNear;
+			dispatchParameters.cameraFar = *globals::game::cameraFar;
+			dispatchParameters.cameraNear = *globals::game::cameraNear;
 
-		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
-		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 
-		dispatchParameters.frameID = frameID;
+			dispatchParameters.frameID = frameID;
 
-		dispatchParameters.depth = ffxApiGetResourceDX12(depth);
-		dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
+			dispatchParameters.depth = ffxApiGetResourceDX12(depth);
+			dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
 
-		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
-			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
+			if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
+				logger::critical("[FidelityFX] Failed to dispatch frame generation!");
+			}
+		}
+
+		{
+			ffx::DispatchDescFrameGenerationPrepareCameraInfo dispatchParameters{};
+
+			auto viewMatrix = globals::upscaling->frameBufferCached.CameraViewInverse.Transpose();
+			auto cameraViewToClip = globals::upscaling->frameBufferCached.CameraProjUnjittered.Transpose();
+
+			dispatchParameters.cameraRight[0] = viewMatrix._11;
+			dispatchParameters.cameraRight[1] = viewMatrix._12;
+			dispatchParameters.cameraRight[2] = viewMatrix._13;
+	
+			dispatchParameters.cameraUp[0] = viewMatrix._21;
+			dispatchParameters.cameraUp[1] = viewMatrix._22;
+			dispatchParameters.cameraUp[2] = viewMatrix._23;
+
+			dispatchParameters.cameraForward[0] = viewMatrix._31;
+			dispatchParameters.cameraForward[1] = viewMatrix._32;
+			dispatchParameters.cameraForward[2] = viewMatrix._33;
+
+			dispatchParameters.cameraPosition[0] = globals::upscaling->frameBufferCached.CameraPosAdjust.x;
+			dispatchParameters.cameraPosition[1] = globals::upscaling->frameBufferCached.CameraPosAdjust.y;
+			dispatchParameters.cameraPosition[2] = globals::upscaling->frameBufferCached.CameraPosAdjust.z;
+
+			if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
+				logger::critical("[FidelityFX] Failed to dispatch frame generation camera info!");
+			}
 		}
 	}
 

@@ -779,3 +779,33 @@ float Upscaling::GetFrameGenerationFrameTime() const
 
 	return 0.0f;
 }
+
+void Upscaling::InstallD3DHooks(ID3D11DeviceContext* a_context)
+{
+	stl::detour_vfunc<14, ID3D11DeviceContext_Map>(a_context);
+	stl::detour_vfunc<15, ID3D11DeviceContext_Unmap>(a_context);
+}
+
+HRESULT Upscaling::ID3D11DeviceContext_Map::thunk(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource)
+{
+	HRESULT hr = func(This, pResource, Subresource, MapType, MapFlags, pMappedResource);
+	if (hr == S_OK) {
+		if (*globals::game::perFrame.get() == pResource)
+			globals::upscaling->mappedFrameBuffer = pMappedResource;
+	}
+	return hr;
+}
+
+void Upscaling::ID3D11DeviceContext_Unmap::thunk(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Subresource)
+{
+	if (*globals::game::perFrame.get() == pResource && globals::upscaling->mappedFrameBuffer)
+		globals::upscaling->CacheFramebuffer();
+	func(This, pResource, Subresource);
+}
+
+void Upscaling::CacheFramebuffer()
+{
+	auto frameBuffer = (FrameBuffer*)mappedFrameBuffer->pData;
+	frameBufferCached = *frameBuffer;
+	mappedFrameBuffer = nullptr;
+}
