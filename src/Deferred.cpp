@@ -178,6 +178,7 @@ void Deferred::SetupResources()
 		prevDiffuseAmbientTexture->CreateUAV(uavDesc);
 	}
 
+	// Testing code for imagespace shaders
 	{
 		auto device = globals::d3d::device;
 		auto context = globals::d3d::context;
@@ -724,6 +725,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	return mainCompositeInteriorCS;
 }
 
+// Testing code for imagespace shaders
 void Deferred::BindLUT()
 {
 	auto view = lutTexture.get();
