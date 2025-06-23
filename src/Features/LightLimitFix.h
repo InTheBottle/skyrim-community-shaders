@@ -277,7 +277,7 @@ public:
 			static void thunk(RE::NiNode* This);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
-		
+
 		struct ValidLight1
 		{
 			static bool thunk(RE::BSShaderProperty* a_property, RE::BSLight* a_light)
