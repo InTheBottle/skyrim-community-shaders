@@ -521,7 +521,7 @@ void Deferred::DeferredPasses()
 
 void Deferred::EndDeferred()
 {
-	if (!inWorld)
+	if (!globals::state->inWorld)
 		return;
 
 	auto shaderCache = globals::shaderCache;
@@ -756,11 +756,8 @@ void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 
 void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 {
-	auto deferred = globals::deferred;
-	deferred->inWorld = true;
 	globals::state->inWorld = true;
 	func(a1);
-	deferred->inWorld = false;
 	globals::state->inWorld = false;
 };
 
@@ -769,10 +766,10 @@ void Deferred::Hooks::Main_RenderWorld_Start::thunk(RE::BSBatchRenderer* This, u
 	auto deferred = globals::deferred;
 	auto shaderCache = globals::shaderCache;
 
-	if (shaderCache->IsEnabled() && deferred->inWorld) {
+	if (shaderCache->IsEnabled() && globals::state->inWorld) {
 		// Here is where the first opaque objects start rendering
 		deferred->StartDeferred();
-		func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches                                                               // RenderBatches
+		func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 	} else {
 		func(This, StartRange, EndRanges, RenderFlags, GeometryGroup);  // RenderBatches
 	}
@@ -781,11 +778,9 @@ void Deferred::Hooks::Main_RenderWorld_Start::thunk(RE::BSBatchRenderer* This, u
 void Deferred::RenderBlendedDecals()
 {
 	if (!globals::state->blendedDecalRenderPasses.empty()) {
-		static auto shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-		auto stateUpdateFlags = shadowState->GetRuntimeData().stateUpdateFlags;
 
-		shadowState->GetRuntimeData().alphaBlendWriteMode = 1;
-		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
+		globals::game::shadowState->GetRuntimeData().alphaBlendWriteMode = 1;
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 		if (renderBlended)
 			for (auto& renderPass : globals::state->blendedDecalRenderPasses)
@@ -801,7 +796,7 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	auto terrainBlending = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
 
-	if (shaderCache->IsEnabled() && deferred->inWorld) {
+	if (shaderCache->IsEnabled() && globals::state->inWorld) {
 		// Defer terrain rendering until after everything else
 		if (terrainBlending->loaded)
 			terrainBlending->RenderTerrainBlendingPasses();

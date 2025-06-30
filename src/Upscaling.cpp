@@ -3,7 +3,6 @@
 #include "DX12SwapChain.h"
 #include "Hooks.h"
 #include "State.h"
-#include "deferred.h"
 #include <reshade/reshade.hpp>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -40,8 +39,6 @@ void Upscaling::DrawSettings()
 
 	if (state->featureLevel != D3D_FEATURE_LEVEL_11_1)
 		availableModes = 1;
-
-	ImGui::Checkbox("enable blended", &globals::deferred->renderBlended);
 
 	// Slider for method selection
 	ImGui::SliderInt("Method", (int*)currentUpscaleMode, 0, availableModes, std::format("{}", upscaleModes[(uint)*currentUpscaleMode]).c_str());

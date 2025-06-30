@@ -46,7 +46,6 @@ public:
 	ID3D11ComputeShader* mainCompositeCS = nullptr;
 	ID3D11ComputeShader* mainCompositeInteriorCS = nullptr;
 
-	bool inWorld = false;
 	bool inBlendedDecals = false;
 	bool inDecals = false;
 	bool inReflections = false;
