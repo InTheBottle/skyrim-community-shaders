@@ -1,4 +1,3 @@
-
 #include "DX12SwapChain.h"
 #include "Deferred.h"
 #include "FrameAnnotations.h"
@@ -90,16 +89,18 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				auto shaderCache = globals::shaderCache;
 
-				shaderCache->ValidateDiskCache();
-
-				if (shaderCache->UseFileWatcher())
-					shaderCache->StartFileWatcher();
-
+				// Run feature PostPostLoad() first so features can disable themselves if needed
 				for (auto* feature : Feature::GetFeatureList()) {
 					if (feature->loaded) {
 						feature->PostPostLoad();
 					}
 				}
+
+				// Now validate disk cache after features have had a chance to modify their state
+				shaderCache->ValidateDiskCache();
+
+				if (shaderCache->UseFileWatcher())
+					shaderCache->StartFileWatcher();
 			}
 
 			break;
@@ -147,7 +148,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {
-		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.178.0", true);
+		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.179.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
