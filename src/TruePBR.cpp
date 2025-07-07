@@ -718,6 +718,31 @@ struct BSLightingShaderProperty_GetRenderPasses
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+struct BSEffectShaderProperty_GetRenderPasses
+{
+	static RE::BSShaderProperty::RenderPassArray* thunk(RE::BSEffectShaderProperty* property, RE::BSGeometry* geometry, std::uint32_t renderFlags, RE::BSShaderAccumulator* accumulator)
+	{
+		auto renderPasses = func(property, geometry, renderFlags, accumulator);
+		if (renderPasses == nullptr) {
+			return renderPasses;
+		}
+
+		auto currentPass = renderPasses->head;
+		while (currentPass != nullptr) {
+			if (currentPass->shader->shaderType == RE::BSShader::Type::Effect) {
+				// Separate deferred and forward blended decals
+				if (currentPass->accumulationHint == 3 && currentPass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kZBufferWrite)) {
+					currentPass->accumulationHint = 16;
+				}
+			}
+			currentPass = currentPass->next;
+		}
+
+		return renderPasses;
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
 bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::BSLightingShaderMaterialBase const* material)
 {
 	using enum SIE::ShaderCache::LightingShaderTechniques;
@@ -1551,6 +1576,8 @@ void TruePBR::PostPostLoad()
 	logger::info("Hooking BSLightingShaderProperty");
 	stl::write_vfunc<0x18, BSLightingShaderProperty_LoadBinary>(RE::VTABLE_BSLightingShaderProperty[0]);
 	stl::write_vfunc<0x2A, BSLightingShaderProperty_GetRenderPasses>(RE::VTABLE_BSLightingShaderProperty[0]);
+	stl::write_vfunc<0x2A, BSEffectShaderProperty_GetRenderPasses>(RE::VTABLE_BSEffectShaderProperty[0]);
+
 	stl::detour_thunk<BSLightingShaderProperty_OnLoadTextureSet>(REL::RelocationID(99865, 106510));
 
 	logger::info("Hooking BSLightingShader");
