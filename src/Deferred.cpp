@@ -779,12 +779,15 @@ void Deferred::RenderBlendedDecals()
 {
 	if (!globals::state->blendedDecalRenderPasses.empty()) {
 		auto& runtimeData = globals::game::shadowState->GetRuntimeData();
+		auto runtimeDataCopy = runtimeData;
 		runtimeData.rasterStateDepthBiasMode = 10;
 
 		for (auto& renderPass : globals::state->blendedDecalRenderPasses)
 			::Hooks::BSBatchRenderer_RenderPassImmediately1::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
 
 		globals::state->blendedDecalRenderPasses.clear();
+
+		runtimeData = runtimeDataCopy;
 	}
 }
 
