@@ -778,16 +778,29 @@ void Deferred::Hooks::Main_RenderWorld_Start::thunk(RE::BSBatchRenderer* This, u
 void Deferred::RenderBlendedDecals()
 {
 	if (!globals::state->blendedDecalRenderPasses.empty()) {
-		auto& runtimeData = globals::game::shadowState->GetRuntimeData();
-		auto runtimeDataCopy = runtimeData;
-		runtimeData.rasterStateDepthBiasMode = 10;
+		if (globals::game::isVR){
+			auto& runtimeData = globals::game::shadowState->GetVRRuntimeData();
+			auto runtimeDataCopy = runtimeData;
+			runtimeData.rasterStateDepthBiasMode = 10;
 
-		for (auto& renderPass : globals::state->blendedDecalRenderPasses)
-			::Hooks::BSBatchRenderer_RenderPassImmediately1::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+			for (auto& renderPass : globals::state->blendedDecalRenderPasses)
+				::Hooks::BSBatchRenderer_RenderPassImmediately1::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
 
-		globals::state->blendedDecalRenderPasses.clear();
+			globals::state->blendedDecalRenderPasses.clear();
 
-		runtimeData = runtimeDataCopy;
+			runtimeData = runtimeDataCopy;
+		} else {
+						auto& runtimeData = globals::game::shadowState->GetRuntimeData();
+			auto runtimeDataCopy = runtimeData;
+			runtimeData.rasterStateDepthBiasMode = 10;
+
+			for (auto& renderPass : globals::state->blendedDecalRenderPasses)
+				::Hooks::BSBatchRenderer_RenderPassImmediately1::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+
+			globals::state->blendedDecalRenderPasses.clear();
+
+			runtimeData = runtimeDataCopy;
+		}
 	}
 }
 
