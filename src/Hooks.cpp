@@ -617,7 +617,7 @@ namespace Hooks
 				stl::detour_vfunc<12, ID3D11Device_CreateVertexShader>(globals::d3d::device);
 				stl::detour_vfunc<15, ID3D11Device_CreatePixelShader>(globals::d3d::device);
 			}
-			
+
 			stl::detour_vfunc<23, ID3D11Device_CreateSamplerState>(globals::d3d::device);
 
 			globals::menu->Init();
