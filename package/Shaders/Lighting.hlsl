@@ -2591,7 +2591,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(DEFERRED)
 		[branch] if (
-			inWorld && !FrameBuffer::FrameParams.z &&
 			SharedData::lightLimitFixSettings.EnableContactShadows &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			shadowComponent != 0.0 &&
