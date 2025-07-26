@@ -768,7 +768,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::HDRShaderHacks()
 {
-	if (globals::state->currentShader->shaderType.get() == RE::BSShader::Type::ImageSpace) {
+	if (globals::state->currentShader && globals::state->currentShader->shaderType.get() == RE::BSShader::Type::ImageSpace) {
 		const auto& isShader = static_cast<const RE::BSImagespaceShader&>(*globals::state->currentShader);
 
 		enum class ShaderAction
