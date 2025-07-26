@@ -166,7 +166,7 @@ PS_OUTPUT main(PS_INPUT input)
 		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
 	}
 
-	float adaptation = AvgTex.Sample(AvgSampler, uv).xyz;
+	float adaptation = AvgTex.Sample(AvgSampler, uv).x;
 
 	// Vanilla tonemapping and post-processing
 	float3 gameSdrColor = 0.0;
