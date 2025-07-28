@@ -22,5 +22,5 @@ instructions: |
     Otherwise, use your standard review approach focusing on code quality.
 
 reviews:
-  path_filters:
-    - "**/*.hlsl"
+    path_filters:
+        - "**/*.hlsl"
