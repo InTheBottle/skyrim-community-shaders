@@ -3057,7 +3057,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!SharedData::hairSpecularSettings.Enabled)
 #		endif
 		specularColor = (specularColor * glossiness * MaterialData.yyy) * SpecularColor.xyz;
-#		endif
 #	elif defined(SPARKLE)
 	specularColor *= glossiness;
 #	endif  // SPECULAR
