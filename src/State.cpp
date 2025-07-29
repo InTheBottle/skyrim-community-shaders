@@ -4,7 +4,7 @@
 
 #include <pystring/pystring.h>
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Deferred.h"
 #include "Features/CloudShadows.h"
 #include "Features/TerrainBlending.h"
@@ -691,7 +691,7 @@ void State::UpdateSharedData(bool a_inWorld, bool a_prepass)
 			data.InMapMenu = true;
 
 		if (!globals::game::isVR && (a_inWorld || a_prepass)) {
-			auto swapChain = globals::dx12SwapChain;
+			auto swapChain = globals::swapChain;
 			data.MipBias = std::log2f(swapChain->renderSize.x / swapChain->outputSize.x) - 1.0f;
 		} else {
 			data.MipBias = 0;

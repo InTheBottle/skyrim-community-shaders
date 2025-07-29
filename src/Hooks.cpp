@@ -10,7 +10,7 @@
 
 #include "ShaderTools/BSShaderHooks.h"
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
 #include "Upscaling.h"
@@ -262,6 +262,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
+
+	Flags |= D3D11_CREATE_DEVICE_DEBUG;
+
 	DXGI_ADAPTER_DESC adapterDesc;
 	pAdapter->GetDesc(&adapterDesc);
 	globals::state->SetAdapterDescription(adapterDesc.Description);
@@ -269,21 +272,17 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	auto streamline = globals::streamline;
 	streamline->LoadInterposer();
 
-	auto proxy = globals::dx12SwapChain;
-
-	bool shouldProxy = false;
-
+	auto swapChainWrapper = globals::swapChain;
 	auto fidelityFX = FidelityFX::GetSingleton();
-
 	auto upscaling = Upscaling::GetSingleton();
-
-	shouldProxy = !globals::game::isVR;
+	
+	bool shouldProxy = !globals::game::isVR;
 
 	if (shouldProxy)
 		if (!pSwapChainDesc->Windowed)
 			shouldProxy = false;
 
-	auto refreshRate = proxy->GetRefreshRate(pSwapChainDesc->OutputWindow);
+	auto refreshRate = swapChainWrapper->GetRefreshRate(pSwapChainDesc->OutputWindow);
 
 	if (shouldProxy) {
 		if (upscaling->settings.frameGenerationMode)
@@ -306,55 +305,33 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 	upscaling->isWindowed = pSwapChainDesc->Windowed;
 
+	swapChainWrapper->dx12Interop = shouldProxy;
+	
+	swapChainWrapper->CreateD3D12Device(pAdapter);
+	
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
 
-	if (shouldProxy) {
-		proxy->CreateD3D12Device(pAdapter);
-
-		D3D11CreateDevice(
-			pAdapter,
-			DriverType,
-			Software,
-			Flags,
-			&featureLevel,
-			1,
-			SDKVersion,
-			ppDevice,
-			pFeatureLevel,
-			ppImmediateContext);
-
-		proxy->SetD3D11Device(*ppDevice);
-		proxy->SetD3D11DeviceContext(*ppImmediateContext);
-
-		proxy->CreateSwapChain(pAdapter, *pSwapChainDesc);
-
-		proxy->CreateInterop();
-
-		*ppSwapChain = proxy->GetSwapChainProxy();
-
-		return S_OK;
-	}
-
-	auto ret = ptrD3D11CreateDeviceAndSwapChain(pAdapter,
+	D3D11CreateDevice(
+		pAdapter,
 		DriverType,
 		Software,
 		Flags,
 		&featureLevel,
 		1,
 		SDKVersion,
-		pSwapChainDesc,
-		ppSwapChain,
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
 
-	if (globals::streamline->initialized) {
-		globals::streamline->CheckFeatures(pAdapter);
-		globals::streamline->slSetD3DDevice(*ppDevice);
-		globals::streamline->PostDevice();
-	}
+	swapChainWrapper->SetD3D11Device(*ppDevice);
+	swapChainWrapper->SetD3D11DeviceContext(*ppImmediateContext);
+	swapChainWrapper->CreateSwapChain(pAdapter, *pSwapChainDesc);
+	swapChainWrapper->CreateWrapperResources();
 
-	return ret;
+	*ppSwapChain = swapChainWrapper->GetSwapChainProxy();
+
+	return S_OK;
+	
 }
 
 struct BSShaderRenderTargets_Create

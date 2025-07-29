@@ -57,14 +57,16 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetLastPresentCount(_Out_ UINT* pLastPresentCount);
 };
 
-class DX12SwapChain
+class SwapChain
 {
 public:
-	static DX12SwapChain* GetSingleton()
+	static SwapChain* GetSingleton()
 	{
-		static DX12SwapChain singleton;
+		static SwapChain singleton;
 		return &singleton;
 	}
+
+	bool dx12Interop = false;
 
 	winrt::com_ptr<ID3D12Device> d3d12Device;
 	winrt::com_ptr<ID3D12CommandQueue> commandQueue;
@@ -81,8 +83,10 @@ public:
 	Texture2D* swapChainBuffer;
 
 	WrappedResource* upscaledSwapChainBufferWrapped;
-
 	WrappedResource* uiBuffersWrapped[2];
+
+	Texture2D* upscaledSwapChainBuffer;
+	Texture2D* uiBuffers[2];
 
 	winrt::com_ptr<ID3D11Device5> d3d11Device;
 	winrt::com_ptr<ID3D11DeviceContext4> d3d11Context;
@@ -106,14 +110,18 @@ public:
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 
-	void CreateInterop();
+	void CreateWrapperResources();
 
 	DXGISwapChainProxy* GetSwapChainProxy();
 	void SetD3D11Device(ID3D11Device* a_d3d11Device);
 	void SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context);
 
 	HRESULT GetBuffer(void** ppSurface);
+
+	HRESULT PresentDX11(UINT SyncInterval, UINT Flags);
+	HRESULT PresentDX12(UINT SyncInterval, UINT Flags);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
+
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 
 	void FrameLimiter(bool a_useFrameGeneration);
@@ -146,7 +154,7 @@ public:
 		{
 			auto ret = func(hWnd, lpRect);
 
-			auto swapChain = globals::dx12SwapChain;
+			auto swapChain = globals::swapChain;
 
 			lpRect->right = (LONG)swapChain->renderSize.x;
 			lpRect->bottom = (LONG)swapChain->renderSize.y;
@@ -162,7 +170,7 @@ public:
 		{
 			auto ret = func(hWnd, lpRect);
 
-			auto swapChain = globals::dx12SwapChain;
+			auto swapChain = globals::swapChain;
 
 			lpRect->right = (LONG)swapChain->renderSize.x;
 			lpRect->bottom = (LONG)swapChain->renderSize.y;

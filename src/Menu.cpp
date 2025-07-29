@@ -9,7 +9,7 @@
 #include <imgui_internal.h>
 #include <imgui_stdlib.h>
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Deferred.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -996,7 +996,7 @@ void Menu::DrawFooter()
 {
 	ImGui::BulletText(std::format("Game Version: {} {}", magic_enum::enum_name(REL::Module::GetRuntime()), Util::GetFormattedVersion(REL::Module::get().version()).c_str()).c_str());
 	ImGui::SameLine();
-	ImGui::BulletText(std::format("D3D12 Interop: {}", globals::dx12SwapChain->swapChain ? "Active" : "Inactive").c_str());
+	ImGui::BulletText(std::format("D3D12 Interop: {}", globals::swapChain->dx12Interop ? "Active" : "Inactive").c_str());
 	ImGui::SameLine();
 	ImGui::BulletText(std::format("GPU: {}", globals::state->adapterDescription.c_str()).c_str());
 

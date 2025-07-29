@@ -1,6 +1,6 @@
 #include "Upscaling.h"
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Hooks.h"
 #include "State.h"
 
@@ -120,29 +120,29 @@ void Upscaling::DrawSettings()
 				onlyRequiresRestart = false;
 			}
 
-			auto swapChain = DX12SwapChain::GetSingleton()->swapChain;
+			auto dx12Interop = SwapChain::GetSingleton()->dx12Interop;
 
-			if (onlyRequiresRestart && settings.frameGenerationMode && !swapChain)
+			if (onlyRequiresRestart && settings.frameGenerationMode && !dx12Interop)
 				ImGui::Text("Warning: Requires restart");
 
 			const char* toggleModes[] = { "Disabled", "Enabled" };
 
 			ImGui::SliderInt("Frame Generation", (int*)&settings.frameGenerationMode, 0, 1, std::format("{}", toggleModes[settings.frameGenerationMode]).c_str());
 
-			if (!settings.frameGenerationMode && swapChain)
+			if (!settings.frameGenerationMode && dx12Interop)
 				ImGui::BeginDisabled();
 
 			ImGui::SliderInt("V-Sync", (int*)&settings.vsyncMode, 0, 1, std::format("{}", toggleModes[settings.vsyncMode]).c_str());
 
-			if (!settings.frameGenerationMode && swapChain)
+			if (!settings.frameGenerationMode && dx12Interop)
 				ImGui::EndDisabled();
 
-			if ((settings.vsyncMode || !settings.frameGenerationMode) && swapChain)
+			if ((settings.vsyncMode || !settings.frameGenerationMode) && dx12Interop)
 				ImGui::BeginDisabled();
 
 			ImGui::SliderInt("Frame Limit (Variable Refresh Rate)", (int*)&settings.frameLimitMode, 0, 1, std::format("{}", toggleModes[settings.frameLimitMode]).c_str());
 
-			if ((settings.vsyncMode || !settings.frameGenerationMode) && swapChain)
+			if ((settings.vsyncMode || !settings.frameGenerationMode) && dx12Interop)
 				ImGui::EndDisabled();
 
 			ImGui::Text("Allows frame generation to function on low refresh rate monitors");
@@ -258,10 +258,10 @@ void Upscaling::Upscale()
 
 	auto context = globals::d3d::context;
 	auto state = globals::state;
-	auto swapChain = globals::dx12SwapChain;
+	auto swapChain = globals::swapChain;
 
 	auto inputTexture = swapChain->swapChainBuffer->resource.get();
-	auto outputTexture = swapChain->upscaledSwapChainBufferWrapped->resource11;
+	auto outputTexture = swapChain->dx12Interop ? swapChain->upscaledSwapChainBufferWrapped->resource11 : swapChain->upscaledSwapChainBuffer->resource.get();
 
 	//context->CopySubresourceRegion(
 	//	outputTexture,
@@ -351,7 +351,7 @@ void Upscaling::CreateUpscalingResources()
 	alphaMaskTexture->CreateSRV(srvDesc);
 	alphaMaskTexture->CreateUAV(uavDesc);
 
-	if (globals::dx12SwapChain->swapChain)
+	if (globals::swapChain->swapChain)
 		CreateFrameGenerationResources();
 }
 
@@ -427,7 +427,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::swapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&colorBufferShared12)));
 
@@ -445,7 +445,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::swapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&depthBufferShared12)));
 
@@ -463,7 +463,7 @@ void Upscaling::CreateFrameGenerationResources()
 			nullptr,
 			&sharedHandle));
 
-		DX::ThrowIfFailed(globals::dx12SwapChain->d3d12Device->OpenSharedHandle(
+		DX::ThrowIfFailed(globals::swapChain->d3d12Device->OpenSharedHandle(
 			sharedHandle,
 			IID_PPV_ARGS(&motionVectorBufferShared12)));
 
@@ -475,7 +475,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::CopyResourcesToSharedBuffers()
 {
-	if (!globals::dx12SwapChain->swapChain || !settings.frameGenerationMode || RE::UI::GetSingleton()->GameIsPaused())
+	if (!globals::swapChain->swapChain || !settings.frameGenerationMode || RE::UI::GetSingleton()->GameIsPaused())
 		return;
 
 	auto& context = globals::d3d::context;

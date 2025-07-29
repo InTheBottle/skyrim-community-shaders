@@ -7,7 +7,7 @@
 #include "State.h"
 #include "Util.h"
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Upscaling.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
@@ -139,7 +139,7 @@ void Streamline::PostDevice()
 
 void Streamline::Sharpen(ID3D11Texture2D* a_sharpenTexture, float a_sharpness)
 {
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = SwapChain::GetSingleton();
 
 	{
 		sl::Extent outputExtent{ 0, 0, (uint)swapChain->outputSize.x, (uint)swapChain->outputSize.y };
@@ -178,7 +178,7 @@ void Streamline::Upscale(ID3D11Texture2D* a_inputTexture, ID3D11Texture2D* a_out
 {
 	UpdateConstants();
 
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = SwapChain::GetSingleton();
 
 	auto renderer = globals::game::renderer;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];

@@ -3,7 +3,7 @@
 #include "State.h"
 #include "Upscaling.h"
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include <dx12/ffx_api_dx12.hpp>
 
 ffxFunctions ffxModule;
@@ -36,7 +36,7 @@ void FidelityFX::LoadFFX()
 
 void FidelityFX::SetupFrameGeneration()
 {
-	auto swapChain = globals::dx12SwapChain;
+	auto swapChain = globals::swapChain;
 
 	ffx::CreateContextDescFrameGeneration createFg{};
 	createFg.displaySize = { (uint)swapChain->renderSize.x, (uint)swapChain->renderSize.y };
@@ -63,7 +63,7 @@ void FidelityFX::SetupFrameGeneration()
 void FidelityFX::Present(bool a_useFrameGeneration)
 {
 	auto upscaling = globals::upscaling;
-	auto swapChain = globals::dx12SwapChain;
+	auto swapChain = globals::swapChain;
 	auto commandList = swapChain->commandLists[swapChain->frameIndex].get();
 
 	auto HUDLessColor = upscaling->colorBufferShared12.get();
@@ -172,7 +172,7 @@ void FidelityFX::CreateFSRResources()
 	if (ffxGetInterfaceDX11(&fsrInterface, fsrDevice, scratchBuffer, scratchBufferSize, FFX_FSR3UPSCALER_CONTEXT_COUNT) != FFX_OK)
 		logger::critical("[FidelityFX] Failed to initialize FSR3 backend interface!");
 
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = SwapChain::GetSingleton();
 
 	FfxFsr3ContextDescription contextDescription;
 	contextDescription.maxRenderSize.width = (uint)swapChain->renderSize.x;
@@ -204,7 +204,7 @@ void FidelityFX::Upscale(ID3D11Texture2D* a_inputTexture, ID3D11Texture2D* a_out
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
 
-	auto swapChain = DX12SwapChain::GetSingleton();
+	auto swapChain = SwapChain::GetSingleton();
 
 	{
 		FfxFsr3DispatchUpscaleDescription dispatchParameters{};

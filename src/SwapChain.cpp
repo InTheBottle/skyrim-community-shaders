@@ -1,11 +1,11 @@
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include <dxgi1_6.h>
 
 #include "FidelityFX.h"
 #include "Streamline.h"
 #include "Upscaling.h"
 
-void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
+void SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
 
@@ -27,7 +27,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 		globals::streamline->CheckFeatures(a_adapter);
 }
 
-void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
+void SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	IDXGIFactory4* dxgiFactory;
 	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
@@ -45,7 +45,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	winrt::com_ptr<IDXGISwapChain4> swapChainCOM;
 
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
-		commandQueue.get(),
+		dx12Interop ? (IUnknown*)commandQueue.get() : (IUnknown*)d3d11Device.get(),
 		a_swapChainDesc.OutputWindow,
 		&swapChainDesc,
 		nullptr,
@@ -71,25 +71,27 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	FidelityFX::GetSingleton()->SetupFrameGeneration();
+	if (dx12Interop) {
+		FidelityFX::GetSingleton()->SetupFrameGeneration();
 
-	swapChain->SetMaximumFrameLatency(1);
-	frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
+		swapChain->SetMaximumFrameLatency(1);
+		frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
 
-	QueryPerformanceFrequency(&qpf);
+		QueryPerformanceFrequency(&qpf);
 
-	refreshRate = GetRefreshRate(a_swapChainDesc.OutputWindow);
+		refreshRate = GetRefreshRate(a_swapChainDesc.OutputWindow);
+	}
 }
 
-void DX12SwapChain::CreateInterop()
+void SwapChain::CreateWrapperResources()
 {
-	for (int i = 0; i < 2; i++) {
-		HANDLE sharedFenceHandle;
-		DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fences[i])));
-		DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fences[i].get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
-		DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fences[i])));
-		CloseHandle(sharedFenceHandle);
-	}
+	//for (int i = 0; i < 2; i++) {
+	//	HANDLE sharedFenceHandle;
+	//	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fences[i])));
+	//	DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fences[i].get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
+	//	DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fences[i])));
+	//	CloseHandle(sharedFenceHandle);
+	//}
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
@@ -131,21 +133,38 @@ void DX12SwapChain::CreateInterop()
 
 	texDesc11.Width = (uint)outputSize.x;
 	texDesc11.Height = (uint)outputSize.y;
-	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
-	upscaledSwapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+	if (dx12Interop) {
+		texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
-	for (int i = 0; i < 2; i++) {
-		uiBuffersWrapped[i] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+		upscaledSwapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+
+		for (int i = 0; i < 2; i++) {
+			uiBuffersWrapped[i] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+		}
+	} else {
+		texDesc11.MiscFlags = 0;
+
+		upscaledSwapChainBuffer = new Texture2D(texDesc11);
+		upscaledSwapChainBuffer->CreateSRV(srvDesc);
+		upscaledSwapChainBuffer->CreateRTV(rtvDesc);
+		upscaledSwapChainBuffer->CreateUAV(uavDesc);
+
+		for (int i = 0; i < 2; i++) {
+			uiBuffers[i] = new Texture2D(texDesc11);
+			uiBuffers[i]->CreateSRV(srvDesc);
+			uiBuffers[i]->CreateRTV(rtvDesc);
+			uiBuffers[i]->CreateUAV(uavDesc);
+		}
 	}
 }
 
-DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
+DXGISwapChainProxy* SwapChain::GetSwapChainProxy()
 {
 	return swapChainProxy;
 }
 
-void DX12SwapChain::SetD3D11Device(ID3D11Device* a_d3d11Device)
+void SwapChain::SetD3D11Device(ID3D11Device* a_d3d11Device)
 {
 	DX::ThrowIfFailed(a_d3d11Device->QueryInterface(IID_PPV_ARGS(&d3d11Device)));
 
@@ -155,18 +174,38 @@ void DX12SwapChain::SetD3D11Device(ID3D11Device* a_d3d11Device)
 	}
 }
 
-void DX12SwapChain::SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context)
+void SwapChain::SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context)
 {
 	DX::ThrowIfFailed(a_d3d11Context->QueryInterface(IID_PPV_ARGS(&d3d11Context)));
 }
 
-HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
+HRESULT SwapChain::GetBuffer(void** ppSurface)
 {
 	*ppSurface = swapChainBuffer->resource.get();
 	return S_OK;
 }
 
-HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
+HRESULT SwapChain::PresentDX11(UINT SyncInterval, UINT Flags)
+{
+	winrt::com_ptr<ID3D11Resource> currentSwapChainBuffer;
+	DX::ThrowIfFailed(swapChain->GetBuffer(frameIndex, IID_PPV_ARGS(&currentSwapChainBuffer)));
+
+	auto fakeSwapChain = upscaledSwapChainBuffer->resource.get();
+	auto realSwapChain = currentSwapChainBuffer.get();
+
+	d3d11Context->CopyResource(realSwapChain, fakeSwapChain);
+
+	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+
+	// Update the frame index.
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER].RTV = swapChainBuffer->rtv.get();
+
+	return S_OK;
+}
+
+HRESULT SwapChain::PresentDX12(UINT SyncInterval, UINT)
 {
 	// Wait for D3D11 work to finish
 	d3d11Context->Flush();
@@ -237,7 +276,14 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT)
 	return S_OK;
 }
 
-HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
+HRESULT SwapChain::Present(UINT SyncInterval, UINT Flags)
+{
+	if (dx12Interop)
+		return PresentDX12(SyncInterval, Flags);
+	return PresentDX11(SyncInterval, Flags);
+}
+
+HRESULT SwapChain::GetDevice(REFIID uuid, void** ppDevice)
 {
 	if (uuid == __uuidof(ID3D11Device) || uuid == __uuidof(ID3D11Device1) || uuid == __uuidof(ID3D11Device2) || uuid == __uuidof(ID3D11Device3) || uuid == __uuidof(ID3D11Device4) || uuid == __uuidof(ID3D11Device5)) {
 		*ppDevice = d3d11Device.get();
@@ -255,7 +301,7 @@ static void TimerSleepQPC(int64_t targetQPC)
 	} while (currentQPC.QuadPart < targetQPC);
 }
 
-void DX12SwapChain::FrameLimiter(bool a_useFrameGeneration)
+void SwapChain::FrameLimiter(bool a_useFrameGeneration)
 {
 	double bestRefreshRate = refreshRate - (refreshRate * refreshRate) / 3600.0;
 
@@ -293,7 +339,7 @@ void DX12SwapChain::FrameLimiter(bool a_useFrameGeneration)
 * SOFTWARE.
 */
 
-double DX12SwapChain::GetRefreshRate(HWND a_window)
+double SwapChain::GetRefreshRate(HWND a_window)
 {
 	HMONITOR monitor = MonitorFromWindow(a_window, MONITOR_DEFAULTTONEAREST);
 	MONITORINFOEXW info;
@@ -436,18 +482,18 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetParent(_In_ REFIID riid, _COM_O
 /****IDXGIDeviceSubObject****/
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice)
 {
-	return globals::dx12SwapChain->GetDevice(riid, ppDevice);
+	return globals::swapChain->GetDevice(riid, ppDevice);
 }
 
 /****IDXGISwapChain****/
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::Present(UINT SyncInterval, UINT Flags)
 {
-	return globals::dx12SwapChain->Present(SyncInterval, Flags);
+	return globals::swapChain->Present(SyncInterval, Flags);
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetBuffer(UINT, _In_ REFIID, _COM_Outptr_ void** ppSurface)
 {
-	return globals::dx12SwapChain->GetBuffer(ppSurface);
+	return globals::swapChain->GetBuffer(ppSurface);
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::SetFullscreenState(BOOL Fullscreen, _In_opt_ IDXGIOutput* pTarget)
@@ -464,8 +510,8 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDesc(_Out_ DXGI_SWAP_CHAIN_DESC
 {
 	swapChain->GetDesc(pDesc);
 
-	pDesc->BufferDesc.Width = (UINT)globals::dx12SwapChain->renderSize.x;
-	pDesc->BufferDesc.Height = (UINT)globals::dx12SwapChain->renderSize.y;
+	pDesc->BufferDesc.Width = (UINT)globals::swapChain->renderSize.x;
+	pDesc->BufferDesc.Height = (UINT)globals::swapChain->renderSize.y;
 
 	return S_OK;
 }
@@ -495,22 +541,29 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetLastPresentCount(_Out_ UINT* pL
 	return swapChain->GetLastPresentCount(pLastPresentCount);
 }
 
-void DX12SwapChain::SetUIBuffer()
+void SwapChain::SetUIBuffer()
 {
 	Upscaling::GetSingleton()->Upscale();
-	Upscaling::GetSingleton()->CopyResourcesToSharedBuffers();
+	
+	if (dx12Interop)
+		Upscaling::GetSingleton()->CopyResourcesToSharedBuffers();
 
-	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(uiBuffersWrapped[frameIndex]->rtv, clearColor);
-
+	if (dx12Interop) {
+		float clearColor[4]{ 0, 0, 0, 0 };
+		d3d11Context->ClearRenderTargetView(uiBuffersWrapped[frameIndex]->rtv, clearColor);
+	} else {
+		float clearColor[4]{ 0, 0, 0, 0 };
+		d3d11Context->ClearRenderTargetView(uiBuffers[frameIndex]->rtv.get(), clearColor);
+	}
+	
 	auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	data.RTV = uiBuffersWrapped[frameIndex]->rtv;
+	data.RTV = dx12Interop ? uiBuffersWrapped[frameIndex]->rtv : uiBuffers[frameIndex]->rtv.get();
 
 	d3d11Context->OMSetRenderTargets(1, &data.RTV, nullptr);
 }
 
-void DX12SwapChain::PostInitD3D()
+void SwapChain::PostInitD3D()
 {
 	static uint32_t* g_width = (uint32_t*)REL::RelocationID(525002, 411483).address();    // 302C8B4, 30C6DB4
 	static uint32_t* g_height = (uint32_t*)REL::RelocationID(525003, 411484).address();   // 302C8B8, 30C6DB8
@@ -540,8 +593,8 @@ void DX12SwapChain::PostInitD3D()
 	*g_yBottom = *g_height;
 }
 
-void DX12SwapChain::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
+void SwapChain::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 {
-	DX12SwapChain::GetSingleton()->SetUIBuffer();
+	SwapChain::GetSingleton()->SetUIBuffer();
 	func(a1);
 }

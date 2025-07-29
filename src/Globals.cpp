@@ -2,7 +2,7 @@
 
 #include "Utils/Game.h"
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Deferred.h"
 #include "Menu.h"
 #include "ShaderCache.h"
@@ -98,7 +98,7 @@ namespace globals
 	SIE::ShaderCache* shaderCache = nullptr;
 	Streamline* streamline = nullptr;
 	Upscaling* upscaling = nullptr;
-	DX12SwapChain* dx12SwapChain = nullptr;
+	SwapChain* swapChain = nullptr;
 
 	void ReInit()
 	{
@@ -136,7 +136,7 @@ namespace globals
 		truePBR = TruePBR::GetSingleton();
 		streamline = Streamline::GetSingleton();
 		upscaling = Upscaling::GetSingleton();
-		dx12SwapChain = DX12SwapChain::GetSingleton();
+		swapChain = SwapChain::GetSingleton();
 
 		features::cloudShadows = CloudShadows::GetSingleton();
 		features::dynamicCubemaps = DynamicCubemaps::GetSingleton();

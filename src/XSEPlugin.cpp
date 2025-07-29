@@ -1,5 +1,5 @@
 
-#include "DX12SwapChain.h"
+#include "SwapChain.h"
 #include "Deferred.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
@@ -86,7 +86,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				Upscaling::InstallHooks();
 				Hooks::Install();
 				FrameAnnotations::OnPostPostLoad();
-				DX12SwapChain::InstallHooks();
+				SwapChain::InstallHooks();
 
 				auto shaderCache = globals::shaderCache;
 
