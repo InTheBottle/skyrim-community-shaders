@@ -16,26 +16,25 @@ public:
 
 	// Initialize RenderDoc API
 	bool Initialize();
-	
+
 	// Check if RenderDoc is available
 	bool IsAvailable() const { return renderDocApi != nullptr; }
-	
+
 	// Trigger a frame capture
 	void TriggerCapture();
-	
+
 	// Check if a capture is currently in progress
 	bool IsCapturing() const;
-	
+
 	// Get capture path for current index
 	std::string GetCapturePath(uint32_t a_index);
-	
+
 	// Get the number of captures made
 	uint32_t GetNumCaptures() const;
 
 	uint32_t CalculateCapturesDiskUsage();
 
 	void ClearFrameCaptures();
-
 
 private:
 	RenderDoc() = default;

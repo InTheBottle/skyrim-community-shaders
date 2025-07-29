@@ -4,11 +4,11 @@
 #include "Globals.h"
 #include "Hooks.h"
 #include "Menu.h"
+#include "RenderDoc.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Upscaling.h"
-#include "RenderDoc.h"
 
 
 #define DLLEXPORT __declspec(dllexport)

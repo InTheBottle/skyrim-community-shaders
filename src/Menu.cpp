@@ -14,6 +14,7 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
+#include "RenderDoc.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Streamline.h"
@@ -21,7 +22,6 @@
 #include "Upscaling.h"
 #include "Util.h"
 #include "Utils/UI.h"
-#include "RenderDoc.h"
 
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/PerformanceOverlay.h"
@@ -1480,7 +1480,7 @@ void Menu::DrawAdvancedSettings()
 		if (ImGui::Button("Dump Ini Settings", { -1, 0 })) {
 			Util::DumpSettingsOptions();
 		}
-		
+
 		if (!shaderCache->blockedKey.empty()) {
 			auto blockingButtonString = std::format("Stop Blocking {} Shaders", shaderCache->blockedIDs.size());
 			if (ImGui::Button(blockingButtonString.c_str(), { -1, 0 })) {
@@ -1519,13 +1519,13 @@ void Menu::DrawAdvancedSettings()
 
 		static uint32_t clearedCaptures = 0;
 
-		if (frameDebuggingActive && !renderDocActive){
+		if (frameDebuggingActive && !renderDocActive) {
 			ImGui::TextColored(settings.Theme.StatusPalette.RestartNeeded, "Requires restart to enable frame debugging.");
-		} else if (!frameDebuggingActive && renderDocActive){
+		} else if (!frameDebuggingActive && renderDocActive) {
 			ImGui::TextColored(settings.Theme.StatusPalette.Warning, "Requires restart to disable frame debugging, performance will be severely impacted.");
 		} else if (frameDebuggingActive && renderDocActive) {
 			ImGui::TextColored(settings.Theme.StatusPalette.InfoColor, "Frame debugging is active.");
-			
+
 			ImGui::SameLine();
 
 			if (ImGui::Button("Create Capture")) {
@@ -1753,7 +1753,6 @@ void Menu::DrawOverlay()
 	auto state = globals::state;
 	auto& themeSettings = settings.Theme;
 
-
 	auto progressTitle = fmt::format("{}Compiling Shaders: {}",
 		shaderCache->backgroundCompilation ? "Background " : "",
 		shaderCache->GetShaderStatsString(!state->IsDeveloperMode()).c_str());
@@ -1799,7 +1798,7 @@ void Menu::DrawOverlay()
 
 			ImGui::End();
 		}
-	} else if (renderDocAvailable){
+	} else if (renderDocAvailable) {
 		ImGui::SetNextWindowPos(ImVec2(10, 10));
 		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
