@@ -21,6 +21,7 @@
 #include "Upscaling.h"
 #include "Util.h"
 #include "Utils/UI.h"
+#include "RenderDoc.h"
 
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/PerformanceOverlay.h"
@@ -1479,6 +1480,7 @@ void Menu::DrawAdvancedSettings()
 		if (ImGui::Button("Dump Ini Settings", { -1, 0 })) {
 			Util::DumpSettingsOptions();
 		}
+		
 		if (!shaderCache->blockedKey.empty()) {
 			auto blockingButtonString = std::format("Stop Blocking {} Shaders", shaderCache->blockedIDs.size());
 			if (ImGui::Button(blockingButtonString.c_str(), { -1, 0 })) {
@@ -1505,7 +1507,54 @@ void Menu::DrawAdvancedSettings()
 			ImGui::Text(std::format("Shader Compiler : {}", shaderCache->GetShaderStatsString()).c_str());
 			ImGui::TreePop();
 		}
-		ImGui::Checkbox("Frame Annotations", &globals::state->frameAnnotations);
+		ImGui::Checkbox("Frame Debugging", &globals::state->frameDebugging);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Enables frame debugging for providing reports to the Community Shaders team.");
+		}
+
+		auto renderDoc = RenderDoc::GetSingleton();
+
+		bool frameDebuggingActive = globals::state->frameDebugging;
+		bool renderDocActive = renderDoc->IsAvailable();
+
+		static uint32_t clearedCaptures = 0;
+
+		if (frameDebuggingActive && !renderDocActive){
+			ImGui::TextColored(settings.Theme.StatusPalette.RestartNeeded, "Requires restart to enable frame debugging.");
+		} else if (!frameDebuggingActive && renderDocActive){
+			ImGui::TextColored(settings.Theme.StatusPalette.Warning, "Requires restart to disable frame debugging, performance will be severely impacted.");
+		} else if (frameDebuggingActive && renderDocActive) {
+			ImGui::TextColored(settings.Theme.StatusPalette.InfoColor, "Frame debugging is active.");
+			
+			ImGui::SameLine();
+
+			if (ImGui::Button("Create Capture")) {
+				renderDoc->TriggerCapture();
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Start a RenderDoc frame capture for debugging. This will capture the next frame and save it to a file next to SkyrimSE.exe.");
+			}
+
+			auto numCaptures = renderDoc->GetNumCaptures();
+			if (numCaptures > clearedCaptures) {
+				auto capturePath = renderDoc->GetCapturePath(numCaptures - 1);
+				ImGui::TextColored(settings.Theme.StatusPalette.SuccessColor, std::format("Saved to {}", capturePath).c_str());
+			}
+		}
+
+		auto captureDiskStorage = renderDoc->CalculateCapturesDiskUsage();
+
+		if (captureDiskStorage > 0) {
+			ImGui::TextColored(settings.Theme.StatusPalette.Warning, std::format("Frame captures disk usage: {} MB", captureDiskStorage).c_str());
+		} else {
+			ImGui::TextColored(settings.Theme.StatusPalette.InfoColor, std::format("Frame captures disk usage: {} MB", captureDiskStorage).c_str());
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Clear Captures")) {
+			renderDoc->ClearFrameCaptures();
+			clearedCaptures = renderDoc->GetNumCaptures();
+		}
 	}
 
 	if (ImGui::CollapsingHeader("Replace Original Shaders", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
@@ -1671,7 +1720,11 @@ void Menu::DrawOverlay()
 	auto failed = shaderCache->GetFailedTasks();
 	auto hide = shaderCache->IsHideErrors();
 	auto* abTestingManager = ABTestingManager::GetSingleton();
-	if (!(shaderCache->IsCompiling() || IsEnabled || abTestingManager->IsEnabled() || (failed && !hide) || PerformanceOverlay::GetSingleton()->settings.ShowInOverlay)) {
+	auto* renderDoc = RenderDoc::GetSingleton();
+	bool renderDocAvailable = renderDoc->IsAvailable();
+	const auto renderDocInformation = "WARNING: Frame debugging is active, performance will be severely impacted.\nPress F12, Print Screen or press the Capture button in the Advanced menu.\nDisable frame debugging in the Advanced menu.";
+
+	if (!(shaderCache->IsCompiling() || IsEnabled || abTestingManager->IsEnabled() || (failed && !hide) || PerformanceOverlay::GetSingleton()->settings.ShowInOverlay || renderDocAvailable)) {
 		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
@@ -1700,6 +1753,7 @@ void Menu::DrawOverlay()
 	auto state = globals::state;
 	auto& themeSettings = settings.Theme;
 
+
 	auto progressTitle = fmt::format("{}Compiling Shaders: {}",
 		shaderCache->backgroundCompilation ? "Background " : "",
 		shaderCache->GetShaderStatsString(!state->IsDeveloperMode()).c_str());
@@ -1721,6 +1775,9 @@ void Menu::DrawOverlay()
 			ImGui::TextUnformatted("WARNING: Uncompiled shaders will have visual errors or cause stuttering when loading.");
 		}
 
+		if (renderDocAvailable)
+			ImGui::TextColored(settings.Theme.StatusPalette.Warning, renderDocInformation);
+
 		ImGui::End();
 	} else if (failed) {
 		if (!hide) {
@@ -1737,8 +1794,19 @@ void Menu::DrawOverlay()
 				ImGui::TextColored(themeSettings.StatusPalette.Error, "Features that may have modified shaders detected. Check Feature Issues in the Menu.");
 			}
 
+			if (renderDocAvailable)
+				ImGui::TextColored(settings.Theme.StatusPalette.Warning, renderDocInformation);
+
 			ImGui::End();
 		}
+	} else if (renderDocAvailable){
+		ImGui::SetNextWindowPos(ImVec2(10, 10));
+		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+			ImGui::End();
+			return;
+		}
+		ImGui::TextColored(settings.Theme.StatusPalette.Warning, renderDocInformation);
+		ImGui::End();
 	}
 
 	if (IsEnabled) {

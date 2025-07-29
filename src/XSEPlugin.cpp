@@ -8,6 +8,7 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Upscaling.h"
+#include "RenderDoc.h"
 
 
 #define DLLEXPORT __declspec(dllexport)
@@ -166,6 +167,10 @@ bool Load()
 	state->Load();
 	auto log = spdlog::default_logger();
 	log->set_level(state->GetLogLevel());
+
+	// Initialize RenderDoc DLL for debugging, which automatically hooks the game
+	if (state->frameDebugging)
+		RenderDoc::GetSingleton()->Initialize();
 
 	const std::array dlls = {
 		L"Data/SKSE/Plugins/ShaderTools.dll",
