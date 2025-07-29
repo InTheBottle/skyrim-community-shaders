@@ -85,13 +85,13 @@ void SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_sw
 
 void SwapChain::CreateWrapperResources()
 {
-	//for (int i = 0; i < 2; i++) {
-	//	HANDLE sharedFenceHandle;
-	//	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fences[i])));
-	//	DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fences[i].get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
-	//	DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fences[i])));
-	//	CloseHandle(sharedFenceHandle);
-	//}
+	for (int i = 0; i < 2; i++) {
+		HANDLE sharedFenceHandle;
+		DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fences[i])));
+		DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fences[i].get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
+		DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fences[i])));
+		CloseHandle(sharedFenceHandle);
+	}
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
