@@ -101,6 +101,7 @@ public:
 	void CreateFrameGenerationResources();
 	void CopyBuffersToSharedResources();
 	void PostDisplay();
+	void PerformUpscaling();
 
 	static void TimerSleepQPC(int64_t targetQPC);
 
@@ -131,29 +132,6 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct CopyScreenshot
-	{
-		static void thunk(RE::ImageSpaceManager*,
-			uint32_t,
-			uint32_t,
-			uint32_t,
-			RE::ImageSpaceShaderParam*)
-		{
-			auto renderer = globals::game::renderer;
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
-			auto& screenshot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSCREENSHOT];
-
-			ID3D11Resource* swapChainResource;
-			main.RTV->GetResource(&swapChainResource);
-
-			globals::d3d::context->CopyResource(screenshot.texture, swapChainResource);
-		}
-
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	void PerformUpscaling();
-
 	struct Main_PostProcessing
 	{
 		static void thunk(RE::ImageSpaceManager* a1, uint32_t a3, uint32_t er8_)
@@ -176,16 +154,17 @@ public:
 	static void InstallHooks()
 	{
 		if (!globals::state->upscalerLoaded) {
-			bool isGOG = !GetModuleHandle(L"steam_api64.dll");
+			bool isGOG = !GetModuleHandle(L"steam_api64.dll")
+			stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
+
+			// Calculates resolution and jitter
 			stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate(0xE5, isGOG ? 0x133 : 0xE2, 0x104));
 
-			stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
-			
-			stl::write_thunk_call<CopyScreenshot>(REL::RelocationID(35556, 35556).address() + REL::Relocate(0x3E6, 0x3E6));
-
+			// Disables the original dynamic resolution system
 			std::uint8_t nop5[] = { 0x0F, 0x1F, 0x44, 0x00, 0x00 };
 			REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D, 0x25), nop5, sizeof(nop5));
 			
+			// Performs upscaling inbetween volumetric lighting and post processing
 			stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 100430).address() + REL::Relocate(0x1F0, 0x1C5));
 
 			logger::info("[Upscaling] Installed hooks");
