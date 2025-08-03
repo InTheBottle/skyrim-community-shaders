@@ -80,8 +80,8 @@ void Upscaling::DrawSettings()
 
 	// Display upscaling preset if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE) {
-		const char* upscalePresets[] = { "Ultra Performance", "Performance", "Balanced", "Quality", "Native AA" };
-		ImGui::SliderInt("Upscale Preset", (int*)&settings.upscalePreset, 0, 4, std::format("{}", upscalePresets[4 - settings.upscalePreset]).c_str());
+		const char* upscalePresets[] = { "Performance", "Balanced", "Quality", "Native AA" };
+		ImGui::SliderInt("Upscale Preset", (int*)&settings.upscalePreset, 0, 3, std::format("{}", upscalePresets[3 - settings.upscalePreset]).c_str());
 	}
 
 	// Display DLSS preset slider if using DLSS
