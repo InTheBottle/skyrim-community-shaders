@@ -78,11 +78,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			if (errors.empty()) {
-				auto state = globals::state;
-				state->PostPostLoad();  // state should load first so basic information is populated
 				Deferred::Hooks::Install();
 				globals::truePBR->PostPostLoad();
-				Upscaling::InstallHooks();
 				Hooks::Install();
 				EngineFix::InstallOnPostPostLoadFixes();
 				FrameAnnotations::OnPostPostLoad();
@@ -95,6 +92,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 						feature->PostPostLoad();
 					}
 				}
+
+				Upscaling::InstallHooks();
 
 				// Now validate disk cache after features have had a chance to modify their state
 				shaderCache->ValidateDiskCache();
@@ -169,7 +168,8 @@ bool Load()
 
 	const std::array dlls = {
 		L"Data/SKSE/Plugins/ShaderTools.dll",
-		L"Data/SKSE/Plugins/SSEShaderTools.dll"
+		L"Data/SKSE/Plugins/SSEShaderTools.dll",
+		L"Data/SKSE/Plugins/SkyrimUpscaler.dll"
 	};
 
 	for (const auto dll : dlls) {
