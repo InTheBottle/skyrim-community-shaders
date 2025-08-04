@@ -860,20 +860,17 @@ void Upscaling::PerformUpscaling()
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
 
+	// The game uses these values at multiple points, setting to 1.0 disables all checks
 	runtimeData.dynamicResolutionPreviousWidthRatio = 1.0f;
 	runtimeData.dynamicResolutionPreviousHeightRatio = 1.0f;
 	runtimeData.dynamicResolutionWidthRatio = 1.0f;
 	runtimeData.dynamicResolutionHeightRatio = 1.0f;
-
-	auto renderer = globals::game::renderer;
-	renderer->UpdateViewPort(0, 0, 1);
-
-	{
-		using func_t = decltype(&UpdateCameraData);
-		static REL::Relocation<func_t> func{ RELOCATION_ID(75472, 77258) };
-		func();
-	}
-
+	
+	// Updates the PerFrame constant buffer so that dynamic resolution settings are disabled
+	using func_t = decltype(&UpdateCameraData);
+	static REL::Relocation<func_t> func{ RELOCATION_ID(75472, 77258) };
+	func();
+	
 	allowUpscaling = true;
 }
 
