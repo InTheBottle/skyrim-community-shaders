@@ -32,7 +32,7 @@ void Upscaling::DrawSettings()
 	settings.upscaleMethod = bTAA ? (settings.upscaleMethod == (uint)UpscaleMethod::kNONE ? (uint)UpscaleMethod::kTAA : settings.upscaleMethod) : (uint)UpscaleMethod::kNONE;
 
 	// Display upscaling options in the UI
-	const char* upscaleModes[] = { "Disabled", "Temporal Anti-Aliasing", "AMD FSR 3.1", "NVIDIA DLAA" };
+	const char* upscaleModes[] = { "Disabled", "Temporal Anti-Aliasing", "AMD FSR 3.1", "NVIDIA DLSS" };
 
 	// Determine available modes
 	bool featureDLSS = streamline->featureDLSS;
@@ -53,10 +53,10 @@ void Upscaling::DrawSettings()
 			"Uses Skyrim's TAA which uses frame history to smooth out jagged edges, reducing flickering and improving image stability.\n"
 			"\n"
 			"AMD FSR 3.1:\n"
-			"AMD's open-source FSR spatial upscaling algorithm designed to enhance performance while maintaining high visual quality.\n"
+			"AMD FSR 3.1 is an open-source upscaling algorithm compatible with all GPUs.\n"
 			"\n"
 			"NVIDIA DLSS:\n"
-			"NVIDIA's Deep Learning Anti-Aliasing leverages AI to provide high-quality anti-aliasing without sacrificing performance. Requires NVIDIA RTX GPU.");
+			"NVIDIA's Deep Learning Super Sampling is an upscaling algorithm using AI. Requires an NVIDIA RTX GPU.");
 	}
 
 	*currentUpscaleMode = std::min(availableModes, (uint)*currentUpscaleMode);
