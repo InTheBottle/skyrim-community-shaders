@@ -216,18 +216,20 @@ public:
 		// Disables the original dynamic resolution system
 		REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D, 0x25), REL::NOP5, sizeof(REL::NOP5));
 
-		// Performs upscaling inbetween volumetric lighting and post processing
+		// Performs upscaling in between volumetric lighting and post processing
 		stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
 
-		// Patches RSSetScissorRect calls to use dynamic resolution
-		// This is a PC-specific function hence it was missing
-		stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
+		if (!REL::Module::IsVR()) {
+			// Patches RSSetScissorRect calls to use dynamic resolution
+			// This is a PC-specific function hence it was missing
+			stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
-		// Patches facegen texture generation to not use dynamic resolution
-		stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
+			// Patches facegen texture generation to not use dynamic resolution
+			stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
 
-		// Patches precipitation camera to not use dynamic resolution
-		stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
+			// Patches precipitation camera to not use dynamic resolution
+			stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
+		}
 
 		logger::info("[Upscaling] Installed hooks");
 	}
