@@ -885,7 +885,7 @@ void Upscaling::Upscale()
 		state->BeginPerfEvent("Upscaling");
 
 		if (upscaleMethod == UpscaleMethod::kDLSS)
-			globals::streamline->Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), (sl::DLSSPreset)11u);
+			globals::streamline->Upscale(main.texture, upscalingTexture->resource.get(), reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), (sl::DLSSPreset)11u);
 		else if (upscaleMethod == UpscaleMethod::kFSR)
 			globals::fidelityFX->Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), jitter, settings.sharpness);
 		else if (upscaleMethod == UpscaleMethod::kXESS) {
@@ -948,7 +948,36 @@ void Upscaling::Upscale()
 			DX::ThrowIfFailed(d3d11Context4->Wait(sharedD3D11Fence.get(), sharedFenceValue));
 			sharedFenceValue++;
 
-			context->CopyResource(main.texture, outputColorBufferShared12->resource11);
+			context->CopyResource(upscalingTexture->resource.get(), outputColorBufferShared12->resource11);
+		}
+
+		state->EndPerfEvent();
+	}
+
+	if (upscaleMethod != UpscaleMethod::kFSR) {
+		state->BeginPerfEvent("Sharpening");
+
+		{
+			{
+				ID3D11ShaderResourceView* views[1] = { upscalingTexture->srv.get() };
+				context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+				ID3D11UnorderedAccessView* uavs[1] = { main.UAV };
+				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+				context->CSSetShader(GetRCASCS(), nullptr, 0);
+
+				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			}
+
+			ID3D11ShaderResourceView* views[1] = { nullptr };
+			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+			ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+			ID3D11ComputeShader* shader = nullptr;
+			context->CSSetShader(shader, nullptr, 0);
 		}
 
 		state->EndPerfEvent();
