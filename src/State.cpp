@@ -137,6 +137,7 @@ void State::Setup()
 		if (feature->loaded)
 			feature->SetupResources();
 	globals::deferred->SetupResources();
+	globals::xess->LoadXeSS();
 	globals::upscaling->CreateUpscalingResources();
 	SetupReShade();
 	if (initialized)
