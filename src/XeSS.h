@@ -57,5 +57,5 @@ public:
 	void LoadXeSS();
 	void CreateXeSSResources();
 	void DestroyXeSSResources();
-	void Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, float2 a_jitter);
+	void Upscale(ID3D11Resource* a_inputTexture, float2 a_jitter);
 };

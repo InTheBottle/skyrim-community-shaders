@@ -101,7 +101,7 @@ void XeSS::DestroyXeSSResources()
 	}
 }
 
-void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, float2 a_jitter)
+void XeSS::Upscale(ID3D11Resource* a_inputTexture, float2 a_jitter)
 {
 	auto upscaling = globals::upscaling;
 	auto state = globals::state;
@@ -109,15 +109,8 @@ void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTextu
 
 	upscaling->CopySharedResources();
 
-	if (xessSetVelocityScale(xessContext, renderSize.x, renderSize.y) != XESS_RESULT_SUCCESS) {
-		logger::warn("[XeSS] Failed to set velocity scale");
-	}
-
-	if (xessSetJitterScale(xessContext, 1.0f, 1.0f) != XESS_RESULT_SUCCESS) {
-		logger::warn("[XeSS] Failed to set jitter scale");
-	}
-
-	// Copy input textures to D3D12 (only the dynamic resolution area)
+	// Input textures are already copied to shared resources by the main upscaling system
+	// We just need to set the scales and copy the input color and reactive mask to the shared textures
 	D3D11_BOX srcBox = {};
 	srcBox.left = 0;
 	srcBox.top = 0;
@@ -127,7 +120,14 @@ void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTextu
 	srcBox.back = 1;
 
 	globals::d3d::context->CopySubresourceRegion(upscaling->inputColorBufferShared12->resource11, 0, 0, 0, 0, a_inputTexture, 0, &srcBox);
-	globals::d3d::context->CopySubresourceRegion(upscaling->reactiveMaskBufferShared12->resource11, 0, 0, 0, 0, a_reactiveMask, 0, &srcBox);
+
+	if (xessSetVelocityScale(xessContext, renderSize.x, renderSize.y) != XESS_RESULT_SUCCESS) {
+		logger::warn("[XeSS] Failed to set velocity scale");
+	}
+
+	if (xessSetJitterScale(xessContext, 1.0f, 1.0f) != XESS_RESULT_SUCCESS) {
+		logger::warn("[XeSS] Failed to set jitter scale");
+	}
 
 	// Wait for D3D11 to finish
 	winrt::com_ptr<ID3D11DeviceContext4> d3d11Context4;
@@ -151,7 +151,6 @@ void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTextu
 		upscaling->sharedD3D12CommandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 	}
 
-	// Execute XeSS upscaling on D3D12 using shared resources
 	xess_d3d12_execute_params_t execParams{};
 	execParams.pColorTexture = upscaling->inputColorBufferShared12->resource.get();
 	execParams.pVelocityTexture = upscaling->motionVectorBufferShared12->resource.get();
@@ -202,6 +201,5 @@ void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTextu
 	DX::ThrowIfFailed(d3d11Context4->Wait(d3d11Fence.get(), fenceValue));
 	fenceValue++;
 
-	// Copy output texture from D3D12 back to D3D11
-	globals::d3d::context->CopyResource(a_outputTexture, upscaling->outputColorBufferShared12->resource11);
+	// outputColorBufferShared12 is copied back to the main buffer by the sharpening pass
 }
