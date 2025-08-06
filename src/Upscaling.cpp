@@ -841,7 +841,11 @@ void Upscaling::Upscale()
 			ID3D11ShaderResourceView* views[3] = { temporalAAMask.SRV, depthPreWater.depthSRV, depthPostWater.depthSRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-			ID3D11UnorderedAccessView* uavs[2] = { reactiveMaskTexture->uav.get(), useTransparencyMask ? transparencyCompositionMaskTexture->uav.get() : nullptr };
+			// Use shared D3D12 textures for XeSS, regular D3D11 textures for others
+			ID3D11UnorderedAccessView* reactiveMaskUAV = (upscaleMethod == UpscaleMethod::kXESS) ? reactiveMaskBufferShared12->uav : reactiveMaskTexture->uav.get();
+			ID3D11UnorderedAccessView* transparencyUAV = useTransparencyMask ? transparencyCompositionMaskTexture->uav.get() : nullptr;
+			
+			ID3D11UnorderedAccessView* uavs[2] = { reactiveMaskUAV, transparencyUAV };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 			context->CSSetShader(useTransparencyMask ? GetEncodeTexturesTransparencyCS() : GetEncodeTexturesCS(), nullptr, 0);
@@ -869,7 +873,7 @@ void Upscaling::Upscale()
 		else if (upscaleMethod == UpscaleMethod::kFSR)
 			globals::fidelityFX->Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), jitter, settings.sharpness);
 		else if (upscaleMethod == UpscaleMethod::kXESS)
-			globals::xess->Upscale(main.texture, upscalingTexture->resource.get(), reactiveMaskTexture->resource.get(), jitter);
+			globals::xess->Upscale(main.texture, jitter);
 
 		state->EndPerfEvent();
 	}
@@ -881,7 +885,9 @@ void Upscaling::Upscale()
 			{
 				dispatchCount = Util::GetScreenDispatchCount(false);
 
-				ID3D11ShaderResourceView* views[1] = { upscalingTexture->srv.get() };
+				// Use shared D3D12 texture for XeSS, regular D3D11 texture for DLSS
+				ID3D11ShaderResourceView* upscalingSRV = (upscaleMethod == UpscaleMethod::kXESS) ? outputColorBufferShared12->srv : upscalingTexture->srv.get();
+				ID3D11ShaderResourceView* views[1] = { upscalingSRV };
 				context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 				ID3D11UnorderedAccessView* uavs[1] = { main.UAV };
