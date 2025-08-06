@@ -126,13 +126,17 @@ public:
 	WrappedResource* inputColorBufferShared12;
 	WrappedResource* outputColorBufferShared12;
 
+	// Frame tracking to ensure shared resources are only copied once per frame
+	Util::FrameChecker sharedResourcesFrameChecker;
+
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
 	bool useHUDLess = false;
 
 	void CreateFrameGenerationResources();
 	void CreateSharedD3D12Device(IDXGIAdapter* a_dxgiAdapter);
-	void CopyBuffersToSharedResources();
+	void CopyFrameGenerationResources();
+	void CopySharedResources();
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
