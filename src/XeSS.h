@@ -17,6 +17,8 @@ typedef xess_result_t (*xessD3D12CreateContextPtr)(ID3D12Device* pDevice, xess_c
 typedef xess_result_t (*xessD3D12InitPtr)(xess_context_handle_t hContext, const xess_d3d12_init_params_t* pInitParams);
 typedef xess_result_t (*xessD3D12ExecutePtr)(xess_context_handle_t hContext, ID3D12GraphicsCommandList* pCommandList, const xess_d3d12_execute_params_t* pExecParams);
 typedef xess_result_t (*xessDestroyContextPtr)(xess_context_handle_t hContext);
+typedef xess_result_t (*xessSetJitterScalePtr)(xess_context_handle_t hContext, float x, float y);
+typedef xess_result_t (*xessSetVelocityScalePtr)(xess_context_handle_t hContext, float x, float y);
 
 class XeSS
 {
@@ -37,6 +39,8 @@ public:
 	xessD3D12InitPtr xessD3D12Init = nullptr;
 	xessD3D12ExecutePtr xessD3D12Execute = nullptr;
 	xessDestroyContextPtr xessDestroyContext = nullptr;
+	xessSetJitterScalePtr xessSetJitterScale = nullptr;
+	xessSetVelocityScalePtr xessSetVelocityScale = nullptr;
 
 	xess_context_handle_t xessContext = nullptr;
 
@@ -53,5 +57,5 @@ public:
 	void LoadXeSS();
 	void CreateXeSSResources();
 	void DestroyXeSSResources();
-	void Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_motionVectors, ID3D11Resource* a_depth, float2 a_jitter);
+	void Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, float2 a_jitter);
 };

@@ -598,9 +598,30 @@ void Upscaling::CreateFrameGenerationResources()
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
-void Upscaling::CopyBuffersToSharedResources()
+void Upscaling::CopyFrameGenerationResources()
 {
 	if (!d3d12Interop || !settings.frameGenerationMode)
+		return;
+
+	CopySharedResources();
+
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
+
+	if (!useHUDLess) {
+		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+		ID3D11Resource* swapChainResource;
+		swapChain.SRV->GetResource(&swapChainResource);
+		context->CopyResource(HUDLessBufferShared12->resource11, swapChainResource);
+	}
+
+	useHUDLess = false;
+}
+
+void Upscaling::CopySharedResources()
+{
+	// Only copy once per frame for all upscaling systems (XeSS, Frame Generation, etc.)
+	if (!sharedResourcesFrameChecker.IsNewFrame())
 		return;
 
 	auto renderer = globals::game::renderer;
@@ -612,7 +633,7 @@ void Upscaling::CopyBuffersToSharedResources()
 	}
 
 	{
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 		{
 			auto dispatchCount = Util::GetScreenDispatchCount(true);
@@ -637,15 +658,6 @@ void Upscaling::CopyBuffersToSharedResources()
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 	}
-
-	if (!useHUDLess) {
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
-		context->CopyResource(HUDLessBufferShared12->resource11, swapChainResource);
-	}
-
-	useHUDLess = false;
 }
 
 void Upscaling::PostDisplay()
@@ -838,11 +850,8 @@ void Upscaling::Upscale()
 			globals::streamline->Upscale(main.texture, upscalingTexture->resource.get(), reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), (sl::DLSSPreset)11u);
 		else if (upscaleMethod == UpscaleMethod::kFSR)
 			globals::fidelityFX->Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), jitter, settings.sharpness);
-		else if (upscaleMethod == UpscaleMethod::kXESS) {
-			auto& motionVectorsTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMOTION_VECTOR];
-			auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			globals::xess->Upscale(main.texture, upscalingTexture->resource.get(), reactiveMaskTexture->resource.get(), motionVectorsTexture.texture, depthTexture.texture, jitter);
-		}
+		else if (upscaleMethod == UpscaleMethod::kXESS)
+			globals::xess->Upscale(main.texture, upscalingTexture->resource.get(), reactiveMaskTexture->resource.get(), jitter);
 
 		state->EndPerfEvent();
 	}

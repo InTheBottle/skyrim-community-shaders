@@ -22,8 +22,10 @@ void XeSS::LoadXeSS()
 		xessD3D12Init = (xessD3D12InitPtr)GetProcAddress(module, "xessD3D12Init");
 		xessD3D12Execute = (xessD3D12ExecutePtr)GetProcAddress(module, "xessD3D12Execute");
 		xessDestroyContext = (xessDestroyContextPtr)GetProcAddress(module, "xessDestroyContext");
+		xessSetJitterScale = (xessSetJitterScalePtr)GetProcAddress(module, "xessSetJitterScale");
+		xessSetVelocityScale = (xessSetVelocityScalePtr)GetProcAddress(module, "xessSetVelocityScale");
 
-		if (xessGetVersion && xessD3D12CreateContext && xessD3D12Init && xessD3D12Execute && xessDestroyContext) {
+		if (xessGetVersion && xessD3D12CreateContext && xessD3D12Init && xessD3D12Execute && xessDestroyContext && xessSetJitterScale && xessSetVelocityScale) {
 			featureXeSS = true;
 			xess_version_t version;
 			if (xessGetVersion(&version) == XESS_RESULT_SUCCESS) {
@@ -73,7 +75,8 @@ void XeSS::CreateXeSSResources()
 	initParams.outputResolution.x = (uint32_t)state->screenSize.x;
 	initParams.outputResolution.y = (uint32_t)state->screenSize.y;
 	initParams.qualitySetting = xessQuality;
-	initParams.initFlags = XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK;
+	initParams.initFlags = XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE;
+
 	initParams.creationNodeMask = 1;
 	initParams.visibleNodeMask = 1;
 	initParams.pTempBufferHeap = nullptr;
@@ -96,8 +99,6 @@ void XeSS::CreateXeSSResources()
 	DX::ThrowIfFailed(upscaling->sharedD3D12Device->CreateSharedHandle(d3d12Fence.get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
 	DX::ThrowIfFailed(d3d11Device5->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence)));
 	CloseHandle(sharedFenceHandle);
-
-	logger::info("[XeSS] XeSS context initialized successfully");
 }
 
 void XeSS::DestroyXeSSResources()
@@ -111,18 +112,26 @@ void XeSS::DestroyXeSSResources()
 	}
 }
 
-void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_motionVectors, ID3D11Resource* a_depth, float2 a_jitter)
+void XeSS::Upscale(ID3D11Resource* a_inputTexture, ID3D11Resource* a_outputTexture, ID3D11Resource* a_reactiveMask, float2 a_jitter)
 {
 	auto upscaling = globals::upscaling;
 	auto state = globals::state;
 	auto renderSize = Util::ConvertToDynamic(state->screenSize);
 
-	// Copy input textures to shared resources
+	upscaling->CopySharedResources();
+
+	if (xessSetVelocityScale(xessContext, renderSize.x, renderSize.y) != XESS_RESULT_SUCCESS) {
+		logger::warn("[XeSS] Failed to set velocity scale");
+	}
+
+	if (xessSetJitterScale(xessContext, 1.0f, 1.0f) != XESS_RESULT_SUCCESS) {
+		logger::warn("[XeSS] Failed to set jitter scale");
+	}
+
+	// Copy input textures to D3D12
 	globals::d3d::context->CopyResource(upscaling->inputColorBufferShared12->resource11, a_inputTexture);
-	globals::d3d::context->CopyResource(upscaling->motionVectorBufferShared12->resource11, a_motionVectors);
-	globals::d3d::context->CopyResource(upscaling->depthBufferShared12->resource11, a_depth);
 	globals::d3d::context->CopyResource(upscaling->reactiveMaskBufferShared12->resource11, a_reactiveMask);
-	
+
 	// Wait for D3D11 to finish
 	winrt::com_ptr<ID3D11DeviceContext4> d3d11Context4;
 	DX::ThrowIfFailed(globals::d3d::context->QueryInterface(IID_PPV_ARGS(&d3d11Context4)));
