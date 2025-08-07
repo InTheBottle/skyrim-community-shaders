@@ -31,8 +31,7 @@ public:
 	ffx::Context swapChainContext{};
 	ffx::Context frameGenContext;
 
-	bool featureFSR3FG = false;  // whether enabled
-	bool featureFSR3 = false;   // FSR 3 upscaling feature
+	bool featureFSR3FG = false;
 
 	// Track if FidelityFX is currently being used for frame generation
 	bool isFrameGenActive = false;
