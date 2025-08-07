@@ -14,12 +14,12 @@ RWTexture2D<float> TransparencyCompositionMask : register(u1);
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
 	float2 taaMask = TAAMask[dispatchID.xy];
 
-	float reactiveMask = taaMask.x * 0.25 + sqrt(taaMask.y);
+	float reactiveMask = sqrt(taaMask.x + taaMask.y);
 
 	float depthPreWater = SharedData::GetScreenDepth(DepthPreWater[dispatchID.xy]);
 	float depthPostWater = SharedData::GetScreenDepth(DepthPostWater[dispatchID.xy]);
 
-	float depthDifference = saturate(abs(depthPreWater - depthPostWater));
+	float depthDifference = abs(depthPreWater - depthPostWater);
 
 	float transparencyCompositionMask = depthDifference;
 
