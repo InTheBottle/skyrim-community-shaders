@@ -1013,7 +1013,9 @@ void Upscaling::UpscaleDepth()
 
 		auto context = globals::d3d::context;
 
-		context->CopyResource(depthCopy.texture, depth.texture);
+		// VR uses both depth and depth copy after, upscaling, skip a copy here
+		if (!globals::game::isVR)
+			context->CopyResource(depthCopy.texture, depth.texture);
 
 		ResolutionScaleCB updateData{};
 		updateData.ResolutionScale.x = resolutionScale;
@@ -1048,13 +1050,13 @@ void Upscaling::UpscaleDepth()
 
 		// Clear stencil to be 0xFF
 		if (globals::game::isVR)
-			context->ClearDepthStencilView(depth.views[0], D3D11_CLEAR_STENCIL, 1.0f, 0xFF);
+			context->ClearDepthStencilView(depthCopy.views[0], D3D11_CLEAR_STENCIL, 1.0f, 0xFF);
 
 		// Set depth stencil state
 		context->OMSetDepthStencilState(depthUpscaleState, 0x00);
 
 		// Set render targets (no color target, depth only)
-		context->OMSetRenderTargets(0, nullptr, depth.views[0]);
+		context->OMSetRenderTargets(0, nullptr, depthCopy.views[0]);
 
 		// Set up pixel shader resources
 		auto constantBuffer = resolutionScaleCB->CB();
@@ -1062,7 +1064,7 @@ void Upscaling::UpscaleDepth()
 
 		if (globals::game::isVR) {
 			// For VR, bind both depth and stencil textures
-			ID3D11ShaderResourceView* views[2] = { depthCopy.depthSRV, depthCopy.stencilSRV };
+			ID3D11ShaderResourceView* views[2] = { depth.depthSRV, depth.stencilSRV };
 			context->PSSetShaderResources(0, 2, views);
 		} else {
 			// For non-VR, bind only depth texture
@@ -1084,9 +1086,9 @@ void Upscaling::UpscaleDepth()
 			context->PSSetShaderResources(0, 1, nullPSResources);
 		}
 
-		// VR uses this for some passes
+		// Copy back to main depth texture
 		if (globals::game::isVR)
-			context->CopyResource(depthCopy.texture, depth.texture);
+			context->CopyResource(depth.texture, depthCopy.texture);
 
 		globals::state->EndPerfEvent();
 	}
