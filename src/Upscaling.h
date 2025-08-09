@@ -76,9 +76,6 @@ public:
 	ID3D11ComputeShader* encodeTexturesTransparencyCS = nullptr;
 	ID3D11ComputeShader* GetEncodeTexturesTransparencyCS();
 
-	ID3D11ComputeShader* rcasCS = nullptr;
-	ID3D11ComputeShader* GetRCASCS();
-
 	ID3D11PixelShader* depthUpscalePS = nullptr;
 	ID3D11PixelShader* GetDepthUpscalePS();
 
@@ -94,7 +91,6 @@ public:
 	void ConfigureUpscaling(RE::BSGraphics::State* a_state);
 	void Upscale();
 
-	Texture2D* upscalingTexture;
 	Texture2D* reactiveMaskTexture;
 	Texture2D* transparencyCompositionMaskTexture;
 
