@@ -261,31 +261,6 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesTransparencyCS()
 	return encodeTexturesTransparencyCS;
 }
 
-ID3D11ComputeShader* Upscaling::GetRCASCS()
-{
-	float sharpnessRemapped = (-2.0f * 0.8f) + 2.0f;
-	sharpnessRemapped = exp2(-sharpnessRemapped);
-
-	static auto previousSharpness = sharpnessRemapped;
-	auto currentSharpness = sharpnessRemapped;
-
-	if (previousSharpness != currentSharpness) {
-		previousSharpness = currentSharpness;
-
-		if (rcasCS) {
-			rcasCS->Release();
-			rcasCS = nullptr;
-		}
-	}
-
-	if (!rcasCS) {
-		logger::debug("Compiling RCAS.hlsl");
-		rcasCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/RCAS/RCAS.hlsl", { { "SHARPNESS", std::format("{}", currentSharpness).c_str() } }, "cs_5_0");
-	}
-
-	return rcasCS;
-}
-
 ID3D11PixelShader* Upscaling::GetDepthUpscalePS()
 {
 	if (!depthUpscalePS) {
@@ -407,10 +382,6 @@ void Upscaling::CreateUpscalingResources()
 
 	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-	upscalingTexture = new Texture2D(texDesc);
-	upscalingTexture->CreateSRV(srvDesc);
-	upscalingTexture->CreateUAV(uavDesc);
-
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	srvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
@@ -493,11 +464,6 @@ void Upscaling::CreateUpscalingResources()
 
 void Upscaling::DestroyUpscalingResources()
 {
-	upscalingTexture->srv = nullptr;
-	upscalingTexture->uav = nullptr;
-	upscalingTexture->resource = nullptr;
-	delete upscalingTexture;
-
 	reactiveMaskTexture->srv = nullptr;
 	reactiveMaskTexture->uav = nullptr;
 	reactiveMaskTexture->resource = nullptr;
@@ -951,41 +917,10 @@ void Upscaling::Upscale()
 			DX::ThrowIfFailed(d3d11Context4->Wait(sharedD3D11Fence.get(), sharedInteropFenceValue));
 			sharedInteropFenceValue++;
 
-			// XeSS output may need to go through sharpening, so copy to upscaling texture if required
-			if (globals::game::isVR)
-				context->CopyResource(main.texture, outputColorBufferShared12->resource11);
-			else
-				context->CopyResource(upscalingTexture->resource.get(), outputColorBufferShared12->resource11);
-		}
+			// Copy back to main buffer
+			context->CopyResource(main.texture, outputColorBufferShared12->resource11);
 
-		state->EndPerfEvent();
-	}
-
-	// XeSS requires sharpening to match the look of TAA and DLSS, but on VR this looks bad
-	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kXESS) {
-		state->BeginPerfEvent("Sharpening");
-
-		{
-			{
-				ID3D11ShaderResourceView* views[1] = { upscalingTexture->srv.get() };
-				context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-				ID3D11UnorderedAccessView* uavs[1] = { main.UAV };
-				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-				context->CSSetShader(GetRCASCS(), nullptr, 0);
-
-				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-			}
-
-			ID3D11ShaderResourceView* views[1] = { nullptr };
-			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-			ID3D11UnorderedAccessView* uavs[1] = { nullptr };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			ID3D11ComputeShader* shader = nullptr;
-			context->CSSetShader(shader, nullptr, 0);
+			state->EndPerfEvent();
 		}
 
 		state->EndPerfEvent();
