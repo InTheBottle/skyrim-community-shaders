@@ -2,9 +2,9 @@
 
 cbuffer PerFrame : register(b0)
 {
-	uint LightCount;
-	uint pad[3];
-	uint4 ClusterSize;
+    uint LightCount;
+    uint3 pad;
+    uint4 ClusterSize;
 }
 
 //references
