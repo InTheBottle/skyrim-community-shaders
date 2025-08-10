@@ -407,6 +407,8 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 	if (upscaleMethod == UpscaleMethod::kTAA)
 		resolutionScale = 1.0f;
+	
+	wasUpscaled = false;
 }
 
 void Upscaling::CreateUpscalingResources()
