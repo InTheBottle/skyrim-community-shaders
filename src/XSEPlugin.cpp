@@ -93,8 +93,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 					}
 				}
 
-				Upscaling::InstallHooks();
-
 				// Now validate disk cache after features have had a chance to modify their state
 				shaderCache->ValidateDiskCache();
 
