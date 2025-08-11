@@ -5,7 +5,7 @@
 
 #include "FidelityFX.h"
 #include "Streamline.h"
-#include "Upscaling.h"
+#include "../Upscaling.h"
 
 void DX12SwapChain::InitializeD3D12Resources()
 {

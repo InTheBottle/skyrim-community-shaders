@@ -12,8 +12,8 @@
 #include <ffx_framegeneration.hpp>
 #include <ffx_upscale.hpp>
 
-#include "Buffer.h"
-#include "State.h"
+#include "../../Buffer.h"
+#include "../../State.h"
 
 class FidelityFX
 {

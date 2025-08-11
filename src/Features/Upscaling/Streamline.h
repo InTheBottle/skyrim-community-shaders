@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Buffer.h"
-#include "State.h"
+#include "../../Buffer.h"
+#include "../../State.h"
 
 #include <d3d11_4.h>
 #include <d3d12.h>

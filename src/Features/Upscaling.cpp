@@ -1,6 +1,6 @@
 #include "Upscaling.h"
 
-#include "DX12SwapChain.h"
+#include "Upscaling/DX12SwapChain.h"
 #include "Deferred.h"
 #include "Hooks.h"
 #include "State.h"
@@ -146,8 +146,8 @@ void Upscaling::DrawSettings()
 		}
 		std::vector<std::string> headers = { "DLL Name", "Version" };
 		std::vector<std::vector<std::string>> ffRows;
-		for (const auto& [name, version] : FidelityFX::dllVersions)
-			ffRows.push_back({ name, version });
+		for (const auto& [name, dllVersion] : FidelityFX::dllVersions)
+			ffRows.push_back({ name, dllVersion });
 		std::vector<Util::TableSortFunc> ffSorters = { nullptr, Util::VersionSortComparator };
 		Util::ShowSortedStringTableStrings(
 			"ffx_dll_versions",
@@ -162,8 +162,8 @@ void Upscaling::DrawSettings()
 			ShellExecuteW(nullptr, L"open", Streamline::PluginDir, nullptr, nullptr, SW_SHOWNORMAL);
 		}
 		std::vector<std::vector<std::string>> slRows;
-		for (const auto& [name, version] : Streamline::dllVersions)
-			slRows.push_back({ name, version });
+		for (const auto& [name, dllVersion] : Streamline::dllVersions)
+			slRows.push_back({ name, dllVersion });
 		std::vector<Util::TableSortFunc> slSorters = { nullptr, Util::VersionSortComparator };
 		Util::ShowSortedStringTableStrings(
 			"sl_dll_versions",
@@ -598,7 +598,7 @@ void Upscaling::CreateSharedD3D12Resources()
 	motionVector.texture->GetDesc(&texDesc);
 	motionVectorBufferShared12 = new WrappedResource(texDesc, d3d11Device5.get(), sharedD3D12Device.get());
 
-	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
 void Upscaling::CreateFrameGenerationResources()
