@@ -1,19 +1,19 @@
 #pragma once
 
-#include "FidelityFX.h"
-#include "Streamline.h"
-#include "XeSS.h"
+#include "Feature.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
+#include "Upscaling/XeSS.h"
 #include <d3d12.h>
 #include <winrt/base.h>
 
 /**
- * @brief Installs hooks for Direct3D 11 device context operations.
+ * @brief Provides upscaling functionality including DLSS, FSR, XeSS and TAA.
  *
- * Sets up hooks on the provided ID3D11DeviceContext to intercept and extend D3D11 Map and Unmap operations, enabling custom frame buffer management and resource tracking.
- *
- * @param a_context Pointer to the Direct3D 11 device context to hook.
+ * This feature handles various upscaling methods and frame generation technologies
+ * to improve performance while maintaining visual quality.
  */
-class Upscaling
+class Upscaling : public Feature
 {
 public:
 	static Upscaling* GetSingleton()
@@ -22,7 +22,27 @@ public:
 		return &singleton;
 	}
 
-	inline std::string GetShortName() { return "Upscaling"; }
+	// Feature interface
+	virtual std::string GetName() override { return "Upscaling"; }
+	virtual std::string GetShortName() override { return "Upscaling"; }
+	virtual bool SupportsVR() override { return true; }
+	virtual bool IsCore() const override { return true; }
+	virtual std::string_view GetCategory() const override { return "Graphics"; }
+	
+	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
+	{
+		return {
+			"Advanced upscaling and frame generation technologies for improved performance",
+			{
+				"DLSS support with quality modes",
+				"FSR (FidelityFX Super Resolution) support", 
+				"XeSS (Intel Xe Super Sampling) support",
+				"TAA (Temporal Anti-Aliasing) support",
+				"Frame generation for supported GPUs",
+				"Dynamic resolution scaling"
+			}
+		};
+	}
 
 	float2 jitter = { 0, 0 };
 
@@ -64,10 +84,11 @@ public:
 	bool IsFrameGenerationActive() const;
 	float GetFrameGenerationFrameTime() const;
 
-	void DrawSettings();
-	void SaveSettings(json& o_json);
-	void LoadSettings(json& o_json);
-	void RestoreDefaultSettings();
+	// Feature interface overrides
+	virtual void DrawSettings() override;
+	virtual void SaveSettings(json& o_json) override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void RestoreDefaultSettings() override;
 
 	UpscaleMethod GetUpscaleMethod();
 

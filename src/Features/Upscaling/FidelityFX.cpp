@@ -2,10 +2,10 @@
 
 #include <directx/d3dx12.h>
 
-#include "Utils/FileSystem.h"
+#include "../../Utils/FileSystem.h"
 
-#include "State.h"
-#include "Upscaling.h"
+#include "../../State.h"
+#include "../Upscaling.h"
 
 #include "DX12SwapChain.h"
 

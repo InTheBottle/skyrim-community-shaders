@@ -1,8 +1,8 @@
 #include "XeSS.h"
-#include "Utils/FileSystem.h"
+#include "../../Utils/FileSystem.h"
 
-#include "State.h"
-#include "Upscaling.h"
+#include "../../State.h"
+#include "../Upscaling.h"
 
 #include <directx/d3dx12.h>
 #include <magic_enum.hpp>
