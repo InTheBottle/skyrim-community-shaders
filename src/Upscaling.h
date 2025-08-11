@@ -59,6 +59,7 @@ public:
 
 	bool wasUpscaled = false;
 
+
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationActive() const;
 	float GetFrameGenerationFrameTime() const;
@@ -238,6 +239,37 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct GFxMovieDef_GetFrameRate
+	{
+		static float thunk(RE::GFxMovieDef* This)
+		{
+			auto frameRate = func(This);
+			auto upscaling = globals::upscaling;
+			if (upscaling->d3d12Interop && upscaling->settings.frameGenerationMode) {
+				float newFrameRate = std::min(60.0f, frameRate * 2.0f);
+				return std::max(frameRate, newFrameRate);
+			}
+			return frameRate;
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct GFxLoader_CreateMovie
+	{
+		static RE::GFxMovieDef* thunk(const char* a_filename, RE::GFxLoader::LoadConstants a_loadConstants, uint32_t a_memoryArena)
+		{
+			auto movieDef = func(a_filename, a_loadConstants, a_memoryArena);
+			static bool patched = false;
+			if (!patched)
+				stl::detour_vfunc<0x9, GFxMovieDef_GetFrameRate>(movieDef);
+			patched = true;
+			return movieDef;
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	static void InstallHooks()
 	{
 		bool isGOG = !GetModuleHandle(L"steam_api64.dll");
@@ -251,6 +283,9 @@ public:
 
 		// Performs upscaling in between volumetric lighting and post processing
 		stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
+		
+		// Patches user interface to reduce latency
+		stl::detour_thunk<GFxLoader_CreateMovie>(REL::RelocationID(80620, 84640));
 
 		if (!REL::Module::IsVR()) {
 			// Patches RSSetScissorRect calls to use dynamic resolution
