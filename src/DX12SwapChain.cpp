@@ -100,10 +100,7 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
 	swapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), upscaling->sharedD3D12Device.get());
-
-	for (int i = 0; i < 2; i++) {
-		uiBuffersWrapped[i] = new WrappedResource(texDesc11, d3d11Device.get(), upscaling->sharedD3D12Device.get());
-	}
+	uiBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), upscaling->sharedD3D12Device.get());
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -130,10 +127,6 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 {
 	auto upscaling = globals::upscaling;
-	if (!upscaling->sharedD3D12CommandQueue) {
-		logger::error("[DX12SwapChain] Shared D3D12 command queue not available");
-		return E_FAIL;
-	}
 
 	// Wait for D3D11 to finish
 	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
@@ -184,7 +177,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(uiBuffersWrapped[frameIndex]->rtv, clearColor);
+	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 
 	auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 	data.RTV = swapChainBufferWrapped->rtv;
@@ -410,6 +403,6 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetLastPresentCount(_Out_ UINT* pL
 void DX12SwapChain::SetUIBuffer()
 {
 	auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-	data.RTV = uiBuffersWrapped[frameIndex]->rtv;
+	data.RTV = uiBufferWrapped->rtv;
 	d3d11Context->OMSetRenderTargets(1, &data.RTV, nullptr);
 }
