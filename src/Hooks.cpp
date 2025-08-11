@@ -225,19 +225,6 @@ struct IDXGISwapChain_Present
 		state->Reset();
 		menu->DrawOverlay();
 
-		if (upscaling->d3d12Interop)
-			SyncInterval = 0;
-
-		if (!globals::game::isVR) {
-			BOOL fullscreen = FALSE;
-			((IDXGISwapChain*)This)->GetFullscreenState(&fullscreen, nullptr);
-			if (fullscreen || SyncInterval) {
-				Flags &= ~DXGI_PRESENT_ALLOW_TEARING;
-			} else if (SyncInterval == 0) {
-				Flags |= DXGI_PRESENT_ALLOW_TEARING;
-			}
-		}
-
 		HRESULT retval = func(This, SyncInterval, Flags);
 
 		TracyD3D11Collect(state->tracyCtx);

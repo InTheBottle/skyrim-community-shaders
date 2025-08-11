@@ -130,8 +130,8 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	}
 
 	ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
-	uiConfig.uiResource = ffxApiGetResourceDX12(swapChain->uiBuffersWrapped[swapChain->frameIndex]->resource.get());
-	uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA;
+	uiConfig.uiResource = ffxApiGetResourceDX12(swapChain->uiBufferWrapped->resource.get());
+	uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA | FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING;
 
 	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure UI composition!");
