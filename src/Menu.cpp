@@ -14,7 +14,6 @@
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
 #include "Menu/AdvancedSettingsRenderer.h"
-#include "Menu/DisplaySettingsRenderer.h"
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/OverlayRenderer.h"
@@ -286,8 +285,7 @@ void Menu::DrawSettings()
 			pendingFeatureSelection,
 			categoryExpansionStates,
 			[&]() { DrawGeneralSettings(); },
-			[&]() { DrawAdvancedSettings(); },
-			[&]() { DrawDisplaySettings(); });
+			[&]() { DrawAdvancedSettings(); });
 
 		ImGui::Spacing();
 		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS);
@@ -389,19 +387,6 @@ void Menu::DrawDisableAtBootSettings()
 	}
 }
 
-/**
- * @brief Renders the Display settings tab content
- *
- * Delegates rendering to DisplaySettingsRenderer to handle upscaling and frame
- * generation settings. Provides callbacks for feature status checking and upscaling
- * configuration while maintaining clean architecture separation.
- */
-void Menu::DrawDisplaySettings()
-{
-	DisplaySettingsRenderer::RenderDisplaySettings(
-		[](const std::string& featureName) { return globals::state->IsFeatureDisabled(featureName); },
-		[]() { globals::features::upscaling.DrawSettings(); });
-}
 
 void Menu::DrawFooter()
 {
