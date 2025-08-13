@@ -14,8 +14,21 @@ std::vector<std::pair<std::string, std::string>> FidelityFX::dllVersions = {};
 
 void FidelityFX::LoadFFX()
 {
-	std::wstring dllPath = std::wstring(FidelityFX::PluginDir) + L"\\amd_fidelityfx_dx12.dll";
-	module = LoadLibrary(dllPath.c_str());
+	// Try loading from root folder first
+	std::wstring rootDllPath = L"amd_fidelityfx_dx12.dll";
+	module = LoadLibrary(rootDllPath.c_str());
+	
+	std::wstring loadedFrom;
+	if (module) {
+		loadedFrom = L"root folder";
+	} else {
+		// Fallback to plugin directory
+		std::wstring pluginDllPath = std::wstring(FidelityFX::PluginDir) + L"\\amd_fidelityfx_dx12.dll";
+		module = LoadLibrary(pluginDllPath.c_str());
+		if (module) {
+			loadedFrom = L"plugin directory";
+		}
+	}
 
 	// Cache all DLL versions in the FidelityFX directory
 	std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
@@ -28,13 +41,15 @@ void FidelityFX::LoadFFX()
 		featureFSR3 = true;
 
 		if (featureFSR3) {
-			logger::info("[FidelityFX] FSR 3 API loaded successfully");
+			logger::info("[FidelityFX] FSR 3 API loaded successfully from {}", 
+				loadedFrom == L"root folder" ? "root folder" : "plugin directory");
 		} else {
 			logger::warn("[FidelityFX] FSR 3 API functions not found, falling back to legacy implementation");
 		}
 	} else {
 		featureFSR3FG = false;
 		featureFSR3 = false;
+		logger::error("[FidelityFX] Failed to load amd_fidelityfx_dx12.dll from both root folder and plugin directory");
 	}
 }
 
