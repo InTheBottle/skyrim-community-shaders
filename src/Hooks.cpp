@@ -313,7 +313,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	globals::state->SetAdapterDescription(adapterDesc.Description);
 
 	auto& upscaling = globals::features::upscaling;
-
+	if (globals::game::isVR) {
+		auto& streamline = globals::features::upscaling.streamline;
+		streamline.LoadInterposer();
+	}
 	if (upscaling.IsBackendInitialized())
 		upscaling.CheckBackendFeatures(pAdapter);
 
@@ -397,7 +400,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
-	
+
 	globals::state->InitReShade(*ppSwapChain);
 
 	if (upscaling.IsBackendInitialized()) {
@@ -1043,7 +1046,6 @@ namespace Hooks
 	 */
 	void InstallD3DHooks()
 	{
-
 		*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
 	}

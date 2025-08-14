@@ -1,14 +1,14 @@
 #include "Upscaling.h"
 
-#include "Upscaling/DX12SwapChain.h"
-#include "Upscaling/Streamline.h"
-#include "Upscaling/XeSS.h"
-#include "Upscaling/FidelityFX.h"
 #include "Deferred.h"
 #include "Hooks.h"
 #include "State.h"
-#include <directx/d3dx12.h>
+#include "Upscaling/DX12SwapChain.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
+#include "Upscaling/XeSS.h"
 #include <Windows.h>
+#include <directx/d3dx12.h>
 #include <reshade/reshade.hpp>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -230,7 +230,7 @@ void Upscaling::PostPostLoad()
 
 	// Performs upscaling in between volumetric lighting and post processing
 	stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
-	
+
 	if (!REL::Module::IsVR()) {
 		// Patches RSSetScissorRect calls to use dynamic resolution
 		// This is a PC-specific function hence it was missing
@@ -410,7 +410,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		else
 			a_viewport->projectionPosScaleX = -2.0f * jitter.x / renderWidth;
 
-		a_viewport->projectionPosScaleY = 2.0f * jitter.y / renderHeight;	
+		a_viewport->projectionPosScaleY = 2.0f * jitter.y / renderHeight;
 	} else {
 		resolutionScale = 1.0f;
 	}
@@ -428,7 +428,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 	if (upscaleMethod == UpscaleMethod::kTAA)
 		resolutionScale = 1.0f;
-	
+
 	wasUpscaled = false;
 }
 
@@ -757,7 +757,7 @@ void Upscaling::PostDisplay()
 	globals::state->RenderReShade();
 
 	CopyHUDLessBuffer();
-	
+
 	if (d3d12Interop)
 		SetUIBuffer();
 }
@@ -889,7 +889,8 @@ void Upscaling::LoadUpscalingSDKs()
 {
 	// Initialize all upscaling SDK components during plugin startup
 	// This ensures all SDKs are available before any D3D device creation
-	streamline.LoadInterposer();
+	if (!globals::game::isVR)
+		streamline.LoadInterposer();
 	fidelityFX.LoadFFX();
 	xess.LoadXeSS();
 }
@@ -1227,7 +1228,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a1, uint32_t a
 {
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
-	
+
 	upscaling.CopySharedD3D12Resources(upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kXESS);
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA)
