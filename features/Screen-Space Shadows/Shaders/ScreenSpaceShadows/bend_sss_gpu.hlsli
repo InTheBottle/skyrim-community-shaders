@@ -260,11 +260,27 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		half2 coord = read_xy * inParameters.InvDepthTextureSize;
 		half2 coord_with_offset = (read_xy + offset_xy) * inParameters.InvDepthTextureSize;
 				
-		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
-		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
 #	if defined(VR)
+		const float eyeBoundary = 0.5;
+		
+#		if defined(RIGHT)
+		// Right eye: valid UV range is [0.5, 1.0]
+		bool coord_out_of_eye = coord.x < eyeBoundary;
+		bool coord_offset_out_of_eye = coord_with_offset.x < eyeBoundary;
+#		else
+		// Left eye: valid UV range is [0.0, 0.5)
+		bool coord_out_of_eye = coord.x >= eyeBoundary;
+		bool coord_offset_out_of_eye = coord_with_offset.x >= eyeBoundary;
+#		endif
+
+		depths.x = coord_out_of_eye ? 1.0 : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0)
+		depths.y = coord_offset_out_of_eye ? 1.0 : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
+		
 		depths.x = lerp(depths.x, 1.0, (float)(depths.x == 0));  // Stencil area
 		depths.y = lerp(depths.y, 1.0, (float)(depths.y == 0));  // Stencil area
+#	else
+		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
+		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
 #	endif
 
 		// Depth thresholds (bilinear/shadow thickness) are based on a fractional ratio of the difference between sampled depth and the far clip depth
