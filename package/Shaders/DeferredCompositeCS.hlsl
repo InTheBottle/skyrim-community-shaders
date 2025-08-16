@@ -69,7 +69,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, out float ao, out float3 il, i
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
 	float2 uv = float2(dispatchID.xy + 0.5) * SharedData::BufferDim.zw;
-	uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
+	uv *= FrameBuffer::DynamicResolutionParams2.xy;  // adjust for dynamic res
 
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
