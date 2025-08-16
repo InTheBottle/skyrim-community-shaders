@@ -218,7 +218,7 @@ void Upscaling::DrawSettings()
 			if (!isWindowed) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: Requires windowed mode");
-				ImGui::PopStyleColor(ImGuiCol_Text);
+				ImGui::PopStyleColor();
 
 				onlyRequiresRestart = false;
 			}
@@ -226,7 +226,7 @@ void Upscaling::DrawSettings()
 			if (lowRefreshRate && !settings.frameGenerationForceEnable) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: Requires a high refresh rate monitor or Force Enable Frame Generation");
-				ImGui::PopStyleColor(ImGuiCol_Text);
+				ImGui::PopStyleColor();
 
 				onlyRequiresRestart = false;
 			}
@@ -234,7 +234,7 @@ void Upscaling::DrawSettings()
 			if (fidelityFXMissing) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: amd_fidelityfx_dx12.dll is not loaded");
-				ImGui::PopStyleColor(ImGuiCol_Text);
+				ImGui::PopStyleColor();
 
 				onlyRequiresRestart = false;
 			}
@@ -242,7 +242,7 @@ void Upscaling::DrawSettings()
 			if (onlyRequiresRestart && settings.frameGenerationMode && !d3d12Interop) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: Requires restart");
-				ImGui::PopStyleColor(ImGuiCol_Text);
+				ImGui::PopStyleColor();
 			}
 
 			std::string backendLabel = fidelityFX.isFrameGenActive ? "FSR3" : "None";
