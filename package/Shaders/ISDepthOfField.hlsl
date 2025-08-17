@@ -1,5 +1,6 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/SharedData.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -17,7 +18,7 @@ SamplerState MaskSampler : register(s4);
 
 Texture2D<float4> ImageTex : register(t0);
 Texture2D<float4> BlurredTex : register(t1);
-Texture2D<float4> DepthTex : register(t2);
+Texture2D<float> DepthTex : register(t2);
 Texture2D<float4> AvgDepthTex : register(t3);
 Texture2D<float4> MaskTex : register(t4);
 
@@ -67,7 +68,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 dofParams = params;
 	float4 dofParams2 = params2;
 #	if defined(MASKED)
-	mask = MaskTex.Sample(MaskSampler, adjustedTexCoord).x;
+	mask = MaskTex.Sample(ImageSampler, adjustedTexCoord).x;
 	dofParams = lerp(params, params6, mask);
 	dofParams2 = lerp(params2, params7, mask);
 #	endif
@@ -83,8 +84,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 
-	float depthCC =
-		DepthTex.Sample(DepthSampler, FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord)).x;
+	float depthCC = DepthTex.Sample(DepthSampler, adjustedTexCoord).x;
 
 	float crossSection = 0;
 	float avgDepth = depthCC;
