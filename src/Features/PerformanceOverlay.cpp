@@ -376,7 +376,10 @@ void PerformanceOverlay::DrawOverlay()
 	ImGui::SetWindowFontScale(1.0f);  // Reset font scale
 
 	// --- A/B Test Section ---
-	DrawABTestSection(allRows, showCollapsibleSections);
+	// A/B testing shows detailed per-shader performance data, so it should also be developer-only
+	if (globals::state->IsDeveloperMode()) {
+		DrawABTestSection(allRows, showCollapsibleSections);
+	}
 
 	ImGui::End();
 	ImGui::PopStyleVar();    // WindowBorderSize
