@@ -169,7 +169,10 @@ void PerformanceOverlay::DrawSettings()
 			ImGui::Indent();
 
 			ImGui::Checkbox("Show FPS Counter", &this->settings.ShowFPS);
-			ImGui::Checkbox("Show Draw Calls", &this->settings.ShowDrawCalls);
+			// Show Draw Calls setting is only available in developer mode
+			if (globals::state->IsDeveloperMode()) {
+				ImGui::Checkbox("Show Draw Calls", &this->settings.ShowDrawCalls);
+			}
 			ImGui::Checkbox("Show VRAM Usage", &this->settings.ShowVRAM);
 
 			bool isFrameGenerationActive = globals::upscaling && globals::upscaling->IsFrameGenerationActive();
@@ -297,7 +300,7 @@ void PerformanceOverlay::DrawOverlay()
 			float fpsWidth = ImGui::CalcTextSize(fpsText.c_str()).x;
 			minWidth = std::max(minWidth, fpsWidth + PerformanceOverlay::Settings::kLabelPadding);  // Add padding for labels
 		}
-		if (this->settings.ShowDrawCalls) {
+		if (this->settings.ShowDrawCalls && globals::state->IsDeveloperMode()) {
 			// Draw calls table needs significant width for all columns
 			minWidth = std::max(minWidth, PerformanceOverlay::Settings::kDrawCallsTableWidth * this->settings.TextSize);
 		}
@@ -347,8 +350,8 @@ void PerformanceOverlay::DrawOverlay()
 		}
 	}
 
-	// Show Draw Calls if enabled
-	if (this->settings.ShowDrawCalls) {
+	// Show Draw Calls if enabled and in developer mode
+	if (this->settings.ShowDrawCalls && globals::state->IsDeveloperMode()) {
 		static bool drawCallsExpanded = true;
 		if (showCollapsibleSections) {
 			Util::DrawSectionHeader("Draw Calls & Shader Performance", false, true, &drawCallsExpanded);
