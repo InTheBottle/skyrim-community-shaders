@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
-// Copyright (C) 2024 Advanced Micro Devices, Inc.
-//
+// Copyright (C) 2025 Advanced Micro Devices, Inc.
+// 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -22,18 +22,13 @@
 
 #pragma once
 
-#include "../ffx_api.hpp"
-#include "ffx_api_dx12.h"
+#include "../../../api/include/dx12/ffx_api_dx12.hpp"
+#include "ffx_api_framegeneration_dx12.h"
 
 // Helper types for header initialization. Api definition is in .h file.
 
 namespace ffx
 {
-
-template<>
-struct struct_type<ffxCreateBackendDX12Desc> : std::integral_constant<uint64_t, FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12> {};
-
-struct CreateBackendDX12Desc : public InitHelper<ffxCreateBackendDX12Desc> {};
 
 template<>
 struct struct_type<ffxCreateContextDescFrameGenerationSwapChainWrapDX12> : std::integral_constant<uint64_t, FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_WRAP_DX12> {};
@@ -79,5 +74,10 @@ template<>
 struct struct_type<ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageDX12> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_GPU_MEMORY_USAGE_DX12> {};
 
 struct QueryFrameGenerationSwapChainGetGPUMemoryUsageDX12 : public InitHelper<ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageDX12> {};
+
+template<>
+struct struct_type<ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageDX12V2> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_GPU_MEMORY_USAGE_DX12_V2> {};
+
+struct QueryFrameGenerationSwapChainGetGPUMemoryUsageDX12V2 : public InitHelper<ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageDX12V2> {};
 
 }

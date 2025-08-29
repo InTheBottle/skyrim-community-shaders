@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
-// Copyright (C) 2024 Advanced Micro Devices, Inc.
-//
+// Copyright (C) 2025 Advanced Micro Devices, Inc.
+// 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "ffx_api.h"
-#include "ffx_api_types.h"
+#include "../../api/include/ffx_api.h"
+#include "ffx_framegeneration_api_types.h"
 
 #define FFX_API_EFFECT_ID_FRAMEGENERATION 0x00020000u
 
@@ -49,7 +49,7 @@ enum FfxApiDispatchFramegenerationFlags
     FFX_FRAMEGENERATION_FLAG_NO_SWAPCHAIN_CONTEXT_NOTIFY = (1 << 3),  ///< A bit indicating that the context should only run frame interpolation and not modify the swapchain.
     FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_PACING_LINES = (1 << 4),      ///< A bit indicating that the debug pacing lines will be drawn to the generated output.
     FFX_FRAMEGENERATION_FLAG_RESERVED_1 = (1 << 5),
-    FFX_FRAMEGENERATION_FLAG_RESERVED_2 = (1 << 6),
+    FFX_FRAMEGENERATION_FLAG_RESERVED_2 = (1 << 6), 
 };
 
 enum FfxApiUiCompositionFlags
@@ -135,7 +135,7 @@ struct ffxDispatchDescFrameGenerationPrepare
     float                 cameraFovAngleVertical;  ///< The camera angle field of view in the vertical direction (expressed in radians).
     float                 viewSpaceToMetersFactor; ///< The scale factor to convert view space units to meters
     struct FfxApiResource depth;                   ///< The depth buffer data
-    struct FfxApiResource motionVectors;           ///< The motion vector data
+    struct FfxApiResource motionVectors;           ///< The motion vector data    
 };
 
 #define FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION_KEYVALUE 0x00020006u
@@ -163,7 +163,7 @@ struct ffxQueryDescFrameGenerationGetGPUMemoryUsage
 struct ffxConfigureDescFrameGenerationRegisterDistortionFieldResource
 {
     ffxConfigureDescHeader header;
-    struct FfxApiResource distortionField;            ///< A resource containing distortion offset data. Needs to be 2-component (ie. RG). Read by FG shaders via Sample. Resource's xy components encodes [UV coordinate of pixel after lens distortion effect- UV coordinate of pixel before lens distortion].
+    struct FfxApiResource distortionField;            ///< A resource containing distortion offset data. Needs to be 2-component (ie. RG). Read by FG shaders via Sample. Resource's xy components encodes [UV coordinate of pixel after lens distortion effect- UV coordinate of pixel before lens distortion]. 
 };
 
 #define FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_HUDLESS 0x00020009u
@@ -183,6 +183,20 @@ struct ffxDispatchDescFrameGenerationPrepareCameraInfo
     float                  cameraUp[3];         ///< The camera up normalized vector in world space.
     float                  cameraRight[3];      ///< The camera right normalized vector in world space.
     float                  cameraForward[3];    ///< The camera forward normalized vector in world space.
+};
+
+#define FFX_API_QUERY_DESC_TYPE_FRAMEGENERATION_GPU_MEMORY_USAGE_V2 0x0002000bu
+struct ffxQueryDescFrameGenerationGetGPUMemoryUsageV2
+{
+    ffxQueryDescHeader header;
+    void* device;                               ///< For DX12: pointer to ID3D12Device. For VK, pointer to VkDevice. App needs to fill out before Query() call.
+    struct FfxApiDimensions2D  maxRenderSize;   ///< App needs to fill out before Query() call.
+    struct FfxApiDimensions2D  displaySize;     ///< App needs to fill out before Query() call.
+    uint32_t createFlags;                       ///< A combination of zero or more values from FfxApiCreateContextFramegenerationFlags.
+    uint32_t dispatchFlags;                     ///< A combination of zero or more values from FfxApiDispatchFrameGenerationFlags.
+    uint32_t backBufferFormat;                  ///< The surface format for the backbuffer. One of the values from FfxApiSurfaceFormat. App needs to fill out before Query() call.
+    uint32_t hudlessBackBufferFormat;           ///< The surface format for HUDLessColor if used. Otherwise set value to FFX_API_SURFACE_FORMAT_UNKNOWN(0). App needs to fill out before Query() call.
+    struct FfxApiEffectMemoryUsage* gpuMemoryUsageFrameGeneration; ///< Output values by Query() call.
 };
 
 #if defined(__cplusplus)

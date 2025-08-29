@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
-// Copyright (C) 2024 Advanced Micro Devices, Inc.
-//
+// Copyright (C) 2025 Advanced Micro Devices, Inc.
+// 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "ffx_api.hpp"
+#include "../../api/include/ffx_api.hpp"
 #include "ffx_upscale.h"
 
 // Helper types for header initialization. Api definition is in .h file.
@@ -74,5 +74,15 @@ template<>
 struct struct_type<ffxQueryDescUpscaleGetGPUMemoryUsage> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE> {};
 
 struct QueryDescUpscaleGetGPUMemoryUsage : public InitHelper<ffxQueryDescUpscaleGetGPUMemoryUsage> {};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetGPUMemoryUsageV2> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2> {};
+
+struct QueryDescUpscaleGetGPUMemoryUsageV2 : public InitHelper<ffxQueryDescUpscaleGetGPUMemoryUsageV2> {};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetResourceRequirements> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS> {};
+
+struct QueryDescUpscaleGetResourceRequirements : public InitHelper<ffxQueryDescUpscaleGetResourceRequirements> {};
 
 }

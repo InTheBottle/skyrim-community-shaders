@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
-// Copyright (C) 2024 Advanced Micro Devices, Inc.
-//
+// Copyright (C) 2025 Advanced Micro Devices, Inc.
+// 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -21,8 +21,8 @@
 // THE SOFTWARE.
 
 #pragma once
-#include "ffx_api.h"
-#include "ffx_api_types.h"
+#include "../../api/include/ffx_api.h"
+#include "../../api/include/ffx_api_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,11 +48,12 @@ enum FfxApiCreateContextUpscaleFlags
     FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION                 = (1<<6), ///< A bit indicating that the application uses dynamic resolution scaling.
     FFX_UPSCALE_ENABLE_DEBUG_CHECKING                     = (1<<7), ///< A bit indicating that the runtime should check some API values and report issues.
     FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE              = (1<<8), ///< A bit indicating that the color resource contains perceptual (gamma corrected) colors
+    FFX_UPSCALE_ENABLE_DEBUG_VISUALIZATION                = (1<<9), ///< A bit indicating if debug visualization is allowed. (memory consumption could increase)
 };
 
 enum FfxApiDispatchFsrUpscaleFlags
 {
-    FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW                    = (1 << 0),  ///< A bit indicating that the output resource will contain debug views with relevant information.
+    FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW                    = (1 << 0),  ///< A bit indicating that the output resource will contain debug views with relevant information.   
     FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB              = (1 << 1),  ///< A bit indicating that the input color resource contains perceptual sRGB colors
     FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_PQ                = (1 << 2),  ///< A bit indicating that the input color resource contains perceptual PQ colors
 };
@@ -71,7 +72,7 @@ enum FfxApiDispatchUpscaleAutoreactiveFlags
 struct ffxCreateContextDescUpscale
 {
     ffxCreateContextDescHeader header;
-    uint32_t                   flags;           ///< Zero or a combination of values from FfxApiCreateContextFsrFlags.
+    uint32_t                   flags;           ///< Zero or a combination of values from FfxApiCreateContextUpscaleFlags.
     struct FfxApiDimensions2D  maxRenderSize;   ///< The maximum size that rendering will be performed at.
     struct FfxApiDimensions2D  maxUpscaleSize;  ///< The size of the presentation resolution targeted by the upscaling process.
     ffxApiMessage              fpMessage;       ///< A pointer to a function that can receive messages from the runtime. May be null.
@@ -148,9 +149,9 @@ struct ffxDispatchDescUpscaleGenerateReactiveMask
 {
     ffxDispatchDescHeader     header;
     void*                     commandList;      ///< The <c><i>FfxCommandList</i></c> to record FSRUPSCALE rendering commands into.
-    struct FfxApiResource     colorOpaqueOnly;  ///< A <c><i>FfxResource</i></c> containing the opaque only color buffer for the current frame (at render resolution).
-    struct FfxApiResource     colorPreUpscale;  ///< A <c><i>FfxResource</i></c> containing the opaque+translucent color buffer for the current frame (at render resolution).
-    struct FfxApiResource     outReactive;      ///< A <c><i>FfxResource</i></c> containing the surface to generate the reactive mask into.
+    struct FfxApiResource     colorOpaqueOnly;  ///< A <c><i>FfxApiResource</i></c> containing the opaque only color buffer for the current frame (at render resolution).
+    struct FfxApiResource     colorPreUpscale;  ///< A <c><i>FfxApiResource</i></c> containing the opaque+translucent color buffer for the current frame (at render resolution).
+    struct FfxApiResource     outReactive;      ///< A <c><i>FfxApiResource</i></c> containing the surface to generate the reactive mask into.
     struct FfxApiDimensions2D renderSize;       ///< The resolution that was used for rendering the input resources.
     float                     scale;            ///< A value to scale the output
     float                     cutoffThreshold;  ///< A threshold value to generate a binary reactive mask
@@ -181,6 +182,35 @@ struct ffxQueryDescUpscaleGetGPUMemoryUsage
 {
     ffxQueryDescHeader header;
     struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2 0x00010009u
+struct ffxQueryDescUpscaleGetGPUMemoryUsageV2
+{
+    ffxQueryDescHeader header;
+    void* device;               ///< For DX12: pointer to ID3D12Device. For VK, pointer to VkDevice. App needs to fill out before Query() call.
+    struct FfxApiDimensions2D  maxRenderSize;   ///< App needs to fill out before Query() call.
+    struct FfxApiDimensions2D  maxUpscaleSize;  ///< App needs to fill out before Query() call.
+    uint32_t                   flags;           ///< Zero or a combination of values from FfxApiCreateContextUpscaleFlags. App needs to fill out before Query() call.
+    struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler; ///< Output values by Query() call.
+};
+
+enum FfxApiQueryResourceIdentifiers
+{
+    FFX_API_QUERY_RESOURCE_INPUT_COLOR                   = (1<<0), // Color buffer for the current frame (at render resolution).
+    FFX_API_QUERY_RESOURCE_INPUT_DEPTH                   = (1<<1), // 32bit depth values for the current frame (at render resolution).
+    FFX_API_QUERY_RESOURCE_INPUT_MV                      = (1<<2), // 2-dimensional motion vectors (at render resolution if FFX_FSR_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS is not set).
+    FFX_API_QUERY_RESOURCE_INPUT_EXPOSURE                = (1<<3), // A 1x1 texture containing exposure value or the FFX_UPSCALE_ENABLE_AUTO_EXPOSURE set at context creation.
+    FFX_API_QUERY_RESOURCE_INPUT_REACTIVEMASK            = (1<<4), //
+    FFX_API_QUERY_RESOURCE_INPUT_TRANSPARENCYCOMPOSITION = (1<<5), //
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS 0x0001000au
+struct ffxQueryDescUpscaleGetResourceRequirements
+{
+    ffxQueryDescHeader header;
+    uint64_t required_resources; // resources 64b bitfield, that given current context state, are required for effect correctness.
+    uint64_t optional_resources; // resources 64b bitfield, that given current context state, will be consumed if provided, but are optional.
 };
 
 #ifdef __cplusplus

@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
-// Copyright (C) 2024 Advanced Micro Devices, Inc.
-//
+// Copyright (C) 2025 Advanced Micro Devices, Inc.
+// 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -22,22 +22,17 @@
 
 #pragma once
 
-#include "ffx_api.h"
-#include <windows.h>
+#include "../ffx_api.hpp"
+#include "ffx_api_dx12.h"
 
-typedef struct ffxFunctions {
-    PfnFfxCreateContext CreateContext;
-    PfnFfxDestroyContext DestroyContext;
-    PfnFfxConfigure Configure;
-    PfnFfxQuery Query;
-    PfnFfxDispatch Dispatch;
-} ffxFunctions;
+// Helper types for header initialization. Api definition is in .h file.
 
-static inline void ffxLoadFunctions(ffxFunctions* pOutFunctions, HMODULE module)
+namespace ffx
 {
-    pOutFunctions->CreateContext  = (PfnFfxCreateContext )GetProcAddress(module, "ffxCreateContext");
-    pOutFunctions->DestroyContext = (PfnFfxDestroyContext)GetProcAddress(module, "ffxDestroyContext");
-    pOutFunctions->Configure      = (PfnFfxConfigure     )GetProcAddress(module, "ffxConfigure");
-    pOutFunctions->Query          = (PfnFfxQuery         )GetProcAddress(module, "ffxQuery");
-    pOutFunctions->Dispatch       = (PfnFfxDispatch      )GetProcAddress(module, "ffxDispatch");
+
+template<>
+struct struct_type<ffxCreateBackendDX12Desc> : std::integral_constant<uint64_t, FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12> {};
+
+struct CreateBackendDX12Desc : public InitHelper<ffxCreateBackendDX12Desc> {};
+
 }
