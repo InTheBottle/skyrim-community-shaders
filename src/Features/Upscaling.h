@@ -104,8 +104,8 @@ public:
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
-	void CreateSharedD3D12Resources(UpscaleMethod a_upscalemethod, bool a_framegenEnabled);
-	void DestroySharedD3D12Resources(UpscaleMethod a_upscalemethod, bool a_framegenEnabled);
+	void CreateSharedD3D12Resources(UpscaleMethod a_upscalemethod);
+	void DestroySharedD3D12Resources(UpscaleMethod a_upscalemethod);
 
 	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCS[5];  // One for each UpscaleMethod
 	ID3D11ComputeShader* GetEncodeTexturesCS();
