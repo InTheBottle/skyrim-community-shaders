@@ -449,18 +449,18 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 	if (a_upscalemethod == UpscaleMethod::kDLSS) {
 		if (reactiveMaskTexture) {
 			reactiveMaskTexture->srv = nullptr;
-			reactiveMaskTexture->uav = nullptr;	
+			reactiveMaskTexture->uav = nullptr;
 			reactiveMaskTexture->resource = nullptr;
-			
+
 			delete reactiveMaskTexture;
 			reactiveMaskTexture = nullptr;
 		}
 
 		if (transparencyCompositionMaskTexture) {
-			transparencyCompositionMaskTexture->srv = nullptr;	
-			transparencyCompositionMaskTexture->uav = nullptr;		
+			transparencyCompositionMaskTexture->srv = nullptr;
+			transparencyCompositionMaskTexture->uav = nullptr;
 			transparencyCompositionMaskTexture->resource = nullptr;
-			
+
 			delete transparencyCompositionMaskTexture;
 			transparencyCompositionMaskTexture = nullptr;
 		}
