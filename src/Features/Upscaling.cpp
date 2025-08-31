@@ -82,6 +82,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			shouldProxy = false;
 	}
 
+	shouldProxy = true;
+
 	upscaling.lowRefreshRate = refreshRate < 119;
 	upscaling.isWindowed = pSwapChainDesc->Windowed;
 
@@ -350,6 +352,7 @@ void Upscaling::LoadSettings(json& o_json)
 			iniSettingCollection->ReadSetting(setting);
 		}
 	}
+	settings.frameGenerationMode = 0;
 }
 
 void Upscaling::RestoreDefaultSettings()
