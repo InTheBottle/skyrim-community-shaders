@@ -86,28 +86,49 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	auto& upscaling = globals::features::upscaling;
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
 
+	auto commandList = swapChain.commandLists[swapChain.frameIndex].get();
+
+	auto HUDLessColor = upscaling.HUDLessBufferShared12->resource.get();
+	auto depth = upscaling.depthBufferShared12->resource.get();
+	auto motionVectors = upscaling.motionVectorBufferShared12->resource.get();
+
+	FfxApiSwapchainFramePacingTuning framePacingTuning{ 0.1f, 0.1f, true, 2, false };
+
+	ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 framePacingTuningParameters{};
+	framePacingTuningParameters.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+	framePacingTuningParameters.ptr = &framePacingTuning;
+
+	if (ffx::Configure(swapChainContext, framePacingTuningParameters) != ffx::ReturnCode::Ok) {
+		logger::critical("[FidelityFX] Failed to configure frame pacing tuning!");
+	}
+
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	configParameters.frameGenerationEnabled = a_useFrameGeneration;
+	if (a_useFrameGeneration) {
+		configParameters.frameGenerationEnabled = true;
 
-	configParameters.frameGenerationCallbackUserContext = nullptr;
-	configParameters.frameGenerationCallback = nullptr;
+		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
+			return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+		};
+		configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
-	configParameters.HUDLessColor = FfxApiResource({});
+		configParameters.HUDLessColor = ffxApiGetResourceDX12(HUDLessColor);
+
+	} else {
+		configParameters.frameGenerationEnabled = false;
+
+		configParameters.frameGenerationCallbackUserContext = nullptr;
+		configParameters.frameGenerationCallback = nullptr;
+
+		configParameters.HUDLessColor = FfxApiResource({});
+	}
 
 	static uint64_t frameID = 0;
 	configParameters.frameID = frameID;
 	configParameters.swapChain = swapChain.swapChain;
 	configParameters.onlyPresentGenerated = false;
-	configParameters.allowAsyncWorkloads = false;
+	configParameters.allowAsyncWorkloads = true;
 	configParameters.flags = 0;
-
-	auto state = globals::state;
-
-	auto wasUpscaled = upscaling.wasUpscaled;
-
-	auto screenSize = state->screenSize;
-	auto renderSize = wasUpscaled ? Util::ConvertToDynamic(state->screenSize, true) : screenSize;
 
 	configParameters.generationRect.left = (swapChain.swapChainDesc.Width - swapChain.swapChainDesc.Width) / 2;
 	configParameters.generationRect.top = (swapChain.swapChainDesc.Height - swapChain.swapChainDesc.Height) / 2;
@@ -119,40 +140,30 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	}
 
 	if (a_useFrameGeneration) {
-		auto commandList = swapChain.commandLists[swapChain.frameIndex].get();
-
-		auto depth = upscaling.depthBufferShared12->resource.get();
-		auto motionVectors = upscaling.motionVectorBufferShared12->resource.get();
-
 		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
 		dispatchParameters.commandList = commandList;
 
-		dispatchParameters.motionVectorScale.x = renderSize.x;
-		dispatchParameters.motionVectorScale.y = renderSize.y;
-		dispatchParameters.renderSize.width = static_cast<uint32_t>(renderSize.x);
-		dispatchParameters.renderSize.height = static_cast<uint32_t>(renderSize.y);
+		dispatchParameters.motionVectorScale.x = (float)swapChain.swapChainDesc.Width;
+		dispatchParameters.motionVectorScale.y = (float)swapChain.swapChainDesc.Height;
+		dispatchParameters.renderSize.width = swapChain.swapChainDesc.Width;
+		dispatchParameters.renderSize.height = swapChain.swapChainDesc.Height;
 
 		auto gameViewport = globals::game::graphicsState;
 
-		if (wasUpscaled) {
-			float2 jitter;
+		float2 jitter;
 
-			if (globals::game::isVR)
-				jitter.x = -gameViewport->projectionPosScaleX * renderSize.x;
-			else
-				jitter.x = -gameViewport->projectionPosScaleX * renderSize.x / 2.0f;
+		if (globals::game::isVR)
+			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain.swapChainDesc.Width);
+		else
+			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain.swapChainDesc.Width) / 2.0f;
 
-			jitter.y = gameViewport->projectionPosScaleY * renderSize.y / 2.0f;
+		jitter.y = gameViewport->projectionPosScaleY * (float)swapChain.swapChainDesc.Height / 2.0f;
 
-			dispatchParameters.jitterOffset.x = -jitter.x;
-			dispatchParameters.jitterOffset.y = -jitter.y;
-		} else {
-			dispatchParameters.jitterOffset.x = 0.0f;
-			dispatchParameters.jitterOffset.y = 0.0f;
-		}
+		dispatchParameters.jitterOffset.x = -jitter.x;
+		dispatchParameters.jitterOffset.y = -jitter.y;
 
-		dispatchParameters.frameTimeDelta = RE::GetSecondsSinceLastFrame() * 1000.f;
+		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 
 		dispatchParameters.cameraFar = *globals::game::cameraFar;
 		dispatchParameters.cameraNear = *globals::game::cameraNear;
@@ -165,69 +176,13 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 		dispatchParameters.depth = ffxApiGetResourceDX12(depth);
 		dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
 
-		ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
-
-		auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
-		auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered().Transpose();
-
-		cameraConfig.cameraRight[0] = viewMatrix._11;
-		cameraConfig.cameraRight[1] = viewMatrix._12;
-		cameraConfig.cameraRight[2] = viewMatrix._13;
-
-		cameraConfig.cameraUp[0] = viewMatrix._21;
-		cameraConfig.cameraUp[1] = viewMatrix._22;
-		cameraConfig.cameraUp[2] = viewMatrix._23;
-
-		cameraConfig.cameraForward[0] = viewMatrix._31;
-		cameraConfig.cameraForward[1] = viewMatrix._32;
-		cameraConfig.cameraForward[2] = viewMatrix._33;
-
-		cameraConfig.cameraPosition[0] = globals::game::frameBufferCached.GetCameraPosAdjust().x;
-		cameraConfig.cameraPosition[1] = globals::game::frameBufferCached.GetCameraPosAdjust().y;
-		cameraConfig.cameraPosition[2] = globals::game::frameBufferCached.GetCameraPosAdjust().z;
-
-		if (ffx::Dispatch(frameGenContext, dispatchParameters, cameraConfig) != ffx::ReturnCode::Ok) {
+		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
 			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
 		}
-	}
 
-	ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
-	uiConfig.uiResource = ffxApiGetResourceDX12(swapChain.uiBufferWrapped->resource.get());
-	uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA | FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING;
 
-	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
-		logger::critical("[FidelityFX] Failed to configure UI composition!");
-	}
-
-	if (a_useFrameGeneration) {
-		auto HUDLessColor = upscaling.HUDLessBufferShared12->resource.get();
-
-		ffx::DispatchDescFrameGeneration dispatchFg{};
-		dispatchFg.presentColor = ffxApiGetResourceDX12(HUDLessColor);
-		dispatchFg.numGeneratedFrames = 1;
-
-		dispatchFg.generationRect.left = (swapChain.swapChainDesc.Width - swapChain.swapChainDesc.Width) / 2;
-		dispatchFg.generationRect.top = (swapChain.swapChainDesc.Height - swapChain.swapChainDesc.Height) / 2;
-		dispatchFg.generationRect.width = swapChain.swapChainDesc.Width;
-		dispatchFg.generationRect.height = swapChain.swapChainDesc.Height;
-
-		ffx::QueryDescFrameGenerationSwapChainInterpolationCommandListDX12 queryCmdList{};
-		queryCmdList.pOutCommandList = &dispatchFg.commandList;
-		if (ffx::Query(swapChainContext, queryCmdList) != ffx::ReturnCode::Ok) {
-			logger::critical("[FidelityFX] Failed to query frame generation!");
-		}
-
-		ffx::QueryDescFrameGenerationSwapChainInterpolationTextureDX12 queryFiTexture{};
-		queryFiTexture.pOutTexture = &dispatchFg.outputs[0];
-		if (ffx::Query(swapChainContext, queryFiTexture) != ffx::ReturnCode::Ok) {
-			logger::critical("[FidelityFX] Failed to query frame generation!");
-		}
-
-		dispatchFg.frameID = frameID;
-		dispatchFg.reset = false;
-
-		if (ffx::Dispatch(frameGenContext, dispatchFg) != ffx::ReturnCode::Ok) {
-			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
+		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
+			logger::critical("[FidelityFX] Failed to dispatch frame generation camera info!");
 		}
 	}
 
