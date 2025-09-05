@@ -78,16 +78,21 @@ void XeSS::LoadXeSS()
 			xefgSwapChainD3D12GetSwapChainPtr = (xefgSwapChainD3D12GetSwapChainPtrPtr)GetProcAddress(moduleFG, "xefgSwapChainD3D12GetSwapChainPtr");
 			xefgSwapChainDestroyContext = (xefgSwapChainDestroyContextPtr)GetProcAddress(moduleFG, "xefgSwapChainDestroyContext");
 			xefgSwapChainSetPresentId = (xefgSwapChainSetPresentIdPtr)GetProcAddress(moduleFG, "xefgSwapChainSetPresentId");
+		
+			xellSetSleepMode = (xellSetSleepModePtr)GetProcAddress(moduleLL, "xellSetSleepMode");
+			xellSleep = (xellSleepPtr)GetProcAddress(moduleLL, "xellSleep");
 
-			if (xefgSwapChainD3D12CreateContext && (xefgSwapChainD3D12InitFromSwapChain || xefgSwapChainD3D12InitFromSwapChainDesc) && 
-				xefgSwapChainD3D12TagFrameResource && xefgSwapChainTagFrameConstants && xefgSwapChainSetEnabled && 
-				xefgSwapChainD3D12GetSwapChainPtr && xefgSwapChainDestroyContext && xefgSwapChainSetPresentId) {
-				featureXeSSFG = true;
-				logger::info("[XeSS] Successfully loaded XeSS Frame Generation functions");
-			} else {
-				featureXeSSFG = false;
-				logger::warn("[XeSS] XeSS Frame Generation functions not available in this SDK version");
-			}
+			featureXeSSFG = true;
+
+			//if (xefgSwapChainD3D12CreateContext && (xefgSwapChainD3D12InitFromSwapChain || xefgSwapChainD3D12InitFromSwapChainDesc) && 
+			//	xefgSwapChainD3D12TagFrameResource && xefgSwapChainTagFrameConstants && xefgSwapChainSetEnabled && 
+			//	xefgSwapChainD3D12GetSwapChainPtr && xefgSwapChainDestroyContext && xefgSwapChainSetPresentId) {
+			//	featureXeSSFG = true;
+			//	logger::info("[XeSS] Successfully loaded XeSS Frame Generation functions");
+			//} else {
+			//	featureXeSSFG = false;
+			//	logger::warn("[XeSS] XeSS Frame Generation functions not available in this SDK version");
+			//}
 		} else {
 			featureXeSS = false;
 			logger::error("[XeSS] Failed to load XeSS function pointers");
@@ -317,6 +322,21 @@ IDXGISwapChain* XeSS::SetupFrameGeneration(HWND a_hwnd, DXGI_SWAP_CHAIN_DESC1 a_
 		return nullptr;
 	}
 
+	xell_sleep_params_t xellParams = {};
+	xellParams.bLowLatencyMode = 1;
+
+	if (xellSetSleepMode(xefgContext, &xellParams) != XELL_RESULT_SUCCESS) {
+		logger::warn("[XeSS FG] Failed to set XeLL sleep mode");
+	}
+
+	// Enable/disable frame generation
+	auto res = xefgSwapChainSetEnabled(xefgContext, true);
+	if (res != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
+		logger::warn("[XeSS FG] Failed to set frame generation enabled state {}", (int)res);
+	}
+
+
+
 	currentPresentId = 0;
 	logger::info("[XeSS FG] Successfully initialized frame generation and created swap chain");
 	return createdSwapChain;
@@ -329,23 +349,14 @@ void XeSS::Present(bool a_useFrameGeneration, ID3D12CommandList* a_commandList)
 		return;
 	}
 
-	// Get frame ID from global state
-	uint32_t frameId = globals::state ? globals::state->frameCount : 0;
-
 	// Set present ID
-	if (xefgSwapChainSetPresentId && xefgSwapChainSetPresentId(xefgContext, frameId) != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
+	if (xefgSwapChainSetPresentId && xefgSwapChainSetPresentId(xefgContext, currentPresentId) != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
 		logger::warn("[XeSS FG] Failed to set present ID");
 	}
 
 	// Tag frame resources if frame generation is enabled
 	if (a_useFrameGeneration && a_commandList) {
-		TagFrameResources(a_commandList, frameId);
-	}
-
-	// Enable/disable frame generation
-	uint32_t enableFlag = a_useFrameGeneration ? 1 : 0;
-	if (xefgSwapChainSetEnabled(xefgContext, enableFlag) != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
-		logger::warn("[XeSS FG] Failed to set frame generation enabled state");
+		TagFrameResources(a_commandList, currentPresentId);
 	}
 
 	// Update frame generation active state
@@ -478,6 +489,7 @@ void XeSS::AddMarker(_xell_latency_marker_type_t markerType)
 
 void XeSS::AddSimulationStartMarker()
 {
+	xellSleep(xellContext, currentPresentId);
 	AddMarker(XELL_SIMULATION_START);
 }
 
@@ -496,4 +508,5 @@ void XeSS::AddPresentStartMarker()
 void XeSS::AddPresentEndMarker()
 {
 	AddMarker(XELL_PRESENT_END);
+	currentPresentId++;
 }

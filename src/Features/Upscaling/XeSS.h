@@ -30,9 +30,27 @@ typedef xefg_swapchain_result_t (*xefgSwapChainD3D12InitFromSwapChainPtr)(xefg_s
 typedef xefg_swapchain_result_t (*xefgSwapChainD3D12InitFromSwapChainDescPtr)(xefg_swapchain_handle_t hSwapChain, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pSwapChainDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, ID3D12CommandQueue* pCmdQueue, IDXGIFactory* pFactory, const xefg_swapchain_d3d12_init_params_t* pInitParams);
 typedef xefg_swapchain_result_t (*xefgSwapChainSetLatencyReductionPtr)(xefg_swapchain_handle_t hSwapChain, void* hXeLLContext);
 
+typedef struct _xell_sleep_params_t
+{
+	/** Minimum interval expressed in microseconds.
+	* If != 0 it will enable fps capping to that value.
+	*/
+	uint32_t minimumIntervalUs = 0;  //us
+	/** Enables latency reduction feature. */
+	uint32_t bLowLatencyMode: 1;
+	/** Boost is not supported as of now. */
+	uint32_t bLowLatencyBoost: 1;
+
+	/** Reserved for future use. */
+	uint32_t reserved: 30;
+} xell_sleep_params_t;
+
 // XeLL (XeSS Low Latency) function pointers
 typedef void* xell_context_handle_t;
-typedef enum { XELL_RESULT_SUCCESS = 0 } xell_result_t;
+typedef enum
+{
+	XELL_RESULT_SUCCESS = 0
+} xell_result_t;
 typedef enum _xell_latency_marker_type_t
 {
 	XELL_SIMULATION_START = 0,    // required
@@ -45,6 +63,12 @@ typedef enum _xell_latency_marker_type_t
 
 	XELL_MARKER_COUNT = 7
 } xell_latency_marker_type_t;
+
+typedef xell_result_t (*xellSetSleepModePtr)(xell_context_handle_t context, const xell_sleep_params_t* param);
+
+typedef xell_result_t (*xellSleepPtr)(xell_context_handle_t context, uint32_t frame_id);
+
+
 
 typedef xell_result_t (*xellD3D12CreateContextPtr)(ID3D12Device* pDevice, xell_context_handle_t* phContext);
 typedef xell_result_t (*xellDestroyContextPtr)(xell_context_handle_t hContext);
@@ -102,6 +126,9 @@ public:
 	xefgSwapChainD3D12GetSwapChainPtrPtr xefgSwapChainD3D12GetSwapChainPtr = nullptr;
 	xefgSwapChainDestroyContextPtr xefgSwapChainDestroyContext = nullptr;
 	xefgSwapChainSetPresentIdPtr xefgSwapChainSetPresentId = nullptr;
+
+	xellSetSleepModePtr xellSetSleepMode = nullptr;
+	xellSleepPtr xellSleep = nullptr;
 
 	xefg_swapchain_handle_t xefgContext = nullptr;
 	xell_context_handle_t xellContext = nullptr;
