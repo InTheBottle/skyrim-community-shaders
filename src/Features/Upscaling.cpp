@@ -1741,14 +1741,14 @@ void Upscaling::ApplyNISSharpening()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 
-	ID3D11Resource* mainResource;
-	main.RTV->GetResource(&mainResource);
+	winrt::com_ptr<ID3D11Resource> mainResource;
+	main.RTV->GetResource(mainResource.put());
 
-	context->CopyResource(nisSharpenerTexture->resource.get(), mainResource);
+	context->CopyResource(nisSharpenerTexture->resource.get(), mainResource.get());
 
 	streamline.ApplyNISSharpening(nisSharpenerTexture->resource.get(), settings.nisSharpness);
 
-	context->CopyResource(mainResource, nisSharpenerTexture->resource.get());
+	context->CopyResource(mainResource.get(), nisSharpenerTexture->resource.get());
 }
 
 void Upscaling::BSFaceGenManager_UpdatePendingCustomizationTextures::thunk()
