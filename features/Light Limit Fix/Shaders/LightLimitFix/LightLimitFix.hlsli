@@ -27,8 +27,12 @@ namespace LightLimitFix
 			return false;
 
 		float clampedZ = clamp(z, SharedData::CameraData.y, SharedData::CameraData.x);
-		uint clusterZ = uint(max((log2(z) - log2(SharedData::CameraData.y)) * clusterSize.z / log2(SharedData::CameraData.x / SharedData::CameraData.y), 0.0));
+		uint clusterZ = uint(max(log(clampedZ / SharedData::CameraData.y) * clusterSize.z / log(SharedData::CameraData.x / SharedData::CameraData.y), 0.0));
 		uint3 cluster = uint3(uint2(uv * clusterSize.xy), clusterZ);
+
+		// Bounds validation to prevent out-of-range cluster indices
+		if (any(cluster >= clusterSize))
+			return false;
 
 		clusterIndex = cluster.x + (clusterSize.x * cluster.y) + (clusterSize.x * clusterSize.y * cluster.z);
 		return true;
