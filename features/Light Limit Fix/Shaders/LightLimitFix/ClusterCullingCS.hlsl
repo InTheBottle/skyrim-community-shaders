@@ -1,3 +1,4 @@
+#include "Common/FrameBuffer.hlsli"
 #include "LightLimitFix/Common.hlsli"
 
 cbuffer PerFrame : register(b0)
@@ -59,10 +60,15 @@ bool LightIntersectsCluster(float3 position, float radius, ClusterAABB cluster)
 		float radius = light.radius * light.radius;
 
 #if defined(VR)
-		[branch] if (LightIntersectsCluster(light.positionVS[0].xyz, radius, cluster) || LightIntersectsCluster(light.positionVS[1].xyz, radius, cluster))
+		float3 positionVSLeft = FrameBuffer::WorldToView(light.positionWS[0].xyz, true, 0);
+		float3 positionVSRight = FrameBuffer::WorldToView(light.positionWS[1].xyz, true, 0);
+
+		[branch] if (LightIntersectsCluster(positionVSLeft, radius, cluster) || LightIntersectsCluster(positionVSRight, radius, cluster))
 		{
 #else
-		[branch] if (LightIntersectsCluster(light.positionVS[0].xyz, radius, cluster))
+		float3 positionVS = FrameBuffer::WorldToView(light.positionWS[0].xyz, true, 0);
+
+		[branch] if (LightIntersectsCluster(positionVS, radius, cluster))
 		{
 #endif
 			visibleLightIndices[visibleLightCount] = i;

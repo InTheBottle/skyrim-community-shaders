@@ -55,7 +55,6 @@ public:
 		float fadeZone;
 		float sizeBias;
 		PositionOpt positionWS[2];
-		PositionOpt positionVS[2];
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMaskIndex = 0;
@@ -78,7 +77,6 @@ public:
 
 	struct alignas(16) LightBuildingCB
 	{
-		float4x4 InvProjMatrix[2];
 		float LightsNear;
 		float LightsFar;
 		uint pad0[2];
@@ -330,11 +328,10 @@ struct fmt::formatter<LightLimitFix::LightData>
 	auto format(const LightLimitFix::LightData& l, format_context& ctx) const -> format_context::iterator
 	{
 		// ctx.out() is an output iterator to write to.
-		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {} {} posVS {} {}}}",
+		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {} {}}}",
 			reinterpret_cast<uintptr_t>(&l),
 			(Vector3)l.color,
 			l.radius,
-			(Vector3)l.positionWS[0].data, (Vector3)l.positionWS[1].data,
-			(Vector3)l.positionVS[0].data, (Vector3)l.positionVS[1].data);
+			(Vector3)l.positionWS[0].data, (Vector3)l.positionWS[1].data);
 	}
 };

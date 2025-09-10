@@ -2590,17 +2590,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		float contactShadow = 1.0;
 
-#	if defined(DEFERRED)
-		[branch] if (
-			SharedData::lightLimitFixSettings.EnableContactShadows &&
-			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
-			shadowComponent != 0.0 &&
-			lightAngle > 0.0)
-		{
-			float3 normalizedLightDirectionVS = normalize(light.positionVS[eyeIndex].xyz - viewPosition.xyz);
-			contactShadow = LightLimitFix::ContactShadows(viewPosition, screenNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
-		}
-#	endif
+// #	if defined(DEFERRED)
+// 		[branch] if (
+// 			SharedData::lightLimitFixSettings.EnableContactShadows &&
+// 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
+// 			shadowComponent != 0.0 &&
+// 			lightAngle > 0.0)
+// 		{
+// 			float3 normalizedLightDirectionVS = normalize(light.positionVS[eyeIndex].xyz - viewPosition.xyz);
+// 			contactShadow = LightLimitFix::ContactShadows(viewPosition, screenNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+// 		}
+// #	endif
 
 		float3 refractedLightDirection = normalizedLightDirection;
 #			if defined(TRUE_PBR) && !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
