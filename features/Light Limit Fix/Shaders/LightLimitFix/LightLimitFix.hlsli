@@ -35,55 +35,6 @@ namespace LightLimitFix
 		return true;
 	}
 
-	bool IsSaturated(float value)
-	{
-		return value == saturate(value);
-	}
-
-	bool IsSaturated(float2 value)
-	{
-		return IsSaturated(value.x) && IsSaturated(value.y);
-	}
-
-	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
-	{
-		if (contactShadowSteps == 0)
-			return 1.0;
-
-		float2 depthDeltaMult = float2(0.20, 0.05);
-
-		// Extend contact shadow distance
-		lightDirectionVS *= 2.0;
-
-		// Offset starting position with interleaved gradient noise
-		viewPosition += lightDirectionVS * noise2D;
-
-		// Accumulate samples
-		float contactShadow = 0.0;
-		for (uint i = 0; i < contactShadowSteps; i++) {
-			// Step the ray
-			viewPosition += lightDirectionVS;
-
-			float2 rayUV = FrameBuffer::ViewToUV(viewPosition, true, a_eyeIndex);
-
-			// Ensure the UV coordinates are inside the screen
-			if (!IsSaturated(rayUV))
-				break;
-
-			// Compute the difference between the ray's and the camera's depth
-			float rayDepth = SharedData::GetScreenDepth(rayUV, a_eyeIndex);
-
-			// Difference between the current ray distance and the marched light
-			float depthDelta = viewPosition.z - rayDepth;
-			if (rayDepth > 16.5)  // First person
-				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaMult.x) - saturate(depthDelta * depthDeltaMult.y));
-			if (contactShadow == 1.0)
-				break;
-		}
-
-		return 1.0 - saturate(contactShadow);
-	}
-
 	// Copyright 2019 Google LLC.
 	// SPDX-License-Identifier: Apache-2.0
 

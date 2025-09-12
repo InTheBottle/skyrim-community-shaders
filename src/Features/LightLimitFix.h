@@ -92,10 +92,9 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		uint EnableContactShadows;
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0;
+		float pad0[2];
 		uint ClusterSize[4];
 	};
 

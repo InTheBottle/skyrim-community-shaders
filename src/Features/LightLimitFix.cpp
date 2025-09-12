@@ -9,7 +9,6 @@ static constexpr uint MAX_LIGHTS = 1024;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
-	EnableContactShadows,
 	EnableParticleLights,
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
@@ -61,17 +60,6 @@ void LightLimitFix::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNodeEx("Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("All lights cast small shadows. Performance impact.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
-
 	auto shaderCache = globals::shaderCache;
 
 	if (ImGui::TreeNodeEx("Light Limit Visualization", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -114,7 +102,6 @@ void LightLimitFix::DrawSettings()
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	PerFrame perFrame{};
-	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
