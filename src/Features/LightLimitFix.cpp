@@ -683,7 +683,7 @@ void LightLimitFix::ClearShaderCache()
 		clusterCullingCS = nullptr;
 	}
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", {}, "cs_5_0");
-	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", {}, "cs_5_0");	
+	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", {}, "cs_5_0");
 }
 
 float LightLimitFix::CalculateLightDistance(float3 a_lightPosition, float a_radius)
@@ -1004,7 +1004,6 @@ void LightLimitFix::UpdateStructure()
 	}
 
 	{
-
 		LightCullingCB updateData{};
 		updateData.LightCount = lightCount;
 		std::copy(clusterSize, clusterSize + 3, updateData.ClusterSize);
