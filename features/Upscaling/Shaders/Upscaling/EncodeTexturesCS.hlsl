@@ -37,7 +37,7 @@ RWTexture2D<float2> MotionVectorOutput : register(u2);
 			// Take neighbor if it's longer AND closer
 			if (neighborDepth < depth){
 				taaMask.x = min(taaMask.x, TAAMask[samplePos].x);
-				
+
 #if defined(DLSS) || defined(XESS)
 				float2 neighborMotionVector = MotionVectorMask[samplePos];
 
