@@ -80,6 +80,8 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.MipLevels = 1;
 	texDesc11.ArraySize = 1;
 	texDesc11.Format = swapChainDesc.Format;
+	texDesc11.SampleDesc.Count = 1;
+	texDesc11.SampleDesc.Quality = 0;
 	texDesc11.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 
 	swapChainBufferWrapped = new WrappedResource(texDesc11, d3d11Device.get(), upscaling.sharedD3D12Device.get());
