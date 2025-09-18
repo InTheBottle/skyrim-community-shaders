@@ -20,7 +20,7 @@ public:
 	{
 		uint EnableCharacterLighting = false;
 		float CharacterLightingStrength = 1.0f;
-		int SSMode = 1;
+		int SSMode = 0;
 		DiffusionProfile BaseProfile{ 0.5f, 1.0f, { 0.48f, 0.41f, 0.28f }, { 0.56f, 0.56f, 0.56f } };
 		DiffusionProfile HumanProfile{ 0.5f, 1.0f, { 0.48f, 0.41f, 0.28f }, { 1.0f, 0.37f, 0.3f } };
 		uint BurleySamples = 16;

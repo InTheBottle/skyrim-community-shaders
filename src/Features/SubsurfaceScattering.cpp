@@ -30,9 +30,10 @@ void SubsurfaceScattering::DrawSettings()
 			ImGui::SliderFloat("Strength", &settings.CharacterLightingStrength, 0, 5, "%.2f");
 		}
 
-		ImGui::RadioButton("Separable SSS", &settings.SSMode, 0);
-		ImGui::SameLine();
-		ImGui::RadioButton("Burley", &settings.SSMode, 1);
+		// Burley currently broken, disabled
+		// ImGui::RadioButton("Separable SSS", &settings.SSMode, 0);
+		// ImGui::SameLine();
+		// ImGui::RadioButton("Burley", &settings.SSMode, 1);
 
 		if (settings.SSMode == 0) {
 			if (ImGui::TreeNodeEx("Base Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
