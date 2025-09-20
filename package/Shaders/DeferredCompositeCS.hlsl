@@ -60,7 +60,10 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, out float ao, out float3 il, i
 	float4 ssgiIlYSh = SsgiYTexture[pixCoord];
 	float ssgiIlY = SphericalHarmonics::FuncProductIntegral(ssgiIlYSh, lobe);
 	float2 ssgiIlCoCg = SsgiCoCgTexture[pixCoord].xy;
-
+	// specular is a bit too saturated, because CoCg are average over hemisphere
+	// we just cheese this bit
+	ssgiIlCoCg *= 0.8;
+	
 	// pi to compensate for the /pi in specularLobe
 	// i don't think there really should be a 1/PI but without it the specular is too strong
 	// reflectance being ambient reflectance doesn't help either
