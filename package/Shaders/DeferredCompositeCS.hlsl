@@ -103,7 +103,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, out float ao, out float3 il, i
 
 	float3 linDiffuseColor = Color::GammaToLinear(diffuseColor);
 	float3 normalWS = normalize(mul(FrameBuffer::CameraViewInverse[eyeIndex], float4(normalVS, 0)).xyz);
-	
+
 #if defined(SSGI)
 #	if defined(VR)
 	float3 uvF = float3((dispatchID.xy + 0.5) * SharedData::BufferDim.zw, depth);  // calculate high precision uv of initial eye
