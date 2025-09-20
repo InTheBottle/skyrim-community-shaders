@@ -145,7 +145,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, out float ao, out float3 il, i
 	if (directionalAmbientColor.z > 0.0)
 		maxScale = min(maxScale, diffuseColor.z / directionalAmbientColor.z);
 	directionalAmbientColor *= maxScale;
-	
+
 	diffuseColor = diffuseColor - directionalAmbientColor;
 	diffuseColor += directionalAmbientColor * Color::LinearToGamma(ssgiAo);
 
