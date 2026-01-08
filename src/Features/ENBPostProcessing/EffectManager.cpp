@@ -277,17 +277,47 @@ void EffectManager::ExecuteEffects()
 		state->EndPerfEvent();
 	}
 
-	if (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>("EnablePostPassShader", "EFFECT")) {
-		state->BeginPerfEvent(enbEffectPostPass.GetName());
-		UpdateCommonVariablesForEffect(enbEffectPostPass.GetEffect());
-		enbEffectPostPass.UpdateEffectVariables();
-		enbEffectPostPass.Execute();
-		state->EndPerfEvent();
-	}
-
 	textureManager.IncrementTextureSwap();
 
 	// Copy final render target to framebuffers
+	auto textureSDRTemp = TextureManager::GetSingleton().GetCommonTexture("TextureSDRTemp");
+	auto textureFramebuffer1 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+	auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
+	auto textureFramebuffer3 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
+
+	CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer1.RTV);
+	CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer2.RTV);
+	CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer3.RTV);
+}
+
+void EffectManager::ExecutePostPass()
+{
+	auto& settingManager = SettingManager::GetSingleton();
+
+	if (!enbEffectPostPass.IsCompiled() || !settingManager.GetValue<bool>("EnablePostPassShader", "EFFECT"))
+		return;
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	auto state = globals::state;
+
+	context->RSSetState(rasterizerState.get());
+	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+	context->OMSetDepthStencilState(nullptr, 0);
+
+	UINT stride = sizeof(float) * 5;
+	UINT offset = 0;
+	ID3D11Buffer* vertexBuffers[] = { quadVertexBuffer.get() };
+	context->IASetVertexBuffers(0, 1, vertexBuffers, &stride, &offset);
+	context->IASetInputLayout(inputLayout.get());
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	state->BeginPerfEvent(enbEffectPostPass.GetName());
+	UpdateCommonVariablesForEffect(enbEffectPostPass.GetEffect());
+	enbEffectPostPass.UpdateEffectVariables();
+	enbEffectPostPass.Execute();
+	state->EndPerfEvent();
+
 	auto textureSDRTemp = TextureManager::GetSingleton().GetCommonTexture("TextureSDRTemp");
 	auto textureFramebuffer1 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 	auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];

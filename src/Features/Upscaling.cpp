@@ -1,6 +1,7 @@
 #include "Upscaling.h"
 
 #include "Deferred.h"
+#include "ENBPostProcessing/EffectManager.h"
 #include "Hooks.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
@@ -1477,6 +1478,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	if (upscaleMethod == UpscaleMethod::kDLSS)
 		upscaling.ApplySharpening();
+
+	EffectManager::GetSingleton().ExecutePostPass();
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
