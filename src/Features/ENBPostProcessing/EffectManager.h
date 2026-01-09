@@ -7,6 +7,8 @@
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
 
+#include <atomic>
+
 enum class TimeOfDay1Index : int
 {
 	Dawn,
@@ -38,6 +40,9 @@ class EffectManager
 {
 public:
 	static EffectManager& GetSingleton();
+
+	/// @brief Check if the effect manager is fully initialized and ready for rendering.
+	bool IsReady() const { return initialized.load(std::memory_order_acquire); }
 
 	// Effect execution
 	void ExecuteEffects();
@@ -107,4 +112,7 @@ public:
 
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
+
+private:
+	std::atomic<bool> initialized{ false };
 };

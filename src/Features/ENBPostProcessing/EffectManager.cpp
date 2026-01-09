@@ -25,12 +25,16 @@ void EffectManager::Initialize()
 
 void EffectManager::Apply()
 {
+	initialized.store(false, std::memory_order_release);
+
 	enbDepthOfField.Apply();
 	enbBloom.Apply();
 	enbLens.Apply();
 	enbAdaptation.Apply();
 	enbEffect.Apply();
 	enbEffectPostPass.Apply();
+
+	initialized.store(true, std::memory_order_release);
 }
 
 void EffectManager::Load()
@@ -213,8 +217,14 @@ void EffectManager::RegisterSettings()
 
 void EffectManager::ExecuteEffects()
 {
+	if (!IsReady())
+		return;
+
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
+
+	if (!rasterizerState || !blendState || !quadVertexBuffer || !inputLayout)
+		return;
 
 	auto textureOriginal = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
@@ -296,9 +306,15 @@ void EffectManager::ExecuteEffects()
 
 void EffectManager::ExecutePostPass()
 {
+	if (!IsReady())
+		return;
+
 	auto& settingManager = SettingManager::GetSingleton();
 
 	if (!enbEffectPostPass.IsCompiled() || !settingManager.GetValue<bool>("EnablePostPassShader", "EFFECT"))
+		return;
+
+	if (!rasterizerState || !blendState || !quadVertexBuffer || !inputLayout)
 		return;
 
 	auto context = globals::d3d::context;
