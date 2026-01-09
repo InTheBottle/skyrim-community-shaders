@@ -153,6 +153,10 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("AmbientLightingIntensity", "ENVIRONMENT", 1, true);
 	settingManager.RegisterTimeOfDaySetting("AmbientLightingDesaturation", "ENVIRONMENT", 0, true);
 
+	settingManager.RegisterTimeOfDaySetting("PointLightingIntensity", "ENVIRONMENT", 1, true);
+	settingManager.RegisterTimeOfDaySetting("PointLightingCurve", "ENVIRONMENT", 1, true);
+	settingManager.RegisterTimeOfDaySetting("PointLightingDesaturation", "ENVIRONMENT", 0, true);
+
 	settingManager.RegisterColorTimeOfDaySetting("DirectLightingColorFilter", "ENVIRONMENT", { 1.0f, 1.0f, 1.0f }, true);
 	settingManager.RegisterTimeOfDaySetting("DirectLightingColorFilterAmount", "ENVIRONMENT", 0, true);
 
@@ -301,6 +305,10 @@ void EffectManager::ExecutePostPass()
 	auto renderer = globals::game::renderer;
 	auto state = globals::state;
 
+	auto& textureManager = TextureManager::GetSingleton();
+	auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
+	auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+
 	context->RSSetState(rasterizerState.get());
 	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
 	context->OMSetDepthStencilState(nullptr, 0);
@@ -312,13 +320,15 @@ void EffectManager::ExecutePostPass()
 	context->IASetInputLayout(inputLayout.get());
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
+	// Copy current framebuffer to TextureSDRTemp before running post-pass
+	CopyTexture(textureFramebuffer.SRV, textureSDRTemp->rtv.get());
+
 	state->BeginPerfEvent(enbEffectPostPass.GetName());
 	UpdateCommonVariablesForEffect(enbEffectPostPass.GetEffect());
 	enbEffectPostPass.UpdateEffectVariables();
 	enbEffectPostPass.Execute();
 	state->EndPerfEvent();
 
-	auto textureSDRTemp = TextureManager::GetSingleton().GetCommonTexture("TextureSDRTemp");
 	auto textureFramebuffer1 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 	auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
 	auto textureFramebuffer3 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
@@ -779,6 +789,23 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	auto context = globals::d3d::context;
 
+	// Get destination texture dimensions for viewport
+	winrt::com_ptr<ID3D11Resource> destResource;
+	a_dest->GetResource(destResource.put());
+	winrt::com_ptr<ID3D11Texture2D> destTexture;
+	destResource->QueryInterface(IID_PPV_ARGS(destTexture.put()));
+	D3D11_TEXTURE2D_DESC texDesc;
+	destTexture->GetDesc(&texDesc);
+
+	D3D11_VIEWPORT viewport = {};
+	viewport.TopLeftX = 0.0f;
+	viewport.TopLeftY = 0.0f;
+	viewport.Width = static_cast<float>(texDesc.Width);
+	viewport.Height = static_cast<float>(texDesc.Height);
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+
 	// Set up for copy operation
 	context->OMSetRenderTargets(1, &a_dest, nullptr);
 	context->OMSetDepthStencilState(nullptr, 0);
@@ -792,6 +819,12 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	// Draw fullscreen quad
 	context->Draw(4, 0);
+
+	// Unbind render target and SRV to avoid resource hazards
+	ID3D11RenderTargetView* nullRTV = nullptr;
+	context->OMSetRenderTargets(1, &nullRTV, nullptr);
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->PSSetShaderResources(0, 1, &nullSRV);
 }
 
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)

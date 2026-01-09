@@ -206,6 +206,11 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 
 	const auto& sequence = sequenceIt->second;
 
+	if (sequence.empty()) {
+		logger::trace("[ENBPP] Technique sequence '{}' is empty", a_baseTechniqueName);
+		return;
+	}
+
 	logger::trace("[ENBPP] Executing technique sequence '{}' with {} techniques", a_baseTechniqueName, sequence.size());
 
 	auto sourceTexture = effect->GetVariableByName("TextureColor")->AsShaderResource();
@@ -215,6 +220,11 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 
 	for (size_t i = 0; i < sequence.size(); ++i) {
 		auto& techniqueInfo = sequence[i];
+
+		if (!techniqueInfo.technique) {
+			logger::warn("[ENBPP] Technique {} in sequence '{}' is null, skipping", i, a_baseTechniqueName);
+			continue;
+		}
 
 		logger::trace("[ENBPP] Executing technique {} in sequence '{}'", i, a_baseTechniqueName);
 
