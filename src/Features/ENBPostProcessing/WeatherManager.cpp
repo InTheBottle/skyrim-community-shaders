@@ -223,19 +223,30 @@ uint32_t WeatherManager::GetEffectiveWeatherID(uint32_t actualWeatherID)
 		return actualWeatherID;
 	}
 
-	RE::TESObjectCELL* parentCell = player->GetParentCell();
+	RE::TESObjectCELL* parentCell = nullptr;
+	try {
+		parentCell = player->GetParentCell();
+	} catch (...) {
+		return actualWeatherID;
+	}
+
 	if (!parentCell) {
 		return actualWeatherID;
 	}
 
 	uint32_t worldSpaceID = 0;
-	if (auto worldSpace = parentCell->GetRuntimeData().worldSpace) {
-		worldSpaceID = worldSpace->GetFormID() & 0x00FFFFFF;
-	}
-
 	uint32_t locationID = 0;
-	if (auto location = parentCell->GetLocation()) {
-		locationID = location->GetFormID() & 0x00FFFFFF;
+
+	try {
+		if (auto worldSpace = parentCell->GetRuntimeData().worldSpace) {
+			worldSpaceID = worldSpace->GetFormID() & 0x00FFFFFF;
+		}
+
+		if (auto location = parentCell->GetLocation()) {
+			locationID = location->GetFormID() & 0x00FFFFFF;
+		}
+	} catch (...) {
+		return actualWeatherID;
 	}
 
 	if (locationID == 0) {

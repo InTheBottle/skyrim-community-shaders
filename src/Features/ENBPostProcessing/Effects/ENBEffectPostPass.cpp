@@ -13,3 +13,9 @@ void ENBEffectPostPass::Execute()
 
 	globals::d3d::context->CopyResource(textureSDRTemp->texture.get(), textureSDRTemp2->texture.get());
 }
+
+void ENBEffectPostPass::UpdateEffectVariables()
+{
+	auto& textureManager = TextureManager::GetSingleton();
+	SetShaderResourceVariable("TextureOriginal", textureManager.GetCommonTexture("TextureSDRTemp")->srv.get());
+}
