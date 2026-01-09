@@ -117,6 +117,7 @@ public:
 	virtual void Reset() override;
 	void OverrideWeather(RE::Sky* a_sky);
 	void CheckCommonData();
+	void OverridePointLightColor(float3& a_color);
 	struct DirectionalAmbientColors
 	{
 		RE::NiColor directionalAmbientColors[3][2];

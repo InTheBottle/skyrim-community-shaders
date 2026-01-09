@@ -1,4 +1,5 @@
 #include "LightLimitFix.h"
+#include "ENBPostProcessing.h"
 #include "InverseSquareLighting.h"
 
 #include "Shadercache.h"
@@ -240,6 +241,10 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 		light.color *= bsLight->lodDimmer;
 
+		auto& enbpp = globals::features::enbPostProcessing;
+		if (enbpp.enableEffect)
+			enbpp.OverridePointLightColor(light.color);
+
 		SetLightPosition(light, niLight->world.translate, inWorld);
 
 		if (i < a_pass->numShadowLights) {
@@ -420,6 +425,10 @@ void LightLimitFix::UpdateLights()
 					}
 
 					light.color *= bsLight->lodDimmer;
+
+					auto& enbpp = globals::features::enbPostProcessing;
+					if (enbpp.enableEffect)
+						enbpp.OverridePointLightColor(light.color);
 
 					if (!IsGlobalLight(bsLight)) {
 						// List of BSMultiBoundRooms affected by a light

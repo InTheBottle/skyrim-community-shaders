@@ -318,6 +318,15 @@ void ENBPostProcessing::CheckCommonData()
 	}
 }
 
+void ENBPostProcessing::OverridePointLightColor(float3& a_color)
+{
+	auto& settingManager = SettingManager::GetSingleton();
+
+	a_color = Curve(a_color, settingManager.GetInterpolatedTimeOfDayValue("PointLightingCurve", "ENVIRONMENT"));
+	a_color = Desaturation(a_color, settingManager.GetInterpolatedTimeOfDayValue("PointLightingDesaturation", "ENVIRONMENT"));
+	a_color = Intensity(a_color, settingManager.GetInterpolatedTimeOfDayValue("PointLightingIntensity", "ENVIRONMENT"));
+}
+
 void ENBPostProcessing::OverrideAmbientLighting(DirectionalAmbientColors& DirectionalAmbientColors)
 {
 	auto& settingManager = SettingManager::GetSingleton();
