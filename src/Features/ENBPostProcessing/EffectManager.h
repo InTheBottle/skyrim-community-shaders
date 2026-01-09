@@ -102,6 +102,7 @@ public:
 		float timeOfDay2[4];
 		float eNightDayFactor;
 		float eInteriorFactor;
+		float eColorPow;
 	} commonData;
 
 	void UpdateCommonData();
