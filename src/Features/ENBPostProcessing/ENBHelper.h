@@ -13,7 +13,7 @@ namespace ENBHelper
 		uint32_t currentWeatherFormID = 0;
 		uint32_t outgoingWeatherFormID = 0;
 		float weatherTransition = 0.0f;
-		int32_t currentClassification = -1;   // 0=Pleasant, 1=Cloudy, 2=Rainy, 3=Snow, -1=Unknown
+		int32_t currentClassification = -1;  // 0=Pleasant, 1=Cloudy, 2=Rainy, 3=Snow, -1=Unknown
 		int32_t outgoingClassification = -1;
 	};
 

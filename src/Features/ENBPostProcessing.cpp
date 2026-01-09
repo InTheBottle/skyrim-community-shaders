@@ -1,7 +1,7 @@
 #include "ENBPostProcessing.h"
 
-#include "ENBPostProcessing/EffectManager.h"
 #include "ENBPostProcessing/ENBHelper.h"
+#include "ENBPostProcessing/EffectManager.h"
 #include "ENBPostProcessing/MenuManager.h"
 #include "ENBPostProcessing/SettingManager.h"
 #include "ENBPostProcessing/WeatherManager.h"
