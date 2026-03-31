@@ -109,7 +109,7 @@ namespace Util::Moon
 
 		// Apply phase-based intensity if moon mesh exists
 		if (moon && moon->moonMesh && moon->moonMesh.get()) {
-			if (const auto moonShaderProperty = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().properties[1].get())) {
+			if (const auto moonShaderProperty = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get())) {
 				if (auto texture = moonShaderProperty->GetBaseTexture()) {
 					const auto phase = GetPhaseFromTexture(texture->name.c_str());
 					color *= GetPhaseIntensityFactor(phase);
