@@ -7,34 +7,31 @@ namespace WaterEffects
 	// http://www.diva-portal.org/smash/get/diva2:831762/FULLTEXT01.pdf
 	// https://bartwronski.files.wordpress.com/2014/03/ac4_gdc.pdf
 
-float GetMipLevel(float2 coords, Texture2D<float4> tex)
-{
-    // Get actual texture dimensions
-    float2 actualTextureDims;
-    tex.GetDimensions(actualTextureDims.x, actualTextureDims.y);
+	float GetMipLevel(float2 coords, Texture2D<float4> tex, float screenNoise)
+	{
+		// Compute the current gradients:
+		float2 textureDims;
+		tex.GetDimensions(textureDims.x, textureDims.y);
 
-    // Use hardcoded 512x512 for mip calculation
-    float2 textureDims = float2(512.0, 512.0);
+		float2 texCoordsPerSize = coords * textureDims;
 
-    float2 texCoordsPerSize = coords;
+		float2 dxSize = ddx(texCoordsPerSize);
+		float2 dySize = ddy(texCoordsPerSize);
 
-    float2 dxSize = ddx(texCoordsPerSize);
-    float2 dySize = ddy(texCoordsPerSize);
+		// Find min of change in u and v across quad: compute du and dv magnitude across quad
+		float2 dTexCoords = dxSize * dxSize + dySize * dySize;
 
-    // Find min of change in u and v across quad: compute du and dv magnitude across quad
-    float2 dTexCoords = dxSize * dxSize + dySize * dySize;
+		// Standard mipmapping uses max here
+		float minTexCoordDelta = max(dTexCoords.x, dTexCoords.y);
 
-    // Standard mipmapping uses max here
-    float minTexCoordDelta = max(dTexCoords.x, dTexCoords.y);
+		// Compute the current mip level
+		float mipLevel = max(0.5 * log2(minTexCoordDelta), 0.0);
 
-    // Compute the current mip level
-    float mipLevel = max(0.5 * log2(minTexCoordDelta), 0.0);
+		// Stochastic mip selection: use screen noise to select between adjacent mip levels
+		mipLevel = floor(mipLevel) + (screenNoise < frac(mipLevel) ? 1.0 : 0.0);
 
-    // Offset mip level to sample as if texture were 512x512
-    float mipOffset = log2(actualTextureDims.x / 512.0);
-
-    return mipLevel + mipOffset;
-}
+		return mipLevel;
+	}
 
 	float GetHeight(PS_INPUT input, float2 currentOffset, float3 normalsAmplitude, float3 normalScalesRcp, float3 mipLevels)
 	{
@@ -55,10 +52,12 @@ float GetMipLevel(float2 coords, Texture2D<float4> tex)
 		// Parallax scale is also multiplied by normalScalesRcp
 		parallaxOffsetTS *= 20.0;
 
+		float screenNoise = Random::InterleavedGradientNoise(input.HPosition.xy, SharedData::FrameCount);
+
 		float3 mipLevels;
-		mipLevels.x = GetMipLevel(input.TexCoord1.xy, Normals01Tex);
-		mipLevels.y = GetMipLevel(input.TexCoord1.zw, Normals02Tex);
-		mipLevels.z = GetMipLevel(input.TexCoord2.xy, Normals03Tex);
+		mipLevels.x = GetMipLevel(input.TexCoord1.xy, Normals01Tex, screenNoise);
+		mipLevels.y = GetMipLevel(input.TexCoord1.zw, Normals02Tex, screenNoise);
+		mipLevels.z = GetMipLevel(input.TexCoord2.xy, Normals03Tex, screenNoise);
 
 		float stepSize = rcp(16.0);
 		float currBound = 0.0;
@@ -160,22 +159,22 @@ float GetMipLevel(float2 coords, Texture2D<float4> tex)
 
 		float2 textureDims;
 		Normals01Tex.GetDimensions(textureDims.x, textureDims.y);
-#if defined(VR)
+#	if defined(VR)
 		textureDims /= 16.0;
-#else
+#	else
 		textureDims /= 8.0;
-#endif
+#	endif
 		float2 texCoordsPerSize = input.TexCoord1.xy * textureDims;
 		float2 dxSize = ddx(texCoordsPerSize);
 		float2 dySize = ddy(texCoordsPerSize);
 		float2 dTexCoords = dxSize * dxSize + dySize * dySize;
 		float minTexCoordDelta = max(dTexCoords.x, dTexCoords.y);
 		float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
-#if defined(VR)
+#	if defined(VR)
 		mipLevel += 4;
-#else
+#	else
 		mipLevel += 3;
-#endif
+#	endif
 
 		float stepSize = rcp(16.0);
 		float currBound = 0.0;

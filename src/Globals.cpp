@@ -4,6 +4,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ENBPostProcessing.h"
+#include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
 #include "Features/GrassCollision.h"
@@ -26,12 +27,13 @@
 #include "Features/TerrainHelper.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainVariation.h"
+#include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
+#include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WeatherEditor.h"
-#include "Features/WeatherPicker.h"
 #include "Features/WetnessEffects.h"
 #include "Menu.h"
 #include "ShaderCache.h"
@@ -52,6 +54,7 @@ namespace globals
 	{
 		CloudShadows cloudShadows{};
 		DynamicCubemaps dynamicCubemaps{};
+		VolumetricShadows volumetricShadows{};
 		ExtendedMaterials extendedMaterials{};
 		GrassCollision grassCollision{};
 		GrassLighting grassLighting{};
@@ -71,10 +74,10 @@ namespace globals
 		TerrainBlending terrainBlending{};
 		TerrainHelper terrainHelper{};
 		TerrainShadows terrainShadows{};
+		UnifiedWater unifiedWater{};
 		VolumetricLighting volumetricLighting{};
 		VR vr{};
 		WaterEffects waterEffects{};
-		WeatherPicker weatherPicker{};
 		PerformanceOverlay performanceOverlay{};
 		WetnessEffects wetnessEffects{};
 		ExtendedTranslucency extendedTranslucency{};
@@ -82,6 +85,7 @@ namespace globals
 		ENBPostProcessing enbPostProcessing{};
 		RenderDoc renderDoc{};
 		WeatherEditor weatherEditor{};
+		ExponentialHeightFog exponentialHeightFog{};
 
 		namespace llf
 		{
@@ -95,6 +99,7 @@ namespace globals
 		RE::BSGraphics::Renderer* renderer = nullptr;
 		RE::BSShaderManager::State* smState = nullptr;
 		RE::TES* tes = nullptr;
+		RE::TESWaterSystem* waterSystem = nullptr;
 		bool isVR = false;
 		RE::MemoryManager* memoryManager = nullptr;
 		RE::INISettingCollection* iniSettingCollection = nullptr;
@@ -104,8 +109,11 @@ namespace globals
 		float* cameraFar = nullptr;
 		float* deltaTime = nullptr;
 		RE::BSUtilityShader* utilityShader = nullptr;
+		RE::PlayerCharacter* player = nullptr;
 		RE::Sky* sky = nullptr;
 		RE::UI* ui = nullptr;
+		RE::Calendar* calendar = nullptr;
+		std::atomic<bool> quitGame{ false };
 
 		RE::BSGraphics::PixelShader** currentPixelShader = nullptr;
 		RE::BSGraphics::VertexShader** currentVertexShader = nullptr;
@@ -127,9 +135,11 @@ namespace globals
 		REL::Relocation<const RE::NiRTTI*> NiIntegerExtraDataRTTI;
 		REL::Relocation<const RE::NiRTTI*> BSLightingShaderPropertyRTTI;
 		REL::Relocation<const RE::NiRTTI*> BSEffectShaderPropertyRTTI;
+		REL::Relocation<const RE::NiRTTI*> BSWaterShaderPropertyRTTI;
 		REL::Relocation<const RE::NiRTTI*> NiParticleSystemRTTI;
 		REL::Relocation<const RE::NiRTTI*> NiBillboardNodeRTTI;
 		REL::Relocation<const RE::NiRTTI*> NiAlphaPropertyRTTI;
+		REL::Relocation<const RE::NiRTTI*> NiSourceTextureRTTI;
 	}
 
 	State* state = nullptr;
@@ -160,6 +170,8 @@ namespace globals
 			iniSettingCollection = RE::INISettingCollection::GetSingleton();
 			iniPrefSettingCollection = RE::INIPrefSettingCollection::GetSingleton();
 			gameSettingCollection = RE::GameSettingCollection::GetSingleton();
+			tes = RE::TES::GetSingleton();
+			waterSystem = RE::TESWaterSystem::GetSingleton();
 			cameraNear = (float*)(REL::RelocationID(517032, 403540).address() + 0x40);
 			cameraFar = (float*)(REL::RelocationID(517032, 403540).address() + 0x44);
 			deltaTime = (float*)REL::RelocationID(523660, 410199).address();
@@ -169,6 +181,7 @@ namespace globals
 			stateUpdateFlags = GET_INSTANCE_MEMBER_PTR(stateUpdateFlags, shadowState);
 
 			ui = RE::UI::GetSingleton();
+			calendar = RE::Calendar::GetSingleton();
 			perFrame = { REL::RelocationID(524768, 411384) };
 
 			currentAccumulator = { REL::RelocationID(527650, 414600) };
@@ -179,9 +192,11 @@ namespace globals
 			NiIntegerExtraDataRTTI = { RE::NiIntegerExtraData::Ni_RTTI };
 			BSLightingShaderPropertyRTTI = { RE::BSLightingShaderProperty::Ni_RTTI };
 			BSEffectShaderPropertyRTTI = { RE::BSEffectShaderProperty::Ni_RTTI };
+			BSWaterShaderPropertyRTTI = { RE::BSWaterShaderProperty::Ni_RTTI };
 			NiParticleSystemRTTI = { RE::NiParticleSystem::Ni_RTTI };
 			NiBillboardNodeRTTI = { RE::NiBillboardNode::Ni_RTTI };
 			NiAlphaPropertyRTTI = { RE::NiAlphaProperty::Ni_RTTI };
+			NiSourceTextureRTTI = { RE::NiSourceTexture::Ni_RTTI };
 		}
 
 		d3d::device = reinterpret_cast<ID3D11Device*>(game::renderer->GetRuntimeData().forwarder);
@@ -192,13 +207,22 @@ namespace globals
 	void OnDataLoaded()
 	{
 		using namespace game;
+		player = RE::PlayerCharacter::GetSingleton();
 		sky = RE::Sky::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();
+		waterSystem = RE::TESWaterSystem::GetSingleton();
 
 		bEnableLandFade = iniSettingCollection->GetSetting("bEnableLandFade:Display");
 
 		bShadowsOnGrass = RE::GetINISetting("bShadowsOnGrass:Display");
 		shadowMaskQuarter = RE::GetINISetting("iShadowMaskQuarter:Display");
+	}
+
+	void OnGameWindowClose()
+	{
+		game::quitGame = true;
+		if (shaderCache)
+			shaderCache->StopCompilation();
 	}
 
 	/**

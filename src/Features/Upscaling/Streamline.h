@@ -3,6 +3,7 @@
 #include "../../Buffer.h"
 #include "../../State.h"
 
+#include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
 
@@ -14,6 +15,7 @@
 #include <sl_consts.h>
 #include <sl_dlss.h>
 #include <sl_matrix_helpers.h>
+#include <sl_reflex.h>
 #include <sl_version.h>
 #pragma warning(pop)
 
@@ -31,9 +33,13 @@ public:
 	bool triedInitialization = false;
 
 	bool featureDLSS = false;
+	bool featureReflex = false;
+	bool featurePCL = false;
+	bool reflexSupportedOnCurrentAdapter = false;
 
 	sl::ViewportHandle viewport{ 0 };
-
+	sl::ViewportHandle viewportRight{ 1 };
+	static constexpr uint32_t MAX_RESOLUTION = 8192;
 	HMODULE interposer = NULL;
 
 	// SL Interposer Functions
@@ -60,8 +66,32 @@ public:
 	PFun_slDLSSGetState* slDLSSGetState{};
 	PFun_slDLSSSetOptions* slDLSSSetOptions{};
 
+	// Reflex specific functions
+	PFun_slReflexGetState* slReflexGetState{};
+	PFun_slReflexSleep* slReflexSleep{};
+	PFun_slReflexSetOptions* slReflexSetOptions{};
+	PFun_slPCLSetMarker* slPCLSetMarker{};
+
 	Util::FrameChecker frameChecker;
 	sl::FrameToken* frameToken = nullptr;
+
+	bool isRTXBelow40series = false;
+
+	struct ReflexOptionsCache
+	{
+		bool valid = false;
+		sl::ReflexMode mode = sl::ReflexMode::eOff;
+		uint32_t frameLimitUs = 0;
+		bool useMarkersToOptimize = false;
+	};
+	ReflexOptionsCache reflexOptionsCache{};
+	uint32_t lastReflexSleepFrame = UINT32_MAX;
+
+	// Helper: Execute DLSS for a single viewport with given resources
+	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
+		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth);
 
 	// Cached DLL version info for Streamline plugin directory
 	static std::vector<std::pair<std::string, std::string>> dllVersions;
@@ -72,13 +102,15 @@ public:
 
 	void PostDevice();
 
-	void CheckFrameConstants();
+	bool EnsureFrameToken();
+	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0);
 
-	void SetDLSSOptions();
+	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
+
+	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width);
 
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors);
-
-	float2 GetInputResolutionScale(uint32_t outputWidth, uint32_t outputHeight, uint32_t qualityPreset);
+	void UpdateReflex();
 
 	void DestroyDLSSResources();
 };

@@ -29,29 +29,33 @@ LightingTemplateWidget::~LightingTemplateWidget()
 void LightingTemplateWidget::DrawWidget()
 {
 	WeatherUtils::SetCurrentWidget(this);
-	ImGui::SetNextWindowSizeConstraints(ImVec2(600, 0), ImVec2(FLT_MAX, FLT_MAX));
-	if (ImGui::Begin(GetEditorID().c_str(), &open, ImGuiWindowFlags_NoSavedSettings)) {
-		// Draw header with search and Save/Load/Delete buttons
-		DrawWidgetHeader("##LightingTemplateSearch", false, true, false, nullptr);
-
-		if (ImGui::BeginTabBar("LightingTemplateSettingsTabs", ImGuiTabBarFlags_None)) {
-			if (ImGui::BeginTabItem("Basic")) {
-				DrawBasicSettings();
-				ImGui::EndTabItem();
-			}
-
-			if (ImGui::BeginTabItem("Fog")) {
-				DrawFogSettings();
-				ImGui::EndTabItem();
-			}
-
-			if (ImGui::BeginTabItem("DALC")) {
-				DrawDALCSettings();
-				ImGui::EndTabItem();
-			}
-
-			ImGui::EndTabBar();
+	SetupWidgetWindowDefaults();
+	if (Util::BeginWithRoundedClose(GetWindowTitle().c_str(), &open, ImGuiWindowFlags_NoSavedSettings | kStickyHeaderFlags)) {
+		DrawWidgetHeader("##LightingTemplateSearch", false, true);
+	}
+	if (ImGui::BeginTabBar("LightingTemplateSettingsTabs", ImGuiTabBarFlags_None)) {
+		if (ImGui::BeginTabItem("Basic")) {
+			BeginScrollableContent("##BasicScroll");
+			DrawBasicSettings();
+			EndScrollableContent();
+			ImGui::EndTabItem();
 		}
+
+		if (ImGui::BeginTabItem("Fog")) {
+			BeginScrollableContent("##FogScroll");
+			DrawFogSettings();
+			EndScrollableContent();
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("DALC")) {
+			BeginScrollableContent("##DALCScroll");
+			DrawDALCSettings();
+			EndScrollableContent();
+			ImGui::EndTabItem();
+		}
+
+		ImGui::EndTabBar();
 	}
 	ImGui::End();
 }
@@ -218,12 +222,12 @@ void LightingTemplateWidget::DrawDALCSettings()
 void LightingTemplateWidget::ApplyChanges()
 {
 	SetLightingTemplateValues();
-	SaveSettings();
 }
 
 void LightingTemplateWidget::RevertChanges()
 {
-	LoadLightingTemplateValues();
+	settings = vanillaSettings;
+	ApplyChanges();
 }
 
 void LightingTemplateWidget::SetLightingTemplateValues()
@@ -297,16 +301,29 @@ void LightingTemplateWidget::LoadLightingTemplateValues()
 	ColorToFloat3(dalc.directional.z.min, settings.dalc.directional[2].min);
 }
 
+void LightingTemplateWidget::LoadFromGameSettings()
+{
+	LoadLightingTemplateValues();
+}
+
 void LightingTemplateWidget::LoadSettings()
 {
 	if (!js.empty()) {
 		settings = js;
 	} else {
-		LoadLightingTemplateValues();
+		settings = vanillaSettings;
 	}
+	originalSettings = settings;
+	ApplyChanges();
 }
 
 void LightingTemplateWidget::SaveSettings()
 {
 	js = settings;
+	originalSettings = settings;
+}
+
+bool LightingTemplateWidget::HasUnsavedChanges() const
+{
+	return !(settings == originalSettings);
 }

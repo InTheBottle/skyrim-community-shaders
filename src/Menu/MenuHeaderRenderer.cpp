@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "Fonts.h"
 #include "Globals.h"
 #include "Plugin.h"
 #include "ShaderCache.h"
@@ -12,42 +13,7 @@
 
 namespace
 {
-	class RoleFontGuard
-	{
-	public:
-		explicit RoleFontGuard(Menu::FontRole role)
-		{
-			Menu* menuInstance = globals::menu;
-			if (!menuInstance) {
-				logger::error("RoleFontGuard: globals::menu is null, cannot retrieve font for role");
-				return;
-			}
-
-			font_ = menuInstance->GetFont(role);
-			if (font_) {
-				ImGui::PushFont(font_);
-				fontPushed_ = true;
-			} else {
-				logger::warn("RoleFontGuard: Failed to retrieve font for role {}", static_cast<int>(role));
-			}
-		}
-
-		~RoleFontGuard()
-		{
-			if (fontPushed_) {
-				ImGui::PopFont();
-			}
-		}
-
-		RoleFontGuard(const RoleFontGuard&) = delete;
-		RoleFontGuard& operator=(const RoleFontGuard&) = delete;
-
-		[[nodiscard]] ImFont* Get() const { return font_; }
-
-	private:
-		ImFont* font_ = nullptr;
-		bool fontPushed_ = false;
-	};
+	using RoleFontGuard = MenuFonts::FontRoleGuard;
 }
 
 void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons)
@@ -92,7 +58,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 
 				if (showLogo) {
 					float logoAspectRatio = uiIcons.logo.size.x / uiIcons.logo.size.y;
-					contentWidth = (logoSize * logoAspectRatio) + 8.0f;  // Logo width + spacing
+					contentWidth = (logoSize * logoAspectRatio) + ImGui::GetStyle().ItemSpacing.x;
 				}
 
 				// Calculate text width
@@ -207,10 +173,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 			// Clear Shader Cache Button
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Clear Shader Cache", { -1, 0 })) {
-				shaderCache->Clear();
-				if (shaderCache->IsDiskCache()) {
-					shaderCache->DeleteDiskCache();
-				}
+				Util::RequestClearShaderCacheConfirmation();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
@@ -291,7 +254,6 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 			} });
 	}
 	if (uiIcons.clearCache.texture) {
-		auto shaderCache = globals::shaderCache;
 		actionIcons.push_back({ uiIcons.clearCache.texture,
 			"Clear Shader Cache\n\n"
 			"Clears the shader cache and disk cache (if enabled).\n"
@@ -299,11 +261,8 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 			"the vanilla shaders at runtime. The Disk Cache is a collection of\n"
 			"compiled shaders on disk. Clearing will mean that shaders are\n"
 			"recompiled only when the game re-encounters them.",
-			[shaderCache]() {
-				shaderCache->Clear();
-				if (shaderCache->IsDiskCache()) {
-					shaderCache->DeleteDiskCache();
-				}
+			[]() {
+				Util::RequestClearShaderCacheConfirmation();
 			} });
 	}
 

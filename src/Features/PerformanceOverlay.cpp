@@ -157,7 +157,8 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Text("Opens performance overlay in a separate window that stays open\neven when the main menu is closed. ");
 		ImGui::Text("Toggle with ");
 		ImGui::SameLine();
-		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s", Util::Input::KeyIdToString(menuSettings.OverlayToggleKey));
+		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
+			Util::Input::KeyIdToString(menuSettings.OverlayToggleKey).c_str());
 	}
 
 	if (this->settings.ShowInOverlay) {
@@ -298,7 +299,6 @@ void PerformanceOverlay::DrawOverlay()
 		windowFlags |= ImGuiWindowFlags_NoBackground;
 	} else {
 		windowFlags &= ~ImGuiWindowFlags_NoDecoration;
-		windowFlags &= ~ImGuiWindowFlags_AlwaysAutoResize;
 		windowFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse;
 	}
 
@@ -309,12 +309,15 @@ void PerformanceOverlay::DrawOverlay()
 			ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).z,
 			this->settings.BackgroundOpacity));
 
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, this->settings.ShowBorder ? 1.0f : 0.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, this->settings.ShowBorder ? ImGui::GetStyle().WindowBorderSize : 0.0f);
+
+	const float scale = Util::GetUIScale();
 
 	// Set initial position if not already set
 	if (!this->settings.PositionSet) {
-		ImGui::SetNextWindowPos(ImVec2(PerformanceOverlay::Settings::kDefaultWindowPadding, PerformanceOverlay::Settings::kDefaultWindowPadding));
-		this->settings.Position = ImVec2(PerformanceOverlay::Settings::kDefaultWindowPadding, PerformanceOverlay::Settings::kDefaultWindowPadding);
+		const float defaultPad = Settings::kDefaultWindowPadding * scale;
+		ImGui::SetNextWindowPos(ImVec2(defaultPad, defaultPad));
+		this->settings.Position = ImVec2(defaultPad, defaultPad);
 		this->settings.PositionSet = true;
 	} else {
 		ImGui::SetNextWindowPos(this->settings.Position, ImGuiCond_FirstUseEver);
@@ -335,19 +338,16 @@ void PerformanceOverlay::DrawOverlay()
 				fpsText = std::format("Raw FPS: {:.1f} ({:.2f} ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
 			}
 			float fpsWidth = ImGui::CalcTextSize(fpsText.c_str()).x;
-			minWidth = std::max(minWidth, fpsWidth + PerformanceOverlay::Settings::kLabelPadding);  // Add padding for labels
+			minWidth = std::max(minWidth, fpsWidth + Settings::kLabelPadding * scale);
 		}
 		if (this->settings.ShowDrawCalls) {
-			// Draw calls table needs significant width for all columns
-			minWidth = std::max(minWidth, PerformanceOverlay::Settings::kDrawCallsTableWidth * this->settings.TextSize);
+			minWidth = std::max(minWidth, Settings::kDrawCallsTableWidth * scale * this->settings.TextSize);
 		}
 		if (this->settings.ShowVRAM && menu->GetDXGIAdapter3()) {
-			// VRAM section needs width for the progress bar and text
-			minWidth = std::max(minWidth, PerformanceOverlay::Settings::kVRAMSectionWidth * this->settings.TextSize);
+			minWidth = std::max(minWidth, Settings::kVRAMSectionWidth * scale * this->settings.TextSize);
 		}
 
-		// Add some padding for window borders and spacing
-		minWidth += PerformanceOverlay::Settings::kWindowBorderPadding;
+		minWidth += Settings::kWindowBorderPadding * scale;
 
 		// Set minimum width, but allow auto-resize for larger content
 		ImGui::SetNextWindowSize(ImVec2(minWidth, 0), ImGuiCond_FirstUseEver);
@@ -367,7 +367,7 @@ void PerformanceOverlay::DrawOverlay()
 		this->settings.Position = currentPos;
 	}
 
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 1.0f));  // Tighter spacing
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 1.0f * scale));
 	ImGui::SetWindowFontScale(this->settings.TextSize);
 
 	// Update graph values
@@ -455,7 +455,7 @@ void PerformanceOverlay::DrawFPS()
 			static_cast<int>(this->state.frameTimeHistory.GetHeadIdx()),
 			overlay_text,
 			this->state.smoothedMinFrameTime, this->state.smoothedMaxFrameTime,
-			ImVec2(graphWidth, 50.0f * this->settings.TextSize));
+			ImVec2(graphWidth, 50.0f * Util::GetUIScale() * this->settings.TextSize));
 
 		ImGui::PopStyleColor();
 
@@ -552,7 +552,7 @@ void PerformanceOverlay::DrawPostFGFrameTimeGraph()
 		static_cast<int>(state.postFGFrameTimeHistory.GetHeadIdx()),
 		overlay_text,
 		state.smoothedMinFrameTime, state.smoothedMaxFrameTime,
-		ImVec2(graphWidth, 50.0f * settings.TextSize));
+		ImVec2(graphWidth, 50.0f * Util::GetUIScale() * settings.TextSize));
 
 	ImGui::PopStyleColor();
 
@@ -1195,6 +1195,10 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 			this->settingsDiff.clear();
 			this->settingsDiffLoaded = false;
 			showSettingsDiff = false;
+			// Also clear cached snapshots so diff does not linger after user opts to clear
+			if (abTestingManager) {
+				abTestingManager->ClearCachedSnapshots();
+			}
 			ImGui::EndGroup();
 			ImGui::Separator();
 			return;
@@ -1203,9 +1207,15 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 		// --- Settings diff section (inline, toggled) ---
 		if (showSettingsDiff) {
 			if (!this->settingsDiffLoaded) {
-				std::filesystem::path userPath = Util::PathHelpers::GetDataPath() / "SKSE/Plugins/CommunityShaders/SettingsUser.json";
-				std::filesystem::path testPath = Util::PathHelpers::GetDataPath() / "SKSE/Plugins/CommunityShaders/SettingsTest.json";
-				this->settingsDiff = Util::FileSystem::LoadJsonDiff(userPath, testPath);
+				// Use cached memory data from ABTestingManager instead of loading from disk
+				if (abTestingManager && abTestingManager->HasCachedSnapshots()) {
+					// Pull structured diff entries directly from ABTestingManager (in-memory snapshots)
+					this->settingsDiff = abTestingManager->GetConfigDiffEntries();
+				} else {
+					std::filesystem::path userPath = Util::PathHelpers::GetDataPath() / "SKSE/Plugins/CommunityShaders/SettingsUser.json";
+					std::filesystem::path testPath = Util::PathHelpers::GetDataPath() / "SKSE/Plugins/CommunityShaders/SettingsTest.json";
+					this->settingsDiff = Util::FileSystem::LoadJsonDiff(userPath, testPath);
+				}
 				this->settingsDiffLoaded = true;
 			}
 			ImGui::TextUnformatted("Differences between USER (A) and TEST (B) configs:");
@@ -1467,7 +1477,11 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildDrawCallTableColumns(const Me
 
 	columns.push_back(ColumnConfig{
 		legends.frameTime.header,
-		MakeMetricColumn(theme, [](const DrawCallRow& row) { return row.frameTime; }, [](const auto& theme, float value, const DrawCallRow&) { return Util::GetThresholdColor(value, PerformanceOverlay::Settings::kFrameTimeGoodThreshold, PerformanceOverlay::Settings::kFrameTimeWarningThreshold, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error); }, [](float /*value*/, const DrawCallRow& row) { return Util::FormatMilliseconds(row.frameTime) + " (" + Util::FormatPercent(row.percent) + ")"; }, legends.frameTime.tooltip), [](const DrawCallRow& a, const DrawCallRow& b, bool asc) { return asc ? (a.percent < b.percent) : (a.percent > b.percent); }, [legends]() {
+		MakeMetricColumn(theme, [](const DrawCallRow& row) { return row.frameTime; }, [](const auto& theme, float value, const DrawCallRow& row) {
+			if (magic_enum::enum_cast<SpecialShaderType>(row.shaderType).has_value()) {
+				return theme.Palette.Text;
+			}
+			return Util::GetThresholdColor(value, PerformanceOverlay::Settings::kFrameTimeGoodThreshold, PerformanceOverlay::Settings::kFrameTimeWarningThreshold, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error); }, [](float /*value*/, const DrawCallRow& row) { return Util::FormatMilliseconds(row.frameTime) + " (" + Util::FormatPercent(row.percent) + ")"; }, legends.frameTime.tooltip), [](const DrawCallRow& a, const DrawCallRow& b, bool asc) { return asc ? (a.percent < b.percent) : (a.percent > b.percent); }, [legends]() {
 			 if (ImGui::IsItemHovered()) {
 				 if (auto _tt = Util::HoverTooltipWrapper()) {
 					 Util::DrawColoredMultiLineTooltip(legends.frameTime.tooltip);
@@ -1476,7 +1490,11 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildDrawCallTableColumns(const Me
 
 	columns.push_back(ColumnConfig{
 		legends.costPerCall.header,
-		MakeMetricColumn(theme, [](const DrawCallRow& row) { return row.costPerCall; }, [](const auto& theme, float value, const DrawCallRow&) { return Util::GetThresholdColor(value, PerformanceOverlay::Settings::kCostPerCallGoodThreshold, PerformanceOverlay::Settings::kCostPerCallWarningThreshold, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error); }, [](float value, const DrawCallRow&) { return (value < PerformanceOverlay::Settings::kMicrosecondThreshold && value > 0.0f) ? Util::FormatMicroseconds(value * 1000.0f) : Util::FormatMilliseconds(value); }, legends.costPerCall.tooltip), [](const DrawCallRow& a, const DrawCallRow& b, bool asc) { return asc ? (a.costPerCall < b.costPerCall) : (a.costPerCall > b.costPerCall); }, [legends]() {
+		MakeMetricColumn(theme, [](const DrawCallRow& row) { return row.costPerCall; }, [](const auto& theme, float value, const DrawCallRow& row) {
+			if (magic_enum::enum_cast<SpecialShaderType>(row.shaderType).has_value()) {
+				return theme.Palette.Text;
+			}
+			return Util::GetThresholdColor(value, PerformanceOverlay::Settings::kCostPerCallGoodThreshold, PerformanceOverlay::Settings::kCostPerCallWarningThreshold, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error); }, [](float value, const DrawCallRow&) { return (value < PerformanceOverlay::Settings::kMicrosecondThreshold && value > 0.0f) ? Util::FormatMicroseconds(value * 1000.0f) : Util::FormatMilliseconds(value); }, legends.costPerCall.tooltip), [](const DrawCallRow& a, const DrawCallRow& b, bool asc) { return asc ? (a.costPerCall < b.costPerCall) : (a.costPerCall > b.costPerCall); }, [legends]() {
 			 if (ImGui::IsItemHovered()) {
 				 if (auto _tt = Util::HoverTooltipWrapper()) {
 					 Util::DrawColoredMultiLineTooltip(legends.costPerCall.tooltip);

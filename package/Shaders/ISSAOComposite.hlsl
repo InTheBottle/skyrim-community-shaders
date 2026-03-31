@@ -7,7 +7,7 @@ typedef VS_OUTPUT PS_INPUT;
 
 struct PS_OUTPUT
 {
-	float4 Color : SV_Target0;
+	float4 Color: SV_Target0;
 };
 
 #if defined(PSHADER)
@@ -126,6 +126,15 @@ float SimplexNoise(float3 v)
 									 dot(p2, x2), dot(p3, x3)));
 }
 
+#	if defined(IBL)
+#		include "IBL/IBL.hlsli"
+#	endif
+
+#	if defined(EXP_HEIGHT_FOG) && defined(APPLY_FOG)
+SamplerState SampColorSampler : register(s9);
+#		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -173,14 +182,29 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogFactor));
 #		if defined(IBL)
-	if (SharedData::iblSettings.EnableDiffuseIBL && !SharedData::InInterior && !SharedData::enbSettings.EnableImageBasedLighting) {
+	if (SharedData::iblSettings.EnableIBL && !SharedData::enbSettings.EnableImageBasedLighting) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif
-
+#		if defined(EXP_HEIGHT_FOG)
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord.xy);
+	float2 monoUV = Stereo::ConvertFromStereoUV(input.TexCoord.xy, eyeIndex);
+	float4 positionWS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
+	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
+	positionWS.xyz = positionWS.xyz / positionWS.w;
+	if (SharedData::exponentialHeightFogSettings.enabled) {
+		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor);
+		fogColor = exponentialHeightFog.xyz;
+		fogFactor = exponentialHeightFog.w;
+	}
+	if (depth < 0.999999 || SharedData::exponentialHeightFogSettings.enabled) {
+		composedColor.xyz = (SharedData::exponentialHeightFogSettings.enabled ? 1.0 : FogNearColor.w) * lerp(composedColor.xyz, fogColor, fogFactor);
+	}
+#		else
 	if (depth < 0.999999) {
 		composedColor.xyz = FogNearColor.w * lerp(composedColor.xyz, fogColor, Color::FogAlpha(fogFactor));
 	}
+#		endif
 #	endif
 
 #	if !defined(VR)

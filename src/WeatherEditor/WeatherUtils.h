@@ -94,6 +94,38 @@ private:
 };
 
 // ============================================================================
+// Sticky Header Utilities - Keep widget headers fixed while content scrolls
+// ============================================================================
+
+/// Window flags to disable scrolling on the parent window when using a sticky header.
+/// Add to ImGui::Begin() or ImGui::BeginChild() window_flags parameter.
+constexpr ImGuiWindowFlags kStickyHeaderFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+
+/// Begin a scrollable content region below a sticky header. Fills remaining space.
+inline bool BeginScrollableContent(const char* id = "##ScrollContent") { return ImGui::BeginChild(id, ImVec2(0, 0)); }
+
+/// End the scrollable content region.
+inline void EndScrollableContent() { ImGui::EndChild(); }
+
+// ============================================================================
+// Widget Window Defaults - DPI-aware sizing for all editor widget windows
+// ============================================================================
+
+namespace WidgetDefaults
+{
+	constexpr float kMinWidth = 200.0f;
+	constexpr float kMinHeight = 150.0f;
+	constexpr float kInitialWidth = 580.0f;
+	constexpr float kInitialHeight = 580.0f;
+	constexpr float kSliderWidthRatio = 0.6f;  ///< Fraction of available width for slider/input controls
+	constexpr float kTODLabelWidth = 150.0f;   ///< Default label column width for time-of-day tables
+}
+
+/// Apply standard DPI-scaled size constraints and initial size for widget windows. Call before ImGui::Begin().
+/// Respects EditorWindow::resetLayout to re-apply defaults on demand.
+void SetupWidgetWindowDefaults();
+
+// ============================================================================
 // PropertyDrawer - Unified table-based property drawing with search support
 // ============================================================================
 namespace PropertyDrawer
@@ -104,6 +136,9 @@ namespace PropertyDrawer
 
 	// Draw a table separator row
 	void DrawSeparator();
+
+	// Draw a vertically-centered label in the first table column. Call between TableNextRow and drawing the value.
+	void DrawLabel(const char* label);
 
 	// Draw properties with optional search filtering.
 	// searchBuffer can be nullptr to skip search filtering.
@@ -249,7 +284,8 @@ namespace TOD
 
 	// Helper to begin a TOD table (2 columns: Parameter | Values)
 	// Returns true if table was created successfully
-	bool BeginTODTable(const char* tableId);
+	// paramColumnWidth: fixed width for the label column (0 = default 200px)
+	bool BeginTODTable(const char* tableId, float paramColumnWidth = 0.0f);
 
 	// End the TOD table
 	void EndTODTable();

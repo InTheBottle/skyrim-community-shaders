@@ -3,9 +3,11 @@
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
+#include <dxgi.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
+#include <imgui_internal.h>
 #include <winrt/base.h>
 
 #include "Feature.h"
@@ -16,6 +18,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include "WeatherEditor/EditorWindow.h"
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -25,7 +28,7 @@ void OverlayRenderer::RenderOverlay(
 	Menu& menu,
 	const std::function<void()>& processInputEventQueue,
 	const std::function<void()>& drawSettings,
-	const std::function<const char*(uint32_t)>& keyIdToString,
+	const std::function<const char*(std::vector<InputCombo>)>& keyIdToString,
 	float& cachedFontSize,
 	float currentFontSize)
 {
@@ -48,9 +51,22 @@ void OverlayRenderer::RenderOverlay(
 
 	RenderShaderCompilationStatus(keyIdToString);
 	RenderShaderBlockingStatus();
-	RenderFirstTimeSetupOverlay();
 
-	if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup()) {
+	auto* editorWindow = EditorWindow::GetSingleton();
+	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
+		editorWindow->open = false;
+		if (editorWindow->IsInPreviewMode())
+			editorWindow->ExitPreviewMode();
+	}
+	editorWindow->UpdateOpenState();
+	if (editorWindow->open) {
+		bool flying = editorWindow->IsPreviewFlying();
+		auto& io = ImGui::GetIO();
+		io.MouseDrawCursor = !flying;
+		if (flying)
+			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
+		editorWindow->Draw();
+	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup()) {
 		ImGui::GetIO().MouseDrawCursor = true;
 		if (menu.IsEnabled) {
 			drawSettings();
@@ -60,6 +76,7 @@ void OverlayRenderer::RenderOverlay(
 	}
 
 	RenderFeatureOverlays();
+	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
 	FinalizeImGuiFrame();
 }
@@ -74,13 +91,14 @@ void OverlayRenderer::HandleVRSetup()
 bool OverlayRenderer::ShouldSkipRendering()
 {
 	auto shaderCache = globals::shaderCache;
-	auto failed = shaderCache->GetFailedTasks();
+	auto failed = shaderCache->GetCurrentFailedCount();
 	auto hide = shaderCache->IsHideErrors();
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	auto* renderDoc = RenderDoc::GetSingleton();
 
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsEnabled ||
+			 EditorWindow::GetSingleton()->open ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
@@ -105,16 +123,27 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
-	ImGui::NewFrame();
 
+	DXGI_SWAP_CHAIN_DESC desc{};
+	globals::d3d::swapChain->GetDesc(&desc);
+
+	Util::UpdateImGuiInput(
+		desc.OutputWindow,
+		static_cast<float>(desc.BufferDesc.Width),
+		static_cast<float>(desc.BufferDesc.Height));
+
+	ImGui::NewFrame();
 	ThemeManager::SetupImGuiStyle(menu);
 }
 
-void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const char*(uint32_t)>& keyIdToString)
+void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString)
 {
 	auto shaderCache = globals::shaderCache;
-	auto failed = shaderCache->GetFailedTasks();
+	auto failed = shaderCache->GetCurrentFailedCount();
 	auto hide = shaderCache->IsHideErrors();
+
+	const float scale = Util::GetUIScale();
+	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * scale;
 
 	uint64_t totalShaders = shaderCache->GetTotalTasks();
 	uint64_t compiledShaders = shaderCache->GetCompletedTasks();
@@ -132,13 +161,30 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
 	if (shaderCache->IsCompiling()) {
-		ImGui::SetNextWindowPos(ImVec2(ThemeManager::Constants::OVERLAY_WINDOW_POSITION, ThemeManager::Constants::OVERLAY_WINDOW_POSITION));
+		ImGui::SetNextWindowPos(ImVec2(pos, pos));
 		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
 			return;
 		}
 		ImGui::TextUnformatted(progressTitle.c_str());
 		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
+		if (state->IsDeveloperMode()) {
+			int32_t threadLimit = shaderCache->backgroundCompilation ? shaderCache->backgroundCompilationThreadCount : shaderCache->compilationThreadCount;
+			int compilationRunning = (int)shaderCache->compilationPool.get_tasks_running();
+			int heavyInFlight = shaderCache->GetHeavyTasksInFlight();
+			int heavyLimit = static_cast<int>(Util::GetPerformanceCoreCount());
+			uint64_t slow = shaderCache->GetSlowTasks();
+			uint64_t verySlow = shaderCache->GetVerySlowTasks();
+			ImGui::Text("Threads: %d / %d limit | Heavy: %d / %d P-cores | %d workers",
+				compilationRunning,
+				threadLimit,
+				heavyInFlight,
+				heavyLimit,
+				(int)shaderCache->compilationPool.get_thread_count());
+			if (slow > 0) {
+				ImGui::Text("Slow shaders: %llu (very slow: %llu)", slow, verySlow);
+			}
+		}
 		if (!shaderCache->backgroundCompilation && shaderCache->menuLoaded) {
 			auto skipShadersText = fmt::format(
 				"Press {} to proceed without completing shader compilation. ",
@@ -151,9 +197,11 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
 
 		ImGui::End();
-	} else if (failed) {
+	}
+
+	if (failed) {
 		if (!hide) {
-			ImGui::SetNextWindowPos(ImVec2(ThemeManager::Constants::OVERLAY_WINDOW_POSITION, ThemeManager::Constants::OVERLAY_WINDOW_POSITION));
+			ImGui::SetNextWindowPos(ImVec2(pos, pos));
 			if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 				ImGui::End();
 				return;
@@ -172,7 +220,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::End();
 		}
 	} else if (renderDocAvailable) {
-		ImGui::SetNextWindowPos(ImVec2(ThemeManager::Constants::OVERLAY_WINDOW_POSITION, ThemeManager::Constants::OVERLAY_WINDOW_POSITION));
+		ImGui::SetNextWindowPos(ImVec2(pos, pos));
 		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
 			return;
@@ -248,7 +296,23 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 		return;
 	}
 
-	ImGui::SetNextWindowPos(ImVec2(ThemeManager::Constants::OVERLAY_WINDOW_POSITION, ThemeManager::Constants::OVERLAY_WINDOW_POSITION + 100));
+	const float scale = Util::GetUIScale();
+	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * scale;
+
+	// Stack below shader compilation window if visible
+	float yPos = pos;
+	if (auto* shaderWin = ImGui::FindWindowByName("ShaderCompilationInfo")) {
+		if (shaderWin->Active) {
+			yPos = shaderWin->Pos.y + shaderWin->Size.y + ImGui::GetStyle().ItemSpacing.y;
+		}
+	}
+	// Also stack below water cache overlay if visible
+	if (auto* waterWin = ImGui::FindWindowByName("UWCacheCreationInfo")) {
+		if (waterWin->Active && waterWin->Pos.y + waterWin->Size.y > yPos) {
+			yPos = waterWin->Pos.y + waterWin->Size.y + ImGui::GetStyle().ItemSpacing.y;
+		}
+	}
+	ImGui::SetNextWindowPos(ImVec2(pos, yPos));
 	if (!ImGui::Begin("ShaderBlockingInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;

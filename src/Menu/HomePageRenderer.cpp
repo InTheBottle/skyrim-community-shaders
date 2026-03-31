@@ -3,14 +3,26 @@
 
 #include <imgui.h>
 
+#include "FeatureConstraints.h"
 #include "Globals.h"
 #include "Menu.h"
 #include "Plugin.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/UI.h"
 
 // Static member definitions
 bool HomePageRenderer::isFirstTimeSetupShown = false;
+uint32_t HomePageRenderer::keyThatClosedDialog = 0;
+
+bool HomePageRenderer::ShouldSkipKeyRelease(uint32_t key)
+{
+	if (keyThatClosedDialog && key == keyThatClosedDialog) {
+		keyThatClosedDialog = 0;
+		return true;
+	}
+	return false;
+}
 
 void HomePageRenderer::RenderHomePage()
 {
@@ -18,6 +30,8 @@ void HomePageRenderer::RenderHomePage()
 
 	RenderWelcomeSection();
 	ImGui::Spacing();
+
+	RenderActiveConstraintsSection();
 
 	RenderQuickLinksSection();
 	ImGui::Spacing();
@@ -29,7 +43,8 @@ void HomePageRenderer::RenderHomePage()
 
 void HomePageRenderer::RenderWelcomeSection()
 {
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+	float scale = Util::GetUIScale();
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * scale, 8 * scale));
 
 	// Main title - centered with safe font handling
 	ImGuiIO& io = ImGui::GetIO();
@@ -45,7 +60,7 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	// Only push font if we have a valid one, otherwise use default scaled
 	if (titleFont) {
-		ImGui::PushFont(titleFont);
+		ImGui::PushFont(titleFont, titleFont->LegacySize);
 	}
 
 	ImVec2 windowSize = ImGui::GetWindowSize();
@@ -118,14 +133,14 @@ void HomePageRenderer::RenderWelcomeSection()
 			ImGui::SetTooltip("Join Community Shaders Discord Server");
 		}
 	} else {
-		// Fallback centered button when Discord icon is not available
-		float buttonWidth = 200.0f;
+		// Fallback button when Discord icon is not available
+		float buttonWidth = QUICK_LINKS_BUTTON_WIDTH * scale;
 		ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
 		if (ImGui::Button("Join Discord Server", ImVec2(buttonWidth, 0))) {
 			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
 		}
 		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Join Community Shaders Discord Server - Icon not found, using fallback button");
+			ImGui::SetTooltip("Join Community Shaders Discord Server");
 		}
 	}
 
@@ -141,7 +156,7 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::Text("Quick Links");
 
 	// Center the button layout
-	float buttonWidth = QUICK_LINKS_BUTTON_WIDTH;
+	float buttonWidth = QUICK_LINKS_BUTTON_WIDTH * Util::GetUIScale();
 	float totalWidth = buttonWidth * 3 + ImGui::GetStyle().ItemSpacing.x * 2;  // 3 buttons with spacing
 	ImGui::SetCursorPosX((windowSize.x - totalWidth) * 0.5f);
 
@@ -247,39 +262,150 @@ void HomePageRenderer::RenderFAQSection()
 	}
 }
 
+void HomePageRenderer::RenderActiveConstraintsSection()
+{
+	auto constraints = FeatureConstraints::GetAllActiveConstraints();
+	if (constraints.empty()) {
+		return;  // Don't show section if there are no active constraints
+	}
+
+	ImGui::Spacing();
+
+	// Use warning color for the header to draw attention
+	auto menu = Menu::GetSingleton();
+	ImVec4 warningColor = menu ? menu->GetTheme().StatusPalette.Warning : ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+
+	ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
+	bool headerOpen = ImGui::CollapsingHeader("Active Setting Constraints", ImGuiTreeNodeFlags_None);
+	ImGui::PopStyleColor();
+
+	if (headerOpen) {
+		ImGui::TextWrapped(
+			"Some settings are constrained by other features. Hover over rows for details.");
+
+		ImGui::Spacing();
+
+		// Prepare data for table
+		struct ConstraintRow
+		{
+			std::string setting;
+			std::string forcedTo;
+			std::string constrainedBy;
+			std::string firstSourceShortName;  // For "navigate to feature" on click
+			std::string tooltip;
+		};
+
+		std::vector<ConstraintRow> rows;
+		for (const auto& [settingId, result] : constraints) {
+			ConstraintRow row;
+			row.setting = std::format("{}.{}", settingId.featureShortName, settingId.settingPath);
+			row.forcedTo = FeatureConstraints::FormatConstraintValue(result.forcedValue);
+			for (size_t i = 0; i < result.sources.size(); ++i) {
+				if (i > 0)
+					row.constrainedBy += ", ";
+				row.constrainedBy += result.sources[i].featureName;
+			}
+			if (!result.sources.empty()) {
+				row.firstSourceShortName = result.sources[0].featureShortName;
+			}
+			// Build tooltip
+			for (const auto& src : result.sources) {
+				if (!row.tooltip.empty())
+					row.tooltip += "\n";
+				row.tooltip += std::format("{}: {}", src.featureName, src.reason);
+				if (src.recommendDisableAtBoot) {
+					row.tooltip += "\nConsider disabling at boot.";
+				}
+			}
+			rows.push_back(row);
+		}
+
+		// Define headers
+		std::vector<std::string> headers = { "Setting", "Forced To", "Constrained By" };
+
+		// Custom sorts (string comparators for each column)
+		std::vector<std::function<bool(const ConstraintRow&, const ConstraintRow&, bool)>> customSorts = {
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.setting, b.setting, asc); },
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.forcedTo, b.forcedTo, asc); },
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.constrainedBy, b.constrainedBy, asc); }
+		};
+
+		// Cell render -- column 2 ("Constrained By") is clickable to navigate
+		// to the first source feature's settings page.
+		auto cellRender = [warningColor](int rowIdx, int colIdx, const ConstraintRow& row) {
+			if (colIdx == 0) {
+				Util::RenderTableCell(row.setting, "", "", nullptr, ImVec4(1, 1, 1, 1), true, warningColor);
+			} else if (colIdx == 1) {
+				Util::RenderTableCell(row.forcedTo, "", "", nullptr, ImVec4(1, 1, 1, 1), true);
+			} else if (colIdx == 2) {
+				if (!row.firstSourceShortName.empty()) {
+					if (ImGui::Selectable(std::format("{}##nav{}", row.constrainedBy, rowIdx).c_str())) {
+						if (auto* menu = Menu::GetSingleton()) {
+							menu->SelectFeatureMenu(row.firstSourceShortName);
+						}
+					}
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("Click to navigate to %s", row.constrainedBy.c_str());
+						if (!row.tooltip.empty()) {
+							ImGui::Separator();
+							ImGui::Text("%s", row.tooltip.c_str());
+						}
+					}
+				} else {
+					Util::RenderTableCell(row.constrainedBy, "", row.tooltip, nullptr, ImVec4(1, 1, 1, 1), true);
+				}
+			}
+		};
+
+		// Render table
+		Util::ShowSortedStringTableCustom<ConstraintRow>(
+			"ConstraintsTable",
+			headers,
+			rows,
+			0,     // sortColumn
+			true,  // ascending
+			customSorts,
+			cellRender);
+	}
+
+	ImGui::Spacing();
+}
+
 void HomePageRenderer::RenderFirstTimeSetupDialog()
 {
+	if (!ShouldShowFirstTimeSetup()) {
+		return;
+	}
+
 	// Block input to the game and make cursor visible - input blocking is handled by ShouldSwallowInput()
 	auto& io = ImGui::GetIO();
 	io.WantCaptureMouse = true;
 	io.WantCaptureKeyboard = true;
 	io.MouseDrawCursor = true;  // Show ImGui cursor
 
-	// Center the window properly with rounded corners and thin border
+	float uiScale = Util::GetUIScale();
 	ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 	ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-	// Set a minimum width for better layout, but allow auto-sizing for height
-	ImGui::SetNextWindowSizeConstraints(ImVec2(500, 0), ImVec2(600, FLT_MAX));
+	ImGui::SetNextWindowSizeConstraints(ImVec2(DIALOG_MIN_WIDTH * uiScale, 0), ImVec2(DIALOG_MAX_WIDTH * uiScale, FLT_MAX));
+	ImGui::SetNextWindowFocus();
 
-	// Style for rounded window with thin border
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, DIALOG_CORNER_ROUNDING * uiScale);
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
 	                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
 	                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize;
 
 	if (!ImGui::Begin("##FirstTimeSetup", nullptr, flags)) {
-		ImGui::PopStyleVar(2);
+		ImGui::PopStyleVar();
 		ImGui::End();
 		return;
 	}
 
-	// Set absolute font size for better readability in this welcome dialog
-	float targetFontSize = 27.0f;
-	float currentFontSize = io.FontDefault ? io.FontDefault->FontSize : io.FontGlobalScale * 13.0f;
-	float fontScale = targetFontSize / currentFontSize;
-	ImGui::SetWindowFontScale(fontScale);
+	// Fullscreen fade on the dialog's draw list — covers all windows beneath at the dialog's z-position
+	auto* drawList = ImGui::GetWindowDrawList();
+	drawList->PushClipRectFullScreen();
+	drawList->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, MODAL_OVERLAY_ALPHA));
+	drawList->PopClipRect();
 
 	auto menu = Menu::GetSingleton();
 
@@ -293,7 +419,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 		float aspectRatio = textureSize.x / textureSize.y;
 
 		// Set desired height and calculate width to maintain aspect ratio
-		float logoHeight = LOGO_WATERMARK_HEIGHT;
+		float logoHeight = LOGO_WATERMARK_HEIGHT * uiScale;
 		float logoWidth = logoHeight * aspectRatio;
 
 		ImVec2 logoMin(windowPos.x + (windowSize.x - logoWidth) * 0.5f,
@@ -317,145 +443,119 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Center all content
 	float windowWidth = ImGui::GetWindowWidth();
+	auto centerText = [windowWidth](const char* text) {
+		ImGui::SetCursorPosX((windowWidth - ImGui::CalcTextSize(text).x) * 0.5f);
+	};
+	auto centerWidth = [windowWidth](float width) {
+		ImGui::SetCursorPosX((windowWidth - width) * 0.5f);
+	};
 
-	// Welcome title - centered
-	const char* welcomeTitle = "Welcome to Community Shaders!";
-	float welcomeTitleWidth = ImGui::CalcTextSize(welcomeTitle).x;
-	ImGui::SetCursorPosX((windowWidth - welcomeTitleWidth) * 0.5f);
-	ImGui::Text("%s", welcomeTitle);
+	// Version text - two lines, both centered (reduced spacing between lines)
+	const char* versionLine1 = "This appears to be a new install, update, or";
+	const char* versionLine2 = "reinstallation of Community Shaders.";
 
-	ImGui::Spacing();
-
-	// Version text - wrapped and centered
-	const char* versionText = "This appears to be a new install, update, or reinstallation of Community Shaders.";
-	float textPadding = 40.0f;  // Padding from window edges
-
-	// Use a centered region for wrapped text
-	ImGui::SetCursorPosX(textPadding);
-	ImGui::BeginGroup();
-	ImGui::PushTextWrapPos(windowWidth - textPadding);
-
-	// Calculate the wrapped text size to center it
-	ImVec2 textSize = ImGui::CalcTextSize(versionText, nullptr, true, windowWidth - textPadding * 2);
-	float centerOffset = (windowWidth - textPadding * 2 - textSize.x) * 0.5f;
-	if (centerOffset > 0) {
-		ImGui::SetCursorPosX(textPadding + centerOffset);
-	}
-
-	ImGui::TextWrapped("%s", versionText);
-	ImGui::PopTextWrapPos();
-	ImGui::EndGroup();
+	centerText(versionLine1);
+	ImGui::Text("%s", versionLine1);
+	ImGui::SetCursorPosY(ImGui::GetCursorPosY() - DIALOG_LINE_TIGHTEN * uiScale);
+	centerText(versionLine2);
+	ImGui::Text("%s", versionLine2);
 
 	ImGui::Spacing();
 
 	// Description - centered
-	const char* description = "Please select a hotkey to access the menu:";
-	float descWidth = ImGui::CalcTextSize(description).x;
-	ImGui::SetCursorPosX((windowWidth - descWidth) * 0.5f);
+	const char* description = "Please choose a hotkey to access the menu:";
+	centerText(description);
 	ImGui::Text("%s", description);
 
 	// Hotkey selection - clickable hotkey text
 	// Show current toggle key and allow user to change it by clicking on it
 	auto& themeSettings = menu->GetTheme();
-	const char* currentKeyName = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
+	bool isCapturing = menu->settingToggleKey;
 
-	// Increase font size for hotkey text
-	ImGui::SetWindowFontScale(fontScale * HOTKEY_TEXT_SCALE_MULTIPLIER);
+	// Increase font size for hotkey text - bigger when capturing
+	ImGui::SetWindowFontScale(isCapturing ? HOTKEY_TEXT_SCALE_CAPTURING : HOTKEY_TEXT_SCALE);
 
-	// Calculate text dimensions for centering and button area
-	float hotkeyWidth = ImGui::CalcTextSize(currentKeyName).x;
-	float centerX = (windowWidth - hotkeyWidth) * 0.5f;
-	ImGui::SetCursorPosX(centerX);
+	// Format hotkey with brackets to make it look like a button
+	std::string hotkeyStr;
+	if (isCapturing) {
+		hotkeyStr = "[ ... ]";
+	} else {
+		auto& keys = menu->GetSettings().ToggleKey;
+		hotkeyStr = std::string("[ ") + Util::Input::KeyIdToString(keys) + " ]";
+	}
+
+	ImVec2 hotkeyTextSize = ImGui::CalcTextSize(hotkeyStr.c_str());
+
+	centerWidth(hotkeyTextSize.x);
+	ImVec2 buttonPos = ImGui::GetCursorScreenPos();
 
 	// Create invisible button for hover detection and clicking
-	ImVec2 buttonPos = ImGui::GetCursorScreenPos();
-	ImVec2 hotkeyTextSize = ImGui::CalcTextSize(currentKeyName);
-	bool hovered = false;
-	bool clicked = false;
-
 	ImGui::PushID("HotkeyButton");
-	if (ImGui::InvisibleButton("##HotkeyClick", hotkeyTextSize)) {
-		clicked = true;
-	}
-	hovered = ImGui::IsItemHovered();
+	bool clicked = ImGui::InvisibleButton("##HotkeyClick", hotkeyTextSize);
+	bool hovered = ImGui::IsItemHovered();
 	ImGui::PopID();
 
 	// Set cursor position back for text rendering
 	ImGui::SetCursorScreenPos(buttonPos);
 
-	// Choose color based on hover state - darken when hovered.
-	ImVec4 hotkeyColor = hovered ?
-	                         ImVec4(themeSettings.StatusPalette.CurrentHotkey.x * 0.7f,
-								 themeSettings.StatusPalette.CurrentHotkey.y * 0.7f,
-								 themeSettings.StatusPalette.CurrentHotkey.z * 0.7f,
-								 themeSettings.StatusPalette.CurrentHotkey.w) :
-	                         themeSettings.StatusPalette.CurrentHotkey;
-
-	ImGui::TextColored(hotkeyColor, "%s", currentKeyName);
-
-	// Reset font scale
-	ImGui::SetWindowFontScale(fontScale);
-
-	// Handle click to start hotkey capture
-	if (clicked) {
-		menu->settingToggleKey = true;
+	// Choose color based on state
+	ImVec4 hotkeyColor;
+	if (isCapturing) {
+		// Pulsing effect using theme's hotkey color
+		hotkeyColor = Util::GetPulsingColor(themeSettings.StatusPalette.CurrentHotkey);
+	} else if (hovered) {
+		hotkeyColor = ImVec4(themeSettings.StatusPalette.CurrentHotkey.x * HOTKEY_HOVER_DIM_FACTOR,
+			themeSettings.StatusPalette.CurrentHotkey.y * HOTKEY_HOVER_DIM_FACTOR,
+			themeSettings.StatusPalette.CurrentHotkey.z * HOTKEY_HOVER_DIM_FACTOR,
+			themeSettings.StatusPalette.CurrentHotkey.w);
+	} else {
+		hotkeyColor = themeSettings.StatusPalette.CurrentHotkey;
 	}
 
-	// Show hotkey capture message or hotkey text
-	if (menu->settingToggleKey) {
+	ImGui::TextColored(hotkeyColor, "%s", hotkeyStr.c_str());
+
+	ImGui::SetWindowFontScale(1.0f);
+
+	// Handle click to start hotkey capture
+	if (clicked && !isCapturing) {
+		// Prevent starting capture if this click was caused by Enter key,
+		// because we want Enter to close the dialog instead.
+		if (!ImGui::IsKeyPressed(ImGuiKey_Enter))
+			menu->settingToggleKey = true;
+	}
+
+	// Show hotkey capture message when in capture mode
+	if (isCapturing) {
 		const char* pressKeyText = "Press any key to set as toggle key...";
-		float pressKeyWidth = ImGui::CalcTextSize(pressKeyText).x;
-		ImGui::SetCursorPosX((windowWidth - pressKeyWidth) * 0.5f);
-		ImGui::Text("%s", pressKeyText);
+		centerText(pressKeyText);
+		ImGui::TextDisabled("%s", pressKeyText);
 	}
 
 	ImGui::Spacing();
 
-	// "You can change this later" text - wrapped and centered
 	const char* laterText = "You can change this later in General > Keybindings.";
-	float laterWidth = ImGui::CalcTextSize(laterText).x;
-	if (laterWidth > windowWidth - 40.0f) {
-		// Text is too wide, use wrapped text with centering
-		float laterTextPadding = 40.0f;
-
-		ImGui::SetCursorPosX(laterTextPadding);
-		ImGui::BeginGroup();
-		ImGui::PushTextWrapPos(windowWidth - laterTextPadding);
-
-		// Calculate the wrapped text size to center it
-		ImVec2 laterTextSize = ImGui::CalcTextSize(laterText, nullptr, true, windowWidth - laterTextPadding * 2);
-		float laterCenterOffset = (windowWidth - laterTextPadding * 2 - laterTextSize.x) * 0.5f;
-		if (laterCenterOffset > 0) {
-			ImGui::SetCursorPosX(laterTextPadding + laterCenterOffset);
-		}
-
-		ImGui::TextWrapped("%s", laterText);
-		ImGui::PopTextWrapPos();
-		ImGui::EndGroup();
-	} else {
-		// Text fits, center it normally
-		ImGui::SetCursorPosX((windowWidth - laterWidth) * 0.5f);
-		ImGui::Text("%s", laterText);
-	}
+	centerText(laterText);
+	ImGui::Text("%s", laterText);
 
 	ImGui::Spacing();
 
 	// Check for Enter or Escape key to close, but only if not capturing a hotkey
-	bool shouldClose = (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Escape)) && !menu->settingToggleKey;
-
-	if (shouldClose) {
-		MarkFirstTimeSetupComplete();
-		// Note: Settings are automatically saved to ensure welcome screen won't show again
+	bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+	if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || escapePressed) && !isCapturing) {
+		MarkFirstTimeSetupComplete(escapePressed ? VK_ESCAPE : VK_RETURN);
 	}
 
-	// Center the help text
+	// Help text with breathing animation
 	const char* helpText = "Press Escape or Enter to continue";
-	float helpWidth = ImGui::CalcTextSize(helpText).x;
-	ImGui::SetCursorPosX((windowWidth - helpWidth) * 0.5f);
-	ImGui::TextDisabled("%s", helpText);
+
+	ImGui::SetWindowFontScale(HELP_TEXT_SCALE);
+	centerText(helpText);
+	Util::DrawBreathingText(helpText);
+
+	ImGui::SetWindowFontScale(1.0f);
 
 	ImGui::End();
-	ImGui::PopStyleVar(2);
+	ImGui::PopStyleVar();
 }
 
 bool HomePageRenderer::ShouldShowFirstTimeSetup()
@@ -475,15 +575,18 @@ bool HomePageRenderer::ShouldShowFirstTimeSetup()
 	return !menu->GetSettings().FirstTimeSetupCompleted;
 }
 
-void HomePageRenderer::MarkFirstTimeSetupComplete()
+void HomePageRenderer::MarkFirstTimeSetupComplete(uint32_t closingKey)
 {
 	// Set the flag in the Menu settings
 	auto menu = Menu::GetSingleton();
 	menu->GetSettings().FirstTimeSetupCompleted = true;
+	// Ensure we are not capturing a hotkey when closing the dialog
+	menu->settingToggleKey = false;
 
 	// Immediately save settings to ensure the flag is persisted
 	// This prevents the welcome screen from showing again even if user doesn't manually save
 	globals::state->Save();
 
-	isFirstTimeSetupShown = true;  // Mark as shown this session
+	isFirstTimeSetupShown = true;
+	keyThatClosedDialog = closingKey;
 }

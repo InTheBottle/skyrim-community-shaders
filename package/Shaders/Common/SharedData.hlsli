@@ -2,6 +2,7 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
 
 namespace SharedData
@@ -27,6 +28,10 @@ namespace SharedData
 		bool InMapMenu;   // If the world/local map is open (note that the renderer is still deferred here)
 		bool HideSky;     // HideSky flag in WorldSpace, e.g. Blackreach
 		float MipBias;    // Offset to mip level for TAA sharpness#
+		float pad0;
+		float4 AmbientSHR;
+		float4 AmbientSHG;
+		float4 AmbientSHB;
 	};
 
 	struct GrassLightingSettings
@@ -37,7 +42,9 @@ namespace SharedData
 		bool OverrideComplexGrassSettings;
 
 		float BasicGrassBrightness;
-		float3 pad0;
+		bool EnableWrappedLighting;
+		float ComplexGrassThreshold;
+		float1 pad0;
 	};
 
 	struct CPMSettings
@@ -102,8 +109,8 @@ namespace SharedData
 
 		bool EnableSplashes;
 		bool EnableRipples;
-        uint EnableVanillaRipples;
-        float RaindropFxRange;
+		uint EnableVanillaRipples;
+		float RaindropFxRange;
 
 		float RaindropGridSizeRcp;
 		float RaindropIntervalRcp;
@@ -184,14 +191,18 @@ namespace SharedData
 
 	struct IBLSettings
 	{
-		uint EnableDiffuseIBL;
+		uint EnableIBL;
 		uint PreserveFogLuminance;
 		uint UseStaticIBL;
-		uint EnableInterior;
-		float DiffuseIBLScale;
 		float DALCAmount;
-		float IBLSaturation;
+		float EnvIBLScale;
+		float SkyIBLScale;
+		float EnvIBLSaturation;
+		float SkyIBLSaturation;
 		float FogAmount;
+		uint DALCMode;  // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky
+		uint DisableInInteriors;
+		float pad0;
 	};
 
 	struct ExtendedTranslucencySettings
@@ -220,14 +231,10 @@ namespace SharedData
 		float skyGamma;
 		float waterGamma;
 		float vlGamma;
-		float vanillaDiffuseMult;
-		float vanillaSpecularMult;
-		float grassDiffuseMult;
-		float grassSpecularMult;
 		float vanillaDiffuseColorMult;
-		float lightMult;
 		float directionalLightMult;
 		float pointLightMult;
+		float ambientMult;
 		float emitColorMult;
 		float glowmapMult;
 		float effectLightingMult;
@@ -315,6 +322,27 @@ struct ENBSettings
 		float WaterReflectionAmount;
 	};
 
+	struct TerrainBlendingSettings
+	{
+		uint Enabled;
+		uint3 _padding;
+	};
+
+	struct ExponentialHeightFogSettings
+	{
+		uint enabled;
+		uint useDynamicCubemaps;
+		float startDistance;
+		float fogHeight;
+		float fogHeightFalloff;
+		float fogDensity;
+		float directionalInscatteringMultiplier;
+		float directionalInscatteringExponent;
+		float4 inscatteringTint;
+		float cubemapMipLevel;
+		float3 pad;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -331,7 +359,9 @@ struct ENBSettings
 		IBLSettings iblSettings;
 		ExtendedTranslucencySettings extendedTranslucencySettings;
 		LinearLightingSettings linearLightingSettings;
-    ENBSettings enbSettings;
+		ENBSettings enbSettings;
+		TerrainBlendingSettings terrainBlendingSettings;
+		ExponentialHeightFogSettings exponentialHeightFogSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
@@ -384,6 +414,11 @@ struct ENBSettings
 		[flatten] if (cellInt.x < 5 && cellInt.x >= 0 && cellInt.y < 5 && cellInt.y >= 0)
 			waterData = WaterData[waterTile];
 		return waterData;
+	}
+
+	float3 GetAmbient(float3 normal)
+	{
+		return SphericalHarmonics::Unproject(AmbientSHR, AmbientSHG, AmbientSHB, normal);
 	}
 }
 #endif  // __SHARED_DATA_DEPENDENCY_HLSL__

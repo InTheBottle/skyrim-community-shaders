@@ -10,7 +10,7 @@ struct LinearLighting : Feature
 
 	virtual inline std::string GetName() override { return "Linear Lighting"; }
 	virtual inline std::string GetShortName() override { return "LinearLighting"; }
-	virtual std::string_view GetCategory() const override { return "Lighting"; }
+	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
@@ -42,15 +42,10 @@ struct LinearLighting : Feature
 		float vlGamma = 1.8f;
 
 		// Lighting multipliers
-		float vanillaDiffuseMult = 0.32f;
-		float vanillaSpecularMult = 0.32f;
-		float grassDiffuseMult = 0.32f;
-		float grassSpecularMult = 0.32f;
 		float vanillaDiffuseColorMult = 1.5f;
-		float lightMult = 1.0f;
-		float directionalLightMultExterior = 1.0f;
-		float directionalLightMultInterior = 1.0f;
+		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
+		float ambientMult = 0.67f;
 		float emitColorMult = 1.0f;
 		float glowmapMult = 0.5f;
 
@@ -81,14 +76,10 @@ struct LinearLighting : Feature
 		float skyGamma;
 		float waterGamma;
 		float vlGamma;
-		float vanillaDiffuseMult;
-		float vanillaSpecularMult;
-		float grassDiffuseMult;
-		float grassSpecularMult;
 		float vanillaDiffuseColorMult;
-		float lightMult;
-		float directionalLightMult;  // Computed based on interior/exterior
+		float directionalLightMult;
 		float pointLightMult;
+		float ambientMult;
 		float emitColorMult;
 		float glowmapMult;
 		float effectLightingMult;

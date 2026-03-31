@@ -169,37 +169,7 @@ namespace EffectExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			func(shader, pass, renderFlags);
-
-			auto state = globals::state;
-
-			state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::EffectShadows);
-
-			if (auto* shaderProperty = static_cast<RE::BSShaderProperty*>(pass->geometry->GetGeometryRuntimeData().properties[1].get())) {
-				if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kUniformScale)) {
-					state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::EffectShadows);
-				}
-			}
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-}
-
-namespace LightingExtensions
-{
-	struct BSLightingShader_SetupGeometry
-	{
-		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
-		{
-			func(shader, pass, renderFlags);
-
-			auto state = globals::state;
-
-			state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsTree);
-
-			if (auto userData = pass->geometry->GetUserData())
-				if (auto baseObject = userData->GetBaseObject())
-					if (baseObject->As<RE::TESObjectTREE>())
-						state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsTree);
+			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -236,7 +206,7 @@ namespace GrassExtensions
 
 			state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::GrassSphereNormal);
 
-			if (auto* shaderProperty = static_cast<RE::BSShaderProperty*>(pass->geometry->GetGeometryRuntimeData().properties[1].get())) {
+			if (auto* shaderProperty = static_cast<RE::BSShaderProperty*>(pass->geometry->GetGeometryRuntimeData().shaderProperty.get())) {
 				if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kEffectLighting)) {
 					state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::GrassSphereNormal);
 				}
@@ -362,8 +332,13 @@ struct BSShaderRenderTargets_Create
 	 *
 	 * Invokes the original function, then reinitializes global state and performs necessary setup for rendering targets.
 	 */
+	static inline Util::GameSetting iNumFocusShadow{ "Number of Focus Shadows (INI)",
+		"Controls the number of focus shadows.",
+		REL::Relocate<uintptr_t>(0, 0, 0x1ed6368), 4, 0, 4 };
+
 	static void thunk()
 	{
+		Util::SetGameSettingValue<std::int32_t>("iNumFocusShadow:Display", iNumFocusShadow, 0);
 		func();
 		globals::ReInit();
 		globals::state->Setup();
@@ -375,6 +350,10 @@ struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
 	{
+		// Reflex sleep/cap runs here by design: this executes before rendering work for the frame.
+		// UpdateReflex() enforces "once per frame" internally in case this hook is hit multiple times.
+		globals::features::upscaling.streamline.UpdateReflex();
+
 		bool blockedDevice = true;
 
 		auto menu = globals::menu;
@@ -416,6 +395,11 @@ struct BSInputDeviceManager_PollInputDevices
 		}
 
 		if (blockedDevice && menu->ShouldSwallowInput()) {  //the menu is open, eat all keypresses
+			// During active flying preview, let input reach the game for movement/camera
+			if (menu->IsPreviewFlying()) {
+				func(a_dispatcher, a_events);
+				return;
+			}
 			constexpr RE::InputEvent* const dummy[] = { nullptr };
 			func(a_dispatcher, dummy);
 			return;
@@ -464,6 +448,9 @@ namespace Hooks
 			auto menu = globals::menu;
 			if ((a_msg == WM_KILLFOCUS || a_msg == WM_SETFOCUS) && menu->initialized) {
 				menu->focusChanged = true;
+			}
+			if (a_msg == WM_CLOSE) {
+				globals::OnGameWindowClose();
 			}
 			return func(a_hwnd, a_msg, a_wParam, a_lParam);
 		}
@@ -842,7 +829,7 @@ namespace Hooks
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
-	 * Sets up function hooks and virtual method overrides for shader management, input polling, rendering pipeline stages, compute shader dispatch, material setup, batch rendering, and window procedure handling. Applies memory patches to adjust render pass cache sizes and offsets. Installs additional update hooks for frame timing and Reflex marker integration when not in VR mode.
+	 * Sets up function hooks and virtual method overrides for shader management, input polling, rendering pipeline stages, compute shader dispatch, material setup, batch rendering, and window procedure handling. Applies memory patches to adjust render pass cache sizes and offsets. Installs additional update hooks for frame timing and Reflex frame pacing where applicable.
 	 */
 	void Install()
 	{
@@ -851,6 +838,7 @@ namespace Hooks
 			stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
 		}
 
+		// This input hook also drives per-frame Reflex update (see BSInputDeviceManager_PollInputDevices::thunk).
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");
 		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B, 0x81));
 
@@ -906,7 +894,6 @@ namespace Hooks
 
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);
-		stl::write_vfunc<0x6, LightingExtensions::BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate(0x45B, 0x4F5));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 

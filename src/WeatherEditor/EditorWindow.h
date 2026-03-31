@@ -10,9 +10,10 @@
 #include "Weather/ReferenceEffectWidget.h"
 #include "Weather/VolumetricLightingWidget.h"
 #include "Weather/WeatherWidget.h"
-#include "Weather/WorldSpaceWidget.h"
 #include "WeatherUtils.h"
 #include "Widget.h"
+
+#include <unordered_map>
 
 class EditorWindow
 {
@@ -23,7 +24,17 @@ public:
 		return &singleton;
 	}
 
+	// Preview modes for exploring the scene without the full editor UI
+	enum class PreviewMode
+	{
+		None,              // Full editor UI visible
+		FreeCamera,        // Flying free camera (tfc), input to game
+		FreeCameraLocked,  // Camera locked in place, editor interactive
+		PlayMode           // Normal gameplay, no scroll interception
+	};
+
 	bool open = false;
+	PreviewMode previewMode = PreviewMode::None;
 	const static int maxRecordMarkers = 10;
 
 	// Owned by EditorWindow, created in Draw(), released in destructor
@@ -31,7 +42,6 @@ public:
 
 	// Widget collections owned by EditorWindow, created in SetupResources(), released in destructor
 	std::vector<std::unique_ptr<Widget>> weatherWidgets;
-	std::vector<std::unique_ptr<Widget>> worldSpaceWidgets;
 	std::vector<std::unique_ptr<Widget>> lightingTemplateWidgets;
 	std::vector<std::unique_ptr<Widget>> imageSpaceWidgets;
 	std::vector<std::unique_ptr<Widget>> volumetricLightingWidgets;
@@ -48,13 +58,46 @@ public:
 	RE::TESWeather* lockedWeather = nullptr;
 	bool weatherLockActive = false;
 
-	// Time pause for editing
-	bool timePaused = false;
-	float savedTimeScale = 1.0f;
+	/// When true, resets all window positions/sizes on next frame (auto-cleared).
+	bool resetLayout = false;
+
+	/// Bottom Y of the viewport window, set during layout for palette positioning.
+	float viewportBottomY = 0.0f;
+
+	// Time control constants
+	static constexpr float kVanillaTimeScale = 20.0f;
+	static constexpr float kGameHourMax = 23.99f;
+	static constexpr float kTimeScaleMin = 0.1f;
+	static constexpr float kTimeScaleMax = 4000.0f;
+	static constexpr float kMenuBarSliderWidth = 400.0f;
+
+	// Preview mode constants
+	static constexpr float kDefaultFlySpeed = 10.0f;
+	static constexpr float kMinFlySpeed = 1.0f;
+	static constexpr float kMaxFlySpeed = 100.0f;
+	static constexpr float kFlySpeedScrollStep = 2.0f;
+	static constexpr float kToggleActiveAlpha = 0.6f;
+	static constexpr float kToggleHoverAlpha = 0.8f;
+	static constexpr float kInactiveHoverAlpha = 0.25f;
+
+	// Preview mode state
+	float flySpeed = kDefaultFlySpeed;
+	ImVec2 savedMousePos = { -FLT_MAX, -FLT_MAX };
+
+	void EnterPreviewMode(PreviewMode mode);
+	void ExitPreviewMode();
+	bool IsInPreviewMode() const { return previewMode != PreviewMode::None; }
+	bool IsPreviewFlying() const { return previewMode == PreviewMode::FreeCamera || previewMode == PreviewMode::PlayMode; }
+	PreviewMode GetPreviewMode() const { return previewMode; }
+	void ToggleFreeCameraLock();
+	void AdjustFlySpeed(float scrollDelta);
 
 	// Vanity camera control
 	bool vanityCameraDisabled = false;
 	float savedVanityCameraDelay = 180.0f;
+
+	// Game HUD hiding (tm equivalent)
+	bool gameMenusHidden = false;
 
 	void ShowObjectsWindow();
 
@@ -73,12 +116,33 @@ public:
 	bool IsWeatherLocked() const { return weatherLockActive; }
 	RE::TESWeather* GetLockedWeather() const { return lockedWeather; }
 
+	// Time controls
 	void PauseTime();
 	void ResumeTime();
+	inline void TogglePause() { timePaused ? ResumeTime() : PauseTime(); }
+	void ResetTimeScale();
 	bool IsTimePaused() const { return timePaused; }
 
+	/// Call once per frame — handles sleep/wait menu and external state sync.
+	void UpdateTimeState();
+
+	/// Draw a game-hour slider. Returns true if calendar is valid.
+	bool DrawGameHourSlider(const char* label = "Game Time", const char* format = "%.2f");
+
+	/// Draw the full time controls panel (pause, game time, timescale).
+	void DrawTimeControls();
+
+	// Check if ESC key should close the editor (no popups open)
+	bool ShouldHandleEscapeKey() const;
+
+	static bool CanBeOpen();
 	void DisableVanityCamera();
 	void RestoreVanityCamera();
+	void HideGameMenus();
+	void ShowGameMenus();
+
+	/// Call every frame from the overlay renderer to track open/close transitions.
+	void UpdateOpenState();
 
 	// Undo system
 	struct UndoState
@@ -116,7 +180,6 @@ public:
 		};
 		std::map<std::string, std::string> markedRecords;
 		bool autoApplyChanges = true;
-		bool suppressDeleteWarning = false;
 		bool useTextButtons = false;
 		bool enableInheritFromParent = false;
 		float editorUIScale = 1.0f;
@@ -125,6 +188,7 @@ public:
 		int maxRecentWidgets = 10;
 		bool rememberOpenWidgets = true;
 		std::vector<std::string> lastOpenWidgets;
+		bool showViewport = true;
 
 		// Palette settings
 		struct PaletteColorEntry
@@ -167,6 +231,8 @@ public:
 	~EditorWindow();
 
 private:
+	friend class Widget;
+
 	void SaveAll();
 	void SaveSettings();
 	void LoadSettings();
@@ -180,6 +246,13 @@ private:
 	// Widget focus tracking for Ctrl+W
 	Widget* lastFocusedWidget = nullptr;
 
+	// Time control state
+	bool timePaused = false;
+	float savedTimeScale = kVanillaTimeScale;
+	float timeScaleSlider = kVanillaTimeScale;
+	bool wasRestoredForWait = false;
+	bool wasPausedBeforeWait = false;
+
 	// Sorting state
 	enum class SortColumn
 	{
@@ -187,8 +260,37 @@ private:
 		EditorID,
 		FormID,
 		File,
-		Status
+		Status,
+		JsonAttachment
 	};
 	SortColumn currentSortColumn = SortColumn::None;
 	bool sortAscending = true;
+
+	Widget* pendingDeleteWidget = nullptr;
+	bool pendingDeletePopupRequested = false;
+
+	void OnWidgetJsonAttachmentChanged(Widget* widget);
+	std::unordered_map<Widget*, bool> jsonAttachmentCache;
+	void RefreshJsonAttachmentCache(const std::vector<Widget*>& widgets);
+	bool HasCachedJsonAttachment(Widget* widget) const;
+	void InvalidateJsonAttachmentCache(Widget* widget = nullptr);
+
+	// Objects window filter state
+	enum class FilterColumn : int
+	{
+		All = 0,
+		EditorID,
+		FormID,
+		File,
+		Status,
+		Count_  // Sentinel – must equal IM_ARRAYSIZE(kFilterColumnNames)
+	};
+	std::string m_selectedCategory = "Weather";
+	std::string m_previousSelectedCategory = "Weather";
+	char m_filterBuffer[256] = {};
+	bool m_showOnlyFlagged = false;
+	bool m_showOnlyFavorites = false;
+	FilterColumn m_currentFilterColumn = FilterColumn::All;
+	void ResetObjectsFilter();
+	bool MatchesObjectFilter(Widget* w) const;
 };

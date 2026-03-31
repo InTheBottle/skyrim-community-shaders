@@ -59,9 +59,9 @@ namespace Permutation
 		static const uint InWorld = (1 << 0);
 		static const uint InReflection = (1 << 1);
 		static const uint IsBeastRace = (1 << 2);
-		static const uint EffectShadows = (1 << 3);
-		static const uint IsTree = (1 << 4);
-		static const uint GrassSphereNormal = (1 << 5);
+		static const uint GrassSphereNormal = (1 << 3);
+		static const uint EffectShadows = (1 << 4);
+		static const uint IsTree = (1 << 5);
 		static const uint IsSun = (1 << 6);
 	}
 
@@ -82,6 +82,8 @@ namespace Permutation
 		uint PixelShaderDescriptor;
 		uint ExtraShaderDescriptor;
 		uint ExtraFeatureDescriptor;
+
+		float EffectRadius;
 	};
 
 }

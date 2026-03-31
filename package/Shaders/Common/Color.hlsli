@@ -18,19 +18,28 @@ namespace Color
 {
 	static float GammaCorrectionValue = 2.2;
 
-	// [Jimenez et al. 2016, "Practical Realtime Strategies for Accurate Indirect Occlusion"]
-	float3 MultiBounceAO(float3 baseColor, float ao)
+	// Copyright 2019 Google LLC.
+	// SPDX-License-Identifier: Apache-2.0
+	// Polynomial approximation in GLSL for the Turbo colormap
+	// Original LUT: https://gist.github.com/mikhailov-work/ee72ba4191942acecc03fe6da94fc73f
+	// Authors: Anton Mikhailov (mikhailov@google.com), Ruofei Du (ruofei@google.com)
+	// https://ai.googleblog.com/2019/08/turbo-improved-rainbow-colormap-for.html
+	float3 TurboColormap(float x)
 	{
-		float3 a = 2.0404 * baseColor - 0.3324;
-		float3 b = -4.7951 * baseColor + 0.6417;
-		float3 c = 2.7552 * baseColor + 0.6903;
-		return max(ao, ((ao * a + b) * ao + c) * ao);
-	}
+		const float4 kRedVec4 = float4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
+		const float4 kGreenVec4 = float4(0.09140261, 2.19418839, 4.84296658, -14.18503333);
+		const float4 kBlueVec4 = float4(0.10667330, 12.64194608, -60.58204836, 110.36276771);
+		const float2 kRedVec2 = float2(-152.94239396, 59.28637943);
+		const float2 kGreenVec2 = float2(4.27729857, 2.82956604);
+		const float2 kBlueVec2 = float2(-89.90310912, 27.34824973);
 
-	// [Lagarde et al. 2014, "Moving Frostbite to Physically Based Rendering 3.0"]
-	float SpecularAOLagarde(float NdotV, float ao, float roughness)
-	{
-		return saturate(pow(abs(NdotV + ao), exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+		x = saturate(x);
+		float4 v4 = float4(1.0, x, x * x, x * x * x);
+		float2 v2 = v4.zw * v4.z;
+		return float3(
+			dot(v4, kRedVec4) + dot(v2, kRedVec2),
+			dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
+			dot(v4, kBlueVec4) + dot(v2, kBlueVec2));
 	}
 
 	float RGBToLuminance(float3 color)
@@ -76,32 +85,32 @@ namespace Color
 		return color;
 	}
 
-	float GammaToLinear(float color)
+	float SkyrimGammaToLinear(float color)
 	{
 		return pow(abs(color), 1.6);
 	}
 
-	float LinearToGamma(float color)
+	float LinearToSkyrimGamma(float color)
 	{
 		return pow(abs(color), 1.0 / 1.6);
 	}
 
-	float3 GammaToLinear(float3 color)
+	float3 SkyrimGammaToLinear(float3 color)
 	{
 		return pow(abs(color), 1.6);
 	}
 
-	float3 LinearToGamma(float3 color)
+	float3 LinearToSkyrimGamma(float3 color)
 	{
 		return pow(abs(color), 1.0 / 1.6);
 	}
 
-	float3 GammaToTrueLinear(float3 color)
+	float3 SrgbToLinear(float3 color)
 	{
 		return pow(abs(color), 2.2);
 	}
 
-	float3 TrueLinearToGamma(float3 color)
+	float3 LinearToSrgb(float3 color)
 	{
 		return pow(abs(color), 1.0 / 2.2);
 	}
@@ -115,43 +124,21 @@ namespace Color
 
 	const static float PBRLightingCompensation = ENABLE_LL ? 1.0 : Math::PI;
 
-	float3 GammaToLinearLuminancePreserving(float3 color)
-	{
-		if (!ENABLE_LL) {
-			return color;
-		}
-		float originalLuminance = max(RGBToLuminance(color), 1e-5);
-		float3 linearColorRaw = GammaToLinear(color / originalLuminance);
-		float scale = GammaToLinear(originalLuminance).x;
-		return linearColorRaw * scale;
-	}
-
-	float3 GammaToLinearLuminancePreservingLight(float3 color)
-	{
-		if (!ENABLE_LL) {
-			return color;
-		}
-		float originalLuminance = max(RGBToLuminance(color), 1e-5);
-		float3 linearColorRaw = pow(abs(color / originalLuminance), SharedData::linearLightingSettings.lightGamma);
-		float scale = originalLuminance;
-		return linearColorRaw * scale;
-	}
-
 	// Linear Lighting Functions
 	float3 LLGammaToLinear(float3 color)
 	{
-		return ENABLE_LL ? GammaToLinear(color) : color;
+		return ENABLE_LL ? SkyrimGammaToLinear(color) : color;
 	}
 
 	float3 LLLinearToGamma(float3 color)
 	{
-		return ENABLE_LL ? LinearToGamma(color) : color;
+		return ENABLE_LL ? LinearToSkyrimGamma(color) : color;
 	}
 
 	float3 Diffuse(float3 color)
 	{
 #	if defined(TRUE_PBR)
-		return ENABLE_LL ? color : TrueLinearToGamma(color);
+		return ENABLE_LL ? color : LinearToSrgb(color);
 #	else
 		return ENABLE_LL ? pow(abs(color), SharedData::linearLightingSettings.colorGamma) * SharedData::linearLightingSettings.vanillaDiffuseColorMult : color;
 #	endif
@@ -159,7 +146,7 @@ namespace Color
 
 	float3 Light(float3 color, bool isLinear = false)
 	{
-		color = (ENABLE_LL && !isLinear) ? pow(abs(color), SharedData::linearLightingSettings.lightGamma) * SharedData::linearLightingSettings.lightMult : color;
+		color = (ENABLE_LL && !isLinear) ? pow(abs(color), SharedData::linearLightingSettings.lightGamma) : color;
 #	if defined(TRUE_PBR)
 		return color * PBRLightingCompensation;  // Compensate for traditional Lambertian diffuse
 #	else
@@ -186,7 +173,7 @@ namespace Color
 	float3 Glowmap(float3 color)
 	{
 #	if defined(TRUE_PBR)
-		return ENABLE_LL ? color * SharedData::linearLightingSettings.glowmapMult : TrueLinearToGamma(color);
+		return ENABLE_LL ? color * SharedData::linearLightingSettings.glowmapMult : LinearToSrgb(color);
 #	else
 		return ENABLE_LL ? pow(abs(color), SharedData::linearLightingSettings.glowmapGamma) * SharedData::linearLightingSettings.glowmapMult : color;
 #	endif
@@ -194,7 +181,7 @@ namespace Color
 
 	float3 Ambient(float3 color)
 	{
-		return ENABLE_LL ? pow(abs(color), SharedData::linearLightingSettings.ambientGamma) : color;
+		return ENABLE_LL ? pow(abs(color), SharedData::linearLightingSettings.ambientGamma) * SharedData::linearLightingSettings.ambientMult : color;
 	}
 
 	float3 Fog(float3 color)
@@ -262,47 +249,32 @@ namespace Color
 
 	float3 RadianceToLinear(float3 color)
 	{
-		return ENABLE_LL ? color : GammaToLinear(color);
+		return ENABLE_LL ? color : SkyrimGammaToLinear(color);
 	}
 
 	float IrradianceToLinear(float color)
 	{
-		return ENABLE_LL ? color : GammaToLinear(color);
+		return ENABLE_LL ? color : SkyrimGammaToLinear(color);
 	}
 
 	float IrradianceToGamma(float color)
 	{
-		return ENABLE_LL ? color : LinearToGamma(color);
+		return ENABLE_LL ? color : LinearToSkyrimGamma(color);
 	}
 
 	float3 IrradianceToLinear(float3 color)
 	{
-		return ENABLE_LL ? color : GammaToLinear(color);
+		return ENABLE_LL ? color : SkyrimGammaToLinear(color);
 	}
 
 	float3 IrradianceToGamma(float3 color)
 	{
-		return ENABLE_LL ? color : LinearToGamma(color);
+		return ENABLE_LL ? color : LinearToSkyrimGamma(color);
 	}
 
-	float VanillaDiffuseMult()
+	float VanillaNormalization()
 	{
-		return ENABLE_LL ? SharedData::linearLightingSettings.vanillaDiffuseMult : 1.0f;
-	}
-
-	float VanillaSpecularMult()
-	{
-		return ENABLE_LL ? SharedData::linearLightingSettings.vanillaSpecularMult : 1.0f;
-	}
-
-	float GrassDiffuseMult()
-	{
-		return ENABLE_LL ? SharedData::linearLightingSettings.grassDiffuseMult : 1.0f;
-	}
-
-	float GrassSpecularMult()
-	{
-		return ENABLE_LL ? SharedData::linearLightingSettings.grassSpecularMult : 1.0f;
+		return ENABLE_LL ? 1.0 / Math::PI : 1.0f;
 	}
 
 	float VanillaDiffuseColorMult()
@@ -310,10 +282,14 @@ namespace Color
 		return ENABLE_LL ? SharedData::linearLightingSettings.vanillaDiffuseColorMult : 1.0f;
 	}
 #else
+	const static float PBRLightingScale = 1.0;
+	const static float ReflectionNormalisationScale = 1.0;
+	const static float PBRLightingCompensation = Math::PI;
+
 	float3 Diffuse(float3 color)
 	{
 #	if defined(TRUE_PBR)
-		return TrueLinearToGamma(color);
+		return LinearToSrgb(color);
 #	else
 		return color;
 #	endif

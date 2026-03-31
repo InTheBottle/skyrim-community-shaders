@@ -2,6 +2,26 @@
 
 #include "State.h"
 
+namespace
+{
+	void RestoreFeatureUserSettings(WeatherVariables::GlobalWeatherRegistry* registry, const std::string& featureName)
+	{
+		if (!registry) {
+			return;
+		}
+
+		registry->EndFeatureTransition(featureName);
+		auto* featureRegistry = registry->GetFeatureRegistry(featureName);
+		if (!featureRegistry) {
+			return;
+		}
+
+		for (const auto& var : featureRegistry->GetVariables()) {
+			var->SetToUserSettings();
+		}
+	}
+}
+
 WeatherManager::CurrentWeathers WeatherManager::GetCurrentWeathers()
 {
 	CurrentWeathers result;
@@ -12,8 +32,15 @@ WeatherManager::CurrentWeathers WeatherManager::GetCurrentWeathers()
 	}
 
 	result.currentWeather = sky->currentWeather;
-	result.lastWeather = sky->lastWeather;
 	result.lerpFactor = sky->currentWeatherPct;
+
+	// Update cache: store current lastWeather if it exists, otherwise keep the cached one
+	if (sky->lastWeather) {
+		cachedLastWeather = sky->lastWeather;
+	}
+
+	// Use cached last weather if sky->lastWeather is null
+	result.lastWeather = sky->lastWeather ? sky->lastWeather : cachedLastWeather;
 
 	return result;
 }
@@ -48,9 +75,9 @@ void WeatherManager::LoadPerWeatherSettingsFromDisk()
 			settingsFile.close();
 
 			// Store the entire weather settings in cache
-			// The structure is expected to be: { "FeatureName": { settings }, ... }
-			if (weatherData.is_object()) {
-				for (auto& [featureName, featureSettings] : weatherData.items()) {
+			// The structure is expected to be: { "featureSettings": { "FeatureName": { settings }, ... }
+			if (weatherData.is_object() && weatherData.contains("featureSettings") && weatherData["featureSettings"].is_object()) {
+				for (auto& [featureName, featureSettings] : weatherData["featureSettings"].items()) {
 					perWeatherSettingsCache[weatherKey][featureName] = featureSettings;
 				}
 				logger::info("Loaded settings for weather: {}", weatherKey);
@@ -71,8 +98,14 @@ void WeatherManager::UpdateFeatures()
 	bool weatherChanged = (currentWeathers.currentWeather != lastKnownWeather.currentWeather) ||
 	                      (currentWeathers.lastWeather != lastKnownWeather.lastWeather);
 
-	// Always update if lerp factor changes or weather changed
-	if (weatherChanged || std::abs(currentWeathers.lerpFactor - lastKnownWeather.lerpFactor) > 0.001f) {
+	// Detect if a new transition is starting
+	bool transitionStarting = weatherChanged && currentWeathers.lerpFactor < 1.0f;
+
+	// Detect if transition just completed
+	bool transitionEnding = lastKnownWeather.lerpFactor < 1.0f && currentWeathers.lerpFactor >= 1.0f;
+
+	// Always update if lerp factor changes, weather changed, or transition just completed
+	if (weatherChanged || transitionEnding || std::abs(currentWeathers.lerpFactor - lastKnownWeather.lerpFactor) > 0.001f) {
 		auto* globalRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();
 
 		// Get all features and update those that have registered weather variables
@@ -87,19 +120,44 @@ void WeatherManager::UpdateFeatures()
 			if (globalRegistry->HasWeatherSupport(featureName)) {
 				json currWeatherSettings;
 				json nextWeatherSettings;
+				bool hasCurrOverride = false;
+				bool hasNextOverride = false;
 
 				// Load settings for last weather (from)
 				if (currentWeathers.lastWeather && currentWeathers.lerpFactor < 1.0f) {
-					LoadSettingsFromWeather(currentWeathers.lastWeather, featureName, currWeatherSettings);
+					hasCurrOverride = LoadSettingsFromWeather(currentWeathers.lastWeather, featureName, currWeatherSettings);
 				}
 
 				// Load settings for current weather (to)
 				if (currentWeathers.currentWeather) {
-					LoadSettingsFromWeather(currentWeathers.currentWeather, featureName, nextWeatherSettings);
+					hasNextOverride = LoadSettingsFromWeather(currentWeathers.currentWeather, featureName, nextWeatherSettings);
 				}
 
-				// Let the global registry handle variable interpolation
-				globalRegistry->UpdateFeatureFromWeathers(featureName, currWeatherSettings, nextWeatherSettings, currentWeathers.lerpFactor);
+				const bool hasAnyWeatherOverride = hasCurrOverride || hasNextOverride;
+
+				// Handle transition lifecycle
+				if (transitionStarting && hasAnyWeatherOverride) {
+					// Begin new transition - cache the "from" values
+					globalRegistry->BeginFeatureTransition(featureName, currWeatherSettings);
+				}
+
+				// No weather overrides on either side: keep in-memory settings unchanged
+				if (!hasAnyWeatherOverride) {
+					globalRegistry->EndFeatureTransition(featureName);
+					continue;
+				}
+
+				// Update feature variables
+				if (currentWeathers.lerpFactor >= 1.0f && !hasNextOverride) {
+					// Transition complete, no override on destination - reset to user settings
+					RestoreFeatureUserSettings(globalRegistry, featureName);
+				} else {
+					// In transition or has override - interpolate
+					globalRegistry->UpdateFeatureFromWeathers(featureName, currWeatherSettings, nextWeatherSettings, currentWeathers.lerpFactor);
+					if (transitionEnding) {
+						globalRegistry->EndFeatureTransition(featureName);
+					}
+				}
 			}
 		}
 
@@ -157,28 +215,36 @@ void WeatherManager::SaveSettingsToWeather(RE::TESWeather* weather, const std::s
 		}
 	}
 
+	// Ensure weatherData is an object and has featureSettings
+	if (!weatherData.is_object()) {
+		weatherData = json::object();
+	}
+	if (!weatherData.contains("featureSettings") || !weatherData["featureSettings"].is_object()) {
+		weatherData["featureSettings"] = json::object();
+	}
+	auto& featureSettings = weatherData["featureSettings"];
+
 	// Update with new feature settings or remove feature entry if settings empty
 	if (settings.is_object() && settings.empty()) {
 		// Remove feature entry from loaded JSON
-		if (weatherData.is_object()) {
-			weatherData.erase(featureName);
-		}
+		featureSettings.erase(featureName);
 	} else {
-		weatherData[featureName] = settings;
+		featureSettings[featureName] = settings;
 	}
 
 	// Write back to disk
-	if (weatherData.is_object() && weatherData.empty()) {
-		// No features left for this weather — remove file if it exists
-		if (std::filesystem::exists(filePath)) {
-			try {
-				std::filesystem::remove(filePath);
-				logger::info("Removed weather settings file (no features remain): {}", filePath);
-			} catch (const std::filesystem::filesystem_error& e) {
-				logger::warn("Failed to remove empty weather settings file ({}): {}", filePath, e.what());
-			}
+	// Only delete file if featureSettings is empty AND weatherData contains only featureSettings (no other data)
+	if (featureSettings.empty() && weatherData.size() == 1 && weatherData.contains("featureSettings")) {
+		std::error_code ec;
+		if (std::filesystem::remove(filePath, ec)) {
+			logger::info("Removed weather settings file (no data remain): {}", filePath);
+			return;
 		}
-		return;
+		if (ec == std::errc::no_such_file_or_directory) {
+			return;
+		}
+		logger::warn("Failed to remove empty weather settings file ({}): {}", filePath, ec.message());
+		// fall through to write updated JSON as a best-effort fallback
 	}
 
 	std::ofstream settingsFile(filePath);
@@ -218,13 +284,7 @@ bool WeatherManager::LoadSettingsFromWeather(RE::TESWeather* weather, const std:
 				return false;
 			}
 
-			// Copy all settings except the __enabled flag
-			o_json = json::object();
-			for (auto it = featureJson.begin(); it != featureJson.end(); ++it) {
-				if (it.key() != "__enabled") {
-					o_json[it.key()] = it.value();
-				}
-			}
+			o_json = featureJson;
 			return true;
 		}
 	}
@@ -257,9 +317,20 @@ bool WeatherManager::HasWeatherSettings(RE::TESWeather* weather) const
 	return perWeatherSettingsCache.find(weatherKey) != perWeatherSettingsCache.end();
 }
 
+void WeatherManager::ClearAllFeatureSettingsForWeather(RE::TESWeather* weather)
+{
+	if (!weather) {
+		return;
+	}
+
+	std::string weatherKey = GetWeatherKey(weather);
+	perWeatherSettingsCache.erase(weatherKey);
+}
+
 void WeatherManager::ClearCache()
 {
 	perWeatherSettingsCache.clear();
 	lastKnownWeather = CurrentWeathers();
+	cachedLastWeather = nullptr;
 	logger::info("Cleared WeatherManager cache");
 }

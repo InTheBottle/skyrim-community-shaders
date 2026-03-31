@@ -1,6 +1,6 @@
 #include "WetnessEffects.h"
 #include "Menu.h"
-#include "WeatherPicker.h"
+#include "WeatherEditor.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::Settings,
@@ -477,14 +477,14 @@ void WetnessEffects::DrawSettings()
 
 	ImGui::Spacing();
 	ImGui::Spacing();
-	auto& weatherPicker = globals::features::weatherPicker;
-	if (weatherPicker.loaded) {
-		if (ImGui::SmallButton(("Open " + weatherPicker.GetName()).c_str())) {
+	auto& weatherEditor = globals::features::weatherEditor;
+	if (weatherEditor.loaded) {
+		if (ImGui::SmallButton(("Open " + weatherEditor.GetName()).c_str())) {
 			// Navigate to the replacement feature in the menu
-			Menu::GetSingleton()->SelectFeatureMenu(weatherPicker.GetShortName());
+			Menu::GetSingleton()->SelectFeatureMenu(weatherEditor.GetShortName());
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Open the installed %s feature", weatherPicker.GetShortName().c_str());
+			ImGui::Text("Open the installed %s feature", weatherEditor.GetShortName().c_str());
 		}
 	}
 
@@ -572,8 +572,8 @@ float WetnessEffects::GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObjec
 		return 0.0f;
 	}
 
-	auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-	auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
+	auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
+	auto shaderProp = effect.get();
 	auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 
 	if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
@@ -713,8 +713,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 							precipObject = precip->lastPrecip;
 						}
 						if (precipObject) {
-							auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-							auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
+							auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
+							auto shaderProp = effect.get();
 							auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 							auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
 							data.OcclusionViewProj = rain->occlusionProjection;

@@ -6,6 +6,15 @@
 // Global widget context for undo tracking
 static Widget* g_currentWidget = nullptr;
 
+void SetupWidgetWindowDefaults()
+{
+	const float scale = Util::GetUIScale();
+	const auto cond = EditorWindow::GetSingleton()->resetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+	ImGui::SetNextWindowSize(
+		ImVec2(WidgetDefaults::kInitialWidth * scale, WidgetDefaults::kInitialHeight * scale),
+		cond);
+}
+
 bool ContainsStringIgnoreCase(const std::string_view a_string, const std::string_view a_substring)
 {
 	if (a_substring.empty())
@@ -398,6 +407,17 @@ namespace TOD
 	// Static debounced tracker for TOD slider rows
 	static DebouncedTracker<float> s_todSliderTracker;
 
+	static void DrawCenteredLabel(const char* label)
+	{
+		ImGui::AlignTextToFramePadding();
+		float colWidth = ImGui::GetColumnWidth();
+		float textWidth = ImGui::CalcTextSize(label).x;
+		float offset = (colWidth - textWidth) * 0.5f;
+		if (offset > 0.0f)
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
+		ImGui::Text("%s", label);
+	}
+
 	bool DrawTODSliderRow(const char* label, float values[4], float minValue, float maxValue, const char* format)
 	{
 		const double debounceDelay = 2.0;
@@ -409,11 +429,11 @@ namespace TOD
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 		ImGui::TableSetColumnIndex(1);
 
 		float totalWidth = ImGui::GetContentRegionAvail().x;
-		float sliderWidth = (totalWidth - 3 * 8.0f) / 4.0f;
+		float sliderWidth = (totalWidth - 3 * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
 
 		for (int i = 0; i < Count; ++i) {
 			if (i > 0)
@@ -468,7 +488,7 @@ namespace TOD
 		if (!anyActive)
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 
 		if (!anyActive)
 			ImGui::PopStyleVar();
@@ -549,7 +569,11 @@ namespace TOD
 					}
 				}
 
-				if (ImGui::ColorPicker3((id + "_picker").c_str(), (float*)&colors[i], ImGuiColorEditFlags_NoAlpha)) {
+				// Use ColorPicker4 with ref_col to show original color preview
+				float col4[4] = { colors[i].x, colors[i].y, colors[i].z, 1.0f };
+				float refCol[4] = { colorCache[id].x, colorCache[id].y, colorCache[id].z, 1.0f };
+				if (ImGui::ColorPicker4((id + "_picker").c_str(), col4, ImGuiColorEditFlags_NoAlpha, refCol)) {
+					colors[i] = { col4[0], col4[1], col4[2] };
 					changed = true;
 				}
 				ImGui::EndPopup();
@@ -587,11 +611,12 @@ namespace TOD
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 		ImGui::TableSetColumnIndex(1);
 
 		float totalWidth = ImGui::GetContentRegionAvail().x;
-		float checkboxWidth = 20.0f;
+		const float scale = Util::GetUIScale();
+		float checkboxWidth = 20.0f * scale;
 		float spacing = ImGui::GetStyle().ItemSpacing.x;
 		float sliderWidth = (totalWidth - (static_cast<int>(Count) - 1) * spacing - (parentValues ? static_cast<int>(Count) * checkboxWidth : 0)) / static_cast<float>(Count);
 
@@ -603,7 +628,7 @@ namespace TOD
 
 			// Per-column inherit checkbox
 			if (parentValues) {
-				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1, 1));
+				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1 * scale, 1 * scale));
 				ImGui::SetNextItemWidth(checkboxWidth);
 				std::string inheritId = std::string("##inherit_") + label + std::to_string(i);
 				if (ImGui::Checkbox(inheritId.c_str(), &inheritFlags[i])) {
@@ -615,7 +640,7 @@ namespace TOD
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Inherit from parent");
 				ImGui::PopStyleVar();
-				ImGui::SameLine(0, 2);
+				ImGui::SameLine(0, 2 * scale);
 			}
 
 			// Slider (disabled if inheriting)
@@ -670,6 +695,7 @@ namespace TOD
 
 	bool DrawTODColorRow(const char* label, float3 colors[4], bool& inheritFlag, const float3 parentColors[4])
 	{
+		const float scale = Util::GetUIScale();
 		float factors[4];
 		GetTimeOfDayFactors(factors);
 		bool changed = false;
@@ -688,14 +714,14 @@ namespace TOD
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 
 		// Draw label text
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 
 		// Draw inherit checkbox right under the label
 		if (parentColors) {
 			ImGui::SameLine();
 			ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
 			ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2 * scale, 2 * scale));
 
 			std::string inheritId = std::string("##inherit_") + label;
 			if (ImGui::Checkbox(inheritId.c_str(), &inheritFlag)) {
@@ -747,12 +773,14 @@ namespace TOD
 			ImVec4 color = ImVec4(colors[i].x, colors[i].y, colors[i].z, 1.0f);
 
 			static std::map<std::string, float3> colorCache;
+			static std::map<std::string, float3> originalColorCache;
 			static std::string activeColorId;
 
 			// Disable editing when inherited
 			ImGui::BeginDisabled(inheritFlag);
 			if (ImGui::ColorButton(id.c_str(), color, ImGuiColorEditFlags_NoAlpha, ImVec2(buttonSize, buttonSize))) {
 				colorCache[id] = colors[i];
+				originalColorCache[id] = colors[i];
 				activeColorId = id;
 				ImGui::OpenPopup(id.c_str());
 			}
@@ -794,11 +822,18 @@ namespace TOD
 				if (colorCache.find(id) == colorCache.end()) {
 					colorCache[id] = colors[i];
 				}
+				if (originalColorCache.find(id) == originalColorCache.end()) {
+					originalColorCache[id] = colors[i];
+				}
 
 				float3& cachedColor = colorCache[id];
 				bool colorChanged = false;
 
-				if (ImGui::ColorPicker3("##picker", &cachedColor.x, ImGuiColorEditFlags_NoAlpha)) {
+				// Use ColorPicker4 with ref_col to show original color preview
+				float col4[4] = { cachedColor.x, cachedColor.y, cachedColor.z, 1.0f };
+				float refCol[4] = { originalColorCache[id].x, originalColorCache[id].y, originalColorCache[id].z, 1.0f };
+				if (ImGui::ColorPicker4("##picker", col4, ImGuiColorEditFlags_NoAlpha, refCol)) {
+					cachedColor = { col4[0], col4[1], col4[2] };
 					colors[i] = cachedColor;
 					colorChanged = true;
 					changed = true;
@@ -834,7 +869,7 @@ namespace TOD
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 		ImGui::TableSetColumnIndex(1);
 
 		float totalWidth = ImGui::GetContentRegionAvail().x;
@@ -869,6 +904,7 @@ namespace TOD
 
 	bool DrawTODFloatRow(const char* label, float values[4], bool& inheritFlag, const float parentValues[4], float minValue, float maxValue, const char* format)
 	{
+		const float scale = Util::GetUIScale();
 		float factors[4];
 		GetTimeOfDayFactors(factors);
 		bool changed = false;
@@ -876,14 +912,14 @@ namespace TOD
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 
 		// Draw inherit checkbox
 		if (parentValues) {
 			ImGui::SameLine();
 			ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
 			ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2 * scale, 2 * scale));
 
 			std::string inheritId = std::string("##inherit_") + label;
 			if (ImGui::Checkbox(inheritId.c_str(), &inheritFlag)) {
@@ -939,11 +975,11 @@ namespace TOD
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
+		DrawCenteredLabel(label);
 		ImGui::TableSetColumnIndex(1);
 
 		float totalWidth = ImGui::GetContentRegionAvail().x;
-		float sliderWidth = (totalWidth - 3 * 8.0f) / 4.0f;
+		float sliderWidth = (totalWidth - 3 * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
 
 		for (int i = 0; i < Count; ++i) {
 			if (i > 0)
@@ -970,10 +1006,12 @@ namespace TOD
 		return changed;
 	}
 
-	bool BeginTODTable(const char* tableId)
+	bool BeginTODTable(const char* tableId, float paramColumnWidth)
 	{
+		if (paramColumnWidth <= 0.0f)
+			paramColumnWidth = WidgetDefaults::kTODLabelWidth;
 		if (ImGui::BeginTable(tableId, 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)) {
-			ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+			ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed, paramColumnWidth * Util::GetUIScale());
 			ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 			return true;
 		}
@@ -997,14 +1035,15 @@ namespace TOD
 
 bool BeginWidgetSearchBar(char* searchBuffer, size_t bufferSize, bool& searchActive)
 {
-	// Check for Ctrl+F to activate search
+	const float scale = Util::GetUIScale();
+
 	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
 		ImGui::IsKeyPressed(ImGuiKey_F, false) && ImGui::GetIO().KeyCtrl) {
 		searchActive = true;
 	}
 
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.25f, 0.3f, 1.0f));
-	ImGui::SetNextItemWidth(-100.0f);
+	ImGui::SetNextItemWidth(-100.0f * scale);
 
 	if (searchActive) {
 		ImGui::SetKeyboardFocusHere();
@@ -1017,7 +1056,7 @@ bool BeginWidgetSearchBar(char* searchBuffer, size_t bufferSize, bool& searchAct
 
 	// Clear button
 	ImGui::SameLine();
-	if (Util::ButtonWithFlash("Clear", ImVec2(90, 0))) {
+	if (Util::ButtonWithFlash("Clear", ImVec2(90 * scale, 0))) {
 		searchBuffer[0] = '\0';
 	}
 
@@ -1040,7 +1079,7 @@ namespace PropertyDrawer
 	bool BeginTable(const char* tableId, float labelWidth)
 	{
 		if (ImGui::BeginTable(tableId, 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)) {
-			ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed, labelWidth);
+			ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed, labelWidth * Util::GetUIScale());
 			ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 			return true;
 		}
@@ -1061,6 +1100,16 @@ namespace PropertyDrawer
 		ImGui::Separator();
 	}
 
+	void DrawLabel(const char* label)
+	{
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text("%s", label);
+		ImGui::TableSetColumnIndex(1);
+		ImGui::SetNextItemWidth(-1);
+	}
+
 	bool MatchesSearch(const char* label, const char* searchBuffer)
 	{
 		if (!searchBuffer || searchBuffer[0] == '\0')
@@ -1074,11 +1123,7 @@ namespace PropertyDrawer
 		if (!MatchesSearch(label, searchBuffer))
 			return false;
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
-		ImGui::TableSetColumnIndex(1);
-		ImGui::SetNextItemWidth(-1);
+		DrawLabel(label);
 
 		std::string id = std::string("##") + label;
 		return ImGui::SliderFloat(id.c_str(), &value, minVal, maxVal, format);
@@ -1089,11 +1134,7 @@ namespace PropertyDrawer
 		if (!MatchesSearch(label, searchBuffer))
 			return false;
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
-		ImGui::TableSetColumnIndex(1);
-		ImGui::SetNextItemWidth(-1);
+		DrawLabel(label);
 
 		std::string id = std::string("##") + label;
 		return ImGui::SliderInt(id.c_str(), &value, minVal, maxVal);
@@ -1104,11 +1145,7 @@ namespace PropertyDrawer
 		if (!MatchesSearch(label, searchBuffer))
 			return false;
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
-		ImGui::TableSetColumnIndex(1);
-		ImGui::SetNextItemWidth(-1);
+		DrawLabel(label);
 
 		return WeatherUtils::DrawColorEdit(label, value);
 	}
@@ -1118,10 +1155,7 @@ namespace PropertyDrawer
 		if (!MatchesSearch(label, searchBuffer))
 			return false;
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%s", label);
-		ImGui::TableSetColumnIndex(1);
+		DrawLabel(label);
 
 		std::string id = std::string("##") + label;
 		return ImGui::Checkbox(id.c_str(), &value);

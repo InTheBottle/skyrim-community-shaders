@@ -19,6 +19,7 @@ struct DisplacementParams
 
 namespace ExtendedMaterials
 {
+	static const float ShadowIntensity = 2.0;
 
 	float ScaleDisplacement(float displacement, DisplacementParams params)
 	{
@@ -35,42 +36,45 @@ namespace ExtendedMaterials
 		return float4(AdjustDisplacementNormalized(displacement.x, params), AdjustDisplacementNormalized(displacement.y, params), AdjustDisplacementNormalized(displacement.z, params), AdjustDisplacementNormalized(displacement.w, params));
 	}
 
-	float GetMipLevel(float2 coords, Texture2D<float4> tex)
+	float GetMipLevel(float2 coords, Texture2D<float4> tex, float screenNoise)
 	{
 		// Compute the current gradients:
 		float2 textureDims;
 		tex.GetDimensions(textureDims.x, textureDims.y);
 
-		#if !defined(PARALLAX) && !defined(TRUE_PBR)
-				textureDims /= 2.0;
-		#endif
+#if !defined(PARALLAX) && !defined(TRUE_PBR)
+		textureDims /= 2.0;
+#endif
 
-		#if defined(VR)
-				textureDims /= 2.0;
-		#endif
+#if defined(VR)
+		textureDims /= 2.0;
+#endif
 
-			float2 texCoordsPerSize = coords * textureDims;
+		float2 texCoordsPerSize = coords * textureDims;
 
-			float2 dxSize = ddx(texCoordsPerSize);
-			float2 dySize = ddy(texCoordsPerSize);
+		float2 dxSize = ddx(texCoordsPerSize);
+		float2 dySize = ddy(texCoordsPerSize);
 
-			// Find min of change in u and v across quad: compute du and dv magnitude across quad
-			//float2 dTexCoords = dxSize * dxSize + dySize * dySize;
+		// Find min of change in u and v across quad: compute du and dv magnitude across quad
+		//float2 dTexCoords = dxSize * dxSize + dySize * dySize;
 
-			// Standard mipmapping uses max here
-			float minTexCoordDelta = min(dot(dxSize, dxSize), dot(dySize, dySize));
+		// Standard mipmapping uses max here
+		float minTexCoordDelta = min(dot(dxSize, dxSize), dot(dySize, dySize));
 
-			// Compute the current mip level  (* 0.5 is effectively computing a square root before )
-			float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
+		// Compute the current mip level  (* 0.5 is effectively computing a square root before )
+		float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
 
-		#if !defined(PARALLAX) && !defined(TRUE_PBR)
-				mipLevel++;
-		#endif
+#if !defined(PARALLAX) && !defined(TRUE_PBR)
+		mipLevel++;
+#endif
 
-		// VR: Apply more conservative mipmap level adjustments to reduce over-blurring and shimmering
-		#if defined(VR)
-				mipLevel++;
-		#endif
+// VR: Apply more conservative mipmap level adjustments to reduce over-blurring and shimmering
+#if defined(VR)
+		mipLevel++;
+#endif
+
+		// Stochastic mip selection: use screen noise to select between adjacent mip levels
+		mipLevel = floor(mipLevel) + (screenNoise < frac(mipLevel) ? 1.0 : 0.0);
 
 		return mipLevel;
 	}
@@ -176,11 +180,13 @@ namespace ExtendedMaterials
 		ProcessTerrainHeightWeights(heightBlend, w1, w2, heights, weights, total);
 #		if defined(TERRAIN_VARIATION)
 		// Boost height by 30% when terrain variation is enabled to enhance depth perception
-		[branch] if (SharedData::terrainVariationSettings.enableTilingFix) {
+		[branch] if (SharedData::terrainVariationSettings.enableTilingFix)
+		{
 			total *= 1.3;
 		}
 #		endif
-		return total;	}
+		return total;
+	}
 #	else
 	float GetTerrainHeight(float screenNoise, PS_INPUT input, float2 coords, float mipLevels[6], DisplacementParams params[6], float blendFactor, float4 w1, float2 w2,
 #		if defined(TERRAIN_VARIATION)
@@ -298,7 +304,8 @@ namespace ExtendedMaterials
 		ProcessTerrainHeightWeights(heightBlend, w1, w2, heights, weights, total);
 #		if defined(TERRAIN_VARIATION)
 		// Boost height by 30% when terrain variation is enabled to enhance depth perception
-		[branch] if (SharedData::terrainVariationSettings.enableTilingFix) {
+		[branch] if (SharedData::terrainVariationSettings.enableTilingFix)
+		{
 			total *= 1.3;
 		}
 #		endif
@@ -325,7 +332,9 @@ namespace ExtendedMaterials
 		viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3 + params.FlattenAmount;  // Fix for objects at extreme viewing angles
 #endif
 
-		float nearBlendToFar = saturate(distance / 2048.0);
+		float distSq = dot(distance, distance);
+		float nearBlendToFar = smoothstep(1024.0 * 1024.0, 2048.0 * 2048.0, distSq);
+
 #if defined(LANDSCAPE)
 #	if defined(TRUE_PBR)
 		float blendFactor = SharedData::extendedMaterialSettings.EnableHeightBlending ? sqrt(saturate(1 - nearBlendToFar)) : 0;
@@ -349,8 +358,6 @@ namespace ExtendedMaterials
 
 #if defined(LANDSCAPE)
 		if (nearBlendToFar < 1.0) {
-			uint numSteps = uint((max(6, scale * 8) * (1.0 - nearBlendToFar)) + 0.5);
-			numSteps = clamp((numSteps + 3) & ~0x03, 4, max(8, scale * 8));
 #else
 #	if defined(TRUE_PBR)
 		if ((PBRFlags & PBR::Flags::InterlayerParallax) != 0 || nearBlendToFar < 1.0)
@@ -358,12 +365,13 @@ namespace ExtendedMaterials
 		if (nearBlendToFar < 1.0)
 #	endif
 		{
-			float maxSteps = SharedData::InInterior ? 8 : 16;
-			uint numSteps = uint((maxSteps * (1.0 - nearBlendToFar)) + 0.5);
-			numSteps = clamp((numSteps + 3) & ~0x03, 4, max(6, scale * maxSteps));
 #endif
+			const float maxSteps = 16;
+			uint numSteps = uint((maxSteps * (1.0 - nearBlendToFar)) + 0.5);
+			numSteps = clamp(numSteps, 4, max(4, uint(scale * maxSteps)));
+			numSteps = (numSteps + 2) & ~3;
+
 			float stepSize = rcp(numSteps);
-			stepSize += (noise * 2.0 - 1.0) * stepSize * stepSize;
 
 			float2 offsetPerStep = viewDirTS.xy * float2(maxHeight, maxHeight) * stepSize.xx;
 			float2 prevOffset = viewDirTS.xy * float2(minHeight, minHeight) + coords.xy;
@@ -521,7 +529,7 @@ namespace ExtendedMaterials
 				sh.z = AdjustDisplacementNormalized(tex.SampleLevel(texSampler, coords + rayDir * multipliers.z, mipLevel)[channel], params);
 			if (quality > 0.75)
 				sh.w = AdjustDisplacementNormalized(tex.SampleLevel(texSampler, coords + rayDir * multipliers.w, mipLevel)[channel], params);
-			return pow(1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality, 2.0);
+			return 1.0 - saturate(dot(max(0, sh - sh0), ShadowIntensity)) * quality;
 		}
 		return 1.0;
 	}
@@ -563,18 +571,7 @@ namespace ExtendedMaterials
 			if (quality > 0.75)
 				sh.w = GetTerrainHeight(noise, input, coords + rayDir * multipliers.w, mipLevel, params, quality, input.LandBlendWeights1, input.LandBlendWeights2.xy, heights);
 #		endif
-#		if defined(TERRAIN_VARIATION)
-			// Enhance shadow contrast for terrain variation to maintain visual quality
-			[branch] if (SharedData::terrainVariationSettings.enableTilingFix) {
-				float shadowIntensity = saturate(dot(max(0, sh - sh0), 1.0)) * quality;
-				shadowIntensity = pow(shadowIntensity, 0.8); // Slight contrast boost
-				return pow(1.0 - shadowIntensity, 2.0);
-			} else {
-				return pow(1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality, 2.0);
-			}
-#		else
-			return pow(1.0 - saturate(dot(max(0, sh - sh0) / scale, 1.0)) * quality, 2.0);
-#		endif
+			return 1.0 - saturate(dot(max(0, sh - sh0) / scale, ShadowIntensity)) * quality;
 #	else
 #		if defined(TERRAIN_VARIATION)
 			sh = GetTerrainHeight(noise, input, coords + rayDir * multipliers.x, mipLevel, params, quality, input.LandBlendWeights1, input.LandBlendWeights2.xy, sharedOffset, dx, dy, heights);
@@ -593,22 +590,11 @@ namespace ExtendedMaterials
 			if (quality > 0.75)
 				sh.w = GetTerrainHeight(noise, input, coords + rayDir * multipliers.w, mipLevel, params, quality, input.LandBlendWeights1, input.LandBlendWeights2.xy, heights);
 #		endif
-#		if defined(TERRAIN_VARIATION)
-			// Enhance shadow contrast for terrain variation to maintain visual quality
-			[branch] if (SharedData::terrainVariationSettings.enableTilingFix) {
-				float shadowIntensity = saturate(dot(max(0, sh - sh0), 1.0)) * quality;
-				shadowIntensity = pow(shadowIntensity, 0.8); // Slight contrast boost
-				return pow(1.0 - shadowIntensity, 2.0);
-			} else {
-				return pow(1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality, 2.0);
-			}
-#		else
-			return pow(1.0 - saturate(dot(max(0, sh - sh0), 1.0)) * quality, 2.0);
-#		endif
+			return 1.0 - saturate(dot(max(0, sh - sh0), ShadowIntensity)) * quality;
 #	endif
 		}
 		return 1.0;
 	}
 
 #endif  // defined(LANDSCAPE) && defined(TERRAIN_VARIATION)
-	}
+}

@@ -3,6 +3,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ENBPostProcessing.h"
+#include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
 #include "Features/GrassLighting.h"
@@ -12,6 +13,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/Skylighting.h"
+#include "Features/TerrainBlending.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainVariation.h"
 #include "Features/WetnessEffects.h"
@@ -48,8 +50,10 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::lodBlending.settings,
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
-		globals::features::ibl.settings,
+		globals::features::ibl.GetCommonBufferData(),
 		globals::features::extendedTranslucency.GetCommonBufferData(),
 		globals::features::linearLighting.GetCommonBufferData(),
-		globals::features::enbPostProcessing.GetCommonBufferData());
+		globals::features::enbPostProcessing.GetCommonBufferData(),
+		globals::features::terrainBlending.settings,
+		globals::features::exponentialHeightFog.settings);
 }

@@ -1,5 +1,7 @@
 #include "Format.h"
 #include "Globals.h"
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -156,6 +158,21 @@ namespace Util
 		}
 	}
 
+	std::string FormatDuration(double ms)
+	{
+		// Validate input: handle negative, NaN, and infinite values
+		if (!std::isfinite(ms) || ms < 0.0) {
+			return "00:00:00";
+		}
+
+		// Use int64_t to avoid overflow on long durations (>596 hours with int)
+		int64_t total_s = static_cast<int64_t>(ms) / 1000;
+		int64_t hours = total_s / 3600;
+		int64_t minutes = (total_s % 3600) / 60;
+		int64_t seconds = total_s % 60;
+		return fmt::format("{:02}:{:02}:{:02}", hours, minutes, seconds);
+	}
+
 	std::string TimeAgoString(std::chrono::steady_clock::time_point last)
 	{
 		using namespace std::chrono;
@@ -238,5 +255,13 @@ namespace Util
 	float CalculateOtherFrameTime(float totalFrameTime, float measuredSum)
 	{
 		return totalFrameTime - measuredSum;
+	}
+
+	bool IEquals(std::string_view a, std::string_view b)
+	{
+		return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
+										   [](char ca, char cb) {
+											   return std::tolower(static_cast<unsigned char>(ca)) == std::tolower(static_cast<unsigned char>(cb));
+										   });
 	}
 }  // namespace Util
