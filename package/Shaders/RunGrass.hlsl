@@ -756,7 +756,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
-
 #				if defined(SKYLIGHTING)
 	float skylightingDiffuse = 1.0;
 	if (!SharedData::InInterior) {
@@ -766,7 +765,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 positionMSSkylight = input.WorldPosition.xyz;
 #					endif
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
-		skylightingDiffuse = SphericalHarmonics::Unproject(skylightingSH, normal);
+		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
 		skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);
@@ -938,8 +937,8 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #			endif  // LIGHT_LIMIT_FIX
 
-	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
-	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
+	float3 ddx = ddx_coarse(input.WorldPosition);
+	float3 ddy = ddy_coarse(input.WorldPosition);
 	float3 normal = -normalize(cross(ddx, ddy));
 
 	normal = normalize(float3(normal.xy, max(0, normal.z)));
@@ -965,7 +964,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 positionMSSkylight = input.WorldPosition.xyz;
 #				endif
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
-		skylightingDiffuse = SphericalHarmonics::Unproject(skylightingSH, normal);
+		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
 		skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);
@@ -992,11 +991,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 albedo = baseColor.xyz * vertexColor;
 
 	diffuseColor *= albedo;
-
 #			if defined(IBL) && defined(SKYLIGHTING)
 	directionalAmbientColor -= envIBLColor;
 #			endif
-
 	directionalAmbientColor *= albedo;
 
 #			if defined(SKYLIGHTING)

@@ -1059,6 +1059,10 @@ float3 GetSunColor(float3 normal, float3 viewDirection, float3 worldPosition, ui
 #			include "InverseSquareLighting/InverseSquareLighting.hlsli"
 #		endif
 
+#		if defined(IBL)
+#			include "IBL/IBL.hlsli"
+#		endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -1379,13 +1383,13 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if defined(STENCIL)
-	float3 viewDirection = normalize(input.WPosition.xyz);
+	float3 viewDirection = normalize(input.WorldPosition.xyz);
 	float3 normal =
-		normalize(cross(ddx_coarse(input.WPosition.xyz), ddy_coarse(input.WPosition.xyz)));
+		normalize(cross(ddx_coarse(input.WorldPosition.xyz), ddy_coarse(input.WorldPosition.xyz)));
 	float VdotN = dot(viewDirection, normal);
 	psout.WaterMask = float4(0, 0, VdotN, 0);
 
-	psout.MotionVector = MotionBlur::GetSSMotionVector(input.WPosition, input.PreviousWorldPosition);
+	psout.MotionVector = MotionBlur::GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition);
 #		endif
 
 	return psout;

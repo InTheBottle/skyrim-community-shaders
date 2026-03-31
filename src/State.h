@@ -155,9 +155,7 @@ public:
 		IsReflections = 1 << 1,
 		IsBeastRace = 1 << 2,
 		GrassSphereNormal = 1 << 3,
-		EffectShadows = 1 << 4,
-		IsTree = 1 << 5,
-		IsSun = 1 << 6
+		IsSun = 1 << 4
 	};
 
 	enum class ExtraFeatureDescriptors : uint32_t

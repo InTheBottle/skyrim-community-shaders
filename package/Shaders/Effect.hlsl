@@ -533,30 +533,28 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 {
 	float3 color = DLightColor.xyz * Color::EffectLightingMult();
 
+#		if defined(SKYLIGHTING)
+#			if defined(VR)
+	float3 positionMSSkylight = worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+#			else
+	float3 positionMSSkylight = worldPosition;
+#			endif
+
+	sh2 skylightingSH = Skylighting::sampleNoBias(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, positionMSSkylight);
+
+	float skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(float3(0, 0, 1))) / Math::PI;
+	skylightingDiffuse = saturate(skylightingDiffuse);
+	skylightingDiffuse = lerp(1.0, skylightingDiffuse, Skylighting::getFadeOutFactor(worldPosition));
+	skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);
+#		endif
+
 	float3 dirColor;
 	float3 ambientColor;
-
-	const bool effectShadows = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::EffectShadows);
-
-	if (effectShadows) {
-		float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
-		dirColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult * 0.5 * Color::EffectLightingMult();
-		ambientColor = max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)));
-
-#		if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL && !SharedData::enbSettings.EnableImageBasedLighting) {
-			float3 envIBLColor = Color::IrradianceToGamma(ImageBasedLighting::GetEnvIBLColor(float3(0, 0, -1)));
-			float3 skyIBLColor = Color::IrradianceToGamma(ImageBasedLighting::GetSkyIBLColor(float3(0, 0, -1)));
-			ambientColor = envIBLColor + skyIBLColor;
-		}
-#		endif
-	} else {
 #		if defined(SKYLIGHTING)
-		ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
+	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
 #		else
-		ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
 #		endif
-	}
 
 	float3 viewDirection = normalize(worldPosition.xyz);
 
@@ -572,19 +570,17 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 
 	dirColor *= dirShadow;
 
-#	if defined(EXP_HEIGHT_FOG)
+#		if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		dirColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
-#	endif
+#		endif
 
-#	if defined(SKYLIGHTING)
-	if (!effectShadows) {
-		ambientColor = Color::IrradianceToLinear(ambientColor);
-		ambientColor *= skylightingDiffuse;
-		ambientColor = Color::IrradianceToGamma(ambientColor);
-	}
-#	endif
+#		if defined(SKYLIGHTING)
+	ambientColor = Color::IrradianceToLinear(ambientColor);
+	ambientColor *= skylightingDiffuse;
+	ambientColor = Color::IrradianceToGamma(ambientColor);
+#		endif
 
 	color = dirColor + ambientColor;
 
@@ -852,30 +848,30 @@ PS_OUTPUT main(PS_INPUT input)
 #	if !defined(MOTIONVECTORS_NORMALS)
 	float fogFactor = Color::FogAlpha(input.FogParam.w);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
-#	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL && !SharedData::enbSettings.EnableImageBasedLighting) {
+#		if defined(IBL)
+	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
-#	endif
-#	if defined(EXP_HEIGHT_FOG)
+#		endif
+#		if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor);
-#		if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
+#			if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 		fogColor = exponentialHeightFog.xyz;
 		fogFactor = exponentialHeightFog.w;
-#		else
-		fogColor = exponentialHeightFog.xyz;
-		fogFactor = exponentialHeightFog.w;
-#		endif
+#			else
+		fogColor = lightColor;
+		alpha *= 1 - exponentialHeightFog.w;
+#			endif
 	}
-#	endif
-#	if defined(ADDBLEND)
+#		endif
+#		if defined(ADDBLEND)
 	float3 blendedColor = lightColor * (1 - fogFactor);
-#	elif defined(MULTBLEND) || defined(MULTBLEND_DECAL)
+#		elif defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 	float3 blendedColor = lerp(lightColor, 1.0.xxx, saturate(1.5 * fogFactor).xxx);
-#	else
+#		else
 	float3 blendedColor = lerp(lightColor, fogColor, fogFactor.xxx);
-#	endif
+#		endif
 #	else
 	float3 blendedColor = lightColor.xyz;
 #	endif
