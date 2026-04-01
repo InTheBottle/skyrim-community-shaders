@@ -493,9 +493,9 @@ void SettingManager::LoadSettingFromFile(const std::string& filePath, const std:
 			for (int i = 0; i < 8; ++i) {
 				std::string fullKey = key + timeOfDayNames[i];
 				char buffer[256];
-				std::string defaultStr = std::to_string(colorTimeOfDayValue.values[i].red) + ", " +
-				                         std::to_string(colorTimeOfDayValue.values[i].green) + ", " +
-				                         std::to_string(colorTimeOfDayValue.values[i].blue);
+				std::string defaultStr = std::to_string(colorTimeOfDayValue.values[i].x) + ", " +
+				                         std::to_string(colorTimeOfDayValue.values[i].y) + ", " +
+				                         std::to_string(colorTimeOfDayValue.values[i].z);
 
 				GetPrivateProfileStringA(section.c_str(), fullKey.c_str(), defaultStr.c_str(), buffer, sizeof(buffer), filePath.c_str());
 				std::string valueStr = buffer;
@@ -514,11 +514,13 @@ void SettingManager::LoadSettingFromFile(const std::string& filePath, const std:
 
 				// Ensure we have exactly 3 components
 				if (components.size() >= 3) {
-					colorTimeOfDayValue.values[i] = { components[0], components[1], components[2] };
+					colorTimeOfDayValue.values[i].x = components[0];
+					colorTimeOfDayValue.values[i].y = components[1];
+					colorTimeOfDayValue.values[i].z = components[2];
 				} else {
 					// Use original default from defaultValue if parsing fails
-					RE::NiColor defaultColor = std::get<ColorTimeOfDayValue>(setting.defaultValue).values[i];
-					colorTimeOfDayValue.values[i] = { defaultColor.red, defaultColor.green, defaultColor.blue };
+					float3 defaultColor = std::get<ColorTimeOfDayValue>(setting.defaultValue).values[i];
+					colorTimeOfDayValue.values[i] = defaultColor;
 				}
 			}
 
