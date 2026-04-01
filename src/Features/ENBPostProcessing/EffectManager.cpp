@@ -504,6 +504,8 @@ void EffectManager::CreateColorCorrectionShader()
 
 void EffectManager::UpdateCommonData()
 {
+	commonData = {};
+
 	auto state = globals::state;
 	auto sky = globals::game::sky;
 
