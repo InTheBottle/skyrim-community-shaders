@@ -10,8 +10,16 @@ void ENBBloom::Execute()
 	auto textureHDRTemp = textureManager.GetCommonTexture("TextureBloomTemp");
 	auto textureBloom = textureManager.GetCommonTexture("TextureBloom");
 
+	if (!textureHDRTemp || !textureBloom) {
+		return;
+	}
+
 	// Set dowsampled texture, typically the one used (use 1024x1024 mip)
 	auto downsampledInputSRV = TextureManager::GetSingleton().GetDownsampleTexture();
+
+	if (!downsampledInputSRV) {
+		return;
+	}
 
 	ExecuteTechniqueSequence(GetSelectedTechnique(), downsampledInputSRV, *textureBloom, *textureHDRTemp);
 }

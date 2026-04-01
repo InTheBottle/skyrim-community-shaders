@@ -10,8 +10,16 @@ void ENBLens::Execute()
 	auto textureHDRTemp = textureManager.GetCommonTexture("TextureHDRTemp");
 	auto textureLens = textureManager.GetCommonTexture("TextureLens");
 
+	if (!textureHDRTemp || !textureLens) {
+		return;
+	}
+
 	// Set dowsampled texture, typically the one used (use 1024x1024 mip)
 	auto downsampledInputSRV = TextureManager::GetSingleton().GetDownsampleTexture();
+
+	if (!downsampledInputSRV) {
+		return;
+	}
 
 	ExecuteTechniqueSequence(GetSelectedTechnique(), downsampledInputSRV, *textureLens, *textureHDRTemp);
 }

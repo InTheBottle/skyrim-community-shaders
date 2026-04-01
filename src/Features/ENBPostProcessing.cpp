@@ -173,6 +173,10 @@ RE::NiColor F3ToNi(float3 color)
 
 void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 {
+	if (!a_sky) {
+		return;
+	}
+
 	auto& settingManager = SettingManager::GetSingleton();
 
 	auto& colors = a_sky->skyColor;
@@ -405,6 +409,10 @@ struct Main_HDRTonemapBlendCinematic_Render
 
 void ENBPostProcessing::ModifySky(RE::BSRenderPass* Pass)
 {
+	if (!Pass || !Pass->shaderProperty) {
+		return;
+	}
+
 	auto skyProperty = static_cast<const RE::BSSkyShaderProperty*>(Pass->shaderProperty);
 
 	auto state = globals::state;

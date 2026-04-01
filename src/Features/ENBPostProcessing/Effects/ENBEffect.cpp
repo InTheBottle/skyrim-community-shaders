@@ -12,7 +12,15 @@ void ENBEffect::Execute()
 	auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 	auto textureSDRTemp2 = textureManager.GetCommonTexture("TextureSDRTemp2");
 
+	if (!textureSDRTemp || !textureSDRTemp2) {
+		return;
+	}
+
 	auto textureOriginal = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+	if (!textureOriginal.SRV) {
+		return;
+	}
 
 	// Execute with: input (16bit HDR), output (10bit SDR), temp (10bit SDR)
 	ExecuteTechniqueSequence(GetSelectedTechnique(), textureOriginal.SRV, *textureSDRTemp, *textureSDRTemp2);
@@ -59,19 +67,24 @@ void ENBEffect::UpdateEffectVariables()
 
 	SetVectorVariable("ENBParams01", &enbParams01, sizeof(enbParams01));
 
-	if (settingManager.GetValue<bool>("EnableBloom", "EFFECT"))
-		SetShaderResourceVariable("TextureBloom", textureManager.GetCommonTexture("TextureBloom")->srv.get());
-	else
+	if (settingManager.GetValue<bool>("EnableBloom", "EFFECT")) {
+		auto texture = textureManager.GetCommonTexture("TextureBloom");
+		SetShaderResourceVariable("TextureBloom", texture ? texture->srv.get() : nullptr);
+	} else {
 		SetShaderResourceVariable("TextureBloom", nullptr);
+	}
 
-	if (settingManager.GetValue<bool>("EnableLens", "EFFECT"))
-		SetShaderResourceVariable("TextureLens", textureManager.GetCommonTexture("TextureLens")->srv.get());
-	else
+	if (settingManager.GetValue<bool>("EnableLens", "EFFECT")) {
+		auto texture = textureManager.GetCommonTexture("TextureLens");
+		SetShaderResourceVariable("TextureLens", texture ? texture->srv.get() : nullptr);
+	} else {
 		SetShaderResourceVariable("TextureLens", nullptr);
+	}
 
 	if (settingManager.GetValue<bool>("EnableAdaptation", "EFFECT")) {
 		const std::string textureAdaptationName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptation" : "TextureAdaptationSwap";
-		SetShaderResourceVariable("TextureAdaptation", textureManager.GetCommonTexture(textureAdaptationName)->srv.get());
+		auto texture = textureManager.GetCommonTexture(textureAdaptationName);
+		SetShaderResourceVariable("TextureAdaptation", texture ? texture->srv.get() : nullptr);
 	} else {
 		SetShaderResourceVariable("TextureAdaptation", nullptr);
 	}
