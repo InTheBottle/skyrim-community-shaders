@@ -41,7 +41,7 @@ PS_OUTPUT main(PS_INPUT input)
 		volumetricLightingPower *= SharedData::enbSettings.VolumetricRaysRangeFactor;
 	}
 
-	color += VolumetricLightingColor.xyz * Color::VolumetricLighting(volumetricLightingPower.xxx).x;
+	color += volumetricLightingColor * Color::VolumetricLighting(volumetricLightingPower.xxx).x;
 
 #	endif
 
