@@ -2,7 +2,6 @@
 
 #include "Effects/ENBAdaptation.h"
 #include "Effects/ENBBloom.h"
-#include "Effects/ENBDepthOfField.h"
 #include "Effects/ENBEffect.h"
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
@@ -60,7 +59,6 @@ public:
 	void UpdateCommonVariablesForEffect(ID3DX11Effect* effect);
 
 public:
-	ENBDepthOfField enbDepthOfField;
 	ENBBloom enbBloom;
 	ENBLens enbLens;
 	ENBAdaptation enbAdaptation;

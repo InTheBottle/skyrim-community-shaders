@@ -195,7 +195,6 @@ std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSetti
 		"TIMEOFDAY",
 		"COLORCORRECTION",
 		"EFFECT",
-		"DEPTHOFFIELD",
 		"ADAPTATION"
 	};
 

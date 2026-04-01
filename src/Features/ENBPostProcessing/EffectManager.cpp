@@ -26,7 +26,6 @@ void EffectManager::Initialize()
 
 void EffectManager::Apply()
 {
-	enbDepthOfField.Apply();
 	enbBloom.Apply();
 	enbLens.Apply();
 	enbAdaptation.Apply();
@@ -36,7 +35,6 @@ void EffectManager::Apply()
 
 void EffectManager::Load()
 {
-	enbDepthOfField.Load();
 	enbBloom.Load();
 	enbLens.Load();
 	enbAdaptation.Load();
@@ -46,7 +44,6 @@ void EffectManager::Load()
 
 void EffectManager::Save()
 {
-	enbDepthOfField.Save();
 	enbBloom.Save();
 	enbLens.Save();
 	enbAdaptation.Save();
@@ -76,7 +73,6 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterBoolSetting("EnableAdaptation", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableBloom", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableLens", "EFFECT", false, false);
-	settingManager.RegisterBoolSetting("EnableDepthOfField", "EFFECT", false, false);
 
 	settingManager.RegisterBoolSetting("EnableProceduralSun", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableCloudShadows", "EFFECT", true, false);
@@ -93,10 +89,6 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterFloatSetting("AdaptationMin", "ADAPTATION", 0.0f, 0.0f, 1.0f, false);
 	settingManager.RegisterFloatSetting("AdaptationMax", "ADAPTATION", 1.0f, 0.0f, 2.0f, false);
 	settingManager.RegisterFloatSetting("AdaptationTime", "ADAPTATION", 1.0f, 0.1f, 10.0f, false);
-
-	// DEPTHOFFIELD
-	settingManager.RegisterFloatSetting("FocusingTime", "DEPTHOFFIELD", 1.0f, 0.1f, 10.0f, false);
-	settingManager.RegisterFloatSetting("ApertureTime", "DEPTHOFFIELD", 1.0f, 0.1f, 10.0f, false);
 
 	// BLOOM
 	settingManager.RegisterTimeOfDaySetting("Amount", "BLOOM", 1, true);
@@ -239,14 +231,6 @@ void EffectManager::ExecuteEffects()
 
 	auto& settingManager = SettingManager::GetSingleton();
 	auto& textureManager = TextureManager::GetSingleton();
-
-	if (enbDepthOfField.IsCompiled() && settingManager.GetValue<bool>("EnableDepthOfField", "EFFECT")) {
-		state->BeginPerfEvent(enbDepthOfField.GetName());
-		UpdateCommonVariablesForEffect(enbDepthOfField.GetEffect());
-		enbDepthOfField.UpdateEffectVariables();
-		enbDepthOfField.Execute();
-		state->EndPerfEvent();
-	}
 
 	// Downsampled texture shared between bloom, lens and adaptation
 	textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
@@ -829,7 +813,6 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 
 void EffectManager::RenderEffectsList()
 {
-	enbDepthOfField.RenderImGui();
 	enbBloom.RenderImGui();
 	enbLens.RenderImGui();
 	enbAdaptation.RenderImGui();
