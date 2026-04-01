@@ -3,7 +3,7 @@
 #include "State.h"
 
 #include "ENBPostProcessing.h"
-#include "ENBPostProcessing/SettingManager.h"
+#include "Utils/Game.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LinearLighting::Settings,
@@ -127,7 +127,8 @@ void LinearLighting::Prepass()
 	if (!imageSpaceManager)
 		return;
 
-	dirLightMult = !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+	GET_INSTANCE_MEMBER(data, imageSpaceManager);
+	dirLightMult = data.baseData.hdr.sunlightScale;
 }
 
 struct LinearLighting::Hooks

@@ -742,9 +742,36 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	auto context = globals::d3d::context;
 
+	// Set viewport based on destination render target
+	winrt::com_ptr<ID3D11Resource> resource;
+	a_dest->GetResource(resource.put());
+	winrt::com_ptr<ID3D11Texture2D> texture;
+	resource.as(texture);
+	D3D11_TEXTURE2D_DESC texDesc;
+	texture->GetDesc(&texDesc);
+
+	D3D11_VIEWPORT viewport = {};
+	viewport.TopLeftX = 0.0f;
+	viewport.TopLeftY = 0.0f;
+	viewport.Width = static_cast<float>(texDesc.Width);
+	viewport.Height = static_cast<float>(texDesc.Height);
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+
 	// Set up for copy operation
 	context->OMSetRenderTargets(1, &a_dest, nullptr);
 	context->OMSetDepthStencilState(nullptr, 0);
+	context->RSSetState(rasterizerState.get());
+	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+
+	// Set IA state
+	UINT stride = 20;  // 3 floats position + 2 floats texcoord
+	UINT offset = 0;
+	ID3D11Buffer* vbs[] = { quadVertexBuffer.get() };
+	context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+	context->IASetInputLayout(inputLayout.get());
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
 	// Set shaders
 	context->VSSetShader(copyVertexShader.get(), nullptr, 0);
@@ -755,6 +782,10 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	// Draw fullscreen quad
 	context->Draw(4, 0);
+
+	// Clean up SRV binding
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->PSSetShaderResources(0, 1, &nullSRV);
 }
 
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
