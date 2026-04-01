@@ -7,21 +7,38 @@ void ENBAdaptation::Execute()
 {
 	auto& textureManager = TextureManager::GetSingleton();
 
-	SetShaderResourceVariable("TextureCurrent", textureManager.GetDownsampleTextureBlurry());
+	auto* currentSRV = textureManager.GetDownsampleTextureBlurry();
+	if (!currentSRV) {
+		return;
+	}
 
-	ExecuteTechnique("Downsample", effectTextureCache["TextureCurrent"]);
+	SetShaderResourceVariable("TextureCurrent", currentSRV);
 
-	SetShaderResourceVariable("TextureCurrent", effectTextureCache["TextureCurrent"].srv.get());
+	auto it = effectTextureCache.find("TextureCurrent");
+	if (it == effectTextureCache.end()) {
+		return;
+	}
+
+	ExecuteTechnique("Downsample", it->second);
+
+	SetShaderResourceVariable("TextureCurrent", it->second.srv.get());
 
 	// Use swap mechanism to determine input/output
 	const std::string texturePreviousName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptationSwap" : "TextureAdaptation";
 	const std::string textureAdaptationName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptation" : "TextureAdaptationSwap";
 
 	// Set input texture (previous frame's adaptation value)
-	SetShaderResourceVariable("TexturePrevious", textureManager.GetCommonTexture(texturePreviousName)->srv.get());
+	auto* texturePrevious = textureManager.GetCommonTexture(texturePreviousName);
+	if (!texturePrevious) {
+		return;
+	}
+	SetShaderResourceVariable("TexturePrevious", texturePrevious->srv.get());
 
 	// Execute adaptation technique, writing to output texture
 	auto* textureAdaptation = textureManager.GetCommonTexture(textureAdaptationName);
+	if (!textureAdaptation) {
+		return;
+	}
 	ExecuteTechnique("Draw", *textureAdaptation);
 }
 
@@ -31,11 +48,14 @@ void ENBAdaptation::UpdateEffectVariables()
 
 	auto forceMinMaxValues = settingManager.GetValue<bool>("ForceMinMaxValues", "ADAPTATION");
 
+	float adaptationTime = settingManager.GetValue<float>("AdaptationTime", "ADAPTATION");
+	float deltaTime = (globals::game::deltaTime) ? (*globals::game::deltaTime) : 0.0f;
+
 	float4 adaptationParameters{};
 	adaptationParameters.x = !forceMinMaxValues ? 0.0f : settingManager.GetValue<float>("AdaptationMin", "ADAPTATION");
 	adaptationParameters.y = !forceMinMaxValues ? 65535.0f : settingManager.GetValue<float>("AdaptationMax", "ADAPTATION");
 	adaptationParameters.z = settingManager.GetValue<float>("AdaptationSensitivity", "ADAPTATION");
-	adaptationParameters.w = (*globals::game::deltaTime) / settingManager.GetValue<float>("AdaptationTime", "ADAPTATION");
+	adaptationParameters.w = (adaptationTime > 0.0f) ? (deltaTime / adaptationTime) : 1.0f;
 
 	SetVectorVariable("AdaptationParameters", &adaptationParameters, sizeof(adaptationParameters));
 }
