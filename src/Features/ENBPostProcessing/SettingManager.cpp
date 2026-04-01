@@ -451,8 +451,9 @@ void SettingManager::LoadSettingFromFile(const std::string& filePath, const std:
 	switch (setting.type) {
 	case SettingType::Bool:
 		{
+			bool defaultVal = std::get<bool>(setting.defaultValue);
 			char buffer[256];
-			GetPrivateProfileStringA(section.c_str(), key.c_str(), "false", buffer, sizeof(buffer), filePath.c_str());
+			GetPrivateProfileStringA(section.c_str(), key.c_str(), defaultVal ? "true" : "false", buffer, sizeof(buffer), filePath.c_str());
 			std::string valueStr = buffer;
 			std::transform(valueStr.begin(), valueStr.end(), valueStr.begin(), ::tolower);
 			setting.currentValue = (valueStr == "true" || valueStr == "1");
@@ -492,7 +493,11 @@ void SettingManager::LoadSettingFromFile(const std::string& filePath, const std:
 			for (int i = 0; i < 8; ++i) {
 				std::string fullKey = key + timeOfDayNames[i];
 				char buffer[256];
-				GetPrivateProfileStringA(section.c_str(), fullKey.c_str(), "1.0, 1.0, 1.0", buffer, sizeof(buffer), filePath.c_str());
+				std::string defaultStr = std::to_string(colorTimeOfDayValue.values[i].red) + ", " +
+				                         std::to_string(colorTimeOfDayValue.values[i].green) + ", " +
+				                         std::to_string(colorTimeOfDayValue.values[i].blue);
+
+				GetPrivateProfileStringA(section.c_str(), fullKey.c_str(), defaultStr.c_str(), buffer, sizeof(buffer), filePath.c_str());
 				std::string valueStr = buffer;
 
 				// Parse comma-separated float3 values
@@ -511,8 +516,9 @@ void SettingManager::LoadSettingFromFile(const std::string& filePath, const std:
 				if (components.size() >= 3) {
 					colorTimeOfDayValue.values[i] = { components[0], components[1], components[2] };
 				} else {
-					// Default fallback
-					colorTimeOfDayValue.values[i] = { 1.0f, 1.0f, 1.0f };
+					// Use original default from defaultValue if parsing fails
+					RE::NiColor defaultColor = std::get<ColorTimeOfDayValue>(setting.defaultValue).values[i];
+					colorTimeOfDayValue.values[i] = { defaultColor.red, defaultColor.green, defaultColor.blue };
 				}
 			}
 
