@@ -52,7 +52,7 @@ namespace WaterEffects
 		return heights.x + heights.y + heights.z;
 	}
 
-	float2 GetParallaxOffset(PS_INPUT input, float3 normalsAmplitude, float3 normalScalesRcp)
+	float2 GetParallaxOffset(PS_INPUT input, float3 normalScalesRcp)
 	{
 		float3 viewDirection = normalize(input.WPosition.xyz);
 		float2 parallaxOffsetTS = viewDirection.xy / -viewDirection.z;

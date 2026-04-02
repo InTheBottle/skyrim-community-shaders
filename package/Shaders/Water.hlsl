@@ -756,8 +756,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	float3 normals3 = Normals03Tex.SampleBias(Normals03Sampler, input.TexCoord2.xy, SharedData::MipBias).xyz * 2.0 - 1.0;
 #				endif
 
-	float3 blendedNormal = normalize(float3(0, 0, 1) + normalsAmplitude.x * normals1 +
-									 normalsAmplitude.y * normals2 + normalsAmplitude.z * normals3);
+	float3 blendedNormal = normalize(float3(0, 0, 1) + NormalsAmplitude.x * normals1 + NormalsAmplitude.y * normals2 + NormalsAmplitude.z * normals3);
 #				if defined(UNDERWATER)
 	float3 finalNormal = blendedNormal;
 #				else
@@ -772,7 +771,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 #				endif
 #			else
 	float3 finalNormal =
-		normalize(float3(0, 0, 1) + normalsAmplitude.xxx * normals1);
+		normalize(float3(0, 0, 1) + NormalsAmplitude.x * normals1);
 #			endif
 
 #			if defined(WADING)
@@ -781,7 +780,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 #				else
 	float2 displacementUv = input.TexCoord3.xy;
 #				endif
-	float3 displacement = normalize(float3(normalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
+	float3 displacement = normalize(float3(NormalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
 		0.04));
 	finalNormal = lerp(displacement, finalNormal, displacement.z);
 #			endif
