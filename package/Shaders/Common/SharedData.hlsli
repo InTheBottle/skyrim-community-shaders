@@ -314,6 +314,8 @@ namespace SharedData
 		float WaterFresnelMax;
 		float WaterFresnelMultiplier;
 		float WaterReflectionAmount;
+		
+		float pad14;
 	};
 
 	struct TerrainBlendingSettings

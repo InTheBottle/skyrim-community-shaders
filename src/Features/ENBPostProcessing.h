@@ -89,6 +89,8 @@ public:
 		float WaterFresnelMax;
 		float WaterFresnelMultiplier;
 		float WaterReflectionAmount;
+		
+		float pad14;
 	};
 
 	bool enableEffect = false;
