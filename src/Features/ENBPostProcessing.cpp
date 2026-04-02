@@ -185,14 +185,15 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 
 		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 		GET_INSTANCE_MEMBER(data, imageSpaceManager);
-		dirLightColorF3 *= data.baseData.hdr.sunlightScale;
+		float sunlightScale = std::max(data.baseData.hdr.sunlightScale, 1e-6f);
+		dirLightColorF3 *= sunlightScale;
 
 		dirLightColorF3 = Curve(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingCurve", "ENVIRONMENT"));
 		dirLightColorF3 = Desaturation(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingDesaturation", "ENVIRONMENT"));
 		dirLightColorF3 = ColorFilter(dirLightColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("DirectLightingColorFilter", "ENVIRONMENT"), settingManager.GetInterpolatedTimeOfDayValue("DirectLightingColorFilterAmount", "ENVIRONMENT"));
 		dirLightColorF3 = Intensity(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingIntensity", "ENVIRONMENT"));
 
-		dirLightColorF3 /= data.baseData.hdr.sunlightScale;
+		dirLightColorF3 /= sunlightScale;
 
 		dirLightColor = F3ToNi(dirLightColorF3);
 	}
