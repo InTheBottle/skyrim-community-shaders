@@ -41,7 +41,6 @@ void LinearLighting::DrawSettings()
 		auto& enb = globals::features::enbPostProcessing;
 		if (enb.enableEffect) {
 			ImGui::TextColored(ImVec4(1, 1, 0, 1), "Gamma settings are currently overwritten by ENB.");
-			return;
 		}
 	}
 
