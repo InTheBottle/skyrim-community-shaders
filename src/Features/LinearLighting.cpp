@@ -37,15 +37,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void LinearLighting::DrawSettings()
 {
+	bool enbActive = false;
 	if (globals::features::enbPostProcessing.loaded) {
 		auto& enb = globals::features::enbPostProcessing;
 		if (enb.enableEffect) {
-			ImGui::TextColored(ImVec4(1, 1, 0, 1), "Gamma settings are currently overwritten by ENB.");
+			enbActive = true;
+			ImGui::TextColored(ImVec4(1, 1, 0, 1), "Linear Lighting settings are currently managed by ENB.");
 		}
 	}
 
 	ImGui::Checkbox("Enable Linear Lighting", (bool*)&settings.enableLinearLighting);
 	ImGui::Checkbox("Enable Gamma Correction", (bool*)&settings.enableGammaCorrection);
+
+	if (enbActive) {
+		return;
+	}
 
 	if (ImGui::BeginTabBar("##LinearLightingTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem("General")) {
