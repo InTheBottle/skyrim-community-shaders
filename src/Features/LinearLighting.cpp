@@ -184,6 +184,8 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 	if (globals::features::enbPostProcessing.loaded) {
 		auto& enb = globals::features::enbPostProcessing;
 		if (enb.enableEffect) {
+			data.enableLinearLighting = !isMainLoadingMenu;
+
 			float colorPow = SettingManager::GetSingleton().GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
 			data.lightGamma = 1.0f;
 			data.colorGamma = colorPow;
