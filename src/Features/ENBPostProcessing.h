@@ -22,11 +22,11 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		uint Enable;
-		uint EnableProceduralSun;
-		uint2 pad000;
+		uint32_t Enable;
+		uint32_t EnableProceduralSun;
+		float2 pad000;
 
-		uint EnableSky;
+		uint32_t EnableSky;
 		float3 pad00;
 
 		float GradientIntensity;
