@@ -283,11 +283,8 @@ namespace SharedData
 		float CloudsOpacity;
 
 		float3 CloudsColorFilter;
-		float CloudsVertexAlphaBoost;
 
-		float CloudsEdgeClamp;
 		float CloudsEdgeIntensity;
-		float CloudsEdgeFadeRange;
 		float CloudsEdgeMoonMultiplier;
 
 		float ColorPow;

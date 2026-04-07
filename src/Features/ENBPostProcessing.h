@@ -23,57 +23,43 @@ public:
 	struct alignas(16) PerFrame
 	{
 		uint32_t Enable;
-		uint32_t pad000_0;
-		float2 pad000;
-
 		uint32_t EnableSky;
 		float SkyBoostIntensity;
-		float2 pad00;
-
 		float GradientIntensity;
+
 		float GradientDesaturation;
 		float GradientTopIntensity;
 		float GradientTopCurve;
-
-		float3 GradientTopColorFilter;
 		float pad0;
 
+		float3 GradientTopColorFilter;
 		float GradientMiddleIntensity;
-		float GradientMiddleCurve;
-		float2 pad1;
 
+		float GradientMiddleCurve;
 		float3 GradientMiddleColorFilter;
-		float pad2;
 
 		float GradientHorizonIntensity;
 		float GradientHorizonCurve;
-		float2 pad3;
+		float2 pad1;
 
 		float3 GradientHorizonColorFilter;
-		float pad4;
-
 		float CloudsIntensity;
+
 		float CloudsCurve;
 		float CloudsDesaturation;
 		float CloudsOpacity;
+		float pad2;
 
 		float3 CloudsColorFilter;
-		float CloudsVertexAlphaBoost;
-
-		float CloudsEdgeClamp;
 		float CloudsEdgeIntensity;
-		float CloudsEdgeFadeRange;
+
 		float CloudsEdgeMoonMultiplier;
-
 		float ColorPow;
-		float3 pad8;
-
 		float VolumetricRaysRangeFactor;
 		float VolumetricRaysDesaturation;
-		float2 pad12;
 
 		float3 VolumetricRaysColorFilter;
-		float pad13;
+		float pad3;
 	};
 
 	bool enableEffect = false;
