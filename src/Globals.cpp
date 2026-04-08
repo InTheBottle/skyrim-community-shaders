@@ -84,7 +84,7 @@ namespace globals
 		ExtendedTranslucency extendedTranslucency{};
 		Upscaling upscaling{};
 		HDRDisplay hdrDisplay{};
-    ENBPostProcessing enbPostProcessing{};
+		ENBPostProcessing enbPostProcessing{};
 		RenderDoc renderDoc{};
 		WeatherEditor weatherEditor{};
 		ExponentialHeightFog exponentialHeightFog{};

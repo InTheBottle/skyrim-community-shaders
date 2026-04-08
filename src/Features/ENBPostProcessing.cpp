@@ -35,7 +35,7 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 	data.GradientHorizonColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("GradientHorizonColorFilter", "SKY");
 	data.GradientHorizonColorFilter *= settingManager.GetInterpolatedTimeOfDayValue("GradientHorizonIntensity", "SKY") * gradientIntensity;
 
-	data.CloudsIntensity = 1.0f; // Baked into ColorFilter
+	data.CloudsIntensity = 1.0f;  // Baked into ColorFilter
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
 	data.CloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
