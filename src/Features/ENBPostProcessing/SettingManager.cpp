@@ -4,9 +4,9 @@
 #include <Windows.h>
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <string>
 #include <tuple>
-#include <set>
 
 static bool TryParseBool(const std::string& a_value, bool& a_out)
 {
