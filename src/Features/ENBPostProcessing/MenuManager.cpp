@@ -423,18 +423,14 @@ void MenuManager::RenderAllSettings()
 								case SettingType::TimeOfDay:
 									{
 										auto v = settingManager.GetValue<TimeOfDayValue>(settingKey, category, true);
-										auto activeIndices = GetActiveTimeOfDayIndices();
+										const std::vector<std::string> timeOfDayNames = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 										bool changed = false;
 
-										// Render all active sliders horizontally
-										float totalWidth = ImGui::GetContentRegionAvail().x;
-										float sliderWidth = (totalWidth - (activeIndices.size() - 1) * 8.0f) / activeIndices.size();  // 8px spacing between sliders
-
-										for (size_t idx = 0; idx < activeIndices.size(); ++idx) {
-											int i = activeIndices[idx];
-
-											if (idx > 0) {
-												ImGui::SameLine();
+										for (int i = 0; i < 8; ++i) {
+											if (i > 0) {
+												ImGui::TableNextRow();
+												ImGui::TableSetColumnIndex(0);
+												ImGui::TableSetColumnIndex(1);
 											}
 
 											// Style the slider based on activity
@@ -446,21 +442,17 @@ void MenuManager::RenderAllSettings()
 												ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 											}
 
-											ImGui::PushItemWidth(sliderWidth);
-											std::string id = "##" + settingKey + std::to_string(i);
-											if (ImGui::SliderFloat(id.c_str(), &v.values[i], settingInfo->minValue, settingInfo->maxValue, "%.1f")) {
+											std::string label = timeOfDayNames[i] + "##" + settingKey + std::to_string(i);
+											if (ImGui::SliderFloat(label.c_str(), &v.values[i], settingInfo->minValue, settingInfo->maxValue, "%.2f")) {
 												changed = true;
 											}
 
-											// Add tooltip showing blend factor
 											if (ImGui::IsItemHovered()) {
 												ImGui::SetTooltip("%.0f%%", blendFactor * 100.0f);
 											}
 
-											ImGui::PopItemWidth();
-
 											if (!isActive) {
-												ImGui::PopStyleVar();  // Alpha
+												ImGui::PopStyleVar();
 											}
 										}
 
@@ -472,18 +464,14 @@ void MenuManager::RenderAllSettings()
 								case SettingType::ColorTimeOfDay:
 									{
 										auto v = settingManager.GetValue<ColorTimeOfDayValue>(settingKey, category, true);
-										auto activeIndices = GetActiveTimeOfDayIndices();
+										const std::vector<std::string> timeOfDayNames = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 										bool changed = false;
 
-										// Render all active color pickers horizontally
-										float totalWidth = ImGui::GetContentRegionAvail().x;
-										float colorWidth = (totalWidth - (activeIndices.size() - 1) * 8.0f) / activeIndices.size();  // 8px spacing between color pickers
-
-										for (size_t idx = 0; idx < activeIndices.size(); ++idx) {
-											int i = activeIndices[idx];
-
-											if (idx > 0) {
-												ImGui::SameLine(0, 8.0f);  // 8px spacing to match slider spacing
+										for (int i = 0; i < 8; ++i) {
+											if (i > 0) {
+												ImGui::TableNextRow();
+												ImGui::TableSetColumnIndex(0);
+												ImGui::TableSetColumnIndex(1);
 											}
 
 											// Style the color picker based on activity
@@ -491,29 +479,26 @@ void MenuManager::RenderAllSettings()
 											bool isActive = blendFactor > 0.0f;
 
 											if (!isActive) {
+												// Inactive sliders: dim the appearance
 												ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 											}
 
-											ImGui::PushItemWidth(colorWidth);
-											std::string id = "##" + settingKey + std::to_string(i);
+											std::string label = timeOfDayNames[i] + "##" + settingKey + std::to_string(i);
 											float color[3] = { v.values[i].x, v.values[i].y, v.values[i].z };
 
-											if (ImGui::ColorEdit3(id.c_str(), color, ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoInputs)) {
+											if (ImGui::ColorEdit3(label.c_str(), color, ImGuiColorEditFlags_NoInputs)) {
 												v.values[i].x = color[0];
 												v.values[i].y = color[1];
 												v.values[i].z = color[2];
 												changed = true;
 											}
 
-											// Add tooltip showing blend factor
 											if (ImGui::IsItemHovered()) {
 												ImGui::SetTooltip("%.0f%%", blendFactor * 100.0f);
 											}
 
-											ImGui::PopItemWidth();
-
 											if (!isActive) {
-												ImGui::PopStyleVar();  // Alpha
+												ImGui::PopStyleVar();
 											}
 										}
 
