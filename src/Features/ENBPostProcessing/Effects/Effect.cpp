@@ -285,6 +285,9 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 	uint32_t swapCounter = 0;  // Track swap count for ping-ponging between output and temp
 	bool targetInOutput = false;
 
+	ID3D11ShaderResourceView* inputSRV = nullptr;
+	ID3D11RenderTargetView* outputRTV = nullptr;
+
 	for (size_t i = 0; i < sequence.size(); ++i) {
 		auto& techniqueInfo = sequence[i];
 
@@ -297,21 +300,10 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 		techniqueInfo.technique->GetDesc(&techDesc);
 
 		// Determine input and output for this technique
-		ID3D11ShaderResourceView* inputSRV;
-		ID3D11RenderTargetView* outputRTV;
-
-		if (sequence.size() == 1) {
-			// Single technique: input -> output
+		if (sequence.size() == 1 || swapCounter == 0) {
+			// Single technique or first pass: input -> output
 			inputSRV = a_input;
 			outputRTV = a_output.rtv.get();
-			if (techniqueInfo.renderTargetName.empty())
-				targetInOutput = true;
-		} else if (swapCounter == 0) {
-			// First pass: input -> output (start the ping-pong with output)
-			inputSRV = a_input;
-			outputRTV = a_output.rtv.get();
-			if (techniqueInfo.renderTargetName.empty())
-				targetInOutput = true;
 		} else {
 			// Subsequent passes: ping-pong between output and temp
 			bool useTemp = (swapCounter & 1) == 0;  // Use counter LSB for swap determination
@@ -319,14 +311,10 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 				// Read from temp, write to output
 				inputSRV = a_temp.srv.get();
 				outputRTV = a_output.rtv.get();
-				if (techniqueInfo.renderTargetName.empty())
-					targetInOutput = true;
 			} else {
 				// Read from output, write to temp
 				inputSRV = a_output.srv.get();
 				outputRTV = a_temp.rtv.get();
-				if (techniqueInfo.renderTargetName.empty())
-					targetInOutput = false;
 			}
 		}
 
@@ -336,6 +324,8 @@ void Effect::ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID
 		} else {
 			swapCounter++;  // Increment counter for next iteration
 		}
+
+		targetInOutput = (outputRTV == a_output.rtv.get());
 
 		if (sourceTexture && sourceTexture->IsValid()) {
 			sourceTexture->AsShaderResource()->SetResource(inputSRV);
@@ -1272,6 +1262,9 @@ bool Effect::SetShaderResourceVariable(const std::string& variableName, ID3D11Sh
 
 bool Effect::SetShaderResourceVariable(ID3DX11Effect* effect, const std::string& variableName, ID3D11ShaderResourceView* resource)
 {
+	if (!effect)
+		return false;
+
 	auto variable = effect->GetVariableByName(variableName.c_str())->AsShaderResource();
 	if (variable && variable->IsValid()) {
 		variable->SetResource(resource);
@@ -1282,6 +1275,9 @@ bool Effect::SetShaderResourceVariable(ID3DX11Effect* effect, const std::string&
 
 bool Effect::SetVectorVariable(ID3DX11Effect* effect, const std::string& variableName, const void* data, uint32_t size)
 {
+	if (!effect)
+		return false;
+
 	auto variable = effect->GetVariableByName(variableName.c_str());
 	if (variable && variable->IsValid()) {
 		variable->SetRawValue(data, 0, size);
@@ -1292,6 +1288,9 @@ bool Effect::SetVectorVariable(ID3DX11Effect* effect, const std::string& variabl
 
 bool Effect::SetVectorVariable(const std::string& variableName, const void* data, uint32_t size)
 {
+	if (!effect)
+		return false;
+
 	auto variable = effect->GetVariableByName(variableName.c_str());
 	if (variable && variable->IsValid()) {
 		variable->SetRawValue(data, 0, size);
@@ -1335,6 +1334,8 @@ std::string Effect::GetSelectedTechnique() const
 {
 	if (selectedTechniqueIndex < uiTechniques.size()) {
 		return uiTechniques[selectedTechniqueIndex].techniqueName;
+	} else if (selectedTechniqueIndex < availableTechniques.size()) {
+		return availableTechniques[selectedTechniqueIndex];
 	}
 	return "";
 }

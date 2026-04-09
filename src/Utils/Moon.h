@@ -55,7 +55,7 @@ namespace Util::Moon
 		std::string lower;
 		lower.reserve(len);
 		for (size_t i = 0; i < len; ++i) {
-			lower.push_back(static_cast<char>(std::tolower(textureName[i])));
+			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(textureName[i]))));
 		}
 
 		// Search for phase identifier in texture name

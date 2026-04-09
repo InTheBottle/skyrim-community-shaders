@@ -400,8 +400,7 @@ void MenuManager::RenderAllSettings()
 
 								ImGui::TableNextRow();
 								ImGui::TableSetColumnIndex(0);
-								if (settingInfo->type != SettingType::TimeOfDay)
-									ImGui::Text("%s", settingKey.c_str());
+								ImGui::Text("%s", settingKey.c_str());
 								ImGui::TableSetColumnIndex(1);
 
 								switch (settingInfo->type) {
@@ -426,12 +425,6 @@ void MenuManager::RenderAllSettings()
 										auto v = settingManager.GetValue<TimeOfDayValue>(settingKey, category, true);
 										auto activeIndices = GetActiveTimeOfDayIndices();
 										bool changed = false;
-
-										// Show active time-of-day periods on one row
-										ImGui::TableNextRow();
-										ImGui::TableSetColumnIndex(0);
-										ImGui::Text("%s", settingKey.c_str());
-										ImGui::TableSetColumnIndex(1);
 
 										// Render all active sliders horizontally
 										float totalWidth = ImGui::GetContentRegionAvail().x;
@@ -481,11 +474,6 @@ void MenuManager::RenderAllSettings()
 										auto v = settingManager.GetValue<ColorTimeOfDayValue>(settingKey, category, true);
 										auto activeIndices = GetActiveTimeOfDayIndices();
 										bool changed = false;
-
-										ImGui::TableNextRow();
-										ImGui::TableSetColumnIndex(0);
-										ImGui::Text("%s", settingKey.c_str());
-										ImGui::TableSetColumnIndex(1);
 
 										// Render all active color pickers horizontally
 										float totalWidth = ImGui::GetContentRegionAvail().x;
