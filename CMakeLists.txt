@@ -128,7 +128,6 @@ target_link_libraries(
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
         Microsoft::Effects11
-        windowsapp
 )
 
 # Some third-party libs (e.g. FFX backend) are built with /GL.
