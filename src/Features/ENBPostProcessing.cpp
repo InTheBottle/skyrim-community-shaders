@@ -16,33 +16,16 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 	PerFrame data{};
 
 	data.Enable = enableEffect;
-	data.EnableSky = settingManager.GetValue<bool>("Enable", "SKY");
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 	data.SkyBoostIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
-	data.GradientIntensity = gradientIntensity;
 
-	data.GradientDesaturation = settingManager.GetInterpolatedTimeOfDayValue("GradientDesaturation", "SKY");
-	data.GradientTopCurve = settingManager.GetInterpolatedTimeOfDayValue("GradientTopCurve", "SKY");
-	data.GradientMiddleCurve = settingManager.GetInterpolatedTimeOfDayValue("GradientMiddleCurve", "SKY");
-	data.GradientHorizonCurve = settingManager.GetInterpolatedTimeOfDayValue("GradientHorizonCurve", "SKY");
-
-	data.GradientTopColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("GradientTopColorFilter", "SKY");
-	data.GradientTopColorFilter *= settingManager.GetInterpolatedTimeOfDayValue("GradientTopIntensity", "SKY") * gradientIntensity;
-
-	data.GradientMiddleColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("GradientMiddleColorFilter", "SKY");
-	data.GradientMiddleColorFilter *= settingManager.GetInterpolatedTimeOfDayValue("GradientMiddleIntensity", "SKY") * gradientIntensity;
-
-	data.GradientHorizonColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("GradientHorizonColorFilter", "SKY");
-	data.GradientHorizonColorFilter *= settingManager.GetInterpolatedTimeOfDayValue("GradientHorizonIntensity", "SKY") * gradientIntensity;
-
-	data.CloudsIntensity = 1.0f;  // Baked into ColorFilter
+	data.CloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
 	data.CloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
 	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
 
 	data.CloudsColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("CloudsColorFilter", "SKY");
-	data.CloudsColorFilter *= settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
 
 	data.VolumetricRaysRangeFactor = settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 
@@ -248,6 +231,47 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 		skyStaticsColorF3 = Intensity(skyStaticsColorF3, settingManager.GetInterpolatedTimeOfDayValue("Intensity", "VOLUMETRICFOG"));
 
 		skyStaticsColor = F3ToNi(skyStaticsColorF3);
+	}
+
+	if (settingManager.GetValue<bool>("Enable", "SKY")) {
+		float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
+		float gradientDesaturation = settingManager.GetInterpolatedTimeOfDayValue("GradientDesaturation", "SKY");
+
+		{
+			auto& horizonColor = colors[(uint)RE::TESWeather::ColorTypes::kHorizon];
+			float3 horizonColorF3 = NiToF3(horizonColor);
+
+			horizonColorF3 = Curve(horizonColorF3, settingManager.GetInterpolatedTimeOfDayValue("GradientHorizonCurve", "SKY"));
+			horizonColorF3 = ColorFilter(horizonColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("GradientHorizonColorFilter", "SKY"), 0.0f);
+			horizonColorF3 *= settingManager.GetInterpolatedTimeOfDayValue("GradientHorizonIntensity", "SKY") * gradientIntensity;
+			horizonColorF3 = Desaturation(horizonColorF3, gradientDesaturation);
+
+			horizonColor = F3ToNi(horizonColorF3);
+		}
+
+		{
+			auto& lowerColor = colors[(uint)RE::TESWeather::ColorTypes::kSkyLower];
+			float3 lowerColorF3 = NiToF3(lowerColor);
+
+			lowerColorF3 = Curve(lowerColorF3, settingManager.GetInterpolatedTimeOfDayValue("GradientMiddleCurve", "SKY"));
+			lowerColorF3 = ColorFilter(lowerColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("GradientMiddleColorFilter", "SKY"), 0.0f);
+			lowerColorF3 *= settingManager.GetInterpolatedTimeOfDayValue("GradientMiddleIntensity", "SKY") * gradientIntensity;
+			lowerColorF3 = Desaturation(lowerColorF3, gradientDesaturation);
+
+			lowerColor = F3ToNi(lowerColorF3);
+		}
+
+		{
+			auto& upperColor = colors[(uint)RE::TESWeather::ColorTypes::kSkyUpper];
+			float3 upperColorF3 = NiToF3(upperColor);
+
+			upperColorF3 = Curve(upperColorF3, settingManager.GetInterpolatedTimeOfDayValue("GradientTopCurve", "SKY"));
+			upperColorF3 = ColorFilter(upperColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("GradientTopColorFilter", "SKY"), 0.0f);
+			upperColorF3 *= settingManager.GetInterpolatedTimeOfDayValue("GradientTopIntensity", "SKY") * gradientIntensity;
+			upperColorF3 = Desaturation(upperColorF3, gradientDesaturation);
+
+			upperColor = F3ToNi(upperColorF3);
+		}
 	}
 }
 

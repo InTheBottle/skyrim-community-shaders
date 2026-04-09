@@ -1239,7 +1239,6 @@ void HDRDisplay::UpdateHDRData() const
 	data.isMainOrLoadingMenu = isMainOrLoadingMenu ? 1.f : 0.f;
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
-	data.enbEnabled = globals::features::enbPostProcessing.enableEffect ? 1.f : 0.f;
 	hdrDataCB->Update(data);
 }
 

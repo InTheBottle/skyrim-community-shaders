@@ -96,8 +96,6 @@ struct HDRDisplay : public Feature
 		float isSceneLinear;             ///< 1.0 = Linear Lighting active, scene already linear
 		float isMainOrLoadingMenu;       ///< 1.0 = main menu/loading screen active
 		float fgTweenMenuMidAlphaBoost;  ///< 1.0 = TweenMenu (pause) open — FG UIBrightnessCS mid-alpha boost only
-		float enbEnabled;                ///< 1.0 = ENB is enabled
-		float pad[3];
 	};
 
 	static_assert((sizeof(HDRDataCB) % 16) == 0, "CB size not padded correctly");

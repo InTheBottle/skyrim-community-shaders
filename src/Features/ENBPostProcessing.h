@@ -22,38 +22,24 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		float3 GradientTopColorFilter;
+		float3 CloudsColorFilter;
 		uint32_t Enable;
 
-		float3 GradientMiddleColorFilter;
-		uint32_t EnableSky;
-
-		float3 GradientHorizonColorFilter;
+		float3 CloudsEdgeScatterColor;
 		float SkyBoostIntensity;
 
-		float3 CloudsColorFilter;
-		float GradientIntensity;
-
-		float3 CloudsEdgeScatterColor;
-		float GradientDesaturation;
-
 		float3 VolumetricRaysColorFilter;
-		float GradientTopCurve;
-
-		float GradientMiddleCurve;
-		float GradientHorizonCurve;
 		float CloudsIntensity;
-		float CloudsCurve;
 
+		float CloudsCurve;
 		float CloudsDesaturation;
 		float CloudsOpacity;
 		float ColorPow;
-		float VolumetricRaysRangeFactor;
 
+		float VolumetricRaysRangeFactor;
 		float VolumetricRaysDesaturation;
 		float pad0;
 		float pad1;
-		float pad2;
 	};
 
 	bool enableEffect = false;
