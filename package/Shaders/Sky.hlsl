@@ -325,7 +325,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color.w = input.Color.w * baseColor.w;
 
 #			if defined(CLOUDS)
-	if (SharedData::enbSettings.Enable) {
+	if (SharedData::enbSettings.Enable && SharedData::enbSettings.EnableSky) {
 		baseColor.w = saturate(baseColor.w * SharedData::enbSettings.CloudsOpacity);
 
 		baseColor.xyz = pow(baseColor.xyz, SharedData::enbSettings.CloudsCurve);

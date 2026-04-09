@@ -25,21 +25,21 @@ public:
 		float3 CloudsColorFilter;
 		uint32_t Enable;
 
-		float CloudsEdgeIntensity;
-		float CloudsEdgeMoonMultiplier;
-		float pad_edge;
-		float SkyScaleIntensity;
-
 		float3 VolumetricRaysColorFilter;
-		float CloudsIntensity;
+		uint32_t EnableSky;
 
+		float CloudsIntensity;
 		float CloudsCurve;
 		float CloudsDesaturation;
 		float CloudsOpacity;
-		float ColorPow;
 
+		float CloudsEdgeIntensity;
+		float CloudsEdgeMoonMultiplier;
 		float VolumetricRaysRangeFactor;
 		float VolumetricRaysDesaturation;
+
+		float SkyScaleIntensity;
+		float ColorPow;
 		float pad0;
 		float pad1;
 	};
@@ -55,6 +55,7 @@ public:
 	void OverrideWeather(RE::Sky* a_sky);
 	void CheckCommonData();
 	void OverridePointLightColor(float3& a_color);
+	void OverrideVolumetricLighting(RE::NiColorA& a_color);
 	struct DirectionalAmbientColors
 	{
 		RE::NiColor directionalAmbientColors[3][2];

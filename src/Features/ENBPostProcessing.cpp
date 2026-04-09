@@ -16,6 +16,7 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 	PerFrame data{};
 
 	data.Enable = enableEffect;
+	data.EnableSky = settingManager.GetValue<bool>("Enable", "SKY");
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 	data.SkyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
 
@@ -44,6 +45,30 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 	return data;
 }
 
+void ENBPostProcessing::OverrideVolumetricLighting(RE::NiColorA& a_color)
+{
+	auto& settingManager = SettingManager::GetSingleton();
+
+	if (!settingManager.GetValue<bool>("Enable", "SKY")) {
+		return;
+	}
+
+	float desaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
+	float3 colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
+	float intensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
+
+	float3 color = { a_color.red, a_color.green, a_color.blue };
+	float luma = (color.x + color.y + color.z) / 3.0f;
+	color.x = std::lerp(color.x, luma, desaturation);
+	color.y = std::lerp(color.y, luma, desaturation);
+	color.z = std::lerp(color.z, luma, desaturation);
+	color *= colorFilter * intensity;
+
+	a_color.red = color.x;
+	a_color.green = color.y;
+	a_color.blue = color.z;
+}
+
 void ENBPostProcessing::DrawSettings()
 {
 	MenuManager::GetSingleton().RenderImGui();
@@ -66,6 +91,12 @@ void ENBPostProcessing::Prepass()
 		return;
 	}
 
+	auto& settingManager = SettingManager::GetSingleton();
+
+	if (!settingManager.GetValue<bool>("Enable", "SKY")) {
+		return;
+	}
+
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	if (!imageSpaceManager) {
 		return;
@@ -73,7 +104,6 @@ void ENBPostProcessing::Prepass()
 
 	GET_INSTANCE_MEMBER(data, imageSpaceManager);
 
-	auto& settingManager = SettingManager::GetSingleton();
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 	float skyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
 
@@ -198,49 +228,53 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 		a_sky->fogFar /= fogAmountMultiplier;
 	}
 
-	{
-		auto& sunColor = colors[(uint)RE::TESWeather::ColorTypes::kSun];
+	const bool enableSky = settingManager.GetValue<bool>("Enable", "SKY");
 
-		float3 sunColorF3 = NiToF3(sunColor);
+	if (enableSky) {
+		{
+			auto& sunColor = colors[(uint)RE::TESWeather::ColorTypes::kSun];
 
-		sunColorF3 = Desaturation(sunColorF3, settingManager.GetInterpolatedTimeOfDayValue("SunDesaturation", "SKY"));
-		sunColorF3 = ColorFilter(sunColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("SunColorFilter", "SKY"), 0.0f);
-		sunColorF3 = Intensity(sunColorF3, settingManager.GetInterpolatedTimeOfDayValue("SunIntensity", "SKY"));
+			float3 sunColorF3 = NiToF3(sunColor);
 
-		sunColor = F3ToNi(sunColorF3);
-	}
+			sunColorF3 = Desaturation(sunColorF3, settingManager.GetInterpolatedTimeOfDayValue("SunDesaturation", "SKY"));
+			sunColorF3 = ColorFilter(sunColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("SunColorFilter", "SKY"), 0.0f);
+			sunColorF3 = Intensity(sunColorF3, settingManager.GetInterpolatedTimeOfDayValue("SunIntensity", "SKY"));
 
-	{
-		auto& moonColor = colors[(uint)RE::TESWeather::ColorTypes::kMoonGlare];
+			sunColor = F3ToNi(sunColorF3);
+		}
 
-		float3 moonColorF3 = NiToF3(moonColor);
+		{
+			auto& moonColor = colors[(uint)RE::TESWeather::ColorTypes::kMoonGlare];
 
-		moonColorF3 = Desaturation(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonDesaturation", "SKY"));
-		moonColorF3 = ColorFilter(moonColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("MoonColorFilter", "SKY"), 0.0f);
-		moonColorF3 = Intensity(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonIntensity", "SKY"));
+			float3 moonColorF3 = NiToF3(moonColor);
 
-		moonColor = F3ToNi(moonColorF3);
-	}
+			moonColorF3 = Desaturation(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonDesaturation", "SKY"));
+			moonColorF3 = ColorFilter(moonColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("MoonColorFilter", "SKY"), 0.0f);
+			moonColorF3 = Intensity(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonIntensity", "SKY"));
 
-	{
-		auto& starsColor = colors[(uint)RE::TESWeather::ColorTypes::kStars];
+			moonColor = F3ToNi(moonColorF3);
+		}
 
-		float3 starsColorF3 = NiToF3(starsColor);
+		{
+			auto& starsColor = colors[(uint)RE::TESWeather::ColorTypes::kStars];
 
-		starsColorF3 = Curve(starsColorF3, settingManager.GetInterpolatedTimeOfDayValue("StarsCurve", "SKY"));
-		starsColorF3 = Intensity(starsColorF3, settingManager.GetInterpolatedTimeOfDayValue("StarsIntensity", "SKY"));
+			float3 starsColorF3 = NiToF3(starsColor);
 
-		starsColor = F3ToNi(starsColorF3);
-	}
+			starsColorF3 = Curve(starsColorF3, settingManager.GetInterpolatedTimeOfDayValue("StarsCurve", "SKY"));
+			starsColorF3 = Intensity(starsColorF3, settingManager.GetInterpolatedTimeOfDayValue("StarsIntensity", "SKY"));
 
-	{
-		auto& sunGlareColor = colors[(uint)RE::TESWeather::ColorTypes::kSunGlare];
+			starsColor = F3ToNi(starsColorF3);
+		}
 
-		float3 sunGlareColorF3 = NiToF3(sunGlareColor);
+		{
+			auto& sunGlareColor = colors[(uint)RE::TESWeather::ColorTypes::kSunGlare];
 
-		sunGlareColorF3 = Intensity(sunGlareColorF3, settingManager.GetInterpolatedTimeOfDayValue("GlowIntensity", "SUNGLARE"));
+			float3 sunGlareColorF3 = NiToF3(sunGlareColor);
 
-		sunGlareColor = F3ToNi(sunGlareColorF3);
+			sunGlareColorF3 = Intensity(sunGlareColorF3, settingManager.GetInterpolatedTimeOfDayValue("GlowIntensity", "SUNGLARE"));
+
+			sunGlareColor = F3ToNi(sunGlareColorF3);
+		}
 	}
 
 	{
@@ -255,7 +289,7 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 		skyStaticsColor = F3ToNi(skyStaticsColorF3);
 	}
 
-	if (settingManager.GetValue<bool>("Enable", "SKY")) {
+	if (enableSky) {
 		float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 		float gradientDesaturation = settingManager.GetInterpolatedTimeOfDayValue("GradientDesaturation", "SKY");
 
