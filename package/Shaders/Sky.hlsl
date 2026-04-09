@@ -195,7 +195,7 @@ Texture2D<float> TexDepthSampler : register(t17);
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
-	float skyBoost = Color::Sky(PParams.yyy).x;
+	float skyScale = Color::Sky(PParams.yyy).x;
 #	if !defined(VR)
 	uint eyeIndex = 0;
 #	else
@@ -203,7 +203,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif  // !VR
 
 	if (SharedData::enbSettings.Enable)
-		skyBoost *= SharedData::enbSettings.SkyBoostIntensity;
+		skyScale *= SharedData::enbSettings.skyScaleIntensity;
 
 #	ifndef OCCLUSION
 #		ifndef TEXLERP
@@ -276,7 +276,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float ign = frac(52.9829189 * frac(dot(floor(input.Position.xy), float2(0.06711056, 0.00583715))));
 		baseColor.xyz += (ign - 0.5) * (discScale / 255.0);
 
-		skyBoost = 0.0;
+		skyScale = 0.0;
 #		endif
 
 #		if defined(CLOUD_SHADOWS)
@@ -305,10 +305,10 @@ PS_OUTPUT main(PS_INPUT input)
 		sunGlareColor = baseColor.xyz;
 	}
 	// Dither/noise term is the legacy sky path contribution for gradient smoothing.
-	psout.Color.xyz = (sunGlareColor + skyBoost) + noiseGrad;
+	psout.Color.xyz = (sunGlareColor + skyScale) + noiseGrad;
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
-	psout.Color.xyz = (skyBoost + Color::Sky(input.Color.xyz)) + noiseGrad;
+	psout.Color.xyz = (skyScale + Color::Sky(input.Color.xyz)) + noiseGrad;
 
 	psout.Color.w = input.Color.w;
 #			endif  // TEX
@@ -321,7 +321,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 
 #		elif defined(HORIZFADE)
-	psout.Color.xyz = float3(1.5, 1.5, 1.5) * (Color::Sky(input.Color.xyz) * baseColor.xyz + skyBoost);
+	psout.Color.xyz = float3(1.5, 1.5, 1.5) * (Color::Sky(input.Color.xyz) * baseColor.xyz + skyScale);
 	psout.Color.w = input.TexCoord2.x * (baseColor.w * input.Color.w);
 #		else
 
@@ -348,7 +348,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 
 	psout.Color.w = input.Color.w * baseColor.w;
-	psout.Color.xyz = Color::Sky(input.Color.xyz) * baseColor.xyz + skyBoost;
+	psout.Color.xyz = Color::Sky(input.Color.xyz) * baseColor.xyz + skyScale;
 
 #		endif
 
