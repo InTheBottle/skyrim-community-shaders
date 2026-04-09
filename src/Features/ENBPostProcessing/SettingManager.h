@@ -124,7 +124,7 @@ public:
 	void RegisterTimeOfDaySetting(const std::string& key, const std::string& category,
 		float defaultValue, float minValue = 0.0f, float maxValue = 10.0f, bool hasWeatherSupport = false);
 	void RegisterColorTimeOfDaySetting(const std::string& key, const std::string& category,
-		float3 defaultValue, float minValue = 0.0f, float maxValue = 10.0f, bool hasWeatherSupport = false);
+		float3 defaultValue, bool hasWeatherSupport = false);
 
 	template <typename T>
 	T GetValue(const std::string& key, const std::string& category, bool rawValue = false);

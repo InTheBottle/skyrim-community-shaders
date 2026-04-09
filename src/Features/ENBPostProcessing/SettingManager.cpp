@@ -119,7 +119,7 @@ void SettingManager::RegisterTimeOfDaySetting(const std::string& key, const std:
 }
 
 void SettingManager::RegisterColorTimeOfDaySetting(const std::string& key, const std::string& category,
-	float3 defaultValue, float minValue, float maxValue, bool hasWeatherSupport)
+	float3 defaultValue, bool hasWeatherSupport)
 {
 	std::unique_lock lock(mutex);
 	ColorTimeOfDayValue colorTimeOfDayDefault;
@@ -134,8 +134,6 @@ void SettingManager::RegisterColorTimeOfDaySetting(const std::string& key, const
 	setting.hasWeatherSupport = hasWeatherSupport;
 	setting.defaultValue = colorTimeOfDayDefault;
 	setting.currentValue = colorTimeOfDayDefault;
-	setting.minValue = minValue;
-	setting.maxValue = maxValue;
 
 	categories[category].settings[key] = setting;
 }
