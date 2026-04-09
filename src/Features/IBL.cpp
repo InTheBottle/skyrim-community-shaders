@@ -28,26 +28,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void IBL::DrawSettings()
 {
-	bool enbActive = false;
 	if (globals::features::enbPostProcessing.loaded) {
 		auto& enb = globals::features::enbPostProcessing;
 		if (enb.enableEffect) {
 			auto& settingManager = SettingManager::GetSingleton();
 			if (settingManager.GetValue<bool>("EnableImageBasedLighting", "EFFECT")) {
-				enbActive = true;
 				ImGui::TextColored(ImVec4(1, 1, 0, 1), "IBL settings are currently managed by ENB.");
+				return;
 			}
 		}
 	}
 
 	Util::WeatherUI::Checkbox("Enable IBL", this, "EnableIBL", (bool*)&settings.EnableIBL);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system.");
-	}
-
-	if (enbActive) {
-		return;
-	}
 
 	Util::WeatherUI::SliderFloat("Env IBL Scale", this, "EnvIBLScale", &settings.EnvIBLScale, 0.0f, 10.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -120,6 +112,16 @@ void IBL::RestoreDefaultSettings()
 
 void IBL::RegisterWeatherVariables()
 {
+	if (globals::features::enbPostProcessing.loaded) {
+		auto& enb = globals::features::enbPostProcessing;
+		if (enb.enableEffect) {
+			auto& settingManager = SettingManager::GetSingleton();
+			if (settingManager.GetValue<bool>("EnableImageBasedLighting", "EFFECT")) {
+				return;
+			}
+		}
+	}
+
 	auto* registry = WeatherVariables::GlobalWeatherRegistry::GetSingleton()
 	                     ->GetOrCreateFeatureRegistry(GetShortName());
 	// Toggle IBL for this weather (SH-based ambient replaces vanilla)
