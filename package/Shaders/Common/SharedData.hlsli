@@ -248,15 +248,12 @@ namespace SharedData
 
 	struct ENBSettings
 	{
-		float3 CloudsColorFilter;
 		uint Enable;
-
-		float3 VolumetricRaysColorFilter;
 		uint EnableSky;
-
 		float CloudsCurve;
 		float CloudsDesaturation;
-		float CloudsOpacity;
+
+		float3 VolumetricRaysColorFilter;
 		float CloudsEdgeIntensity;
 
 		float CloudsEdgeMoonMultiplier;

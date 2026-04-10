@@ -22,15 +22,12 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		float3 CloudsColorFilter;
 		uint32_t Enable;
-
-		float3 VolumetricRaysColorFilter;
 		uint32_t EnableSky;
-
 		float CloudsCurve;
 		float CloudsDesaturation;
-		float CloudsOpacity;
+
+		float3 VolumetricRaysColorFilter;
 		float CloudsEdgeIntensity;
 
 		float CloudsEdgeMoonMultiplier;

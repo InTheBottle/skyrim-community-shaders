@@ -326,11 +326,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			if defined(CLOUDS)
 	if (SharedData::enbSettings.Enable && SharedData::enbSettings.EnableSky) {
-		baseColor.w = saturate(baseColor.w * SharedData::enbSettings.CloudsOpacity);
-
 		baseColor.xyz = pow(abs(baseColor.xyz), SharedData::enbSettings.CloudsCurve);
 		baseColor.xyz = lerp(abs(baseColor.xyz), dot(baseColor.xyz, 1.0 / 3.0), SharedData::enbSettings.CloudsDesaturation);
-		baseColor.xyz *= SharedData::enbSettings.CloudsColorFilter;
 
 		float3 viewDirection = normalize(input.WorldPosition.xyz);
 		float cloudsEdgeAlpha = saturate(1.0 - baseColor.w);
@@ -341,6 +338,8 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 cloudsScatter = (sunPhase + masserPhase + secundaPhase) * cloudsEdgeAlpha * SharedData::enbSettings.CloudsEdgeIntensity;
 
 		baseColor.xyz = baseColor.xyz + baseColor.xyz * cloudsScatter;
+		
+		input.Color.w = saturate(input.Color.w);
 	}
 #			endif
 

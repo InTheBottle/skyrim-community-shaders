@@ -20,12 +20,7 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
-	data.CloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
 	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
-
-	data.CloudsColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("CloudsColorFilter", "SKY");
-	float cloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
-	data.CloudsColorFilter *= cloudsIntensity;
 
 	float volumetricRaysRangeFactor = settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 	data.VolumetricRaysRangeFactor = 1.0f / std::max(FLT_MIN, volumetricRaysRangeFactor);
@@ -331,6 +326,19 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 			upperColorF3 = Desaturation(upperColorF3, gradientDesaturation);
 
 			upperColor = F3ToNi(upperColorF3);
+		}
+	}
+
+	if (auto clouds = a_sky->clouds) {
+		auto cloudsColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("CloudsColorFilter", "SKY");
+		float cloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
+		float cloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
+
+		for (uint32_t i = 0; i < clouds->numLayers; i++) {
+			float3 cloudColorF3 = NiToF3(clouds->colors[i]);
+			cloudColorF3 *= cloudsColorFilter * cloudsIntensity;
+			clouds->colors[i] = F3ToNi(cloudColorF3);
+			clouds->alphas[i] *= cloudsOpacity;
 		}
 	}
 }
