@@ -362,6 +362,15 @@ void EffectManager::ExecuteEffects()
 
 	textureManager.IncrementTextureSwap();
 
+	// Determine final source for framebuffer copy
+	ID3D11ShaderResourceView* finalSourceSRV = textureManager.GetCommonTexture("TextureSDRTemp")->srv.get();
+	if (enbEffect.IsCompiled() || (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>(ids.usePostPass))) {
+		auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
+		if (textureSDRTemp) {
+			finalSourceSRV = textureSDRTemp->srv.get();
+		}
+	}
+
 	// Copy final render target to framebuffer
 	auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
 	CopyTexture(textureManager.GetCommonTexture("TextureSDRTemp")->srv.get(), textureFramebuffer.RTV);
