@@ -101,6 +101,7 @@ using SettingValue = std::variant<bool, float, TimeOfDayValue, ColorTimeOfDayVal
 
 struct Setting
 {
+	uint32_t id = 0;
 	std::string key;
 	std::string category;
 	SettingType type;
@@ -131,13 +132,22 @@ public:
 	T GetValue(const std::string& key, const std::string& category, bool rawValue = false);
 
 	template <typename T>
+	T GetValue(uint32_t id, bool rawValue = false);
+
+	template <typename T>
 	void SetValue(const std::string& key, const std::string& category, const T& value);
+
+	template <typename T>
+	void SetValue(uint32_t id, const T& value);
+
+	uint32_t GetSettingID(const std::string& key, const std::string& category) const;
 
 	float GetInterpolatedTimeOfDayValue(const std::string& key, const std::string& category);
 	float3 GetInterpolatedColorTimeOfDayValue(const std::string& key, const std::string& category);
 
 	bool HasSetting(const std::string& key, const std::string& category) const;
 	const Setting* GetSettingInfo(const std::string& key, const std::string& category) const;
+	const Setting* GetSettingInfo(uint32_t id) const;
 	std::vector<std::string> GetSettingsByCategory(const std::string& category) const;
 	std::vector<std::string> GetAllCategories() const;
 	bool CategoryHasWeatherSupport(const std::string& category) const;
@@ -170,13 +180,16 @@ public:
 private:
 	struct CategorySettings
 	{
-		std::unordered_map<std::string, Setting> settings;
+		std::unordered_map<std::string, uint32_t> settings; // key -> ID
+		std::vector<std::string> settingOrder;
 		bool ignoreWeatherSystem = false;
 		bool ignoreWeatherSystemInterior = true;
 	};
 
+	std::vector<Setting> allSettings;
 	std::unordered_map<std::string, CategorySettings> categories;
-	std::unordered_map<uint32_t, std::unordered_map<std::string, SettingValue>> weatherData;
+	std::vector<std::string> categoryOrder;
+	std::unordered_map<uint32_t, std::vector<SettingValue>> weatherData;
 
 	uint32_t currentWeatherID = 0;
 	uint32_t lastWeatherID = 0;
@@ -187,6 +200,8 @@ private:
 	float interiorFactor = 0.0f;
 
 	mutable std::shared_mutex mutex;
+
+	void RegisterSettingInternal(Setting& setting);
 
 	SettingValue InterpolateValues(const SettingValue& a, const SettingValue& b, float t);
 	float ComputeTimeOfDayInterpolation(const TimeOfDayValue& value);

@@ -398,6 +398,8 @@ void MenuManager::RenderAllSettings()
 								if (!settingInfo)
 									continue;
 
+								uint32_t settingID = settingInfo->id;
+
 								ImGui::TableNextRow();
 								ImGui::TableSetColumnIndex(0);
 								ImGui::Text("%s", settingKey.c_str());
@@ -406,25 +408,25 @@ void MenuManager::RenderAllSettings()
 								switch (settingInfo->type) {
 								case SettingType::Bool:
 									{
-										bool v = settingManager.GetValue<bool>(settingKey, category, true);
+										bool v = settingManager.GetValue<bool>(settingID, true);
 										if (ImGui::Checkbox(("##" + settingKey).c_str(), &v)) {
-											settingManager.SetValue<bool>(settingKey, category, v);
+											settingManager.SetValue<bool>(settingID, v);
 										}
 										break;
 									}
 								case SettingType::Float:
 									{
-										float v = settingManager.GetValue<float>(settingKey, category, true);
+										float v = settingManager.GetValue<float>(settingID, true);
 										if (ImGui::InputFloat(("##" + settingKey).c_str(), &v, settingInfo->step, settingInfo->step * 10.0f, "%.2f")) {
 											// Clamp value between min and max after input
 											v = std::clamp(v, settingInfo->minValue, settingInfo->maxValue);
-											settingManager.SetValue<float>(settingKey, category, v);
+											settingManager.SetValue<float>(settingID, v);
 										}
 										break;
 									}
 								case SettingType::TimeOfDay:
 									{
-										auto v = settingManager.GetValue<TimeOfDayValue>(settingKey, category, true);
+										auto v = settingManager.GetValue<TimeOfDayValue>(settingID, true);
 										const std::vector<std::string> timeOfDayNames = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 										bool changed = false;
 
@@ -461,13 +463,13 @@ void MenuManager::RenderAllSettings()
 										}
 
 										if (changed) {
-											settingManager.SetValue<TimeOfDayValue>(settingKey, category, v);
+											settingManager.SetValue<TimeOfDayValue>(settingID, v);
 										}
 										break;
 									}
 								case SettingType::ColorTimeOfDay:
 									{
-										auto v = settingManager.GetValue<ColorTimeOfDayValue>(settingKey, category, true);
+										auto v = settingManager.GetValue<ColorTimeOfDayValue>(settingID, true);
 										const std::vector<std::string> timeOfDayNames = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 										bool changed = false;
 
@@ -507,7 +509,7 @@ void MenuManager::RenderAllSettings()
 										}
 
 										if (changed) {
-											settingManager.SetValue<ColorTimeOfDayValue>(settingKey, category, v);
+											settingManager.SetValue<ColorTimeOfDayValue>(settingID, v);
 										}
 										break;
 									}

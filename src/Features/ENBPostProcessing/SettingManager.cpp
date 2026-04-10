@@ -66,6 +66,29 @@ SettingManager& SettingManager::GetSingleton()
 	return instance;
 }
 
+void SettingManager::RegisterSettingInternal(Setting& setting)
+{
+	// Already holding unique_lock from public Register... methods
+	if (categories.find(setting.category) == categories.end()) {
+		categoryOrder.push_back(setting.category);
+	}
+
+	auto& cat = categories[setting.category];
+	auto it = cat.settings.find(setting.key);
+
+	if (it == cat.settings.end()) {
+		setting.id = static_cast<uint32_t>(allSettings.size());
+		cat.settings[setting.key] = setting.id;
+		cat.settingOrder.push_back(setting.key);
+		allSettings.push_back(setting);
+	} else {
+		// Update existing setting info but keep the same ID
+		uint32_t existingID = it->second;
+		setting.id = existingID;
+		allSettings[existingID] = setting;
+	}
+}
+
 void SettingManager::RegisterBoolSetting(const std::string& key, const std::string& category,
 	bool defaultValue, bool hasWeatherSupport)
 {
@@ -78,14 +101,13 @@ void SettingManager::RegisterBoolSetting(const std::string& key, const std::stri
 	setting.defaultValue = defaultValue;
 	setting.currentValue = defaultValue;
 
-	categories[category].settings[key] = setting;
+	RegisterSettingInternal(setting);
 }
 
 void SettingManager::RegisterFloatSetting(const std::string& key, const std::string& category,
 	float defaultValue, float minValue, float maxValue, float step, bool hasWeatherSupport)
 {
 	std::unique_lock lock(mutex);
-
 	Setting setting;
 	setting.key = key;
 	setting.category = category;
@@ -97,7 +119,7 @@ void SettingManager::RegisterFloatSetting(const std::string& key, const std::str
 	setting.maxValue = maxValue;
 	setting.step = step;
 
-	categories[category].settings[key] = setting;
+	RegisterSettingInternal(setting);
 }
 
 void SettingManager::RegisterTimeOfDaySetting(const std::string& key, const std::string& category,
@@ -120,7 +142,7 @@ void SettingManager::RegisterTimeOfDaySetting(const std::string& key, const std:
 	setting.maxValue = maxValue;
 	setting.step = step;
 
-	categories[category].settings[key] = setting;
+	RegisterSettingInternal(setting);
 }
 
 void SettingManager::RegisterColorTimeOfDaySetting(const std::string& key, const std::string& category,
@@ -140,27 +162,29 @@ void SettingManager::RegisterColorTimeOfDaySetting(const std::string& key, const
 	setting.defaultValue = colorTimeOfDayDefault;
 	setting.currentValue = colorTimeOfDayDefault;
 
-	categories[category].settings[key] = setting;
+	RegisterSettingInternal(setting);
 }
 
 template <typename T>
 T SettingManager::GetValue(const std::string& key, const std::string& category, bool rawValue)
 {
+	uint32_t id = GetSettingID(key, category);
+	if (id == 0xFFFFFFFF) {
+		return T{};
+	}
+	return GetValue<T>(id, rawValue);
+}
+
+template <typename T>
+T SettingManager::GetValue(uint32_t id, bool rawValue)
+{
 	std::shared_lock lock(mutex);
-	auto categoryIt = categories.find(category);
-	if (categoryIt == categories.end()) {
-		logger::error("[SettingManager] Category '{}' not found", category);
+	if (id >= allSettings.size()) {
 		return T{};
 	}
 
-	auto settingIt = categoryIt->second.settings.find(key);
-	if (settingIt == categoryIt->second.settings.end()) {
-		logger::error("[SettingManager] Setting '{}::{}' not found", category, key);
-		return T{};
-	}
-
-	const auto& setting = settingIt->second;
-	const auto& categorySettings = categoryIt->second;
+	const auto& setting = allSettings[id];
+	const auto& categorySettings = categories.at(setting.category);
 
 	if (setting.hasWeatherSupport) {
 		bool shouldIgnoreWeather = (interiorFactor > 0.5f) ?
@@ -177,20 +201,13 @@ T SettingManager::GetValue(const std::string& key, const std::string& category, 
 		if (currentIt != weatherData.end() || lastIt != weatherData.end()) {
 			SettingValue currentValue = setting.currentValue;
 			SettingValue lastValue = setting.currentValue;
-			std::string settingKey = category + "::" + key;
 
-			if (currentIt != weatherData.end()) {
-				auto valueIt = currentIt->second.find(settingKey);
-				if (valueIt != currentIt->second.end()) {
-					currentValue = valueIt->second;
-				}
+			if (currentIt != weatherData.end() && id < currentIt->second.size()) {
+				currentValue = currentIt->second[id];
 			}
 
-			if (lastIt != weatherData.end()) {
-				auto valueIt = lastIt->second.find(settingKey);
-				if (valueIt != lastIt->second.end()) {
-					lastValue = valueIt->second;
-				}
+			if (lastIt != weatherData.end() && id < lastIt->second.size()) {
+				lastValue = lastIt->second[id];
 			}
 
 			if (rawValue) {
@@ -208,21 +225,22 @@ T SettingManager::GetValue(const std::string& key, const std::string& category, 
 template <typename T>
 void SettingManager::SetValue(const std::string& key, const std::string& category, const T& value)
 {
+	uint32_t id = GetSettingID(key, category);
+	if (id != 0xFFFFFFFF) {
+		SetValue<T>(id, value);
+	}
+}
+
+template <typename T>
+void SettingManager::SetValue(uint32_t id, const T& value)
+{
 	std::unique_lock lock(mutex);
-	auto categoryIt = categories.find(category);
-	if (categoryIt == categories.end()) {
-		logger::error("[SettingManager] Category '{}' not found", category);
+	if (id >= allSettings.size()) {
 		return;
 	}
 
-	auto settingIt = categoryIt->second.settings.find(key);
-	if (settingIt == categoryIt->second.settings.end()) {
-		logger::error("[SettingManager] Setting '{}::{}' not found", category, key);
-		return;
-	}
-
-	auto& setting = settingIt->second;
-	const auto& categorySettings = categoryIt->second;
+	auto& setting = allSettings[id];
+	const auto& categorySettings = categories.at(setting.category);
 
 	if (setting.hasWeatherSupport) {
 		bool shouldIgnoreWeather = (interiorFactor > 0.5f) ?
@@ -235,7 +253,6 @@ void SettingManager::SetValue(const std::string& key, const std::string& categor
 		}
 
 		uint32_t targetWeatherID = (weatherBlendFactor > 0.5f) ? currentWeatherID : lastWeatherID;
-		std::string settingKey = category + "::" + key;
 
 		// Update all weather IDs sharing the same file
 		auto& weatherManager = WeatherManager::GetSingleton();
@@ -243,24 +260,44 @@ void SettingManager::SetValue(const std::string& key, const std::string& categor
 
 		if (entry) {
 			for (uint32_t linkedID : entry->weatherIDs) {
-				auto it = weatherData.find(linkedID);
-				if (it != weatherData.end()) {
-					it->second[settingKey] = value;
+				auto& data = weatherData[linkedID];
+				if (data.size() < allSettings.size()) {
+					data.resize(allSettings.size());
+					// Initialize with current values from allSettings
+					for (size_t i = 0; i < allSettings.size(); ++i) {
+						data[i] = allSettings[i].currentValue;
+					}
 				}
+				data[id] = value;
 			}
 		} else {
 			// Fallback: update target ID only
-			auto weatherIt = weatherData.find(targetWeatherID);
-			if (weatherIt != weatherData.end()) {
-				weatherIt->second[settingKey] = value;
-			} else {
-				setting.currentValue = value;
+			auto& data = weatherData[targetWeatherID];
+			if (data.size() < allSettings.size()) {
+				data.resize(allSettings.size());
+				for (size_t i = 0; i < allSettings.size(); ++i) {
+					data[i] = allSettings[i].currentValue;
+				}
 			}
+			data[id] = value;
 		}
 		return;
 	}
 
 	setting.currentValue = value;
+}
+
+uint32_t SettingManager::GetSettingID(const std::string& key, const std::string& category) const
+{
+	std::shared_lock lock(mutex);
+	auto catIt = categories.find(category);
+	if (catIt != categories.end()) {
+		auto setIt = catIt->second.settings.find(key);
+		if (setIt != catIt->second.settings.end()) {
+			return setIt->second;
+		}
+	}
+	return 0xFFFFFFFF;
 }
 
 float SettingManager::GetInterpolatedTimeOfDayValue(const std::string& key, const std::string& category)
@@ -284,37 +321,33 @@ bool SettingManager::HasSetting(const std::string& key, const std::string& categ
 
 const Setting* SettingManager::GetSettingInfo(const std::string& key, const std::string& category) const
 {
+	uint32_t id = GetSettingID(key, category);
+	return GetSettingInfo(id);
+}
+
+const Setting* SettingManager::GetSettingInfo(uint32_t id) const
+{
 	std::shared_lock lock(mutex);
-	auto categoryIt = categories.find(category);
-	if (categoryIt == categories.end())
-		return nullptr;
-	auto settingIt = categoryIt->second.settings.find(key);
-	return (settingIt != categoryIt->second.settings.end()) ? &settingIt->second : nullptr;
+	if (id < allSettings.size()) {
+		return &allSettings[id];
+	}
+	return nullptr;
 }
 
 std::vector<std::string> SettingManager::GetSettingsByCategory(const std::string& category) const
 {
 	std::shared_lock lock(mutex);
-	std::vector<std::string> result;
 	auto categoryIt = categories.find(category);
 	if (categoryIt != categories.end()) {
-		for (const auto& [key, setting] : categoryIt->second.settings) {
-			result.push_back(key);
-		}
-		std::sort(result.begin(), result.end());
+		return categoryIt->second.settingOrder;
 	}
-	return result;
+	return {};
 }
 
 std::vector<std::string> SettingManager::GetAllCategories() const
 {
 	std::shared_lock lock(mutex);
-	std::vector<std::string> result;
-	for (const auto& [category, _] : categories) {
-		result.push_back(category);
-	}
-	std::sort(result.begin(), result.end());
-	return result;
+	return categoryOrder;
 }
 
 bool SettingManager::CategoryHasWeatherSupport(const std::string& category) const
@@ -323,8 +356,9 @@ bool SettingManager::CategoryHasWeatherSupport(const std::string& category) cons
 	auto categoryIt = categories.find(category);
 	if (categoryIt == categories.end())
 		return false;
-	for (const auto& [key, setting] : categoryIt->second.settings) {
-		if (setting.hasWeatherSupport) {
+
+	for (uint32_t id : categoryIt->second.settingOrder | std::views::transform([&](const auto& key) { return categoryIt->second.settings.at(key); })) {
+		if (allSettings[id].hasWeatherSupport) {
 			return true;
 		}
 	}
@@ -350,20 +384,22 @@ void SettingManager::LoadWeatherSettings(const std::vector<uint32_t>& weatherIDs
 		return;
 	}
 
-	std::unordered_map<std::string, SettingValue> loadedValues;
+	std::vector<SettingValue> loadedValues;
 
 	// Load settings from file once
 	{
-		// We use a shared lock for reading categories/settings
 		std::shared_lock lock(mutex);
-		for (const auto& [category, categoryData] : categories) {
-			for (const auto& [key, setting] : categoryData.settings) {
-				if (setting.hasWeatherSupport) {
-					Setting tempSetting = setting;
-					LoadSettingFromFile(filePath, category, key, tempSetting);
-					std::string settingKey = category + "::" + key;
-					loadedValues[settingKey] = tempSetting.currentValue;
-				}
+		loadedValues.resize(allSettings.size());
+		// Initialize with defaults first
+		for (size_t i = 0; i < allSettings.size(); ++i) {
+			loadedValues[i] = allSettings[i].currentValue;
+		}
+
+		for (const auto& setting : allSettings) {
+			if (setting.hasWeatherSupport) {
+				Setting tempSetting = setting;
+				LoadSettingFromFile(filePath, setting.category, setting.key, tempSetting);
+				loadedValues[setting.id] = tempSetting.currentValue;
 			}
 		}
 	}
@@ -394,17 +430,13 @@ void SettingManager::SaveWeatherSettings(const std::string& weatherKey, const st
 			return;
 		}
 
-		for (const auto& [category, categoryData] : categories) {
-			for (const auto& [key, setting] : categoryData.settings) {
-				if (setting.hasWeatherSupport) {
-					std::string settingKey = category + "::" + key;
-					auto valueIt = weatherIt->second.find(settingKey);
-					if (valueIt != weatherIt->second.end()) {
-						Setting tempSetting = setting;
-						tempSetting.currentValue = valueIt->second;
-						settingsToWrite.emplace_back(category, key, tempSetting);
-					}
-				}
+		const auto& weatherValues = weatherIt->second;
+
+		for (const auto& setting : allSettings) {
+			if (setting.hasWeatherSupport && setting.id < weatherValues.size()) {
+				Setting tempSetting = setting;
+				tempSetting.currentValue = weatherValues[setting.id];
+				settingsToWrite.emplace_back(setting.category, setting.key, tempSetting);
 			}
 		}
 	}
@@ -464,10 +496,8 @@ void SettingManager::LoadFromFile(const std::string& filePath)
 	}
 
 	std::unique_lock lock(mutex);
-	for (auto& [category, categoryData] : categories) {
-		for (auto& [key, setting] : categoryData.settings) {
-			LoadSettingFromFile(absPath.string(), category, key, setting);
-		}
+	for (auto& setting : allSettings) {
+		LoadSettingFromFile(absPath.string(), setting.category, setting.key, setting);
 	}
 
 	LoadWeatherIgnoreSettings(absPath.string());
@@ -480,21 +510,22 @@ void SettingManager::SaveToFile(const std::string& filePath)
 
 	{
 		std::shared_lock lock(mutex);
-		for (const auto& [category, categoryData] : categories) {
-			for (const auto& [key, setting] : categoryData.settings) {
-				settingsToWrite.emplace_back(category, key, setting);
-			}
+		for (const auto& setting : allSettings) {
+			settingsToWrite.emplace_back(setting.category, setting.key, setting);
+		}
 
+		for (const auto& categoryName : categoryOrder) {
+			const auto& categoryData = categories.at(categoryName);
 			bool hasWeatherSupport = false;
-			for (const auto& [key, setting] : categoryData.settings) {
-				if (setting.hasWeatherSupport) {
+			for (const auto& [key, id] : categoryData.settings) {
+				if (allSettings[id].hasWeatherSupport) {
 					hasWeatherSupport = true;
 					break;
 				}
 			}
 
 			if (hasWeatherSupport) {
-				weatherSupportFlags.emplace_back(category, categoryData.ignoreWeatherSystem, categoryData.ignoreWeatherSystemInterior);
+				weatherSupportFlags.emplace_back(categoryName, categoryData.ignoreWeatherSystem, categoryData.ignoreWeatherSystemInterior);
 			}
 		}
 	}
@@ -521,37 +552,29 @@ SettingValue SettingManager::InterpolateValues(const SettingValue& a, const Sett
 		return t > 0.5f ? b : a;
 	}
 
-	switch (a.index()) {
-	case 0:  // bool
-		return t > 0.5f ? std::get<bool>(b) : std::get<bool>(a);
-	case 1:  // float
-		{
-			float valA = std::get<float>(a);
-			float valB = std::get<float>(b);
+	return std::visit([&](auto&& valA) -> SettingValue {
+		using T = std::decay_t<decltype(valA)>;
+		const T& valB = std::get<T>(b);
+
+		if constexpr (std::is_same_v<T, bool>) {
+			return t > 0.5f ? valB : valA;
+		} else if constexpr (std::is_same_v<T, float>) {
 			return valA + t * (valB - valA);
-		}
-	case 2:  // TimeOfDayValue
-		{
-			const auto& valA = std::get<TimeOfDayValue>(a);
-			const auto& valB = std::get<TimeOfDayValue>(b);
+		} else if constexpr (std::is_same_v<T, TimeOfDayValue>) {
 			TimeOfDayValue result;
 			for (int i = 0; i < 8; ++i) {
 				result.values[i] = valA.values[i] + t * (valB.values[i] - valA.values[i]);
 			}
 			return result;
-		}
-	case 3:  // ColorTimeOfDayValue
-		{
-			const auto& valA = std::get<ColorTimeOfDayValue>(a);
-			const auto& valB = std::get<ColorTimeOfDayValue>(b);
+		} else if constexpr (std::is_same_v<T, ColorTimeOfDayValue>) {
 			ColorTimeOfDayValue result;
 			for (int i = 0; i < 8; ++i) {
 				result.values[i] = valA.values[i] + t * (valB.values[i] - valA.values[i]);
 			}
 			return result;
 		}
-	}
-	return b;
+		return valB;
+	}, a);
 }
 
 float SettingManager::ComputeTimeOfDayInterpolation(const TimeOfDayValue& value)

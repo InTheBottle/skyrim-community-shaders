@@ -149,6 +149,8 @@ void Effect::Unload()
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
 
+	ClearVariableCache();
+
 	errors.clear();
 
 	logger::debug("[ENBPP] Unloaded effect '{}'", GetName());
@@ -792,9 +794,8 @@ ID3D11RenderTargetView* Effect::GetRenderTargetView(const std::string& renderTar
 	if (texture && texture->rtv)
 		return texture->rtv.get();
 
-	// Get render target from EffectManager's common texture cache
-	auto& textureManager = TextureManager::GetSingleton();
-	texture = textureManager.GetCommonTexture(renderTargetName);
+	// Get render target from EffectManager's common texture cache (using our pointer cache)
+	texture = GetCachedCommonTexture(renderTargetName);
 	if (texture && texture->rtv)
 		return texture->rtv.get();
 
@@ -1255,9 +1256,50 @@ void Effect::EnumerateAllVariables()
 	logger::debug("[ENBPP] Enumerated {} effect variables", variables.size());
 }
 
+ID3DX11EffectVariable* Effect::GetCachedVariable(const std::string& name)
+{
+	if (!effect)
+		return nullptr;
+
+	auto it = variableCache.find(name);
+	if (it != variableCache.end()) {
+		return it->second;
+	}
+
+	auto variable = effect->GetVariableByName(name.c_str());
+	variableCache[name] = variable;
+	return variable;
+}
+
+TextureManager::Texture* Effect::GetCachedCommonTexture(const std::string& name)
+{
+	auto it = commonTexturePointerCache.find(name);
+	if (it != commonTexturePointerCache.end()) {
+		return it->second;
+	}
+
+	auto* texture = TextureManager::GetSingleton().GetCommonTexture(name);
+	commonTexturePointerCache[name] = texture;
+	return texture;
+}
+
+void Effect::ClearVariableCache()
+{
+	variableCache.clear();
+	commonTexturePointerCache.clear();
+}
+
 bool Effect::SetShaderResourceVariable(const std::string& variableName, ID3D11ShaderResourceView* resource)
 {
-	return SetShaderResourceVariable(effect.get(), variableName, resource);
+	auto variable = GetCachedVariable(variableName);
+	if (variable) {
+		auto srVar = variable->AsShaderResource();
+		if (srVar && srVar->IsValid()) {
+			srVar->SetResource(resource);
+			return true;
+		}
+	}
+	return false;
 }
 
 bool Effect::SetShaderResourceVariable(ID3DX11Effect* effect, const std::string& variableName, ID3D11ShaderResourceView* resource)
@@ -1288,10 +1330,7 @@ bool Effect::SetVectorVariable(ID3DX11Effect* effect, const std::string& variabl
 
 bool Effect::SetVectorVariable(const std::string& variableName, const void* data, uint32_t size)
 {
-	if (!effect)
-		return false;
-
-	auto variable = effect->GetVariableByName(variableName.c_str());
+	auto variable = GetCachedVariable(variableName);
 	if (variable && variable->IsValid()) {
 		variable->SetRawValue(data, 0, size);
 		return true;

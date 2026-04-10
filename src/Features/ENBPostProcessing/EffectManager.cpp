@@ -218,6 +218,22 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("RangeFactor", "GAMEVOLUMETRICRAYS", 1.0f, 0.0f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("Desaturation", "GAMEVOLUMETRICRAYS", 0.0f, 0.0f, 1.0f, 0.01f, true);
 	settingManager.RegisterColorTimeOfDaySetting("ColorFilter", "GAMEVOLUMETRICRAYS", { 1.0f, 1.0f, 1.0f }, true);
+
+	// Cache IDs for performance
+	ids.useBloom = settingManager.GetSettingID("EnableBloom", "EFFECT");
+	ids.useLens = settingManager.GetSettingID("EnableLens", "EFFECT");
+	ids.useAdaptation = settingManager.GetSettingID("EnableAdaptation", "EFFECT");
+	ids.usePostPass = settingManager.GetSettingID("EnablePostPassShader", "EFFECT");
+
+	ids.nightTime = settingManager.GetSettingID("NightTime", "TIMEOFDAY");
+	ids.sunriseTime = settingManager.GetSettingID("SunriseTime", "TIMEOFDAY");
+	ids.dawnDuration = settingManager.GetSettingID("DawnDuration", "TIMEOFDAY");
+	ids.dayTime = settingManager.GetSettingID("DayTime", "TIMEOFDAY");
+	ids.sunsetTime = settingManager.GetSettingID("SunsetTime", "TIMEOFDAY");
+	ids.duskDuration = settingManager.GetSettingID("DuskDuration", "TIMEOFDAY");
+
+	ids.brightness = settingManager.GetSettingID("Brightness", "COLORCORRECTION");
+	ids.gammaCurve = settingManager.GetSettingID("GammaCurve", "COLORCORRECTION");
 }
 
 void EffectManager::ExecuteEffects()
@@ -274,7 +290,7 @@ void EffectManager::ExecuteEffects()
 	// Downsampled texture shared between bloom, lens and adaptation
 	textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
 
-	if (enbBloom.IsCompiled() && settingManager.GetValue<bool>("EnableBloom", "EFFECT")) {
+	if (enbBloom.IsCompiled() && settingManager.GetValue<bool>(ids.useBloom)) {
 		state->BeginPerfEvent(enbBloom.GetName());
 		UpdateCommonVariablesForEffect(enbBloom.GetEffect());
 		enbBloom.UpdateEffectVariables();
@@ -282,7 +298,7 @@ void EffectManager::ExecuteEffects()
 		state->EndPerfEvent();
 	}
 
-	if (enbLens.IsCompiled() && settingManager.GetValue<bool>("EnableLens", "EFFECT")) {
+	if (enbLens.IsCompiled() && settingManager.GetValue<bool>(ids.useLens)) {
 		state->BeginPerfEvent(enbLens.GetName());
 		UpdateCommonVariablesForEffect(enbLens.GetEffect());
 		enbLens.UpdateEffectVariables();
@@ -290,7 +306,7 @@ void EffectManager::ExecuteEffects()
 		state->EndPerfEvent();
 	}
 
-	if (enbAdaptation.IsCompiled() && settingManager.GetValue<bool>("EnableAdaptation", "EFFECT")) {
+	if (enbAdaptation.IsCompiled() && settingManager.GetValue<bool>(ids.useAdaptation)) {
 		state->BeginPerfEvent(enbAdaptation.GetName());
 		UpdateCommonVariablesForEffect(enbAdaptation.GetEffect());
 		enbAdaptation.UpdateEffectVariables();
@@ -306,7 +322,7 @@ void EffectManager::ExecuteEffects()
 		state->EndPerfEvent();
 	}
 
-	if (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>("EnablePostPassShader", "EFFECT")) {
+	if (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>(ids.usePostPass)) {
 		state->BeginPerfEvent(enbEffectPostPass.GetName());
 		UpdateCommonVariablesForEffect(enbEffectPostPass.GetEffect());
 		enbEffectPostPass.UpdateEffectVariables();
@@ -318,7 +334,7 @@ void EffectManager::ExecuteEffects()
 
 	// Determine final source for framebuffer copy
 	ID3D11ShaderResourceView* finalSourceSRV = textureOriginal.SRV;
-	if (enbEffect.IsCompiled() || (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>("EnablePostPassShader", "EFFECT"))) {
+	if (enbEffect.IsCompiled() || (enbEffectPostPass.IsCompiled() && settingManager.GetValue<bool>(ids.usePostPass))) {
 		auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 		if (textureSDRTemp) {
 			finalSourceSRV = textureSDRTemp->srv.get();
@@ -623,13 +639,13 @@ void EffectManager::UpdateCommonData()
 		// Clamp current time to valid range
 		float currentTime = sky ? std::clamp(sky->currentGameHour, 0.0f, 24.0f) : 12.0f;
 
-		// Load time of day settings
-		const float nightTime = settingManager.GetValue<float>("NightTime", "TIMEOFDAY");
-		const float sunriseTime = settingManager.GetValue<float>("SunriseTime", "TIMEOFDAY");
-		const float dawnDuration = settingManager.GetValue<float>("DawnDuration", "TIMEOFDAY");
-		const float dayTime = settingManager.GetValue<float>("DayTime", "TIMEOFDAY");
-		const float sunsetTime = settingManager.GetValue<float>("SunsetTime", "TIMEOFDAY");
-		const float duskDuration = settingManager.GetValue<float>("DuskDuration", "TIMEOFDAY");
+		// Load time of day settings using cached IDs
+		const float nightTime = settingManager.GetValue<float>(ids.nightTime);
+		const float sunriseTime = settingManager.GetValue<float>(ids.sunriseTime);
+		const float dawnDuration = settingManager.GetValue<float>(ids.dawnDuration);
+		const float dayTime = settingManager.GetValue<float>(ids.dayTime);
+		const float sunsetTime = settingManager.GetValue<float>(ids.sunsetTime);
+		const float duskDuration = settingManager.GetValue<float>(ids.duskDuration);
 
 		commonData.eInteriorFactor = Util::IsInterior();
 
@@ -857,8 +873,8 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 
 	auto& settingManager = SettingManager::GetSingleton();
 
-	auto brightness = settingManager.GetValue<float>("Brightness", "COLORCORRECTION");
-	auto gammaCurve = settingManager.GetValue<float>("GammaCurve", "COLORCORRECTION");
+	auto brightness = settingManager.GetValue<float>(ids.brightness);
+	auto gammaCurve = settingManager.GetValue<float>(ids.gammaCurve);
 
 	if (brightness == 1.0f && gammaCurve == 1.0f)
 		return;

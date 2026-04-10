@@ -140,8 +140,16 @@ public:
 
 	static void UpdateSizeVariables(ID3DX11Effect* effect, uint32_t outputWidth, uint32_t outputHeight);
 
+protected:
+	ID3DX11EffectVariable* GetCachedVariable(const std::string& name);
+	TextureManager::Texture* GetCachedCommonTexture(const std::string& name);
+	void ClearVariableCache();
+
 private:
 	bool LoadFXFile();
+
+	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
+	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;
 
 	void EnumerateAllVariables();
 
