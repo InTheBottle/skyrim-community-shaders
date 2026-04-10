@@ -941,18 +941,18 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 vertexColor = Color::ColorToLinear(iinput.VertexColor.xyz);
 
-#				if defined(SKYLIGHTING)
+#			if defined(SKYLIGHTING)
 	float skylightingDiffuse = 1.0;
 	float skylightingFadeOutFactor = 1.0;
 
 	if (!SharedData::InInterior) {
 		skylightingFadeOutFactor = Skylighting::getFadeOutFactor(input.WorldPosition.xyz);
 
-#					if defined(VR)
+#				if defined(VR)
 		float3 positionMSSkylight = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#					else
+#				else
 		float3 positionMSSkylight = input.WorldPosition.xyz;
-#					endif
+#				endif
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
 		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
@@ -963,7 +963,7 @@ PS_OUTPUT main(PS_INPUT input)
 		// Modify skylightingDiffuse such that skylightingDiffuse * vertexAO = min(skylightingDiffuse, vertexAO)
 		skylightingDiffuse = saturate(skylightingDiffuse / max(vertexAO, 1e-5));
 	}
-#				endif  // SKYLIGHTING
+#			endif  // SKYLIGHTING
 
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
