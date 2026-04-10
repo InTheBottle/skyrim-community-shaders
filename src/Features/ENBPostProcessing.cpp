@@ -16,7 +16,7 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 	PerFrame data{};
 
 	data.Enable = enableEffect;
-	data.EnableSky = settingManager.GetValue<bool>("Enable", "SKY");
+	data.EnableSky = enableEffect && settingManager.GetValue<bool>("Enable", "SKY");
 
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
@@ -229,7 +229,7 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 		effectLightingColor = F3ToNi(effectLightingColorF3);
 	}
 
-	const bool enableSky = settingManager.GetValue<bool>("Enable", "SKY");
+	const bool enableSky = enableEffect && settingManager.GetValue<bool>("Enable", "SKY");
 
 	if (enableSky) {
 		{
@@ -275,20 +275,18 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 
 			sunGlareColor = F3ToNi(sunGlareColorF3);
 		}
-	}
 
-	{
-		auto& skyStaticsColor = colors[(uint)RE::TESWeather::ColorTypes::kSkyStatics];
+		{
+			auto& skyStaticsColor = colors[(uint)RE::TESWeather::ColorTypes::kSkyStatics];
 
-		float3 skyStaticsColorF3 = NiToF3(skyStaticsColor);
+			float3 skyStaticsColorF3 = NiToF3(skyStaticsColor);
 
-		skyStaticsColorF3 = ColorFilter(skyStaticsColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "VOLUMETRICFOG"), 0.0f);
-		skyStaticsColorF3 = Intensity(skyStaticsColorF3, settingManager.GetInterpolatedTimeOfDayValue("Intensity", "VOLUMETRICFOG"));
+			skyStaticsColorF3 = ColorFilter(skyStaticsColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "VOLUMETRICFOG"), 0.0f);
+			skyStaticsColorF3 = Intensity(skyStaticsColorF3, settingManager.GetInterpolatedTimeOfDayValue("Intensity", "VOLUMETRICFOG"));
 
-		skyStaticsColor = F3ToNi(skyStaticsColorF3);
-	}
+			skyStaticsColor = F3ToNi(skyStaticsColorF3);
+		}
 
-	if (enableSky) {
 		float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 		float gradientDesaturation = settingManager.GetInterpolatedTimeOfDayValue("GradientDesaturation", "SKY");
 
@@ -327,18 +325,18 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 
 			upperColor = F3ToNi(upperColorF3);
 		}
-	}
 
-	if (auto clouds = a_sky->clouds) {
-		auto cloudsColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("CloudsColorFilter", "SKY");
-		float cloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
-		float cloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
+		if (auto clouds = a_sky->clouds) {
+			auto cloudsColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("CloudsColorFilter", "SKY");
+			float cloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
+			float cloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
 
-		for (uint32_t i = 0; i < clouds->numLayers; i++) {
-			float3 cloudColorF3 = NiToF3(clouds->colors[i]);
-			cloudColorF3 *= cloudsColorFilter * cloudsIntensity;
-			clouds->colors[i] = F3ToNi(cloudColorF3);
-			clouds->alphas[i] *= cloudsOpacity;
+			for (uint32_t i = 0; i < clouds->numLayers; i++) {
+				float3 cloudColorF3 = NiToF3(clouds->colors[i]);
+				cloudColorF3 *= cloudsColorFilter * cloudsIntensity;
+				clouds->colors[i] = F3ToNi(cloudColorF3);
+				clouds->alphas[i] *= cloudsOpacity;
+			}
 		}
 	}
 }
@@ -390,7 +388,7 @@ void ENBPostProcessing::OverrideAmbientLighting(DirectionalAmbientColors& Direct
 			int currentSide = i * 2 + j;
 			if (currentSide == 3)
 				ambientLightingColorF3 = Desaturation(ambientLightingColorF3, settingManager.GetInterpolatedTimeOfDayValue("AmbientLightingDesaturation", "ENVIRONMENT"));
-
+			
 			ambientLightingColorF3 = Intensity(ambientLightingColorF3, settingManager.GetInterpolatedTimeOfDayValue("AmbientLightingIntensity", "ENVIRONMENT"));
 
 			ambientLightingColor = F3ToNi(ambientLightingColorF3);
