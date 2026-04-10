@@ -672,7 +672,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 albedo = baseColor.xyz * vertexColor * Color::VanillaNormalization();
 
-	float3 subsurfaceAlbedo = lerp(dot(albedo, 1.0 / 3.0), albedo, 2.0) * saturate(input.VertexNormal.w * 10.0);
+	float3 subsurfaceAlbedo = lerp(dot(albedo, 1.0 / 3.0), albedo, 2.0) * saturate(input.VertexNormal.w * 10.0) * albedo;
 
 	float3 subsurfaceColor = dirLightColor * dirSoftShadow * saturate(-dirLightAngle);
 
