@@ -772,8 +772,8 @@ void SettingManager::LoadWeatherIgnoreSettings(const std::string& filePath)
 	// Internal helper, called from methods already holding a unique lock
 	for (auto& [category, categoryData] : categories) {
 		bool hasWeatherSupport = false;
-		for (const auto& [key, setting] : categoryData.settings) {
-			if (setting.hasWeatherSupport) {
+		for (const auto& [key, settingID] : categoryData.settings) {
+			if (allSettings[settingID].hasWeatherSupport) {
 				hasWeatherSupport = true;
 				break;
 			}
