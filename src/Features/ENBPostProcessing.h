@@ -28,20 +28,20 @@ public:
 		float3 VolumetricRaysColorFilter;
 		uint32_t EnableSky;
 
-		float CloudsIntensity;
 		float CloudsCurve;
 		float CloudsDesaturation;
 		float CloudsOpacity;
-
 		float CloudsEdgeIntensity;
+
 		float CloudsEdgeMoonMultiplier;
 		float VolumetricRaysRangeFactor;
 		float VolumetricRaysDesaturation;
-
-		float SkyScaleIntensity;
 		float ColorPow;
+
 		float pad0;
 		float pad1;
+		float pad2;
+		float pad3;
 	};
 
 	bool enableEffect = false;
