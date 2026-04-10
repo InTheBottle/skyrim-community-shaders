@@ -218,7 +218,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	// HDR-only sun path: scale glare/disc brightness using user HDR settings.
-	if (SharedData::HDRData.x > 0.5 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
+	if (SharedData::HDRData.x > 0.5 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun) && !SharedData::enbSettings.EnableSky) {
 		// 203 nits is the HDR reference paper white used by the rest of the HDR pipeline.
 		const float SUN_REF_PAPER_WHITE_NITS = 203.0;
 		float paperWhiteNits = max(SharedData::HDRData.y, 1.0);
