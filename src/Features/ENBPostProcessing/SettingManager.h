@@ -30,6 +30,11 @@ struct TimeOfDayValue
 	float& operator[](Index idx) { return values[idx]; }
 	const float& operator[](Index idx) const { return values[idx]; }
 
+	bool operator==(const TimeOfDayValue& other) const
+	{
+		return std::equal(std::begin(values), std::end(values), std::begin(other.values));
+	}
+
 	float& GetByName(const std::string& name)
 	{
 		if (name == "Dawn")
@@ -75,6 +80,16 @@ struct ColorTimeOfDayValue
 	float3& operator[](Index idx) { return values[idx]; }
 	const float3& operator[](Index idx) const { return values[idx]; }
 
+	bool operator==(const ColorTimeOfDayValue& other) const
+	{
+		for (int i = 0; i < 8; ++i) {
+			if (values[i].x != other.values[i].x || values[i].y != other.values[i].y || values[i].z != other.values[i].z) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	float3& GetByName(const std::string& name)
 	{
 		if (name == "Dawn")
@@ -108,6 +123,7 @@ struct Setting
 	bool hasWeatherSupport;
 	SettingValue defaultValue;
 	SettingValue currentValue;
+	SettingValue lastSavedValue;
 	float minValue = 0.0f;
 	float maxValue = 10.0f;
 	float step = 0.01f;
@@ -184,12 +200,15 @@ private:
 		std::vector<std::string> settingOrder;
 		bool ignoreWeatherSystem = false;
 		bool ignoreWeatherSystemInterior = true;
+		bool lastSavedIgnoreWeatherSystem = false;
+		bool lastSavedIgnoreWeatherSystemInterior = true;
 	};
 
 	std::vector<Setting> allSettings;
 	std::unordered_map<std::string, CategorySettings> categories;
 	std::vector<std::string> categoryOrder;
 	std::unordered_map<uint32_t, std::vector<SettingValue>> weatherData;
+	std::unordered_map<uint32_t, std::vector<SettingValue>> lastSavedWeatherData;
 
 	uint32_t currentWeatherID = 0;
 	uint32_t lastWeatherID = 0;

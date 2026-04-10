@@ -78,6 +78,7 @@ void SettingManager::RegisterSettingInternal(Setting& setting)
 
 	if (it == cat.settings.end()) {
 		setting.id = static_cast<uint32_t>(allSettings.size());
+		setting.lastSavedValue = setting.currentValue;
 		cat.settings[setting.key] = setting.id;
 		cat.settingOrder.push_back(setting.key);
 		allSettings.push_back(setting);
@@ -85,6 +86,7 @@ void SettingManager::RegisterSettingInternal(Setting& setting)
 		// Update existing setting info but keep the same ID
 		uint32_t existingID = it->second;
 		setting.id = existingID;
+		setting.lastSavedValue = allSettings[existingID].lastSavedValue;
 		allSettings[existingID] = setting;
 	}
 }
@@ -409,6 +411,7 @@ void SettingManager::LoadWeatherSettings(const std::vector<uint32_t>& weatherIDs
 		std::unique_lock lock(mutex);
 		for (uint32_t weatherID : weatherIDs) {
 			weatherData[weatherID] = loadedValues;
+			lastSavedWeatherData[weatherID] = loadedValues;
 		}
 	}
 }
@@ -424,21 +427,38 @@ void SettingManager::SaveWeatherSettings(const std::string& weatherKey, const st
 	std::vector<std::tuple<std::string, std::string, Setting>> settingsToWrite;
 
 	{
-		std::shared_lock lock(mutex);
+		std::unique_lock lock(mutex);
 		auto weatherIt = weatherData.find(weatherID);
 		if (weatherIt == weatherData.end()) {
 			return;
 		}
 
+		auto lastIt = lastSavedWeatherData.find(weatherID);
 		const auto& weatherValues = weatherIt->second;
 
 		for (const auto& setting : allSettings) {
 			if (setting.hasWeatherSupport && setting.id < weatherValues.size()) {
-				Setting tempSetting = setting;
-				tempSetting.currentValue = weatherValues[setting.id];
-				settingsToWrite.emplace_back(setting.category, setting.key, tempSetting);
+				bool changed = true;
+				if (lastIt != lastSavedWeatherData.end() && setting.id < lastIt->second.size()) {
+					if (weatherValues[setting.id] == lastIt->second[setting.id]) {
+						changed = false;
+					}
+				}
+
+				if (changed) {
+					Setting tempSetting = setting;
+					tempSetting.currentValue = weatherValues[setting.id];
+					settingsToWrite.emplace_back(setting.category, setting.key, tempSetting);
+				}
 			}
 		}
+
+		// Update last saved state
+		lastSavedWeatherData[weatherID] = weatherValues;
+	}
+
+	if (settingsToWrite.empty()) {
+		return;
 	}
 
 	// Perform IO outside of lock to prevent deadlocks
@@ -498,9 +518,13 @@ void SettingManager::LoadFromFile(const std::string& filePath)
 	std::unique_lock lock(mutex);
 	for (auto& setting : allSettings) {
 		LoadSettingFromFile(absPath.string(), setting.category, setting.key, setting);
+		setting.lastSavedValue = setting.currentValue;
 	}
 
 	LoadWeatherIgnoreSettings(absPath.string());
+
+	// Update lastSavedWeatherData after loading main file
+	lastSavedWeatherData = weatherData;
 }
 
 void SettingManager::SaveToFile(const std::string& filePath)
@@ -509,25 +533,37 @@ void SettingManager::SaveToFile(const std::string& filePath)
 	std::vector<std::tuple<std::string, bool, bool>> weatherSupportFlags;
 
 	{
-		std::shared_lock lock(mutex);
-		for (const auto& setting : allSettings) {
-			settingsToWrite.emplace_back(setting.category, setting.key, setting);
+		std::unique_lock lock(mutex);
+		for (auto& setting : allSettings) {
+			if (!(setting.currentValue == setting.lastSavedValue)) {
+				settingsToWrite.emplace_back(setting.category, setting.key, setting);
+				setting.lastSavedValue = setting.currentValue;
+			}
 		}
 
 		for (const auto& categoryName : categoryOrder) {
-			const auto& categoryData = categories.at(categoryName);
+			auto& categoryData = categories.at(categoryName);
 			bool hasWeatherSupport = false;
-			for (const auto& [key, id] : categoryData.settings) {
-				if (allSettings[id].hasWeatherSupport) {
+			for (const auto& [key, settingID] : categoryData.settings) {
+				if (allSettings[settingID].hasWeatherSupport) {
 					hasWeatherSupport = true;
 					break;
 				}
 			}
 
 			if (hasWeatherSupport) {
-				weatherSupportFlags.emplace_back(categoryName, categoryData.ignoreWeatherSystem, categoryData.ignoreWeatherSystemInterior);
+				if (categoryData.ignoreWeatherSystem != categoryData.lastSavedIgnoreWeatherSystem ||
+					categoryData.ignoreWeatherSystemInterior != categoryData.lastSavedIgnoreWeatherSystemInterior) {
+					weatherSupportFlags.emplace_back(categoryName, categoryData.ignoreWeatherSystem, categoryData.ignoreWeatherSystemInterior);
+					categoryData.lastSavedIgnoreWeatherSystem = categoryData.ignoreWeatherSystem;
+					categoryData.lastSavedIgnoreWeatherSystemInterior = categoryData.ignoreWeatherSystemInterior;
+				}
 			}
 		}
+	}
+
+	if (settingsToWrite.empty() && weatherSupportFlags.empty()) {
+		return;
 	}
 
 	// Perform IO outside of lock
@@ -793,6 +829,9 @@ void SettingManager::LoadWeatherIgnoreSettings(const std::string& filePath)
 				categoryData.ignoreWeatherSystemInterior = parsed;
 			}
 		}
+
+		categoryData.lastSavedIgnoreWeatherSystem = categoryData.ignoreWeatherSystem;
+		categoryData.lastSavedIgnoreWeatherSystemInterior = categoryData.ignoreWeatherSystemInterior;
 	}
 }
 
