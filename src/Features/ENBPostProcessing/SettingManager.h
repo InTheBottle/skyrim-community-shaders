@@ -180,7 +180,7 @@ public:
 private:
 	struct CategorySettings
 	{
-		std::unordered_map<std::string, uint32_t> settings; // key -> ID
+		std::unordered_map<std::string, uint32_t> settings;  // key -> ID
 		std::vector<std::string> settingOrder;
 		bool ignoreWeatherSystem = false;
 		bool ignoreWeatherSystemInterior = true;

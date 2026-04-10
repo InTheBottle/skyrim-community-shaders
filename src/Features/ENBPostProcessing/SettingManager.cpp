@@ -574,7 +574,8 @@ SettingValue SettingManager::InterpolateValues(const SettingValue& a, const Sett
 			return result;
 		}
 		return valB;
-	}, a);
+	},
+		a);
 }
 
 float SettingManager::ComputeTimeOfDayInterpolation(const TimeOfDayValue& value)
