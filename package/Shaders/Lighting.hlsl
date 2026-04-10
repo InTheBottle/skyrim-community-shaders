@@ -2858,7 +2858,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		vertexColor = 1;
 #		endif
 #	elif defined(SKYLIGHTING)
-	float3 vertexColor = input.Color.xyz;
+	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
 	// Modify skylightingDiffuse such that skylightingDiffuse * vertexAO = min(skylightingDiffuse, vertexAO)
 	skylightingDiffuse = saturate(skylightingDiffuse / max(vertexAO, 1e-5));
