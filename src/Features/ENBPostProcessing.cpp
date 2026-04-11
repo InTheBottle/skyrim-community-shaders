@@ -295,7 +295,7 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 			auto cloudsIntensity = settingManager.GetInterpolatedTimeOfDayValue("CloudsIntensity", "SKY");
 			auto cloudsOpacity = settingManager.GetInterpolatedTimeOfDayValue("CloudsOpacity", "SKY");
 
-			for (uint32_t i = 0; i < clouds->numLayers; i++) {
+			for (uint16_t i = 0; i < clouds->numLayers; i++) {
 				auto cloudColorF3 = NiToF3(clouds->colors[i]);
 				cloudColorF3 *= cloudsColorFilter * cloudsIntensity;
 				clouds->colors[i] = F3ToNi(cloudColorF3);
