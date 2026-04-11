@@ -170,17 +170,24 @@ void SettingManager::RegisterColorTimeOfDaySetting(const std::string& key, const
 template <typename T>
 T SettingManager::GetValue(const std::string& key, const std::string& category, bool rawValue)
 {
-	uint32_t id = GetSettingID(key, category);
+	std::shared_lock lock(mutex);
+	uint32_t id = GetSettingIDInternal(key, category);
 	if (id == 0xFFFFFFFF) {
 		return T{};
 	}
-	return GetValue<T>(id, rawValue);
+	return GetValueInternal<T>(id, rawValue);
 }
 
 template <typename T>
 T SettingManager::GetValue(uint32_t id, bool rawValue)
 {
 	std::shared_lock lock(mutex);
+	return GetValueInternal<T>(id, rawValue);
+}
+
+template <typename T>
+T SettingManager::GetValueInternal(uint32_t id, bool rawValue) const
+{
 	if (id >= allSettings.size()) {
 		return T{};
 	}
@@ -227,9 +234,10 @@ T SettingManager::GetValue(uint32_t id, bool rawValue)
 template <typename T>
 void SettingManager::SetValue(const std::string& key, const std::string& category, const T& value)
 {
-	uint32_t id = GetSettingID(key, category);
+	std::unique_lock lock(mutex);
+	uint32_t id = GetSettingIDInternal(key, category);
 	if (id != 0xFFFFFFFF) {
-		SetValue<T>(id, value);
+		SetValueInternal<T>(id, value);
 	}
 }
 
@@ -237,6 +245,12 @@ template <typename T>
 void SettingManager::SetValue(uint32_t id, const T& value)
 {
 	std::unique_lock lock(mutex);
+	SetValueInternal<T>(id, value);
+}
+
+template <typename T>
+void SettingManager::SetValueInternal(uint32_t id, const T& value)
+{
 	if (id >= allSettings.size()) {
 		return;
 	}
@@ -292,6 +306,11 @@ void SettingManager::SetValue(uint32_t id, const T& value)
 uint32_t SettingManager::GetSettingID(const std::string& key, const std::string& category) const
 {
 	std::shared_lock lock(mutex);
+	return GetSettingIDInternal(key, category);
+}
+
+uint32_t SettingManager::GetSettingIDInternal(const std::string& key, const std::string& category) const
+{
 	auto catIt = categories.find(category);
 	if (catIt != categories.end()) {
 		auto setIt = catIt->second.settings.find(key);
@@ -582,7 +601,7 @@ void SettingManager::SaveToFile(const std::string& filePath)
 	WritePrivateProfileStringA(NULL, NULL, NULL, filePath.c_str());
 }
 
-SettingValue SettingManager::InterpolateValues(const SettingValue& a, const SettingValue& b, float t)
+SettingValue SettingManager::InterpolateValues(const SettingValue& a, const SettingValue& b, float t) const
 {
 	if (a.index() != b.index()) {
 		return t > 0.5f ? b : a;
@@ -614,7 +633,7 @@ SettingValue SettingManager::InterpolateValues(const SettingValue& a, const Sett
 		a);
 }
 
-float SettingManager::ComputeTimeOfDayInterpolation(const TimeOfDayValue& value)
+float SettingManager::ComputeTimeOfDayInterpolation(const TimeOfDayValue& value) const
 {
 	if (interiorFactor > 0.5f) {
 		float dayNightFactor = (timeOfDay1[2] + timeOfDay1[1] + timeOfDay1[0] * 0.5f + timeOfDay1[3] * 0.5f);
@@ -630,7 +649,7 @@ float SettingManager::ComputeTimeOfDayInterpolation(const TimeOfDayValue& value)
 	       timeOfDay2[1] * value.values[TimeOfDayValue::Night];
 }
 
-float3 SettingManager::ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value)
+float3 SettingManager::ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value) const
 {
 	if (interiorFactor > 0.5f) {
 		float dayNightFactor = (timeOfDay1[2] + timeOfDay1[1] + timeOfDay1[0] * 0.5f + timeOfDay1[3] * 0.5f);
@@ -883,3 +902,23 @@ template void SettingManager::SetValue<bool>(const std::string& key, const std::
 template void SettingManager::SetValue<float>(const std::string& key, const std::string& category, const float& value);
 template void SettingManager::SetValue<TimeOfDayValue>(const std::string& key, const std::string& category, const TimeOfDayValue& value);
 template void SettingManager::SetValue<ColorTimeOfDayValue>(const std::string& key, const std::string& category, const ColorTimeOfDayValue& value);
+
+template bool SettingManager::GetValue<bool>(uint32_t id, bool rawValue);
+template float SettingManager::GetValue<float>(uint32_t id, bool rawValue);
+template TimeOfDayValue SettingManager::GetValue<TimeOfDayValue>(uint32_t id, bool rawValue);
+template ColorTimeOfDayValue SettingManager::GetValue<ColorTimeOfDayValue>(uint32_t id, bool rawValue);
+
+template void SettingManager::SetValue<bool>(uint32_t id, const bool& value);
+template void SettingManager::SetValue<float>(uint32_t id, const float& value);
+template void SettingManager::SetValue<TimeOfDayValue>(uint32_t id, const TimeOfDayValue& value);
+template void SettingManager::SetValue<ColorTimeOfDayValue>(uint32_t id, const ColorTimeOfDayValue& value);
+
+template bool SettingManager::GetValueInternal<bool>(uint32_t id, bool rawValue) const;
+template float SettingManager::GetValueInternal<float>(uint32_t id, bool rawValue) const;
+template TimeOfDayValue SettingManager::GetValueInternal<TimeOfDayValue>(uint32_t id, bool rawValue) const;
+template ColorTimeOfDayValue SettingManager::GetValueInternal<ColorTimeOfDayValue>(uint32_t id, bool rawValue) const;
+
+template void SettingManager::SetValueInternal<bool>(uint32_t id, const bool& value);
+template void SettingManager::SetValueInternal<float>(uint32_t id, const float& value);
+template void SettingManager::SetValueInternal<TimeOfDayValue>(uint32_t id, const TimeOfDayValue& value);
+template void SettingManager::SetValueInternal<ColorTimeOfDayValue>(uint32_t id, const ColorTimeOfDayValue& value);

@@ -131,6 +131,7 @@ struct Setting
 
 class SettingManager
 {
+	friend class WeatherManager;
 public:
 	static SettingManager& GetSingleton();
 
@@ -222,9 +223,15 @@ private:
 
 	void RegisterSettingInternal(Setting& setting);
 
-	SettingValue InterpolateValues(const SettingValue& a, const SettingValue& b, float t);
-	float ComputeTimeOfDayInterpolation(const TimeOfDayValue& value);
-	float3 ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value);
+	template <typename T>
+	T GetValueInternal(uint32_t id, bool rawValue = false) const;
+	template <typename T>
+	void SetValueInternal(uint32_t id, const T& value);
+	uint32_t GetSettingIDInternal(const std::string& key, const std::string& category) const;
+
+	SettingValue InterpolateValues(const SettingValue& a, const SettingValue& b, float t) const;
+	float ComputeTimeOfDayInterpolation(const TimeOfDayValue& value) const;
+	float3 ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value) const;
 	void LoadSettingFromFile(const std::string& filePath, const std::string& section, const std::string& key, Setting& setting);
 	void SaveSettingToFile(const std::string& filePath, const std::string& section, const std::string& key, const Setting& setting);
 };
