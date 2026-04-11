@@ -132,6 +132,7 @@ struct Setting
 class SettingManager
 {
 	friend class WeatherManager;
+
 public:
 	static SettingManager& GetSingleton();
 
