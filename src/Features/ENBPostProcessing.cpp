@@ -17,50 +17,14 @@ ENBPostProcessing::PerFrame ENBPostProcessing::GetCommonBufferData()
 
 	data.Enable = enableEffect;
 	data.EnableSky = enableEffect && settingManager.GetValue<bool>("Enable", "SKY");
+	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
 
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
-	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
-
-	float volumetricRaysRangeFactor = settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
-	data.VolumetricRaysRangeFactor = 1.0f / std::max(volumetricRaysRangeFactor, FLT_MIN);
-
-	float cloudsEdgeIntensity = settingManager.GetValue<float>("CloudsEdgeIntensity", "SKY");
-	float cloudsEdgeMoonMultiplier = settingManager.GetValue<float>("CloudsEdgeMoonMultiplier", "SKY");
-	data.CloudsEdgeIntensity = cloudsEdgeIntensity;
-	data.CloudsEdgeMoonMultiplier = cloudsEdgeMoonMultiplier;
-
-	data.VolumetricRaysDesaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
-
-	data.VolumetricRaysColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
-	float volumetricRaysIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
-	data.VolumetricRaysColorFilter *= volumetricRaysIntensity;
+	data.CloudsEdgeIntensity = settingManager.GetValue<float>("CloudsEdgeIntensity", "SKY");
+	data.CloudsEdgeMoonMultiplier = settingManager.GetValue<float>("CloudsEdgeMoonMultiplier", "SKY");
 
 	return data;
-}
-
-void ENBPostProcessing::OverrideVolumetricLighting(RE::NiColorA& a_color)
-{
-	auto& settingManager = SettingManager::GetSingleton();
-
-	if (!settingManager.GetValue<bool>("Enable", "SKY")) {
-		return;
-	}
-
-	float desaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
-	float3 colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
-	float intensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
-
-	float3 color = { a_color.red, a_color.green, a_color.blue };
-	float luma = (color.x + color.y + color.z) / 3.0f;
-	color.x = std::lerp(color.x, luma, desaturation);
-	color.y = std::lerp(color.y, luma, desaturation);
-	color.z = std::lerp(color.z, luma, desaturation);
-	color *= colorFilter * intensity;
-
-	a_color.red = color.x;
-	a_color.green = color.y;
-	a_color.blue = color.z;
 }
 
 void ENBPostProcessing::DrawSettings()
@@ -338,6 +302,21 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 				clouds->alphas[i] *= cloudsOpacity;
 			}
 		}
+	}
+
+	{
+		static auto& volumetricLightingRenderParams = (*(VolumetricLightingRenderParams*)REL::RelocationID(527719, 414629).address());
+
+		auto& volumetricLightingColor = volumetricLightingRenderParams.color;
+		float3 volumetricLightingColorF3 = NiToF3(volumetricLightingColor);
+
+		volumetricLightingColorF3 = Desaturation(volumetricLightingColorF3, settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS"));
+		volumetricLightingColorF3 = ColorFilter(volumetricLightingColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS"), 0.0f);
+		volumetricLightingColorF3 *= settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
+
+		volumetricLightingColor = F3ToNi(volumetricLightingColorF3);
+
+		volumetricLightingRenderParams.samplingRepartition.rangeFactor *= settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 	}
 }
 

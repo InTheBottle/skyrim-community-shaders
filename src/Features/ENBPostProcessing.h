@@ -22,18 +22,15 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		uint32_t Enable;
-		uint32_t EnableSky;
+		uint Enable;
+		uint EnableSky;
+		float ColorPow;
+		float pad0;
+
 		float CloudsCurve;
 		float CloudsDesaturation;
-
-		float3 VolumetricRaysColorFilter;
 		float CloudsEdgeIntensity;
-
 		float CloudsEdgeMoonMultiplier;
-		float VolumetricRaysRangeFactor;
-		float VolumetricRaysDesaturation;
-		float ColorPow;
 	};
 
 	bool enableEffect = false;
@@ -44,15 +41,25 @@ public:
 	virtual void SetupResources() override;
 	virtual void Reset() override;
 	virtual void Prepass() override;
+
+	struct VolumetricLightingRenderParams
+	{
+		RE::NiColor color;
+		RE::BSVolumetricLightingRenderData::Density density;
+		RE::BSVolumetricLightingRenderData::PhaseFunction phaseFunction;
+		RE::BSVolumetricLightingRenderData::SamplingRepartition samplingRepartition;
+	};
+
 	void OverrideWeather(RE::Sky* a_sky);
 	void CheckCommonData();
 	void OverridePointLightColor(float3& a_color);
-	void OverrideVolumetricLighting(RE::NiColorA& a_color);
+
 	struct DirectionalAmbientColors
 	{
 		RE::NiColor directionalAmbientColors[3][2];
 	};
 	void OverrideAmbientLighting(DirectionalAmbientColors& DirectionalAmbientColors);
+
 	void ModifySky(RE::BSRenderPass* Pass);
 	virtual void PostPostLoad() override;
 };

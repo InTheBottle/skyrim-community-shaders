@@ -250,16 +250,13 @@ namespace SharedData
 	{
 		uint Enable;
 		uint EnableSky;
+		float ColorPow;
+		float pad0;
+		
 		float CloudsCurve;
 		float CloudsDesaturation;
-
-		float3 VolumetricRaysColorFilter;
 		float CloudsEdgeIntensity;
-
 		float CloudsEdgeMoonMultiplier;
-		float VolumetricRaysRangeFactor;
-		float VolumetricRaysDesaturation;
-		float ColorPow;
 	};
 	struct TerrainBlendingSettings
 	{
