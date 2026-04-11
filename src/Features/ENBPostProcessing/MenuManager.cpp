@@ -183,14 +183,15 @@ std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSetti
 	// Global Settings - Master controls and basic adjustments
 	categorizedSettings["Main"] = {
 		"GLOBAL",
-		"TIMEOFDAY",
-		"COLORCORRECTION",
 		"EFFECT",
+		"COLORCORRECTION",
+		"WEATHER",
+		"TIMEOFDAY",
 		"ADAPTATION"
 	};
 
 	// Weather-Based Settings - Categories that change with weather/time
-	categorizedSettings["Weather"] = { "BLOOM", "LENS", "SKY", "CLOUDSHADOWS", "ENVIRONMENT", "IMAGEBASEDLIGHTING", "VOLUMETRICFOG", "GAMEVOLUMETRICRAYS", "SUNGLARE" };
+	categorizedSettings["Weather"] = { "BLOOM", "LENS", "ENVIRONMENT", "SKY", "VOLUMETRICFOG", "IMAGEBASEDLIGHTING", "PARTICLE", "GAMEVOLUMETRICRAYS", "SUNGLARE", "CLOUDSHADOWS" };
 
 	// Debug Information
 	categorizedSettings["Debug"] = {};

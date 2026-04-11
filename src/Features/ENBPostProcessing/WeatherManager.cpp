@@ -1,5 +1,6 @@
 #include "WeatherManager.h"
 
+#include "EffectManager.h"
 #include "SettingManager.h"
 #include <Windows.h>
 #include <filesystem>
@@ -89,6 +90,11 @@ void WeatherManager::LoadWeatherList()
 
 WeatherManager::WeatherEntry* WeatherManager::FindWeatherEntry(uint32_t weatherID)
 {
+	auto& effectManager = EffectManager::GetSingleton();
+	if (!SettingManager::GetSingleton().GetValue<bool>(effectManager.ids.enableMultipleWeathers)) {
+		return nullptr;
+	}
+
 	auto it = weatherIDMap.find(weatherID);
 	if (it != weatherIDMap.end()) {
 		auto entryIt = weatherEntries.find(it->second);
@@ -208,6 +214,11 @@ void WeatherManager::LoadLocationWeather()
 
 uint32_t WeatherManager::GetEffectiveWeatherID(uint32_t actualWeatherID)
 {
+	auto& effectManager = EffectManager::GetSingleton();
+	if (!SettingManager::GetSingleton().GetValue<bool>(effectManager.ids.enableLocationWeather)) {
+		return actualWeatherID;
+	}
+
 	if (locationWeatherMap.empty()) {
 		return actualWeatherID;
 	}

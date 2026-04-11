@@ -107,6 +107,14 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterFloatSetting("DuskDuration", "TIMEOFDAY", 2.0f, 0.1f, 6.0f, 0.01f, false);
 	settingManager.RegisterFloatSetting("NightTime", "TIMEOFDAY", 1.0f, 0.0f, 24.0f, 0.01f, false);
 
+	// WEATHER
+	settingManager.RegisterBoolSetting("EnableMultipleWeathers", "WEATHER", true, false);
+	settingManager.RegisterBoolSetting("EnableLocationWeather", "WEATHER", true, false);
+
+	// COLORCORRECTION
+	settingManager.RegisterFloatSetting("Brightness", "COLORCORRECTION", 1.0f, 0.0f, 10000.0f, 0.001f, false);
+	settingManager.RegisterFloatSetting("GammaCurve", "COLORCORRECTION", 1.0f, 1.0f, 2.5f, 0.01f, false);
+
 	// EFFECT
 	settingManager.RegisterBoolSetting("UseOriginalPostProcessing", "EFFECT", false, false);
 
@@ -117,10 +125,6 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterBoolSetting("EnableCloudShadows", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableImageBasedLighting", "EFFECT", true, false);
-
-	// COLORCORRECTION
-	settingManager.RegisterFloatSetting("Brightness", "COLORCORRECTION", 1.0f, 0.0f, 10000.0f, 0.001f, false);
-	settingManager.RegisterFloatSetting("GammaCurve", "COLORCORRECTION", 1.0f, 1.0f, 2.5f, 0.01f, false);
 
 	// ADAPTATION
 	settingManager.RegisterFloatSetting("AdaptationSensitivity", "ADAPTATION", 1.0f, 0.0f, 1.0f, 0.01f, false);
@@ -224,6 +228,9 @@ void EffectManager::RegisterSettings()
 	ids.useLens = settingManager.GetSettingID("EnableLens", "EFFECT");
 	ids.useAdaptation = settingManager.GetSettingID("EnableAdaptation", "EFFECT");
 	ids.usePostPass = settingManager.GetSettingID("EnablePostPassShader", "EFFECT");
+
+	ids.enableMultipleWeathers = settingManager.GetSettingID("EnableMultipleWeathers", "WEATHER");
+	ids.enableLocationWeather = settingManager.GetSettingID("EnableLocationWeather", "WEATHER");
 
 	ids.nightTime = settingManager.GetSettingID("NightTime", "TIMEOFDAY");
 	ids.sunriseTime = settingManager.GetSettingID("SunriseTime", "TIMEOFDAY");
@@ -682,8 +689,12 @@ void EffectManager::UpdateCommonData()
 		};
 
 		if (sky) {
-			commonData.weather[0] = sky->currentWeather ? static_cast<float>(stripPluginIndex(sky->currentWeather->formID)) : 0;
-			commonData.weather[1] = sky->lastWeather ? static_cast<float>(stripPluginIndex(sky->lastWeather->formID)) : 0;
+			auto& weatherManager = WeatherManager::GetSingleton();
+			uint32_t currentID = sky->currentWeather ? stripPluginIndex(sky->currentWeather->formID) : 0;
+			uint32_t lastID = sky->lastWeather ? stripPluginIndex(sky->lastWeather->formID) : 0;
+
+			commonData.weather[0] = static_cast<float>(weatherManager.GetEffectiveWeatherID(currentID));
+			commonData.weather[1] = static_cast<float>(weatherManager.GetEffectiveWeatherID(lastID));
 			commonData.weather[2] = sky->currentWeatherPct;
 			commonData.weather[3] = sky->currentGameHour;
 		}

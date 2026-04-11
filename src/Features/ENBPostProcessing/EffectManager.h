@@ -106,6 +106,9 @@ public:
 		uint32_t useAdaptation = 0xFFFFFFFF;
 		uint32_t usePostPass = 0xFFFFFFFF;
 
+		uint32_t enableMultipleWeathers = 0xFFFFFFFF;
+		uint32_t enableLocationWeather = 0xFFFFFFFF;
+
 		uint32_t nightTime = 0xFFFFFFFF;
 		uint32_t sunriseTime = 0xFFFFFFFF;
 		uint32_t dawnDuration = 0xFFFFFFFF;
