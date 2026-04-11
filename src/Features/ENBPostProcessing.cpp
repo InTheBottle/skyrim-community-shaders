@@ -130,7 +130,7 @@ void ENBPostProcessing::OverrideWeather(RE::Sky* a_sky)
 	ambientColorAvg.x = std::max(ambientColorAvg.x, 0.0f);
 	ambientColorAvg.y = std::max(ambientColorAvg.y, 0.0f);
 	ambientColorAvg.z = std::max(ambientColorAvg.z, 0.0f);
-	
+
 	float3 dirLightColorAvg = NiToF3(colors[(uint)RE::TESWeather::ColorTypes::kSunlight]);
 
 	auto applyLightingExtraction = [&](float3 inputColor, float3 ambientPart, float3 dirPart) -> float3 {
