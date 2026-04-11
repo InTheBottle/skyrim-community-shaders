@@ -79,7 +79,7 @@ namespace Util::Moon
 		if (!moon || !moon->root)
 			return { 0.0f, 0.0f, 1.0f };
 
-		auto dir = moon->root->local.rotate.GetVectorY();
+		auto dir = moon->root->world.rotate.GetVectorY();
 		dir.Unitize();
 
 		// Moon and Stars adjusts some intermediary rotation matrices for the moon

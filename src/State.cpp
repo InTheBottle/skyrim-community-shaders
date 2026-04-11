@@ -905,7 +905,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		if (auto sky = globals::game::sky) {
 			// Process sun
 			if (auto sun = sky->sun) {
-				float3 sunDirection = { sun->root->local.translate.x, sun->root->local.translate.y, sun->root->local.translate.z };
+				const auto& sunPos = sun->root->world.translate;
+				const auto& skyPos = sky->root->world.translate;
+				float3 sunDirection = { sunPos.x - skyPos.x, sunPos.y - skyPos.y, sunPos.z - skyPos.z };
 				sunDirection.Normalize();
 				data.SunDirection = { sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
 
