@@ -908,7 +908,11 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	// Update constant buffer with current settings
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	HRESULT hr = context->Map(colorCorrectionConstantBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-	if (SUCCEEDED(hr)) {
+	if (FAILED(hr)) {
+		logger::warn("[ENBPP] Failed to map color correction constant buffer");
+		return;
+	}
+	{
 		float* cbData = static_cast<float*>(mapped.pData);
 		cbData[0] = brightness;
 		cbData[1] = gammaCurve;
