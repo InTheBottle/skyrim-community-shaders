@@ -297,7 +297,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			ifdef TEX
 	float3 sunGlareColor = Color::Sky(input.Color.xyz) * baseColor.xyz;
-	if (SharedData::HDRData.x > 0.5 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
+	if (SharedData::HDRData.x > 0.5 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun) && !SharedData::enbSettings.EnableSky) {
 		// HDR sun block already applied tint/scale; avoid multiplying by tint again.
 		sunGlareColor = baseColor.xyz;
 	}
