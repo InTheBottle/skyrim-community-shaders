@@ -120,6 +120,8 @@ public:
 
 	const CommonVariableData& GetCommonData() const { return commonData; }
 
+	bool IsInitialized() const { return initialized; }
+
 	// Execute a single effect with perf events and common variable setup
 	void ExecuteEffect(Effect& effect, uint32_t enableSettingID = 0xFFFFFFFF);
 
@@ -128,4 +130,7 @@ public:
 
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
+
+private:
+	bool initialized = false;
 };

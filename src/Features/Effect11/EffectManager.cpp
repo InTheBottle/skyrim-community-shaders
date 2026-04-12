@@ -51,6 +51,9 @@ void EffectManager::Initialize()
 
 	if (!resourcesValid) {
 		logger::error("[EffectManager] Initialization failed due to missing resources");
+		initialized = false;
+	} else {
+		initialized = true;
 	}
 }
 
@@ -243,6 +246,9 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 
 void EffectManager::ExecuteEffects()
 {
+	if (!initialized)
+		return;
+
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 
