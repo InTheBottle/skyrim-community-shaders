@@ -206,7 +206,7 @@ IBL::Settings IBL::GetCommonBufferData() const
 				data.DALCAmount = 1.0f;
 				data.EnvIBLSaturation = 2.5f;
 				data.SkyIBLSaturation = 2.5f;
-				data.DALCMode = 2;
+				data.DALCMode = 3;
 			}
 		}
 	}
