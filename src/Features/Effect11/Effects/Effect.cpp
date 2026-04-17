@@ -6,7 +6,6 @@
 #include <DirectXTK/DDSTextureLoader.h>
 #include <DirectXTK/WICTextureLoader.h>
 
-#include "../ENBExtender.h"
 #include "../TextureManager.h"
 #include "State.h"
 
@@ -195,22 +194,15 @@ bool Effect::LoadFXFile()
 	}
 	mainFile.close();
 
-	// Preprocess main source code for ENB Extender compatibility
-	sourceCode = ENBExtender::PreprocessSource(sourceCode);
-
-	// Create custom include handler for ENB Extender compatibility
-	ENBExtender::IncludeHandler includeHandler(std::filesystem::path("enbseries"));
-
 	winrt::com_ptr<ID3DBlob> compiledShader;
 	winrt::com_ptr<ID3DBlob> errorBlob;
 
-	// Compile the effect with custom include handler
 	HRESULT hr = D3DCompile(
 		sourceCode.c_str(),
 		sourceCode.size(),
 		filePath.string().c_str(),
 		nullptr,
-		&includeHandler,
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,
 		nullptr,
 		"fx_5_0",
 		0,
