@@ -658,8 +658,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					else
 		float3 positionMSSkylight = input.WorldPosition.xyz;
 #					endif
+
+		float3 skylightingNormal = normal;
+		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal = normalize(skylightingNormal);
+
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
-		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
+		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(skylightingNormal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
 		skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);
@@ -946,8 +951,13 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 		float3 positionMSSkylight = input.WorldPosition.xyz;
 #				endif
+
+		float3 skylightingNormal = normal;
+		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal = normalize(skylightingNormal);
+
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
-		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
+		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(skylightingNormal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
 		skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);

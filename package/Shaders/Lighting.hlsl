@@ -2832,8 +2832,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float skylightingDiffuse = 1;
 	float skylightingFadeOutFactor = 1.0;
 	if (!SharedData::InInterior) {
+		float3 skylightingNormal = ambientNormal;
+		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal = normalize(skylightingNormal);
 		skylightingFadeOutFactor = Skylighting::getFadeOutFactor(input.WorldPosition.xyz);
-		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(ambientNormal)) / Math::PI;
+		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(skylightingNormal)) / Math::PI;
 		skylightingDiffuse = saturate(skylightingDiffuse);
 		skylightingDiffuse = lerp(1.0, skylightingDiffuse, skylightingFadeOutFactor);
 		skylightingDiffuse = Skylighting::mixDiffuse(SharedData::skylightingSettings, skylightingDiffuse);
