@@ -228,6 +228,7 @@ void SubsurfaceScattering::DrawSSS()
 	{
 		ID3D11Buffer* buffer[1] = { blurCB->CB() };
 		context->CSSetConstantBuffers(1, 1, buffer);
+		context->CSSetSamplers(0, 1, &globals::deferred->linearSampler);
 
 		auto main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
@@ -314,6 +315,9 @@ void SubsurfaceScattering::DrawSSS()
 
 	ID3D11Buffer* buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);
+
+	ID3D11SamplerState* nullSampler = nullptr;
+	context->CSSetSamplers(0, 1, &nullSampler);
 
 	ID3D11ShaderResourceView* views[5]{ nullptr, nullptr, nullptr, nullptr, nullptr };
 	context->CSSetShaderResources(0, ARRAYSIZE(views), views);

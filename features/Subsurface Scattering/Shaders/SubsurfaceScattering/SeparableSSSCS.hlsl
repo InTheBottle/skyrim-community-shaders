@@ -6,6 +6,8 @@ Texture2D<float4> MaskTexture : register(t2);
 Texture2D<float4> AlbedoTexture : register(t3);
 Texture2D<float4> NormalTexture : register(t4);
 
+SamplerState LinearSampler : register(s0);
+
 #define SSSS_N_SAMPLES 21
 
 cbuffer PerFrameSSS : register(b1)
@@ -55,7 +57,7 @@ cbuffer PerFrameSSS : register(b1)
 	float sssAmount = MaskTexture[DTid.xy].x;
 	bool humanProfile = MaskTexture[DTid.xy].y > 0.0;
 
-	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(1.0, 0.0), sssAmount, humanProfile);
+	float4 color = SSSSBlurCS(texCoord, float2(1.0, 0.0), sssAmount, humanProfile);
 	SSSRW[DTid.xy] = max(0, color);
 
 #else
@@ -65,7 +67,7 @@ cbuffer PerFrameSSS : register(b1)
 	if (sssAmount > 0.0) {
 		bool humanProfile = MaskTexture[DTid.xy].y > 0.0;
 
-		float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(0.0, 1.0), sssAmount, humanProfile);
+		float4 color = SSSSBlurCS(texCoord, float2(0.0, 1.0), sssAmount, humanProfile);
 		color.rgb = Color::IrradianceToGamma(color.rgb);
 		color.rgb = SSSApplyAlbedo(color.rgb, AlbedoTexture[DTid.xy].rgb);
 		SSSRW[DTid.xy] = float4(color.rgb, 1.0);
