@@ -660,7 +660,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 
 		float3 skylightingNormal = normal;
-		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal.z = skylightingNormal.z * 0.5 + 0.5;
 		skylightingNormal = normalize(skylightingNormal);
 
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);
@@ -953,7 +953,7 @@ PS_OUTPUT main(PS_INPUT input)
 #				endif
 
 		float3 skylightingNormal = normal;
-		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal.z = skylightingNormal.z * 0.5 + 0.5;
 		skylightingNormal = normalize(skylightingNormal);
 
 		sh2 skylightingSH = Skylighting::sample(SharedData::skylightingSettings, Skylighting::SkylightingProbeArray, Skylighting::stbn_vec3_2Dx1D_128x128x64, input.HPosition.xy, positionMSSkylight, normal);

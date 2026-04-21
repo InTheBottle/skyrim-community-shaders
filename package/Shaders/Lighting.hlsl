@@ -1996,6 +1996,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING))
 	float4 rimSoftLightColor = TexRimSoftLightWorldMapOverlaySampler.Sample(SampRimSoftLightWorldMapOverlaySampler, uv);
+#		if defined(TREE_ANIM)
+	rimSoftLightColor.xyz = lerp(dot(rimSoftLightColor.xyz, 1.0 / 3.0), rimSoftLightColor, 2.0);
+#		endif // TREE_ANIM
 #	endif  // RIM_LIGHTING || SOFT_LIGHTING
 
 	uint numLights = min(7, uint(NumLightNumShadowLight.x));
@@ -2829,7 +2832,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float skylightingFadeOutFactor = 1.0;
 	if (!SharedData::InInterior) {
 		float3 skylightingNormal = ambientNormal;
-		skylightingNormal.z = max(0, skylightingNormal.z);
+		skylightingNormal.z = skylightingNormal.z * 0.5 + 0.5;
 		skylightingNormal = normalize(skylightingNormal);
 		skylightingFadeOutFactor = Skylighting::getFadeOutFactor(input.WorldPosition.xyz);
 		skylightingDiffuse = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(skylightingNormal)) / Math::PI;
