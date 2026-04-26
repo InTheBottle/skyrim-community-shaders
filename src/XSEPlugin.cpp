@@ -103,6 +103,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 			break;
 		}
+	case SKSE::MessagingInterface::kPostLoadGame:
+	case SKSE::MessagingInterface::kNewGame:
+		{
+			Feature::ForEachLoadedFeature("PostLoadGame", [](Feature* feature) { feature->PostLoadGame(); });
+			break;
+		}
 	case SKSE::MessagingInterface::kDataLoaded:
 		{
 			for (auto it = errors.begin(); it != errors.end(); ++it) {
