@@ -102,6 +102,18 @@ void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 	auto skyProperty = static_cast<const RE::BSSkyShaderProperty*>(Pass->shaderProperty);
 
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_CLOUDS) {
+		uint16_t layer = skyProperty->usCloudLayer;
+		bool alreadyTracked = false;
+		for (int i = 0; i < currentCloudCount; i++) {
+			if (currentCloudOrder[i] == layer) {
+				alreadyTracked = true;
+				break;
+			}
+		}
+		if (!alreadyTracked && currentCloudCount < kMaxTrackedCloudLayers) {
+			currentCloudOrder[currentCloudCount++] = layer;
+		}
+
 		overrideSky = true;
 	}
 }
@@ -126,6 +138,26 @@ void CloudShadows::ReflectionsPrepass()
 
 void CloudShadows::EarlyPrepass()
 {
+	bool orderValid = (currentCloudCount == validatedCloudCount);
+	if (orderValid) {
+		for (int i = 0; i < currentCloudCount; i++) {
+			if (currentCloudOrder[i] != validatedCloudOrder[i]) {
+				orderValid = false;
+				break;
+			}
+		}
+	}
+
+	if (orderValid || validatedCloudCount == 0) {
+		settings.Validity = 1.0f;
+	} else {
+		settings.Validity = 0.0f;
+	}
+
+	std::memcpy(validatedCloudOrder, currentCloudOrder, sizeof(validatedCloudOrder));
+	validatedCloudCount = currentCloudCount;
+	currentCloudCount = 0;
+
 	if ((globals::game::sky->mode.get() != RE::Sky::Mode::kFull) ||
 		!globals::game::sky->currentClimate)
 		return;

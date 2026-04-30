@@ -6,10 +6,13 @@ private:
 	static constexpr std::string_view MOD_ID = "139185";
 
 public:
+	static constexpr int kMaxTrackedCloudLayers = 8;
+
 	struct alignas(16) Settings
 	{
 		float Opacity = 0.8f;
-		float pad[3];
+		float Validity = 1.0f;
+		float pad[2];
 	};
 
 	Settings settings;
@@ -40,6 +43,11 @@ public:
 
 	ID3D11RenderTargetView* cubemapCloudOccRTVs[6] = { nullptr };
 	ID3D11RenderTargetView* cubemapCloudOccCopyRTVs[6] = { nullptr };
+
+	uint16_t currentCloudOrder[kMaxTrackedCloudLayers] = {};
+	int currentCloudCount = 0;
+	uint16_t validatedCloudOrder[kMaxTrackedCloudLayers] = {};
+	int validatedCloudCount = 0;
 
 	ID3D11BlendState* cloudShadowBlendState = nullptr;
 
