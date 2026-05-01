@@ -218,6 +218,14 @@ PS_OUTPUT main(PS_INPUT input)
 	baseColor = PParams.xxxx * (-baseColor + blendColor) + baseColor;
 #		endif
 
+#		if defined(CLOUD_SHADOWS) && defined(CLOUDS)
+	{
+		float3 cloudSelfShadowDir = CloudShadows::GetCloudShadowSampleDir(input.WorldPosition.xyz, SharedData::DirLightDirection.xyz);
+		float selfShadow = CloudShadows::CloudSelfShadowTexture.SampleLevel(SampBaseSampler, cloudSelfShadowDir, 0).x;
+		baseColor.xyz *= 1.0 - selfShadow * SharedData::cloudShadowsSettings.Opacity;
+	}
+#		endif
+
 	// HDR-only sun path: scale glare/disc brightness using user HDR settings.
 	if (SharedData::HDRData.x > 0.5 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
 		// 203 nits is the HDR reference paper white used by the rest of the HDR pipeline.
