@@ -21,7 +21,11 @@ namespace
 
 		HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID, LPCVOID* ppData, UINT* pBytes) override
 		{
-			auto fullPath = basePath / pFileName;
+			std::string_view name(pFileName);
+			while (!name.empty() && (name.front() == '/' || name.front() == '\\'))
+				name.remove_prefix(1);
+
+			auto fullPath = basePath / name;
 			std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
 			if (!file.is_open())
 				return E_FAIL;

@@ -51,7 +51,7 @@ void PresetManager::DiscoverPresets()
 	}
 
 	// Scan Data/enbpresets/
-	std::filesystem::path presetsDir = "Data/enbpresets";
+	std::filesystem::path presetsDir = "Data\\enbpresets";
 	if (std::filesystem::exists(presetsDir) && std::filesystem::is_directory(presetsDir)) {
 		std::vector<std::string> folders;
 		for (auto& entry : std::filesystem::directory_iterator(presetsDir)) {
