@@ -257,6 +257,9 @@ namespace SharedData
 		float CloudsDesaturation;
 		float CloudsEdgeIntensity;
 		float CloudsEdgeMoonMultiplier;
+
+		float VolumetricRaysDesaturation;
+		float3 VolumetricRaysColorFilter;
 	};
 	struct TerrainBlendingSettings
 	{

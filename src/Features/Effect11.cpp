@@ -25,6 +25,10 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	data.CloudsEdgeIntensity = settingManager.GetValue<float>("CloudsEdgeIntensity", "SKY");
 	data.CloudsEdgeMoonMultiplier = settingManager.GetValue<float>("CloudsEdgeMoonMultiplier", "SKY");
 
+	data.VolumetricRaysDesaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
+	auto colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
+	data.VolumetricRaysColorFilter = { colorFilter.x, colorFilter.y, colorFilter.z };
+
 	return data;
 }
 
@@ -306,18 +310,9 @@ void Effect11::OverrideWeather(RE::Sky* a_sky)
 	}
 
 	{
-		static auto& volumetricLightingRenderParams = (*(VolumetricLightingRenderParams*)REL::RelocationID(527719, 414629).address());
-
-		auto& volumetricLightingColor = volumetricLightingRenderParams.color;
-		auto volumetricLightingColorF3 = NiToF3(volumetricLightingColor);
-
-		volumetricLightingColorF3 = Desaturation(volumetricLightingColorF3, settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS"));
-		volumetricLightingColorF3 = ColorFilter(volumetricLightingColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS"), 0.0f);
-		volumetricLightingColorF3 *= settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
-
-		volumetricLightingColor = F3ToNi(volumetricLightingColorF3);
-
-		volumetricLightingRenderParams.samplingRepartition.rangeFactor *= settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
+		static auto& volumetricLighting = (*(RE::BSVolumetricLightingRenderData*)(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, red)));
+		volumetricLighting.intensity *= settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
+		volumetricLighting.samplingRepartition.rangeFactor *= settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 	}
 }
 

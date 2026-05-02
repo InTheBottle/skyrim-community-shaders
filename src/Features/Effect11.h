@@ -31,6 +31,9 @@ public:
 		float CloudsDesaturation;
 		float CloudsEdgeIntensity;
 		float CloudsEdgeMoonMultiplier;
+
+		float VolumetricRaysDesaturation;
+		float3 VolumetricRaysColorFilter;
 	};
 
 	bool enableEffect = false;
@@ -41,14 +44,6 @@ public:
 	virtual void SetupResources() override;
 	virtual void Reset() override;
 	virtual void Prepass() override;
-
-	struct VolumetricLightingRenderParams
-	{
-		RE::NiColor color;
-		RE::BSVolumetricLightingRenderData::Density density;
-		RE::BSVolumetricLightingRenderData::PhaseFunction phaseFunction;
-		RE::BSVolumetricLightingRenderData::SamplingRepartition samplingRepartition;
-	};
 
 	void OverrideWeather(RE::Sky* a_sky);
 	void CheckCommonData();
