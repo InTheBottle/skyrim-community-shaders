@@ -1,0 +1,11 @@
+[
+	{
+		"file": "enbeffect.hlsli",
+		"patches": [
+			{
+				"find": "#define TODIE(a) lerp( TOD(a), a##_Interior, EInteriorFactor )",
+				"replace": "#define TODIE(a) (EInteriorFactor ? a##_Interior : TOD(a))"
+			}
+		]
+	}
+]
