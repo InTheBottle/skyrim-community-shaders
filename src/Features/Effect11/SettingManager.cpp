@@ -1,5 +1,6 @@
 #include "SettingManager.h"
 
+#include "PresetManager.h"
 #include "WeatherManager.h"
 #include <Windows.h>
 #include <algorithm>
@@ -965,13 +966,13 @@ void SettingManager::SetIgnoreWeatherSystemInterior(const std::string& category,
 
 void SettingManager::Load()
 {
-	LoadFromFile("enbseries.ini");
+	LoadFromFile(PresetManager::GetSingleton().GetENBSeriesIniPath().string());
 	ReloadAllWeatherSettings();
 }
 
 void SettingManager::Save()
 {
-	SaveToFile("enbseries.ini");
+	SaveToFile(PresetManager::GetSingleton().GetENBSeriesIniPath().string());
 	SaveAllWeatherSettings();
 }
 

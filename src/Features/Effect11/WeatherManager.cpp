@@ -1,6 +1,7 @@
 #include "WeatherManager.h"
 
 #include "EffectManager.h"
+#include "PresetManager.h"
 #include "SettingManager.h"
 #include <Windows.h>
 #include <filesystem>
@@ -20,7 +21,7 @@ void WeatherManager::Initialize()
 
 void WeatherManager::LoadWeatherList()
 {
-	std::filesystem::path weatherListPath = "enbseries/_weatherlist.ini";
+	std::filesystem::path weatherListPath = PresetManager::GetSingleton().GetENBSeriesPath() / "_weatherlist.ini";
 
 	if (!std::filesystem::exists(weatherListPath)) {
 		logger::warn("[WeatherManager] _weatherlist.ini not found at {}", weatherListPath.string());
@@ -74,7 +75,7 @@ void WeatherManager::LoadWeatherList()
 		ParseWeatherIDs(weatherIDsStr, entry.weatherIDs);
 
 		// Load the weather file through SettingManager once for all associated IDs
-		std::filesystem::path weatherFilePath = "enbseries/" + entry.fileName;
+		std::filesystem::path weatherFilePath = PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName;
 		if (std::filesystem::exists(weatherFilePath)) {
 			SettingManager::GetSingleton().LoadWeatherSettings(entry.weatherIDs, weatherFilePath.string());
 		} else {
@@ -141,7 +142,7 @@ uint32_t WeatherManager::ParseHexID(const std::string& hexStr)
 
 void WeatherManager::LoadLocationWeather()
 {
-	std::filesystem::path locationWeatherPath = "enbseries/_locationweather.ini";
+	std::filesystem::path locationWeatherPath = PresetManager::GetSingleton().GetENBSeriesPath() / "_locationweather.ini";
 
 	if (!std::filesystem::exists(locationWeatherPath)) {
 		logger::info("[WeatherManager] _locationweather.ini not found, location weather disabled");
@@ -276,7 +277,7 @@ std::unordered_map<std::string, std::string> WeatherManager::GetWeatherFiles() c
 	std::unordered_map<std::string, std::string> result;
 
 	for (const auto& [sectionName, entry] : weatherEntries) {
-		std::string weatherFilePath = "enbseries/" + entry.fileName;
+		std::string weatherFilePath = (PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName).string();
 		for (uint32_t weatherID : entry.weatherIDs) {
 			result["weather_" + std::to_string(weatherID)] = weatherFilePath;
 		}

@@ -1,6 +1,7 @@
 ﻿#include "MenuManager.h"
 
 #include "EffectManager.h"
+#include "PresetManager.h"
 #include "SettingManager.h"
 
 static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
@@ -195,6 +196,9 @@ std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSetti
 	// Weather-Based Settings - Categories that change with weather/time
 	categorizedSettings["Weather"] = { "BLOOM", "LENS", "ENVIRONMENT", "SKY", "VOLUMETRICFOG", "IMAGEBASEDLIGHTING", "PARTICLE", "GAMEVOLUMETRICRAYS", "SUNGLARE", "CLOUDSHADOWS" };
 
+	// Presets
+	categorizedSettings["Presets"] = {};
+
 	// Debug Information
 	categorizedSettings["Debug"] = {};
 
@@ -269,7 +273,7 @@ void MenuManager::RenderAllSettings()
 	auto categorizedSettings = GetCategorizedSettings();
 
 	// Define explicit order for tabs
-	const std::vector<std::string> tabOrder = { "Main", "Weather", "Debug" };
+	const std::vector<std::string> tabOrder = { "Presets", "Main", "Weather", "Debug" };
 
 	if (ImGui::BeginTabBar("SettingsTabBar", ImGuiTabBarFlags_None)) {
 		for (const auto& tabName : tabOrder) {
@@ -341,6 +345,10 @@ void MenuManager::RenderAllSettings()
 
 						ImGui::Separator();
 					}
+				}
+
+				if (tabName == "Presets") {
+					RenderPresetsTab();
 				}
 
 				if (tabName == "Debug") {
@@ -529,5 +537,109 @@ void MenuManager::RenderAllSettings()
 			}
 		}
 		ImGui::EndTabBar();
+	}
+}
+
+void MenuManager::RenderPresetsTab()
+{
+	auto& presetManager = PresetManager::GetSingleton();
+	const auto& presets = presetManager.GetPresets();
+	int activeIndex = presetManager.GetActivePresetIndex();
+
+	if (presets.empty()) {
+		ImGui::TextWrapped("No ENB presets found. Place presets in Data/enbpresets/<name>/enbseries/ or use the root enbseries/ folder.");
+		return;
+	}
+
+	ImGui::Text("Active: %s", activeIndex >= 0 ? presets[activeIndex].displayName.c_str() : "None");
+	ImGui::Text("Path: %s", presetManager.GetENBSeriesPath().generic_string().c_str());
+	ImGui::Separator();
+
+	for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+		const auto& preset = presets[i];
+		bool isActive = (i == activeIndex);
+		bool reqMet = presetManager.AreRequirementsMet(preset);
+
+		ImGui::PushID(i);
+
+		if (isActive) {
+			ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.4f, 0.2f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.5f, 0.25f, 1.0f));
+		}
+
+		bool open = ImGui::CollapsingHeader(preset.displayName.c_str(), isActive ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
+
+		if (isActive) {
+			ImGui::PopStyleColor(2);
+		}
+
+		if (open) {
+			ImGui::Indent();
+
+			if (preset.isRoot) {
+				ImGui::TextDisabled("Root enbseries/ folder");
+			} else {
+				ImGui::TextDisabled("%s", preset.basePath.generic_string().c_str());
+			}
+
+			if (preset.thumbnailSRV) {
+				float maxWidth = 385.0f;
+				float maxHeight = 216.0f;
+				float aspect = preset.thumbnailWidth / preset.thumbnailHeight;
+				float displayWidth = std::min(maxWidth, preset.thumbnailWidth);
+				float displayHeight = displayWidth / aspect;
+				if (displayHeight > maxHeight) {
+					displayHeight = maxHeight;
+					displayWidth = displayHeight * aspect;
+				}
+				ImGui::Image(preset.thumbnailSRV.get(), ImVec2(displayWidth, displayHeight));
+			}
+
+			if (!preset.description.empty()) {
+				ImGui::TextWrapped("%s", preset.description.c_str());
+			}
+
+			if (!preset.requiredPlugins.empty()) {
+				ImGui::Text("Required Plugins:");
+				for (const auto& plugin : preset.requiredPlugins) {
+					auto handler = RE::TESDataHandler::GetSingleton();
+					bool loaded = handler && handler->LookupModByName(plugin);
+					if (loaded) {
+						ImGui::BulletText("%s", plugin.c_str());
+					} else {
+						ImGui::Bullet();
+						ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s (missing)", plugin.c_str());
+					}
+				}
+			}
+
+			if (!isActive) {
+				if (!reqMet) {
+					ImGui::BeginDisabled();
+				}
+
+				if (ImGui::Button("Activate")) {
+					presetManager.SetActivePreset(i);
+
+					auto& settingManager = SettingManager::GetSingleton();
+					auto& effectManager = EffectManager::GetSingleton();
+					settingManager.Load();
+					effectManager.Apply();
+				}
+
+				if (!reqMet) {
+					ImGui::EndDisabled();
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+						ImGui::SetTooltip("Missing required plugins");
+					}
+				}
+			} else {
+				ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Active");
+			}
+
+			ImGui::Unindent();
+		}
+
+		ImGui::PopID();
 	}
 }

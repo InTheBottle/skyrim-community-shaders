@@ -3,6 +3,7 @@
 #include "Effect11/ENBHelper.h"
 #include "Effect11/EffectManager.h"
 #include "Effect11/MenuManager.h"
+#include "Effect11/PresetManager.h"
 #include "Effect11/SettingManager.h"
 #include "Effect11/WeatherManager.h"
 
@@ -34,7 +35,7 @@ void Effect11::DrawSettings()
 
 void Effect11::SetupResources()
 {
-	// Initialize the effects system
+	PresetManager::GetSingleton().Initialize();
 	EffectManager::GetSingleton().Initialize();
 }
 

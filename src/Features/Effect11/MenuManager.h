@@ -17,6 +17,7 @@ private:
 	void RenderSettingsPanel();
 	void RenderWeatherControl();
 	void RenderDebugControl();
+	void RenderPresetsTab();
 
 	// Helper UI methods
 	void RenderAllSettings();

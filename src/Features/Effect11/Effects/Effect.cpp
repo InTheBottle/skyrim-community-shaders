@@ -6,15 +6,61 @@
 #include <DirectXTK/DDSTextureLoader.h>
 #include <DirectXTK/WICTextureLoader.h>
 
+#include "../PresetManager.h"
 #include "../TextureManager.h"
 #include "State.h"
+#include "Utils/ShaderPatches.h"
+
+namespace
+{
+	class PresetInclude : public ID3DInclude
+	{
+	public:
+		PresetInclude(const std::filesystem::path& a_basePath) :
+			basePath(a_basePath) {}
+
+		HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID, LPCVOID* ppData, UINT* pBytes) override
+		{
+			auto fullPath = basePath / pFileName;
+			std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+			if (!file.is_open())
+				return E_FAIL;
+
+			auto size = file.tellg();
+			if (size < 0)
+				return E_FAIL;
+			file.seekg(0, std::ios::beg);
+
+			std::string content(static_cast<size_t>(size), '\0');
+			if (!file.read(content.data(), size))
+				return E_FAIL;
+
+			Util::ShaderPatches::Apply(pFileName, content);
+
+			auto* buf = new char[content.size()];
+			memcpy(buf, content.data(), content.size());
+			*ppData = buf;
+			*pBytes = static_cast<UINT>(content.size());
+			return S_OK;
+		}
+
+		HRESULT __stdcall Close(LPCVOID pData) override
+		{
+			delete[] static_cast<const char*>(pData);
+			return S_OK;
+		}
+
+	private:
+		std::filesystem::path basePath;
+	};
+}
 
 bool Effect::Load()
 {
 	logger::debug("[ENBPP] Loading settings for effect '{}'", GetName());
 
 	// Create ini file path based on effect name
-	std::filesystem::path iniPath = "enbseries";
+	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath();
 	iniPath /= GetName() + ".ini";
 
 	// Check if file exists
@@ -65,7 +111,7 @@ void Effect::Save()
 	logger::debug("[ENBPP] Saving settings for effect '{}'", GetName());
 
 	// Create ini file path based on effect name
-	std::filesystem::path iniPath = "enbseries";
+	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath();
 	iniPath /= GetName() + ".ini";
 
 	// Prepare section name
@@ -168,7 +214,7 @@ void Effect::Unload()
 
 bool Effect::LoadFXFile()
 {
-	auto filePath = std::filesystem::path("enbseries");
+	auto filePath = PresetManager::GetSingleton().GetENBSeriesPath();
 	filePath /= GetName();
 
 	// Read main effect file
@@ -194,6 +240,10 @@ bool Effect::LoadFXFile()
 	}
 	mainFile.close();
 
+	Util::ShaderPatches::Apply(GetName().c_str(), sourceCode);
+
+	PresetInclude includeHandler(filePath.parent_path());
+
 	winrt::com_ptr<ID3DBlob> compiledShader;
 	winrt::com_ptr<ID3DBlob> errorBlob;
 
@@ -202,7 +252,7 @@ bool Effect::LoadFXFile()
 		sourceCode.size(),
 		filePath.string().c_str(),
 		nullptr,
-		D3D_COMPILE_STANDARD_FILE_INCLUDE,
+		&includeHandler,
 		nullptr,
 		"fx_5_0",
 		0,
@@ -475,8 +525,7 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 		return cacheIt->second.get();
 	}
 
-	// Construct full path - check enbseries folder first
-	std::filesystem::path filepath = std::filesystem::path{ "enbseries" } / filename;
+	std::filesystem::path filepath = PresetManager::GetSingleton().GetENBSeriesPath() / filename;
 
 	winrt::com_ptr<ID3D11Resource> texture;
 	winrt::com_ptr<ID3D11ShaderResourceView> srv;
