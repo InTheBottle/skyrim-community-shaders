@@ -53,7 +53,7 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 	float centerDepth = SharedData::GetScreenDepth(DepthTexture[DTid].x);
 
 	float4 centerColor = ColorTexture[DTid];
-	if (centerDepth <= 0) {
+	if (sssAmount == 0 || centerDepth <= 0) {
 		return centerColor;
 	}
 
