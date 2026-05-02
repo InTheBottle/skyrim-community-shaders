@@ -1,4 +1,4 @@
-name: Build Community Shaders and addons
+name: "Release: Build Artifacts"
 
 on:
     push:
@@ -32,7 +32,7 @@ concurrency:
 jobs:
     build:
         name: Build
-        uses: ./.github/workflows/_build.yaml
+        uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ github.ref }}
             repository: ${{ github.repository }}
@@ -40,6 +40,7 @@ jobs:
             run-shader-validation: ${{ github.event_name != 'workflow_dispatch' || inputs.validate-shaders == true }}
             run-shader-tests: ${{ github.event_name != 'workflow_dispatch' || inputs.validate-shaders == true }}
             cache-key-suffix: ${{ inputs.cache-key-suffix || '' }}
+            run-vs2022: ${{ github.ref_type != 'tag' }}
 
     feature-audit:
         name: Feature Version Audit (Release)
@@ -48,13 +49,13 @@ jobs:
         continue-on-error: true
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   fetch-depth: 0
                   submodules: recursive
 
             - name: Setup Python
-              uses: actions/setup-python@v5
+              uses: actions/setup-python@v6
               with:
                   python-version: "3.11"
 
@@ -64,7 +65,7 @@ jobs:
                   cat feature-version-audit-latest.md
 
             - name: Upload feature audit markdown
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: feature-version-audit
                   path: feature-version-audit-latest.md
@@ -86,6 +87,7 @@ jobs:
         steps:
             - name: Ensure ref is a tag
               if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+              shell: bash
               run: |
                   if [ "${{ github.ref_type }}" != "tag" ]; then
                     echo "This workflow must be run on a tag, not a branch."
@@ -93,14 +95,14 @@ jobs:
                   fi
 
             - name: Download dist artifacts
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v7
               with:
                   name: dist-artifacts
                   path: dist/
 
             - name: Download feature audit artifact
               continue-on-error: true
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v7
               with:
                   name: feature-version-audit
                   path: .
