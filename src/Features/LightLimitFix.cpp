@@ -249,7 +249,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		light.fade *= bsLight->lodDimmer;
 
 		auto& enbpp = globals::features::effect11;
-		if (enbpp.enableEffect)
+		if (inWorld && enbpp.enableEffect)
 			enbpp.OverridePointLightColor(light.color);
 
 		SetLightPosition(light, niLight->world.translate, inWorld);
