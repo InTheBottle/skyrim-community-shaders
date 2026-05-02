@@ -90,6 +90,7 @@
 //-----------------------------------------------------------------------------
 
 #include "Common/Math.hlsli"
+#include "Common/Random.hlsli"
 
 float4 SSSSBlurCS(
 	float2 texcoord,
@@ -118,6 +119,12 @@ float4 SSSSBlurCS(
 	// Accumulate center sample, multiplying it with its gaussian weight:
 	float4 colorBlurred = colorM;
 	colorBlurred.rgb *= Kernels[kernelOffset].rgb;
+
+	// Per-pixel rotation to break separable axis-aligned banding
+	float angle = Random::InterleavedGradientNoise(texcoord * SharedData::BufferDim.xy, SharedData::FrameCount) * Math::PI;
+	float cs, sn;
+	sincos(angle, sn, cs);
+	dir = float2(dir.x * cs - dir.y * sn, dir.x * sn + dir.y * cs);
 
 	// World-space width
 	float distanceToProjectionWindow = 1.0 / tan(0.5 * radians(SSSS_FOVY));
