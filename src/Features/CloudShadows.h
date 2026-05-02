@@ -40,11 +40,13 @@ public:
 	Texture2D* texCloudShadowLayers[kMaxCloudLayers] = {};
 	ID3D11RenderTargetView* cloudShadowLayerRTVs[kMaxCloudLayers][6] = {};
 	Texture2D* texCubemapCloudOccCopy = nullptr;
+	Texture2D* texSelfShadowCopy = nullptr;
 
 	UINT cubemapMipLevels = 1;
 	int currentLayerForDraw = 0;
 
 	uint32_t renderedLayersMask[6] = {};
+	uint32_t globalRenderedMask = 0;
 	int previouslyRenderedSide = -1;
 
 	ID3D11BlendState* cloudShadowBlendState = nullptr;

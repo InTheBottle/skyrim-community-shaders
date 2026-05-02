@@ -5,6 +5,8 @@
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
+#undef SKYLIGHTING
+
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
@@ -187,9 +189,9 @@ cbuffer AlphaTestRefCB : register(b11)
 #	include "Common/MotionBlur.hlsli"
 #	include "Common/SharedData.hlsli"
 
-#	if defined(CLOUD_SHADOWS)
-#		include "CloudShadows/CloudShadows.hlsli"
-#	endif
+#define LinearSampler SampBaseSampler
+#	include "Common/ShadowSampling.hlsli"
+
 
 Texture2D<float> TexDepthSampler : register(t17);
 
@@ -220,9 +222,46 @@ PS_OUTPUT main(PS_INPUT input)
 
 #		if defined(CLOUD_SHADOWS) && defined(CLOUDS)
 	{
-		float3 cloudSelfShadowDir = CloudShadows::GetCloudShadowSampleDir(input.WorldPosition.xyz, SharedData::DirLightDirection.xyz);
-		float selfShadow = CloudShadows::CloudSelfShadowTexture.SampleLevel(SampBaseSampler, cloudSelfShadowDir, 0).x;
-		baseColor.xyz *= 1.0 - selfShadow * SharedData::cloudShadowsSettings.Opacity;
+		float3 viewDir = normalize(input.WorldPosition.xyz);
+		float3 dirLightDir = SharedData::DirLightDirection.xyz;
+
+
+		float scale = 10;
+		
+		float3 dirColor;
+		float3 ambientColor;
+		ShadowSampling::ExtractLighting(input.Color.xyz, dirColor, ambientColor);
+
+		// Accumulate directional-light contribution with 4 Poisson-disc
+		// cloud-shadow samples along the sun-view great circle.
+		static const float kRayStep = 1.0 / 32.0;
+		float rayPos = kRayStep * 0.5;
+		float4 rayShadow = 0.0;
+
+		static const float3 kPoissonDisc[4] = {
+			float3(0.460921f, 0.615192f, 0.887539f),
+			float3(0.757347f, 0.911008f, 0.189581f),
+			float3(0.548753f, 0.145482f, 0.0548723f),
+			float3(0.90051f, 0.157048f, 0.623493f)
+		};
+
+		[unroll] for (int i = 0; i < 4; i++)
+		{
+			float3 raySample = normalize(lerp(viewDir, dirLightDir, rayPos));
+			raySample += (kPoissonDisc[i] * 2.0 - 1.0) * 0.01;
+
+			if (raySample.z < 0.0)
+				rayShadow[i] += -raySample.z;
+			else
+				rayShadow[i] = max(rayShadow[i], CloudShadows::CloudSelfShadowTexture.SampleLevel(SampBaseSampler, raySample, 0).x);
+
+			rayPos += kRayStep;
+		}
+
+		dirColor *= (1.0 - saturate(dot(rayShadow, 0.25)));
+
+		input.Color.xyz = dirColor + ambientColor;
+	
 	}
 #		endif
 

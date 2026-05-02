@@ -53,13 +53,38 @@ void CloudShadows::PropagateToCompletion(int side)
 	uint32_t mask = renderedLayersMask[side];
 	unsigned long highBit;
 	int fromLayer = _BitScanReverse(&highBit, mask) ? static_cast<int>(highBit) : 0;
-	if (fromLayer >= kMaxCloudLayers - 1)
-		return;
-	UINT subresource = D3D11CalcSubresource(0, side, cubemapMipLevels);
+
 	auto context = globals::d3d::context;
-	for (int i = fromLayer + 1; i < kMaxCloudLayers; i++) {
+
+	uint32_t newLayers = mask & ~globalRenderedMask;
+	if (newLayers) {
+		unsigned long bit;
+		uint32_t remaining = newLayers;
+		while (_BitScanForward(&bit, remaining)) {
+			int newLayer = static_cast<int>(bit);
+			for (int otherSide = 0; otherSide < 6; otherSide++) {
+				if (otherSide == side)
+					continue;
+				if (renderedLayersMask[otherSide] & (1u << newLayer))
+					continue;
+				uint32_t belowMask = renderedLayersMask[otherSide] & ((1u << newLayer) - 1);
+				unsigned long nearestBit;
+				int srcLayer = _BitScanReverse(&nearestBit, belowMask) ? static_cast<int>(nearestBit) : 0;
+				UINT otherSub = D3D11CalcSubresource(0, otherSide, cubemapMipLevels);
+				context->CopySubresourceRegion(
+					texCloudShadowLayers[newLayer]->resource.get(), otherSub, 0, 0, 0,
+					texCloudShadowLayers[srcLayer]->resource.get(), otherSub, nullptr);
+				renderedLayersMask[otherSide] |= (1u << newLayer);
+			}
+			remaining &= ~(1u << bit);
+		}
+		globalRenderedMask |= mask;
+	}
+
+	if (fromLayer < kMaxCloudLayers - 1) {
+		UINT subresource = D3D11CalcSubresource(0, side, cubemapMipLevels);
 		context->CopySubresourceRegion(
-			texCloudShadowLayers[i]->resource.get(), subresource, 0, 0, 0,
+			texCloudShadowLayers[kMaxCloudLayers - 1]->resource.get(), subresource, 0, 0, 0,
 			texCloudShadowLayers[fromLayer]->resource.get(), subresource, nullptr);
 	}
 }
@@ -95,23 +120,17 @@ void CloudShadows::SkyShaderHacks()
 		UINT subresource = D3D11CalcSubresource(0, side, cubemapMipLevels);
 
 		int fromLayer = std::max(prevLayer, 0);
-		for (int gap = fromLayer + 1; gap < layer; gap++) {
-			context->CopySubresourceRegion(
-				texCloudShadowLayers[gap]->resource.get(), subresource, 0, 0, 0,
-				texCloudShadowLayers[fromLayer]->resource.get(), subresource, nullptr);
-		}
+
+		context->CopyResource(texSelfShadowCopy->resource.get(), texCloudShadowLayers[layer]->resource.get());
 
 		if (layer > 0) {
 			context->CopySubresourceRegion(
 				texCloudShadowLayers[layer]->resource.get(), subresource, 0, 0, 0,
-				texCloudShadowLayers[layer - 1]->resource.get(), subresource, nullptr);
-
-			ID3D11ShaderResourceView* prevSrv = texCloudShadowLayers[layer - 1]->srv.get();
-			context->PSSetShaderResources(26, 1, &prevSrv);
-		} else {
-			ID3D11ShaderResourceView* nullSrv = nullptr;
-			context->PSSetShaderResources(26, 1, &nullSrv);
+				texCloudShadowLayers[fromLayer]->resource.get(), subresource, nullptr);
 		}
+
+		ID3D11ShaderResourceView* selfShadowSrv = texSelfShadowCopy->srv.get();
+		context->PSSetShaderResources(26, 1, &selfShadowSrv);
 
 		rtvs[3] = cloudShadowLayerRTVs[layer][side];
 		context->OMSetRenderTargets(4, rtvs, nullptr);
@@ -170,13 +189,8 @@ void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 		overrideSky = true;
 	} else {
 		auto context = globals::d3d::context;
-		if (layer > 0) {
-			ID3D11ShaderResourceView* srv = texCloudShadowLayers[layer - 1]->srv.get();
-			context->PSSetShaderResources(26, 1, &srv);
-		} else {
-			ID3D11ShaderResourceView* nullSrv = nullptr;
-			context->PSSetShaderResources(26, 1, &nullSrv);
-		}
+		ID3D11ShaderResourceView* srv = texCloudShadowLayers[layer]->srv.get();
+		context->PSSetShaderResources(26, 1, &srv);
 	}
 }
 
@@ -204,7 +218,6 @@ void CloudShadows::EarlyPrepass()
 		PropagateToCompletion(previouslyRenderedSide);
 		previouslyRenderedSide = -1;
 	}
-
 }
 
 void CloudShadows::SetupResources()
@@ -241,6 +254,9 @@ void CloudShadows::SetupResources()
 
 		texCubemapCloudOccCopy = new Texture2D(texDesc, "CloudShadows::CubemapCloudOccCopy");
 		texCubemapCloudOccCopy->CreateSRV(srvDesc);
+
+		texSelfShadowCopy = new Texture2D(texDesc, "CloudShadows::SelfShadowCopy");
+		texSelfShadowCopy->CreateSRV(srvDesc);
 	}
 	{
 		D3D11_BLEND_DESC blendDesc = {};
