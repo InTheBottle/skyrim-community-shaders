@@ -500,20 +500,18 @@ namespace ENBExtender
 	{
 		if (groupPath.empty())
 			return;
-		auto [it, inserted] = effect.groupMeta.try_emplace(groupPath);
-		if (!inserted)
-			return;
+		auto& gm = effect.groupMeta[groupPath];
 		auto get = [&](const char* name) { return effect.GetUIAnnotation(variable, name); };
 		auto s = get("UIGroupName");
 		if (!s.empty())
-			it->second.displayName = s;
+			gm.displayName = s;
 		s = get("UIGroupOpen");
 		if (!s.empty())
-			it->second.defaultOpen = IsTruthy(s);
+			gm.defaultOpen = IsTruthy(s);
 		s = get("UIOrdering");
 		if (!s.empty()) {
-			it->second.ordering = SafeStoi(s);
-			it->second.hasOrdering = true;
+			gm.ordering = SafeStoi(s);
+			gm.hasOrdering = true;
 		}
 	}
 
@@ -922,7 +920,31 @@ namespace ENBExtender
 			SortMergedTree(*child, meta);
 	}
 
-	// Root separator mapping
+	// Add root-level separators that fall between root label vars
+	static void InsertRootVarSeparators(std::span<Effect*> effects, GroupNode& root)
+	{
+		if (root.vars.empty())
+			return;
+		int maxRootVarSO = -1;
+		for (auto& ref : root.vars) {
+			int so = ref.effect->uiVariables[ref.index].sourceOrder;
+			if (so > maxRootVarSO)
+				maxRootVarSO = so;
+		}
+		for (auto* effect : effects) {
+			if (!effect->IsCompiled())
+				continue;
+			for (int i = 0; i < static_cast<int>(effect->uiVariables.size()); ++i) {
+				auto& var = effect->uiVariables[i];
+				if (!var.isSeparator || !var.group.empty())
+					continue;
+				if (var.sourceOrder < maxRootVarSO)
+					root.vars.push_back({ effect, i });
+			}
+		}
+	}
+
+	// Root separator mapping — maps root-level separators to the group they should render before
 
 	static std::unordered_set<std::string> MapRootSeparators(std::span<Effect*> effects, const GroupNode& root)
 	{
@@ -950,28 +972,46 @@ namespace ENBExtender
 			childInfos.push_back(std::move(ci));
 		}
 
+		// Collect source orders of root-level non-separator vars per effect
+		std::unordered_map<const Effect*, std::vector<int>> rootVarOrders;
+		for (auto& ref : root.vars) {
+			auto& var = ref.effect->uiVariables[ref.index];
+			if (!var.isSeparator)
+				rootVarOrders[ref.effect].push_back(var.sourceOrder);
+		}
+
 		std::unordered_set<std::string> result;
 		for (auto* effect : effects) {
 			if (!effect->IsCompiled())
 				continue;
+			int maxRootVarSO = -1;
+			auto rvIt = rootVarOrders.find(effect);
+			if (rvIt != rootVarOrders.end())
+				for (int so : rvIt->second)
+					if (so > maxRootVarSO)
+						maxRootVarSO = so;
+
 			for (auto& var : effect->uiVariables) {
 				if (!var.isSeparator || !var.group.empty())
 					continue;
+				// Skip separators that fall between root vars (handled in root.vars rendering)
+				if (var.sourceOrder < maxRootVarSO)
+					continue;
 				int bestMinSO = INT_MAX;
 				int bestIdx = -1;
-				bool hasGroupBefore = false;
+				bool hasContentBefore = maxRootVarSO >= 0;
 				for (size_t ci = 0; ci < childInfos.size(); ++ci) {
 					auto it = childInfos[ci].minOrders.find(effect);
 					if (it == childInfos[ci].minOrders.end())
 						continue;
 					if (it->second <= var.sourceOrder)
-						hasGroupBefore = true;
+						hasContentBefore = true;
 					if (it->second > var.sourceOrder && it->second < bestMinSO) {
 						bestMinSO = it->second;
 						bestIdx = static_cast<int>(ci);
 					}
 				}
-				if (bestIdx >= 0 && hasGroupBefore)
+				if (bestIdx >= 0 && hasContentBefore)
 					result.insert(childInfos[bestIdx].fullPath);
 			}
 		}
@@ -1128,8 +1168,9 @@ namespace ENBExtender
 			if (!group.empty() && group == node.fullPath)
 				RenderTechDropdown(effect, ctx.changedEffects);
 
+		bool lastWasSeparator = false;
 		if (!node.vars.empty()) {
-			bool inTable = false, lastWasSeparator = false;
+			bool inTable = false;
 			for (auto& ref : node.vars)
 				RenderVar(ref, inTable, lastWasSeparator, ctx);
 			if (inTable)
@@ -1137,8 +1178,9 @@ namespace ENBExtender
 		}
 
 		for (auto& child : node.children) {
-			if (ctx.separatorsBeforeGroup.count(child->fullPath))
+			if (ctx.separatorsBeforeGroup.count(child->fullPath) && !lastWasSeparator)
 				ImGui::Separator();
+			lastWasSeparator = false;
 			std::string displayName = child->name;
 			ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_None;
 			auto metaIt = ctx.meta.find(child->fullPath);
@@ -1163,6 +1205,7 @@ namespace ENBExtender
 		GroupNode root;
 		MergedGroupMeta meta;
 		BuildMergedTree(effects, root, meta, uniqueNameMap, fileUniqueNameMap);
+		InsertRootVarSeparators(effects, root);
 		PropagateGroupOrdering(root, meta);
 		SortMergedTree(root, meta);
 		auto separatorsBeforeGroup = MapRootSeparators(effects, root);
