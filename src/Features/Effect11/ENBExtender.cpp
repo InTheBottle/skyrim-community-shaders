@@ -67,6 +67,17 @@ namespace ENBExtender
 		return sep;
 	}
 
+	static bool IsIdentChar(char c)
+	{
+		return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+	}
+
+	static void Trim(std::string& s, const char* chars = " \t")
+	{
+		s.erase(0, s.find_first_not_of(chars));
+		s.erase(s.find_last_not_of(chars) + 1);
+	}
+
 	int SafeStoi(const std::string& s, int fallback)
 	{
 		try {
@@ -91,43 +102,30 @@ namespace ENBExtender
 
 	static std::string ExtractAnnotation(const std::string& annotations, const std::string& name)
 	{
-		size_t pos = 0;
-		while (true) {
+		for (size_t pos = 0;;) {
 			pos = annotations.find(name, pos);
 			if (pos == std::string::npos)
 				return {};
-
-			if (pos > 0 && (std::isalnum(static_cast<unsigned char>(annotations[pos - 1])) || annotations[pos - 1] == '_')) {
-				pos += name.size();
+			size_t end = pos + name.size();
+			if ((pos > 0 && IsIdentChar(annotations[pos - 1])) ||
+				(end < annotations.size() && IsIdentChar(annotations[end]))) {
+				pos = end;
 				continue;
 			}
 
-			size_t afterEnd = pos + name.size();
-			if (afterEnd < annotations.size() && (std::isalnum(static_cast<unsigned char>(annotations[afterEnd])) || annotations[afterEnd] == '_')) {
-				pos = afterEnd;
-				continue;
-			}
-
-			size_t eq = annotations.find('=', pos + name.size());
+			size_t eq = annotations.find('=', end);
 			if (eq == std::string::npos)
 				return {};
-
-			size_t valueStart = annotations.find_first_not_of(" \t", eq + 1);
-			if (valueStart == std::string::npos)
+			size_t vs = annotations.find_first_not_of(" \t", eq + 1);
+			if (vs == std::string::npos)
 				return {};
-
-			if (annotations[valueStart] == '"') {
-				size_t quoteEnd = annotations.find('"', valueStart + 1);
-				if (quoteEnd == std::string::npos)
-					return {};
-				return annotations.substr(valueStart + 1, quoteEnd - valueStart - 1);
+			if (annotations[vs] == '"') {
+				size_t qe = annotations.find('"', vs + 1);
+				return (qe != std::string::npos) ? annotations.substr(vs + 1, qe - vs - 1) : std::string{};
 			}
-
-			size_t valueEnd = annotations.find_first_of(";>", valueStart);
-			std::string val = (valueEnd != std::string::npos)
-			                      ? annotations.substr(valueStart, valueEnd - valueStart)
-			                      : annotations.substr(valueStart);
-			val.erase(val.find_last_not_of(" \t") + 1);
+			size_t ve = annotations.find_first_of(";>", vs);
+			std::string val = (ve != std::string::npos) ? annotations.substr(vs, ve - vs) : annotations.substr(vs);
+			Trim(val);
 			return val;
 		}
 	}
@@ -141,12 +139,11 @@ namespace ENBExtender
 		size_t firstChar = content.find_first_not_of(" \t", lineStart);
 		if (firstChar != std::string::npos && content[firstChar] == '#')
 			return true;
-
-		if (lineStart > 1) {
-			size_t checkPos = lineStart - 1;
-			if (checkPos > 0 && content[checkPos - 1] == '\r')
-				checkPos--;
-			if (checkPos > 0 && content[checkPos - 1] == '\\')
+		if (lineStart >= 2) {
+			size_t prev = lineStart - 1;
+			if (prev > 0 && content[prev - 1] == '\r')
+				prev--;
+			if (prev > 0 && content[prev - 1] == '\\')
 				return true;
 		}
 		return false;
@@ -154,7 +151,7 @@ namespace ENBExtender
 
 	static bool IsWordBoundary(const std::string& text, size_t pos)
 	{
-		return pos == 0 || !(std::isalnum(static_cast<unsigned char>(text[pos - 1])) || text[pos - 1] == '_');
+		return pos == 0 || !IsIdentChar(text[pos - 1]);
 	}
 
 	struct ParsedAnnotationBlock
@@ -188,15 +185,11 @@ namespace ENBExtender
 			return {};
 
 		ParsedBlock result;
-
-		// Skip optional name (identifier before < or {)
 		if (text[pos] != '<' && text[pos] != '{') {
 			pos = text.find_first_of("<{", pos);
 			if (pos == std::string::npos)
 				return {};
 		}
-
-		// Parse optional <annotations>
 		if (text[pos] == '<') {
 			auto anno = ParseAngleBracketBlock(text, pos);
 			if (anno.closePos == std::string::npos)
@@ -206,8 +199,6 @@ namespace ENBExtender
 			if (pos == std::string::npos)
 				return {};
 		}
-
-		// Parse { body }
 		if (text[pos] != '{')
 			pos = text.find('{', pos);
 		if (pos == std::string::npos)
@@ -215,7 +206,6 @@ namespace ENBExtender
 		size_t closePos = FindMatchingBrace(text, pos);
 		if (closePos == std::string::npos)
 			return {};
-
 		result.body = text.substr(pos, closePos - pos + 1);
 		result.endPos = closePos;
 		return result;
@@ -230,23 +220,17 @@ namespace ENBExtender
 			size_t fxPos = content.find("fxgroup", searchStart);
 			if (fxPos == std::string::npos)
 				break;
+			searchStart = fxPos + 7;
 
-			if (!IsWordBoundary(content, fxPos) || IsInsidePreprocessorDirective(content, fxPos)) {
-				searchStart = fxPos + 7;
+			if (!IsWordBoundary(content, fxPos) || IsInsidePreprocessorDirective(content, fxPos))
 				continue;
-			}
 
-			// Parse the fxgroup: name <annotations> { body }
 			size_t nameStart = content.find_first_not_of(" \t", fxPos + 7);
-			if (nameStart == std::string::npos) {
-				searchStart = fxPos + 7;
+			if (nameStart == std::string::npos)
 				continue;
-			}
 			size_t nameEnd = content.find_first_of(" \t<{", nameStart);
-			if (nameEnd == std::string::npos) {
-				searchStart = fxPos + 7;
+			if (nameEnd == std::string::npos)
 				continue;
-			}
 			std::string groupName = content.substr(nameStart, nameEnd - nameStart);
 
 			std::string groupAnnotations;
@@ -258,64 +242,41 @@ namespace ENBExtender
 			}
 
 			size_t bodyOpen = content.find('{', bodySearchFrom);
-			if (bodyOpen == std::string::npos) {
-				searchStart = fxPos + 7;
+			if (bodyOpen == std::string::npos)
 				continue;
-			}
 			size_t bodyClose = FindMatchingBrace(content, bodyOpen);
-			if (bodyClose == std::string::npos) {
-				searchStart = fxPos + 7;
+			if (bodyClose == std::string::npos)
 				continue;
-			}
 
 			std::string body = content.substr(bodyOpen + 1, bodyClose - bodyOpen - 1);
 
-			// Extract technique11 blocks from the fxgroup body
 			std::vector<ParsedBlock> techniques;
-			size_t techSearch = 0;
-			while (true) {
-				size_t techPos = body.find("technique11", techSearch);
-				if (techPos == std::string::npos)
+			for (size_t ts = 0;;) {
+				size_t tp = body.find("technique11", ts);
+				if (tp == std::string::npos)
 					break;
-				if (!IsWordBoundary(body, techPos)) {
-					techSearch = techPos + 11;
+				if (!IsWordBoundary(body, tp)) {
+					ts = tp + 11;
 					continue;
 				}
-
-				auto parsed = ParseKeywordBlock(body, techPos + 11);
+				auto parsed = ParseKeywordBlock(body, tp + 11);
 				if (parsed.endPos == std::string::npos) {
-					techSearch = techPos + 11;
+					ts = tp + 11;
 					continue;
 				}
+				ts = parsed.endPos + 1;
 				techniques.push_back(std::move(parsed));
-				techSearch = techniques.back().endPos + 1;
 			}
 
-			// Emit flattened technique11 declarations
 			std::string replacement;
 			for (size_t i = 0; i < techniques.size(); ++i) {
-				std::string techName = groupName;
-				if (i > 0)
-					techName += std::to_string(i);
-
+				std::string techName = groupName + (i > 0 ? std::to_string(i) : "");
+				std::string anno = (i == 0 && !groupAnnotations.empty())
+				                       ? groupAnnotations + (techniques[i].annotations.empty() ? "" : " " + techniques[i].annotations)
+				                       : techniques[i].annotations;
 				replacement += "technique11 " + techName;
-
-				// First technique merges group + technique annotations
-				std::string anno;
-				if (i == 0) {
-					if (!groupAnnotations.empty())
-						anno = groupAnnotations;
-					if (!techniques[i].annotations.empty()) {
-						if (!anno.empty())
-							anno += " ";
-						anno += techniques[i].annotations;
-					}
-				} else {
-					anno = techniques[i].annotations;
-				}
 				if (!anno.empty())
 					replacement += " <" + anno + ">";
-
 				replacement += " " + techniques[i].body + "\n";
 			}
 
@@ -359,7 +320,6 @@ namespace ENBExtender
 		size_t existsPos = line.find("exists", pragmaPos + 7);
 		if (existsPos == std::string::npos)
 			return false;
-
 		size_t openParen = line.find('(', existsPos);
 		size_t closeParen = line.rfind(')');
 		if (openParen == std::string::npos || closeParen == std::string::npos || closeParen <= openParen)
@@ -372,12 +332,9 @@ namespace ENBExtender
 		if (q1 == std::string::npos || q2 == std::string::npos || comma == std::string::npos)
 			return false;
 
-		std::string filePath = args.substr(q1 + 1, q2 - q1 - 1);
 		std::string defineName = args.substr(comma + 1);
-		defineName.erase(0, defineName.find_first_not_of(" \t"));
-		defineName.erase(defineName.find_last_not_of(" \t") + 1);
-
-		bool exists = std::filesystem::exists(enbseriesPath / filePath);
+		Trim(defineName);
+		bool exists = std::filesystem::exists(enbseriesPath / args.substr(q1 + 1, q2 - q1 - 1));
 		result += "#define " + defineName + (exists ? " 1" : " 0") + "\n";
 		return true;
 	}
@@ -392,18 +349,14 @@ namespace ENBExtender
 		if (uidefPos == std::string::npos)
 			return false;
 
-		while (!line.empty()) {
-			auto trailing = line.find_last_not_of(" \t\r");
-			if (trailing != std::string::npos && line[trailing] == '\\') {
-				line.erase(trailing);
-				std::string nextLine;
-				if (std::getline(stream, nextLine))
-					line += nextLine;
-				else
-					break;
-			} else {
+		for (auto t = line.find_last_not_of(" \t\r");
+			 t != std::string::npos && line[t] == '\\';
+			 t = line.find_last_not_of(" \t\r")) {
+			line.erase(t);
+			std::string next;
+			if (!std::getline(stream, next))
 				break;
-			}
+			line += next;
 		}
 
 		size_t openParen = line.find('(', uidefPos);
@@ -417,16 +370,14 @@ namespace ENBExtender
 		if (typeEnd == std::string::npos)
 			return false;
 		std::string typeName = inner.substr(0, typeEnd);
-		typeName.erase(0, typeName.find_first_not_of(" \t"));
+		Trim(typeName);
 
 		size_t nameStart = inner.find_first_not_of(" \t", typeEnd);
 		if (nameStart == std::string::npos)
 			return false;
 		size_t nameEnd = inner.find_first_of("<=", nameStart);
-		std::string defineName = (nameEnd != std::string::npos)
-		                             ? inner.substr(nameStart, nameEnd - nameStart)
-		                             : inner.substr(nameStart);
-		defineName.erase(defineName.find_last_not_of(" \t") + 1);
+		std::string defineName = (nameEnd != std::string::npos) ? inner.substr(nameStart, nameEnd - nameStart) : inner.substr(nameStart);
+		Trim(defineName);
 
 		std::string annotations;
 		size_t angleOpen = inner.find('<', nameStart);
@@ -438,31 +389,27 @@ namespace ENBExtender
 		std::string defaultVal = "0";
 		if (equalsPos != std::string::npos) {
 			defaultVal = inner.substr(equalsPos + 1);
-			defaultVal.erase(0, defaultVal.find_first_not_of(" \t"));
-			defaultVal.erase(defaultVal.find_last_not_of(" \t;") + 1);
+			Trim(defaultVal, " \t;");
 			defaultVal = NormalizeBoolString(defaultVal);
 		}
 
-		std::string uiName = ExtractAnnotation(annotations, "UIName");
-		std::string uiGroup = ExtractAnnotation(annotations, "UIGroup");
+		auto ann = [&](const char* name) { return ExtractAnnotation(annotations, name); };
+		std::string uiName = ann("UIName");
+		std::string uiGroup = ann("UIGroup");
 
 		std::string finalVal = defaultVal;
 		if (!iniPath.empty() && !iniSection.empty() && !uiName.empty()) {
 			std::string iniKey = uiGroup.empty() ? uiName : (uiGroup + "." + uiName);
-			std::vector<char> valueBuffer(1024);
-			DWORD iniResult = GetPrivateProfileStringA(iniSection.c_str(), iniKey.c_str(), "", valueBuffer.data(), 1024, iniPath.c_str());
-			if (iniResult > 0) {
-				std::string iniVal(valueBuffer.data());
-				iniVal.erase(0, iniVal.find_first_not_of(" \t"));
-				iniVal.erase(iniVal.find_last_not_of(" \t") + 1);
+			char buf[1024];
+			if (GetPrivateProfileStringA(iniSection.c_str(), iniKey.c_str(), "", buf, sizeof(buf), iniPath.c_str()) > 0) {
+				std::string iniVal(buf);
+				Trim(iniVal);
 				finalVal = NormalizeBoolString(iniVal);
 			}
 		}
 
 		if (!uiName.empty()) {
-			auto ann = [&](const char* name) { return ExtractAnnotation(annotations, name); };
 			bool isInt = (typeName == "int");
-
 			Effect::UIDefineInfo info;
 			info.defineName = defineName;
 			info.displayName = uiName;
@@ -472,8 +419,7 @@ namespace ENBExtender
 			info.widget = ann("UIWidget");
 			info.list = ann("UIList");
 
-			auto minStr = ann("UIMin");
-			auto maxStr = ann("UIMax");
+			auto minStr = ann("UIMin"), maxStr = ann("UIMax");
 			if (!minStr.empty()) { if (isInt) info.intMin = SafeStoi(minStr); else info.floatMin = SafeStof(minStr); }
 			if (!maxStr.empty()) { if (isInt) info.intMax = SafeStoi(maxStr); else info.floatMax = SafeStof(maxStr); }
 			auto stepStr = ann("UIStep");
@@ -484,7 +430,6 @@ namespace ENBExtender
 				info.ordering = SafeStoi(orderStr);
 				info.hasExplicitOrdering = true;
 			}
-
 			uiDefines.push_back(std::move(info));
 		}
 
@@ -922,6 +867,22 @@ namespace ENBExtender
 
 	using MergedGroupMeta = std::unordered_map<std::string, Effect::GroupMeta>;
 
+	static GroupNode* TraverseGroupPath(GroupNode& root, const std::string& groupPath)
+	{
+		GroupNode* node = &root;
+		size_t start = 0;
+		while (start < groupPath.size()) {
+			size_t dot = groupPath.find('.', start);
+			if (dot == std::string::npos)
+				dot = groupPath.size();
+			std::string segment = groupPath.substr(start, dot - start);
+			std::string fullPath = groupPath.substr(0, dot);
+			node = FindOrCreateChild(*node, segment, fullPath);
+			start = dot + 1;
+		}
+		return node;
+	}
+
 	static void BuildMergedTree(std::span<Effect*> effects, GroupNode& root, MergedGroupMeta& meta)
 	{
 		std::unordered_map<GroupNode*, std::unordered_set<std::string>> seenDisplayNames;
@@ -936,24 +897,11 @@ namespace ENBExtender
 
 			for (int i = 0; i < static_cast<int>(effect->uiVariables.size()); ++i) {
 				auto& var = effect->uiVariables[i];
-				GroupNode* node = &root;
-
-				if (!var.isTopLevel && !var.group.empty()) {
-					std::istringstream ss(var.group);
-					std::string segment;
-					std::string builtPath;
-					while (std::getline(ss, segment, '.')) {
-						if (!builtPath.empty())
-							builtPath += ".";
-						builtPath += segment;
-						node = FindOrCreateChild(*node, segment, builtPath);
-					}
-				}
+				GroupNode* node = (!var.isTopLevel && !var.group.empty()) ? TraverseGroupPath(root, var.group) : &root;
 
 				if (var.isSeparator) {
-					if (node == &root)
-						continue;
-					node->vars.push_back({ effect, i });
+					if (node != &root)
+						node->vars.push_back({ effect, i });
 					continue;
 				}
 
@@ -1302,18 +1250,7 @@ namespace ENBExtender
 					it->second.ordering = effect->techniqueDropdownOrdering;
 					it->second.hasOrdering = true;
 				}
-
-				// Ensure the dropdown's target group exists in the tree
-				std::istringstream ss(effect->techniqueDropdownGroup);
-				std::string segment;
-				std::string builtPath;
-				GroupNode* node = &root;
-				while (std::getline(ss, segment, '.')) {
-					if (!builtPath.empty())
-						builtPath += ".";
-					builtPath += segment;
-					node = FindOrCreateChild(*node, segment, builtPath);
-				}
+				TraverseGroupPath(root, effect->techniqueDropdownGroup);
 			}
 		}
 
@@ -1432,23 +1369,17 @@ namespace ENBExtender
 			float weight;
 		};
 		std::unordered_map<std::string, std::vector<PeriodVar>> baseGroups;
-
 		auto& cd = EffectManager::GetSingleton().commonData;
 
 		for (size_t i = 0; i < effect.uiVariables.size(); ++i) {
 			auto& uiVar = effect.uiVariables[i];
 			if (uiVar.timePeriod.empty() || uiVar.isSeparator || !uiVar.effectVariable)
 				continue;
-
-			std::string baseName;
-			if (uiVar.name.size() > uiVar.timePeriod.size() &&
-				uiVar.name.compare(uiVar.name.size() - uiVar.timePeriod.size(), uiVar.timePeriod.size(), uiVar.timePeriod) == 0)
-				baseName = uiVar.name.substr(0, uiVar.name.size() - uiVar.timePeriod.size());
-			else
+			auto& name = uiVar.name;
+			auto& period = uiVar.timePeriod;
+			if (name.size() <= period.size() || name.compare(name.size() - period.size(), period.size(), period) != 0)
 				continue;
-
-			float w = GetPeriodWeight(uiVar.timePeriod, cd);
-			baseGroups[baseName].push_back({ i, w });
+			baseGroups[name.substr(0, name.size() - period.size())].push_back({ i, GetPeriodWeight(period, cd) });
 		}
 
 		for (auto& [baseName, entries] : baseGroups) {
