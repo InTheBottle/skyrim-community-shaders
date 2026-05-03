@@ -597,7 +597,6 @@ bool Effect::LoadFXFile()
 	availableTechniques = GetBaseTechniqueNames();
 
 	LoadUIVariables();
-	ENBExtender::RecoverGroupsFromINI(*this, enbseriesPath);
 
 	logger::info("[ENBPP] Successfully loaded FX file: {}", filePath.string());
 	return true;
