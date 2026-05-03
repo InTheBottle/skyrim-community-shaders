@@ -950,7 +950,7 @@ void EffectManager::RenderEffectsList()
 		if (effect->IsCompiled()) {
 			ImGui::Separator();
 			if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-				ENBExtender::RenderMergedEffectsList(&effect, 1);
+				effect->RenderImGui();
 				ImGui::TreePop();
 			}
 		} else if (!effect->GetErrors().empty()) {
