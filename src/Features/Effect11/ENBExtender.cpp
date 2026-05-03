@@ -531,6 +531,7 @@ namespace ENBExtender
 		std::string labelText = get("UIName");
 		if (labelText.empty())
 			labelText = GetStringVariableValue(variable);
+		Trim(labelText);
 		if (labelText.empty())
 			return true;
 
@@ -543,6 +544,8 @@ namespace ENBExtender
 		labelVar.name = varDesc.Name;
 		labelVar.displayName = labelText;
 		labelVar.type = Effect::UIVariableType::Float;
+		labelVar.floatMin = 0.0f;
+		labelVar.floatMax = 0.0f;
 		labelVar.isReadOnly = true;
 		ApplyExtenderAnnotations(labelVar, variable, groupStack, effect);
 		if (!labelVar.isHidden)
