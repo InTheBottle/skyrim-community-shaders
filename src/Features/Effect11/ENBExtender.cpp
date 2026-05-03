@@ -708,8 +708,12 @@ namespace ENBExtender
 
 		uiVar.uniqueName = effect.GetUIAnnotation(variable, "UniqueName");
 		uiVar.uiBinding = effect.GetUIAnnotation(variable, "UIBinding");
+		uiVar.uiBindingFile = effect.GetUIAnnotation(variable, "UIBindingFile");
 		uiVar.uiBindingProperty = effect.GetUIAnnotation(variable, "UIBindingProperty");
 		uiVar.uiBindingCondition = effect.GetUIAnnotation(variable, "UIBindingCondition");
+		uiVar.ignorePerfMode = IsTruthy(effect.GetUIAnnotation(variable, "UIIgnorePerfMode"));
+		uiVar.isWeatherString = IsTruthy(effect.GetUIAnnotation(variable, "UIWeatherString"));
+		uiVar.isWeatherOnlyString = IsTruthy(effect.GetUIAnnotation(variable, "UIWeatherOnlyString"));
 		uiVar.separation = effect.GetUIAnnotation(variable, "Separation");
 
 		TrackGroupMetadata(uiVar.group, variable, effect);
@@ -839,19 +843,35 @@ namespace ENBExtender
 		return false;
 	}
 
+	using FileUniqueNameMap = std::unordered_map<std::string, std::unordered_map<std::string, VarRef>>;
+
 	static std::pair<bool, bool> EvaluateBinding(const Effect::UIVariable& var,
-		const std::unordered_map<std::string, VarRef>& uniqueNameMap)
+		const std::unordered_map<std::string, VarRef>& uniqueNameMap,
+		const FileUniqueNameMap& fileUniqueNameMap)
 	{
 		bool visible = true;
 		bool readOnly = var.isReadOnly;
 		if (var.uiBinding.empty())
 			return { visible, readOnly };
 
-		auto it = uniqueNameMap.find(var.uiBinding);
-		if (it == uniqueNameMap.end())
+		const VarRef* boundRef = nullptr;
+		if (!var.uiBindingFile.empty()) {
+			auto fileIt = fileUniqueNameMap.find(var.uiBindingFile);
+			if (fileIt != fileUniqueNameMap.end()) {
+				auto varIt = fileIt->second.find(var.uiBinding);
+				if (varIt != fileIt->second.end())
+					boundRef = &varIt->second;
+			}
+		} else {
+			auto it = uniqueNameMap.find(var.uiBinding);
+			if (it != uniqueNameMap.end())
+				boundRef = &it->second;
+		}
+
+		if (!boundRef)
 			return { visible, readOnly };
 
-		const auto& boundVar = it->second.effect->uiVariables[it->second.index];
+		const auto& boundVar = boundRef->effect->uiVariables[boundRef->index];
 		bool conditionMet = EvaluateCondition(var.uiBindingCondition, GetBoundValue(boundVar));
 
 		std::string prop = var.uiBindingProperty;
@@ -880,16 +900,21 @@ namespace ENBExtender
 	// Tree construction
 
 	static void BuildUniqueNameMap(std::span<Effect*> effects,
-		std::unordered_map<std::string, VarRef>& uniqueNameMap)
+		std::unordered_map<std::string, VarRef>& uniqueNameMap,
+		FileUniqueNameMap& fileUniqueNameMap)
 	{
 		for (size_t e = 0; e < effects.size(); ++e) {
 			auto* effect = effects[e];
 			if (!effect->IsCompiled())
 				continue;
+			auto& fileMap = fileUniqueNameMap[effect->GetName()];
 			for (int i = 0; i < static_cast<int>(effect->uiVariables.size()); ++i) {
 				auto& var = effect->uiVariables[i];
-				if (!var.isSeparator)
-					uniqueNameMap[ComputeUniqueName(var)] = { effect, i };
+				if (!var.isSeparator) {
+					std::string uname = ComputeUniqueName(var);
+					uniqueNameMap[uname] = { effect, i };
+					fileMap[uname] = { effect, i };
+				}
 			}
 		}
 	}
@@ -1047,9 +1072,11 @@ namespace ENBExtender
 	struct RenderContext
 	{
 		std::unordered_map<std::string, VarRef>& uniqueNameMap;
+		FileUniqueNameMap& fileUniqueNameMap;
 		std::unordered_set<Effect*>& changedEffects;
 		MergedGroupMeta& meta;
 		std::unordered_set<std::string>& separatorsBeforeGroup;
+		bool performanceMode = false;
 		int tableCounter = 0;
 
 		bool BeginVarTable()
@@ -1145,7 +1172,13 @@ namespace ENBExtender
 		if (uiVar.displayName.empty() || uiVar.isHidden)
 			return;
 
-		auto [bindVisible, bindReadOnly] = EvaluateBinding(uiVar, ctx.uniqueNameMap);
+		if (uiVar.isWeatherOnlyString)
+			return;
+
+		if (ctx.performanceMode && !uiVar.ignorePerfMode)
+			return;
+
+		auto [bindVisible, bindReadOnly] = EvaluateBinding(uiVar, ctx.uniqueNameMap, ctx.fileUniqueNameMap);
 		if (!bindVisible)
 			return;
 
@@ -1229,7 +1262,8 @@ namespace ENBExtender
 	void RenderUI(std::span<Effect*> effects)
 	{
 		std::unordered_map<std::string, VarRef> uniqueNameMap;
-		BuildUniqueNameMap(effects, uniqueNameMap);
+		FileUniqueNameMap fileUniqueNameMap;
+		BuildUniqueNameMap(effects, uniqueNameMap, fileUniqueNameMap);
 
 		GroupNode root;
 		MergedGroupMeta meta;
@@ -1239,14 +1273,34 @@ namespace ENBExtender
 		auto separatorsBeforeGroup = MapRootSeparators(effects, root);
 
 		std::unordered_set<Effect*> changedEffects;
-		RenderContext ctx{ uniqueNameMap, changedEffects, meta, separatorsBeforeGroup };
+		bool perfMode = EffectManager::GetSingleton().performanceMode;
+		RenderContext ctx{ uniqueNameMap, fileUniqueNameMap, changedEffects, meta, separatorsBeforeGroup, perfMode };
 
-		// Collect technique dropdowns
+		// Collect technique dropdowns and inject dropdown group metadata
 		std::vector<std::pair<Effect*, std::string>> techDropdowns;
 		for (size_t e = 0; e < effects.size(); ++e) {
 			auto* effect = effects[e];
-			if (effect->IsCompiled() && effect->uiTechniques.size() > 1 && effect->techniqueDropdownVisible)
-				techDropdowns.push_back({ effect, effect->techniqueDropdownGroup });
+			if (!effect->IsCompiled() || effect->uiTechniques.size() <= 1 || !effect->techniqueDropdownVisible)
+				continue;
+			techDropdowns.push_back({ effect, effect->techniqueDropdownGroup });
+			if (!effect->techniqueDropdownGroup.empty()) {
+				if (!effect->techniqueDropdownGroupName.empty())
+					meta.displayNames.try_emplace(effect->techniqueDropdownGroup, effect->techniqueDropdownGroupName);
+				meta.defaultOpen.try_emplace(effect->techniqueDropdownGroup, effect->techniqueDropdownGroupOpen);
+				meta.ordering.try_emplace(effect->techniqueDropdownGroup, effect->techniqueDropdownOrdering);
+
+				// Ensure the dropdown's target group exists in the tree
+				std::istringstream ss(effect->techniqueDropdownGroup);
+				std::string segment;
+				std::string builtPath;
+				GroupNode* node = &root;
+				while (std::getline(ss, segment, '.')) {
+					if (!builtPath.empty())
+						builtPath += ".";
+					builtPath += segment;
+					node = FindOrCreateChild(*node, segment, builtPath);
+				}
+			}
 		}
 
 		// Render top-level technique dropdowns
@@ -1350,6 +1404,12 @@ namespace ENBExtender
 		std::string dropGroup = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroup");
 		if (!dropGroup.empty())
 			effect.techniqueDropdownGroup = dropGroup;
+		std::string dropGroupName = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroupName");
+		if (!dropGroupName.empty())
+			effect.techniqueDropdownGroupName = dropGroupName;
+		std::string dropGroupOpen = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroupOpen");
+		if (!dropGroupOpen.empty())
+			effect.techniqueDropdownGroupOpen = (dropGroupOpen != "0" && dropGroupOpen != "false");
 		std::string dropVisible = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownVisible");
 		if (!dropVisible.empty())
 			effect.techniqueDropdownVisible = (dropVisible != "0" && dropVisible != "false");

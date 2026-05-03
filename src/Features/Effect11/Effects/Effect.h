@@ -114,8 +114,12 @@ public:
 		bool isHidden = false;
 		std::string uniqueName;
 		std::string uiBinding;
+		std::string uiBindingFile;
 		std::string uiBindingProperty;
 		std::string uiBindingCondition;
+		bool ignorePerfMode = false;
+		bool isWeatherString = false;
+		bool isWeatherOnlyString = false;
 
 		// Weather separation ("ExteriorWeather" or "Weather")
 		std::string separation;
@@ -135,6 +139,8 @@ public:
 	// Technique dropdown metadata (from first technique's annotations)
 	std::string techniqueDropdownName = "Technique";
 	std::string techniqueDropdownGroup;
+	std::string techniqueDropdownGroupName;
+	bool techniqueDropdownGroupOpen = true;
 	bool techniqueDropdownVisible = true;
 	bool techniqueDropdownTopLevel = false;
 	int techniqueDropdownOrdering = 1;

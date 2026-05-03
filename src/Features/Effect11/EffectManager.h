@@ -123,6 +123,8 @@ public:
 
 	bool IsInitialized() const { return initialized; }
 
+	bool performanceMode = false;
+
 	// Execute a single effect with perf events and common variable setup
 	void ExecuteEffect(Effect& effect, uint32_t enableSettingID = 0xFFFFFFFF);
 
