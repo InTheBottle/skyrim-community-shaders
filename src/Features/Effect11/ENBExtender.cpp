@@ -45,6 +45,17 @@ namespace ENBExtender
 		return (it != effect.sourceOrderMap.end()) ? it->second : INT_MAX;
 	}
 
+	static std::string GetStringVariableValue(ID3DX11EffectVariable* variable)
+	{
+		auto* strVar = variable->AsString();
+		if (strVar && strVar->IsValid()) {
+			LPCSTR val = nullptr;
+			if (SUCCEEDED(strVar->GetString(&val)) && val && val[0] != '\0')
+				return val;
+		}
+		return {};
+	}
+
 	static Effect::UIVariable MakeSeparator(const std::string& varName,
 		const std::vector<std::string>& groupStack, const Effect& effect)
 	{
@@ -449,36 +460,28 @@ namespace ENBExtender
 		}
 
 		if (!uiName.empty()) {
+			auto ann = [&](const char* name) { return ExtractAnnotation(annotations, name); };
+			bool isInt = (typeName == "int");
+
 			Effect::UIDefineInfo info;
 			info.defineName = defineName;
 			info.displayName = uiName;
 			info.group = uiGroup;
 			info.type = typeName;
 			info.value = finalVal;
-			info.widget = ExtractAnnotation(annotations, "UIWidget");
-			info.list = ExtractAnnotation(annotations, "UIList");
+			info.widget = ann("UIWidget");
+			info.list = ann("UIList");
 
-			std::string minStr = ExtractAnnotation(annotations, "UIMin");
-			std::string maxStr = ExtractAnnotation(annotations, "UIMax");
-			std::string stepStr = ExtractAnnotation(annotations, "UIStep");
-			std::string orderStr = ExtractAnnotation(annotations, "UIOrdering");
-
-			if (!minStr.empty()) {
-				if (typeName == "int")
-					info.intMin = SafeStoi(minStr, info.intMin);
-				else
-					info.floatMin = SafeStof(minStr, info.floatMin);
-			}
-			if (!maxStr.empty()) {
-				if (typeName == "int")
-					info.intMax = SafeStoi(maxStr, info.intMax);
-				else
-					info.floatMax = SafeStof(maxStr, info.floatMax);
-			}
+			auto minStr = ann("UIMin");
+			auto maxStr = ann("UIMax");
+			if (!minStr.empty()) { if (isInt) info.intMin = SafeStoi(minStr); else info.floatMin = SafeStof(minStr); }
+			if (!maxStr.empty()) { if (isInt) info.intMax = SafeStoi(maxStr); else info.floatMax = SafeStof(maxStr); }
+			auto stepStr = ann("UIStep");
 			if (!stepStr.empty())
-				info.floatStep = SafeStof(stepStr, info.floatStep);
+				info.floatStep = SafeStof(stepStr);
+			auto orderStr = ann("UIOrdering");
 			if (!orderStr.empty()) {
-				info.ordering = SafeStoi(orderStr, info.ordering);
+				info.ordering = SafeStoi(orderStr);
 				info.hasExplicitOrdering = true;
 			}
 
@@ -536,17 +539,15 @@ namespace ENBExtender
 			if (line.find("UIGroupBegin") != std::string::npos) {
 				std::string groupName = ExtractAnnotation(line, "UIGroup");
 				if (groupName.empty()) {
-					size_t angleClose = line.rfind('>');
-					if (angleClose != std::string::npos) {
-						size_t q1 = line.find('"', angleClose);
-						size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
-						if (q1 != std::string::npos && q2 != std::string::npos)
-							groupName = line.substr(q1 + 1, q2 - q1 - 1);
-					}
+					size_t gt = line.rfind('>');
+					size_t q1 = (gt != std::string::npos) ? line.find('"', gt) : std::string::npos;
+					size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
+					if (q2 != std::string::npos)
+						groupName = line.substr(q1 + 1, q2 - q1 - 1);
 				}
 				if (!groupName.empty()) {
 					groupStack.push_back(groupName);
-					std::string orderStr = ExtractAnnotation(line, "UIOrdering");
+					auto orderStr = ExtractAnnotation(line, "UIOrdering");
 					if (!orderStr.empty()) {
 						auto& gm = effect.groupMeta[BuildGroupPath(groupStack)];
 						gm.ordering = SafeStoi(orderStr);
@@ -593,20 +594,19 @@ namespace ENBExtender
 	{
 		if (groupPath.empty())
 			return;
-
 		auto [it, inserted] = effect.groupMeta.try_emplace(groupPath);
 		if (!inserted)
 			return;
-
-		std::string displayName = effect.GetUIAnnotation(variable, "UIGroupName");
-		if (!displayName.empty())
-			it->second.displayName = displayName;
-		std::string openStr = effect.GetUIAnnotation(variable, "UIGroupOpen");
-		if (!openStr.empty())
-			it->second.defaultOpen = IsTruthy(openStr);
-		std::string orderStr = effect.GetUIAnnotation(variable, "UIOrdering");
-		if (!orderStr.empty()) {
-			it->second.ordering = SafeStoi(orderStr);
+		auto get = [&](const char* name) { return effect.GetUIAnnotation(variable, name); };
+		auto s = get("UIGroupName");
+		if (!s.empty())
+			it->second.displayName = s;
+		s = get("UIGroupOpen");
+		if (!s.empty())
+			it->second.defaultOpen = IsTruthy(s);
+		s = get("UIOrdering");
+		if (!s.empty()) {
+			it->second.ordering = SafeStoi(s);
 			it->second.hasOrdering = true;
 		}
 	}
@@ -616,16 +616,12 @@ namespace ENBExtender
 	bool ProcessExtenderStringVariable(ID3DX11EffectVariable* variable, const D3DX11_EFFECT_VARIABLE_DESC& varDesc,
 		std::vector<std::string>& groupStack, Effect& effect)
 	{
-		if (IsTruthy(effect.GetUIAnnotation(variable, "UIGroupBegin"))) {
-			std::string groupName = effect.GetUIAnnotation(variable, "UIGroup");
-			if (groupName.empty()) {
-				auto strVar = variable->AsString();
-				if (strVar && strVar->IsValid()) {
-					LPCSTR val = nullptr;
-					if (SUCCEEDED(strVar->GetString(&val)) && val)
-						groupName = val;
-				}
-			}
+		auto get = [&](const char* name) { return effect.GetUIAnnotation(variable, name); };
+
+		if (IsTruthy(get("UIGroupBegin"))) {
+			std::string groupName = get("UIGroup");
+			if (groupName.empty())
+				groupName = GetStringVariableValue(variable);
 			if (!groupName.empty()) {
 				groupStack.push_back(groupName);
 				TrackGroupMeta(BuildGroupPath(groupStack), variable, effect);
@@ -633,30 +629,24 @@ namespace ENBExtender
 			return true;
 		}
 
-		if (IsTruthy(effect.GetUIAnnotation(variable, "UIGroupEnd"))) {
+		if (IsTruthy(get("UIGroupEnd"))) {
 			if (!groupStack.empty())
 				groupStack.pop_back();
 			return true;
 		}
 
-		if (IsTruthy(effect.GetUIAnnotation(variable, "UISeparator"))) {
+		if (IsTruthy(get("UISeparator"))) {
 			auto sep = MakeSeparator(varDesc.Name, groupStack, effect);
-			std::string explicitGroup = effect.GetUIAnnotation(variable, "UIGroup");
+			auto explicitGroup = get("UIGroup");
 			if (!explicitGroup.empty())
 				sep.group = explicitGroup;
 			effect.uiVariables.push_back(sep);
 			return true;
 		}
 
-		std::string labelText = effect.GetUIAnnotation(variable, "UIName");
-		if (labelText.empty()) {
-			auto strVar = variable->AsString();
-			if (strVar && strVar->IsValid()) {
-				LPCSTR val = nullptr;
-				if (SUCCEEDED(strVar->GetString(&val)) && val && val[0] != '\0')
-					labelText = val;
-			}
-		}
+		std::string labelText = get("UIName");
+		if (labelText.empty())
+			labelText = GetStringVariableValue(variable);
 		if (labelText.empty())
 			return true;
 
@@ -681,32 +671,33 @@ namespace ENBExtender
 	void ApplyExtenderAnnotations(Effect::UIVariable& uiVar, ID3DX11EffectVariable* variable,
 		const std::vector<std::string>& groupStack, Effect& effect)
 	{
-		uiVar.group = ResolveGroup(uiVar.name, effect.GetUIAnnotation(variable, "UIGroup"), groupStack, effect);
+		auto get = [&](const char* name) { return effect.GetUIAnnotation(variable, name); };
 
-		std::string orderStr = effect.GetUIAnnotation(variable, "UIOrdering");
+		uiVar.group = ResolveGroup(uiVar.name, get("UIGroup"), groupStack, effect);
+		uiVar.sourceOrder = GetSourceOrder(uiVar.name, effect);
+
+		auto orderStr = get("UIOrdering");
 		if (!orderStr.empty())
 			uiVar.ordering = SafeStoi(orderStr);
 
-		uiVar.sourceOrder = GetSourceOrder(uiVar.name, effect);
-		uiVar.isReadOnly = IsTruthy(effect.GetUIAnnotation(variable, "UIReadOnly"));
-
-		std::string hiddenStr = effect.GetUIAnnotation(variable, "UIHidden");
-		std::string visibleStr = effect.GetUIAnnotation(variable, "UIVisible");
+		uiVar.isReadOnly = IsTruthy(get("UIReadOnly"));
+		auto hiddenStr = get("UIHidden");
+		auto visibleStr = get("UIVisible");
 		uiVar.isHidden = IsTruthy(hiddenStr) || (!visibleStr.empty() && !IsTruthy(visibleStr));
 
-		uiVar.isTopLevel = IsTruthy(effect.GetUIAnnotation(variable, "UITopLevel"));
+		uiVar.isTopLevel = IsTruthy(get("UITopLevel"));
 		if (uiVar.isTopLevel)
 			uiVar.group.clear();
 
-		uiVar.uniqueName = effect.GetUIAnnotation(variable, "UniqueName");
-		uiVar.uiBinding = effect.GetUIAnnotation(variable, "UIBinding");
-		uiVar.uiBindingFile = effect.GetUIAnnotation(variable, "UIBindingFile");
-		uiVar.uiBindingProperty = effect.GetUIAnnotation(variable, "UIBindingProperty");
-		uiVar.uiBindingCondition = effect.GetUIAnnotation(variable, "UIBindingCondition");
-		uiVar.ignorePerfMode = IsTruthy(effect.GetUIAnnotation(variable, "UIIgnorePerfMode"));
-		uiVar.isWeatherString = IsTruthy(effect.GetUIAnnotation(variable, "UIWeatherString"));
-		uiVar.isWeatherOnlyString = IsTruthy(effect.GetUIAnnotation(variable, "UIWeatherOnlyString"));
-		uiVar.separation = effect.GetUIAnnotation(variable, "Separation");
+		uiVar.uniqueName = get("UniqueName");
+		uiVar.uiBinding = get("UIBinding");
+		uiVar.uiBindingFile = get("UIBindingFile");
+		uiVar.uiBindingProperty = get("UIBindingProperty");
+		uiVar.uiBindingCondition = get("UIBindingCondition");
+		uiVar.ignorePerfMode = IsTruthy(get("UIIgnorePerfMode"));
+		uiVar.isWeatherString = IsTruthy(get("UIWeatherString"));
+		uiVar.isWeatherOnlyString = IsTruthy(get("UIWeatherOnlyString"));
+		uiVar.separation = get("Separation");
 
 		TrackGroupMeta(uiVar.group, variable, effect);
 	}
@@ -760,13 +751,12 @@ namespace ENBExtender
 	{
 		if (uiVar.separation.empty() || uiVar.separation == "None")
 			return;
-
-		static const char* periods[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "Interior" };
-		for (const auto& period : periods) {
-			std::string withIndent = std::string("|- ") + period + " - ";
-			std::string plain = std::string(period) + " - ";
-			if (uiVar.displayName.compare(0, withIndent.size(), withIndent) == 0 ||
-				uiVar.displayName.compare(0, plain.size(), plain) == 0) {
+		static const std::string_view periods[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "Interior" };
+		const auto& name = uiVar.displayName;
+		for (auto period : periods) {
+			auto suffix = std::string(period) + " - ";
+			if (name.compare(0, 3 + suffix.size(), "|- " + suffix) == 0 ||
+				name.compare(0, suffix.size(), suffix) == 0) {
 				uiVar.timePeriod = period;
 				return;
 			}
@@ -1360,58 +1350,58 @@ namespace ENBExtender
 	{
 		if (!effect.IsCompiled())
 			return;
-
 		auto* fx = effect.GetEffect();
 		if (!fx)
 			return;
-
 		D3DX11_EFFECT_DESC effectDesc;
 		if (FAILED(fx->GetDesc(&effectDesc)) || effectDesc.Techniques == 0)
 			return;
-
-		auto firstTech = fx->GetTechniqueByIndex(0);
-		if (!firstTech || !firstTech->IsValid())
+		auto* tech = fx->GetTechniqueByIndex(0);
+		if (!tech || !tech->IsValid())
 			return;
 
-		std::string dropName = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownName");
-		if (!dropName.empty())
-			effect.techniqueDropdownName = dropName;
-		std::string dropGroup = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroup");
-		if (!dropGroup.empty())
-			effect.techniqueDropdownGroup = dropGroup;
-		std::string dropGroupName = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroupName");
-		if (!dropGroupName.empty())
-			effect.techniqueDropdownGroupName = dropGroupName;
-		std::string dropGroupOpen = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownGroupOpen");
-		if (!dropGroupOpen.empty())
-			effect.techniqueDropdownGroupOpen = (dropGroupOpen != "0" && dropGroupOpen != "false");
-		std::string dropVisible = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownVisible");
-		if (!dropVisible.empty())
-			effect.techniqueDropdownVisible = (dropVisible != "0" && dropVisible != "false");
-		std::string dropTopLevel = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownTopLevel");
-		if (!dropTopLevel.empty())
-			effect.techniqueDropdownTopLevel = (dropTopLevel != "0" && dropTopLevel != "false");
-		std::string dropOrdering = Effect::GetTechniqueAnnotation(firstTech, "UIDropdownOrdering");
-		if (!dropOrdering.empty())
-			effect.techniqueDropdownOrdering = SafeStoi(dropOrdering, effect.techniqueDropdownOrdering);
+		auto get = [&](const char* name) { return Effect::GetTechniqueAnnotation(tech, name); };
+
+		auto s = get("UIDropdownName");
+		if (!s.empty())
+			effect.techniqueDropdownName = s;
+		s = get("UIDropdownGroup");
+		if (!s.empty())
+			effect.techniqueDropdownGroup = s;
+		s = get("UIDropdownGroupName");
+		if (!s.empty())
+			effect.techniqueDropdownGroupName = s;
+		s = get("UIDropdownGroupOpen");
+		if (!s.empty())
+			effect.techniqueDropdownGroupOpen = IsTruthy(s);
+		s = get("UIDropdownVisible");
+		if (!s.empty())
+			effect.techniqueDropdownVisible = IsTruthy(s);
+		s = get("UIDropdownTopLevel");
+		if (!s.empty())
+			effect.techniqueDropdownTopLevel = IsTruthy(s);
+		s = get("UIDropdownOrdering");
+		if (!s.empty())
+			effect.techniqueDropdownOrdering = SafeStoi(s, effect.techniqueDropdownOrdering);
 	}
 
 	static float GetPeriodWeight(const std::string& period, const EffectManager::CommonVariableData& cd)
 	{
-		if (period == "Dawn")
-			return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Dawn)];
-		if (period == "Sunrise")
-			return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunrise)];
-		if (period == "Day")
-			return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Day)];
-		if (period == "Sunset")
-			return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunset)];
-		if (period == "Dusk")
-			return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Dusk)];
-		if (period == "Night")
-			return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Night)];
-		if (period == "Interior")
-			return cd.eInteriorFactor;
+		using T1 = TimeOfDay1Index;
+		using T2 = TimeOfDay2Index;
+		struct Entry { const char* name; float (*get)(const EffectManager::CommonVariableData&); };
+		static const Entry table[] = {
+			{ "Dawn", [](const auto& c) { return c.timeOfDay1[(int)T1::Dawn]; } },
+			{ "Sunrise", [](const auto& c) { return c.timeOfDay1[(int)T1::Sunrise]; } },
+			{ "Day", [](const auto& c) { return c.timeOfDay1[(int)T1::Day]; } },
+			{ "Sunset", [](const auto& c) { return c.timeOfDay1[(int)T1::Sunset]; } },
+			{ "Dusk", [](const auto& c) { return c.timeOfDay2[(int)T2::Dusk]; } },
+			{ "Night", [](const auto& c) { return c.timeOfDay2[(int)T2::Night]; } },
+			{ "Interior", [](const auto& c) { return c.eInteriorFactor; } },
+		};
+		for (auto& [name, get] : table)
+			if (period == name)
+				return get(cd);
 		return 0.0f;
 	}
 
