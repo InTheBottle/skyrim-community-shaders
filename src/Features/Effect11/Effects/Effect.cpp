@@ -342,6 +342,7 @@ bool Effect::Apply()
 		return false;
 	}
 
+
 	CreateEffectTextures();
 
 	logger::info("[ENBPP] Successfully applied effect '{}'", GetName());
@@ -362,6 +363,7 @@ void Effect::Unload()
 	groupMeta.clear();
 	techniqueDropdown = {};
 	sourceGroupMap.clear();
+	sourceOrderMap.clear();
 
 	ClearVariableCache();
 
@@ -486,7 +488,9 @@ bool Effect::LoadFXFile()
 	SetupCustomTextures();
 	LoadTechniques();
 	LoadUITechniques();
+
 	LoadUIVariables();
+
 
 	logger::info("[ENBPP] Successfully loaded FX file: {}", filePathStr);
 	return true;

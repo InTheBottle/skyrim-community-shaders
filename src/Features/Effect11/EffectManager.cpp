@@ -67,6 +67,7 @@ void EffectManager::Apply()
 	enbAdaptation.Apply();
 	enbEffect.Apply();
 	enbEffectPostPass.Apply();
+
 }
 
 void EffectManager::Load()

@@ -165,6 +165,7 @@ public:
 	// Source declaration order (variable name → declaration index)
 	std::unordered_map<std::string, int> sourceOrderMap;
 
+
 	struct UIDefineInfo
 	{
 		std::string defineName;
