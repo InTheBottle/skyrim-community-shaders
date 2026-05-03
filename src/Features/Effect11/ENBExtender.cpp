@@ -166,6 +166,53 @@ namespace ENBExtender
 		return { text.substr(open + 1, close - open - 1), close };
 	}
 
+	struct ParsedBlock
+	{
+		std::string annotations;
+		std::string body;
+		size_t endPos = std::string::npos;
+	};
+
+	static ParsedBlock ParseKeywordBlock(const std::string& text, size_t afterKeyword)
+	{
+		size_t pos = text.find_first_not_of(" \t\r\n", afterKeyword);
+		if (pos == std::string::npos)
+			return {};
+
+		ParsedBlock result;
+
+		// Skip optional name (identifier before < or {)
+		if (text[pos] != '<' && text[pos] != '{') {
+			pos = text.find_first_of("<{", pos);
+			if (pos == std::string::npos)
+				return {};
+		}
+
+		// Parse optional <annotations>
+		if (text[pos] == '<') {
+			auto anno = ParseAngleBracketBlock(text, pos);
+			if (anno.closePos == std::string::npos)
+				return {};
+			result.annotations = anno.content;
+			pos = text.find_first_not_of(" \t\r\n", anno.closePos + 1);
+			if (pos == std::string::npos)
+				return {};
+		}
+
+		// Parse { body }
+		if (text[pos] != '{')
+			pos = text.find('{', pos);
+		if (pos == std::string::npos)
+			return {};
+		size_t closePos = FindMatchingBrace(text, pos);
+		if (closePos == std::string::npos)
+			return {};
+
+		result.body = text.substr(pos, closePos - pos + 1);
+		result.endPos = closePos;
+		return result;
+	}
+
 	void ConvertFxGroups(std::string& content)
 	{
 		int convertedCount = 0;
@@ -181,6 +228,7 @@ namespace ENBExtender
 				continue;
 			}
 
+			// Parse the fxgroup: name <annotations> { body }
 			size_t nameStart = content.find_first_not_of(" \t", fxPos + 7);
 			if (nameStart == std::string::npos) {
 				searchStart = fxPos + 7;
@@ -214,13 +262,8 @@ namespace ENBExtender
 
 			std::string body = content.substr(bodyOpen + 1, bodyClose - bodyOpen - 1);
 
-			struct TechInfo
-			{
-				std::string annotations;
-				std::string body;
-			};
-			std::vector<TechInfo> techniques;
-
+			// Extract technique11 blocks from the fxgroup body
+			std::vector<ParsedBlock> techniques;
 			size_t techSearch = 0;
 			while (true) {
 				size_t techPos = body.find("technique11", techSearch);
@@ -231,59 +274,16 @@ namespace ENBExtender
 					continue;
 				}
 
-				size_t afterKeyword = techPos + 11;
-				size_t nextNonSpace = body.find_first_not_of(" \t\r\n", afterKeyword);
-				if (nextNonSpace == std::string::npos) {
-					techSearch = afterKeyword;
+				auto parsed = ParseKeywordBlock(body, techPos + 11);
+				if (parsed.endPos == std::string::npos) {
+					techSearch = techPos + 11;
 					continue;
 				}
-
-				TechInfo info;
-				size_t techBodySearchFrom = nextNonSpace;
-
-				if (body[nextNonSpace] == '<') {
-					auto techAnno = ParseAngleBracketBlock(body, nextNonSpace);
-					if (techAnno.closePos == std::string::npos) {
-						techSearch = afterKeyword;
-						continue;
-					}
-					info.annotations = techAnno.content;
-					techBodySearchFrom = techAnno.closePos + 1;
-				} else if (body[nextNonSpace] != '{') {
-					size_t afterName = body.find_first_of("<{", nextNonSpace);
-					if (afterName == std::string::npos) {
-						techSearch = afterKeyword;
-						continue;
-					}
-					if (body[afterName] == '<') {
-						auto techAnno = ParseAngleBracketBlock(body, afterName);
-						if (techAnno.closePos == std::string::npos) {
-							techSearch = afterKeyword;
-							continue;
-						}
-						info.annotations = techAnno.content;
-						techBodySearchFrom = techAnno.closePos + 1;
-					} else {
-						techBodySearchFrom = afterName;
-					}
-				}
-
-				size_t techBodyOpen = body.find('{', techBodySearchFrom);
-				if (techBodyOpen == std::string::npos) {
-					techSearch = afterKeyword;
-					continue;
-				}
-				size_t techBodyClose = FindMatchingBrace(body, techBodyOpen);
-				if (techBodyClose == std::string::npos) {
-					techSearch = afterKeyword;
-					continue;
-				}
-
-				info.body = body.substr(techBodyOpen, techBodyClose - techBodyOpen + 1);
-				techniques.push_back(std::move(info));
-				techSearch = techBodyClose + 1;
+				techniques.push_back(std::move(parsed));
+				techSearch = techniques.back().endPos + 1;
 			}
 
+			// Emit flattened technique11 declarations
 			std::string replacement;
 			for (size_t i = 0; i < techniques.size(); ++i) {
 				std::string techName = groupName;
@@ -291,18 +291,23 @@ namespace ENBExtender
 					techName += std::to_string(i);
 
 				replacement += "technique11 " + techName;
-				if (i == 0 && (!groupAnnotations.empty() || !techniques[i].annotations.empty())) {
-					replacement += " <";
+
+				// First technique merges group + technique annotations
+				std::string anno;
+				if (i == 0) {
 					if (!groupAnnotations.empty())
-						replacement += groupAnnotations;
-					if (!groupAnnotations.empty() && !techniques[i].annotations.empty())
-						replacement += " ";
-					if (!techniques[i].annotations.empty())
-						replacement += techniques[i].annotations;
-					replacement += ">";
-				} else if (i > 0 && !techniques[i].annotations.empty()) {
-					replacement += " <" + techniques[i].annotations + ">";
+						anno = groupAnnotations;
+					if (!techniques[i].annotations.empty()) {
+						if (!anno.empty())
+							anno += " ";
+						anno += techniques[i].annotations;
+					}
+				} else {
+					anno = techniques[i].annotations;
 				}
+				if (!anno.empty())
+					replacement += " <" + anno + ">";
+
 				replacement += " " + techniques[i].body + "\n";
 			}
 
@@ -966,6 +971,8 @@ namespace ENBExtender
 
 	static void BuildMergedTree(Effect* effects[], int effectCount, GroupNode& root, MergedGroupMeta& meta)
 	{
+		std::unordered_set<std::string> rootDisplayNames;
+
 		for (int e = 0; e < effectCount; ++e) {
 			auto* effect = effects[e];
 			if (!effect->IsCompiled())
@@ -997,14 +1004,7 @@ namespace ENBExtender
 				if (node == &root) {
 					if (var.isSeparator)
 						continue;
-					bool isDuplicate = false;
-					for (auto& existing : root.vars) {
-						if (!var.displayName.empty() && existing.effect->uiVariables[existing.index].displayName == var.displayName) {
-							isDuplicate = true;
-							break;
-						}
-					}
-					if (isDuplicate)
+					if (!var.displayName.empty() && !rootDisplayNames.insert(var.displayName).second)
 						continue;
 				}
 
@@ -1055,35 +1055,30 @@ namespace ENBExtender
 		return minOrder;
 	}
 
-	static std::unordered_map<std::string, bool> MapRootSeparators(
+	static std::unordered_set<std::string> MapRootSeparators(
 		Effect* effects[], int effectCount, const GroupNode& root)
 	{
-		std::vector<VarRef> rootSeparators;
+		std::unordered_set<std::string> result;
+
 		for (int e = 0; e < effectCount; ++e) {
 			auto* effect = effects[e];
 			if (!effect->IsCompiled())
 				continue;
-			for (int i = 0; i < static_cast<int>(effect->uiVariables.size()); ++i) {
-				auto& var = effect->uiVariables[i];
-				if (var.isSeparator && var.group.empty())
-					rootSeparators.push_back({ effect, i });
-			}
-		}
-
-		std::unordered_map<std::string, bool> result;
-		for (auto& sep : rootSeparators) {
-			auto& sepVar = sep.effect->uiVariables[sep.index];
-			int bestMinSO = INT_MAX;
-			int bestIdx = -1;
-			for (size_t ci = 0; ci < root.children.size(); ++ci) {
-				int minSO = GetMinSourceOrderForEffect(*root.children[ci], sep.effect);
-				if (minSO > sepVar.sourceOrder && minSO < bestMinSO) {
-					bestMinSO = minSO;
-					bestIdx = static_cast<int>(ci);
+			for (auto& var : effect->uiVariables) {
+				if (!var.isSeparator || !var.group.empty())
+					continue;
+				int bestMinSO = INT_MAX;
+				int bestIdx = -1;
+				for (size_t ci = 0; ci < root.children.size(); ++ci) {
+					int minSO = GetMinSourceOrderForEffect(*root.children[ci], effect);
+					if (minSO > var.sourceOrder && minSO < bestMinSO) {
+						bestMinSO = minSO;
+						bestIdx = static_cast<int>(ci);
+					}
 				}
+				if (bestIdx >= 0)
+					result.insert(root.children[bestIdx]->fullPath);
 			}
-			if (bestIdx >= 0)
-				result[root.children[bestIdx]->fullPath] = true;
 		}
 		return result;
 	}
@@ -1095,7 +1090,7 @@ namespace ENBExtender
 		std::unordered_map<std::string, VarRef>& uniqueNameMap;
 		std::unordered_set<Effect*>& changedEffects;
 		MergedGroupMeta& meta;
-		std::unordered_map<std::string, bool>& separatorsBeforeGroup;
+		std::unordered_set<std::string>& separatorsBeforeGroup;
 		int tableCounter = 0;
 
 		bool BeginVarTable()
