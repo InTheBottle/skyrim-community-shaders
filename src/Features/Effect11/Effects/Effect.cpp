@@ -301,15 +301,15 @@ void Effect::Save()
 			value = uiVar.boolValue ? "true" : "false";
 			break;
 		case UIVariableType::Float2:
-		case UIVariableType::Color3:
-		case UIVariableType::Color4:
+		case UIVariableType::Float3:
+		case UIVariableType::Float4:
 			{
 				std::ostringstream oss;
-				int numComponents = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Color3) ? 3 : 4;
+				int numComponents = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Float3) ? 3 : 4;
 
-				std::copy(uiVar.colorValue, uiVar.colorValue + numComponents - 1,
+				std::copy(uiVar.vectorValue, uiVar.vectorValue + numComponents - 1,
 					std::ostream_iterator<float>(oss, ", "));
-				oss << uiVar.colorValue[numComponents - 1];
+				oss << uiVar.vectorValue[numComponents - 1];
 
 				value = oss.str();
 			}
@@ -903,13 +903,6 @@ std::string Effect::GetGroupAnnotation(ID3DX11EffectGroup* group, const std::str
 
 std::string Effect::GetVariableIniKey(const UIVariable& uiVar)
 {
-	if (uiVar.effectVariable) {
-		auto uniqueName = GetUIAnnotation(uiVar.effectVariable.get(), "UniqueName");
-		if (!uniqueName.empty())
-			return uniqueName;
-		auto uiName = GetUIAnnotation(uiVar.effectVariable.get(), "UIName");
-		return uiVar.group.empty() ? uiName : uiVar.group + "." + uiName;
-	}
 	if (!uiVar.uniqueName.empty())
 		return uiVar.uniqueName;
 	return uiVar.group.empty() ? uiVar.displayName : uiVar.group + "." + uiVar.displayName;
@@ -928,9 +921,9 @@ void Effect::LoadUIVariableValue(UIVariable& uiVar)
 		uiVar.effectVariable->AsScalar()->GetBool(&uiVar.boolValue);
 		break;
 	case UIVariableType::Float2:
-	case UIVariableType::Color3:
-	case UIVariableType::Color4:
-		uiVar.effectVariable->AsVector()->GetFloatVector(uiVar.colorValue);
+	case UIVariableType::Float3:
+	case UIVariableType::Float4:
+		uiVar.effectVariable->AsVector()->GetFloatVector(uiVar.vectorValue);
 		break;
 	}
 }
@@ -964,19 +957,19 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 			}
 			break;
 		case UIVariableType::Float2:
-		case UIVariableType::Color3:
-		case UIVariableType::Color4:
+		case UIVariableType::Float3:
+		case UIVariableType::Float4:
 			{
 				std::istringstream ss(value);
-				int numComponents = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Color3) ? 3 : 4;
+				int numComponents = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Float3) ? 3 : 4;
 				for (int i = 0; i < numComponents; ++i) {
 					char sep;
-					ss >> uiVar.colorValue[i];
+					ss >> uiVar.vectorValue[i];
 					if (ss.peek() == ',')
 						ss >> sep;
 				}
 				if (uiVar.effectVariable)
-					uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.colorValue);
+					uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
 			}
 			break;
 		}
@@ -1002,9 +995,9 @@ void Effect::UpdateUIVariables()
 			uiVar.effectVariable->AsScalar()->SetBool(uiVar.boolValue);
 			break;
 		case UIVariableType::Float2:
-		case UIVariableType::Color3:
-		case UIVariableType::Color4:
-			uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.colorValue);
+		case UIVariableType::Float3:
+		case UIVariableType::Float4:
+			uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
 			break;
 		}
 	}

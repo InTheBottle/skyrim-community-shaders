@@ -100,7 +100,6 @@ namespace ENBExtender
 	{
 		std::string lower = widget;
 		std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-		if (lower == "spinner") return Effect::UIWidgetType::Spinner;
 		if (lower == "dropdown") return Effect::UIWidgetType::Dropdown;
 		if (lower == "vector") return Effect::UIWidgetType::Vector;
 		if (lower == "quality") return Effect::UIWidgetType::Quality;
@@ -237,9 +236,6 @@ namespace ENBExtender
 			auto minStr = ann("UIMin"), maxStr = ann("UIMax");
 			if (!minStr.empty()) { if (isInt) info.intMin = SafeStoi(minStr); else info.floatMin = SafeStof(minStr); }
 			if (!maxStr.empty()) { if (isInt) info.intMax = SafeStoi(maxStr); else info.floatMax = SafeStof(maxStr); }
-			auto stepStr = ann("UIStep");
-			if (!stepStr.empty())
-				info.floatStep = SafeStof(stepStr);
 			auto orderStr = ann("UIOrdering");
 			if (!orderStr.empty()) {
 				info.ordering = SafeStoi(orderStr);
@@ -319,14 +315,14 @@ namespace ENBExtender
 				continue;
 
 			if (line.find("UIGroupBegin") != std::string::npos) {
-				std::string groupName = ExtractAnnotation(line, "UIGroup");
-				if (groupName.empty()) {
-					size_t gt = line.rfind('>');
-					size_t q1 = (gt != std::string::npos) ? line.find('"', gt) : std::string::npos;
-					size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
-					if (q2 != std::string::npos)
-						groupName = line.substr(q1 + 1, q2 - q1 - 1);
-				}
+				std::string groupName;
+				size_t gt = line.rfind('>');
+				size_t q1 = (gt != std::string::npos) ? line.find('"', gt) : std::string::npos;
+				size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
+				if (q2 != std::string::npos)
+					groupName = line.substr(q1 + 1, q2 - q1 - 1);
+				if (groupName.empty())
+					groupName = ExtractAnnotation(line, "UIGroup");
 				if (!groupName.empty()) {
 					groupStack.push_back(groupName);
 					auto groupPath = BuildGroupPath(groupStack);
@@ -423,6 +419,7 @@ namespace ENBExtender
 		uiVar.isHidden = IsTruthy(hiddenStr) || (!visibleStr.empty() && !IsTruthy(visibleStr));
 
 		uiVar.isTopLevel = IsTruthy(get("UITopLevel"));
+		CollectGroupMeta(uiVar.group, variable, effect);
 		if (uiVar.isTopLevel)
 			uiVar.group.clear();
 
@@ -432,11 +429,10 @@ namespace ENBExtender
 		uiVar.uiBindingProperty = get("UIBindingProperty");
 		uiVar.uiBindingCondition = get("UIBindingCondition");
 		uiVar.ignorePerfMode = IsTruthy(get("UIIgnorePerfMode"));
-		uiVar.isWeatherString = IsTruthy(get("UIWeatherString"));
 		uiVar.isWeatherOnlyString = IsTruthy(get("UIWeatherOnlyString"));
-		uiVar.separation = get("Separation");
-
-		CollectGroupMeta(uiVar.group, variable, effect);
+		if (uiVar.type == Effect::UIVariableType::Float || uiVar.type == Effect::UIVariableType::Float2 ||
+			uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4)
+			uiVar.separation = get("Separation");
 	}
 
 	static void ParseTimePeriod(Effect::UIVariable& uiVar)
@@ -480,8 +476,8 @@ namespace ENBExtender
 			}
 		} else if (typeDesc.Class == D3D_SVC_VECTOR && typeDesc.Type == D3D_SVT_FLOAT && typeDesc.Elements == 0) {
 			if (typeDesc.Columns == 2) out.type = Effect::UIVariableType::Float2;
-			else if (typeDesc.Columns == 3) out.type = Effect::UIVariableType::Color3;
-			else if (typeDesc.Columns == 4) out.type = Effect::UIVariableType::Color4;
+			else if (typeDesc.Columns == 3) out.type = Effect::UIVariableType::Float3;
+			else if (typeDesc.Columns == 4) out.type = Effect::UIVariableType::Float4;
 			else return false;
 		} else {
 			return false;
@@ -489,10 +485,10 @@ namespace ENBExtender
 
 		out.widgetType = ParseWidgetType(get("UIWidget"));
 
-		if (out.type == Effect::UIVariableType::Float || out.type == Effect::UIVariableType::Float2) {
+		if (out.type == Effect::UIVariableType::Float || out.type == Effect::UIVariableType::Float2 ||
+			out.type == Effect::UIVariableType::Float3 || out.type == Effect::UIVariableType::Float4) {
 			auto s = get("UIMin"); if (!s.empty()) out.floatMin = SafeStof(s, out.floatMin);
 			s = get("UIMax"); if (!s.empty()) out.floatMax = SafeStof(s, out.floatMax);
-			s = get("UIStep"); if (!s.empty()) out.floatStep = SafeStof(s, out.floatStep);
 		} else if (out.type == Effect::UIVariableType::Int) {
 			auto s = get("UIMin"); if (!s.empty()) out.intMin = SafeStoi(s, out.intMin);
 			s = get("UIMax"); if (!s.empty()) out.intMax = SafeStoi(s, out.intMax);
@@ -521,9 +517,9 @@ namespace ENBExtender
 		auto get = [&](const char* name) { return effect.GetUIAnnotation(variable, name); };
 
 		if (IsTruthy(get("UIGroupBegin"))) {
-			std::string groupName = get("UIGroup");
+			std::string groupName = GetStringVariableValue(variable);
 			if (groupName.empty())
-				groupName = GetStringVariableValue(variable);
+				groupName = get("UIGroup");
 			if (!groupName.empty()) {
 				groupStack.push_back(groupName);
 				CollectGroupMeta(BuildGroupPath(groupStack), variable, effect);
@@ -561,11 +557,7 @@ namespace ENBExtender
 		Effect::UIVariable labelVar = {};
 		labelVar.name = varDesc.Name;
 		labelVar.displayName = labelText;
-		labelVar.type = Effect::UIVariableType::Float;
-		labelVar.floatMin = 0.0f;
-		labelVar.floatMax = 0.0f;
 		labelVar.isLabel = true;
-		labelVar.isReadOnly = true;
 		ApplyAnnotations(labelVar, variable, groupStack, effect);
 		if (!labelVar.isHidden)
 			effect.uiVariables.push_back(labelVar);
@@ -603,7 +595,6 @@ namespace ENBExtender
 				uiVar.floatValue = SafeStof(def.value);
 				uiVar.floatMin = def.floatMin;
 				uiVar.floatMax = def.floatMax;
-				uiVar.floatStep = def.floatStep;
 			}
 
 			if (!def.group.empty() && def.hasExplicitOrdering) {
@@ -912,15 +903,21 @@ namespace ENBExtender
 			changed = ImGui::Checkbox(id.c_str(), &uiVar.boolValue);
 			break;
 		case Effect::UIVariableType::Float2:
-			changed = ImGui::SliderFloat2(id.c_str(), uiVar.colorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
+			changed = ImGui::SliderFloat2(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
 			break;
-		case Effect::UIVariableType::Color3:
-			changed = (uiVar.widgetType == Effect::UIWidgetType::Vector)
-			              ? ImGui::SliderFloat3(id.c_str(), uiVar.colorValue, -1.0f, 1.0f, "%.3f")
-			              : ImGui::ColorEdit3(id.c_str(), uiVar.colorValue);
+		case Effect::UIVariableType::Float3:
+			if (uiVar.widgetType == Effect::UIWidgetType::Color)
+				changed = ImGui::ColorEdit3(id.c_str(), uiVar.vectorValue);
+			else if (uiVar.widgetType == Effect::UIWidgetType::Vector)
+				changed = ImGui::SliderFloat3(id.c_str(), uiVar.vectorValue, -1.0f, 1.0f, "%.3f");
+			else
+				changed = ImGui::SliderFloat3(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
 			break;
-		case Effect::UIVariableType::Color4:
-			changed = ImGui::ColorEdit4(id.c_str(), uiVar.colorValue);
+		case Effect::UIVariableType::Float4:
+			if (uiVar.widgetType == Effect::UIWidgetType::Color)
+				changed = ImGui::ColorEdit4(id.c_str(), uiVar.vectorValue);
+			else
+				changed = ImGui::SliderFloat4(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
 			break;
 		}
 		if (changed)
@@ -1137,7 +1134,8 @@ namespace ENBExtender
 		if (FAILED(fx->GetDesc(&effectDesc)))
 			return;
 
-		std::function<std::string(const char*)> get;
+		ID3DX11EffectGroup* annotationGroup = nullptr;
+		ID3DX11EffectTechnique* annotationTechnique = nullptr;
 
 		for (UINT g = 0; g < effectDesc.Groups; ++g) {
 			auto* group = fx->GetGroupByIndex(g);
@@ -1148,18 +1146,25 @@ namespace ENBExtender
 				continue;
 
 			if (groupDesc.Name && groupDesc.Name[0]) {
-				get = [group](const char* name) { return Effect::GetGroupAnnotation(group, name); };
+				annotationGroup = group;
+				break;
 			} else if (groupDesc.Techniques > 0) {
 				auto* tech = group->GetTechniqueByIndex(0);
-				if (tech && tech->IsValid())
-					get = [tech](const char* name) { return Effect::GetTechniqueAnnotation(tech, name); };
+				if (tech && tech->IsValid()) {
+					annotationTechnique = tech;
+					break;
+				}
 			}
-			if (get)
-				break;
 		}
 
-		if (!get)
+		if (!annotationGroup && !annotationTechnique)
 			return;
+
+		auto get = [&](const char* name) -> std::string {
+			if (annotationGroup)
+				return Effect::GetGroupAnnotation(annotationGroup, name);
+			return Effect::GetTechniqueAnnotation(annotationTechnique, name);
+		};
 
 		auto str = [&](const char* name, std::string& out) { auto s = get(name); if (!s.empty()) out = s; };
 		auto flag = [&](const char* name, bool& out) { auto s = get(name); if (!s.empty()) out = IsTruthy(s); };
@@ -1215,6 +1220,10 @@ namespace ENBExtender
 			if (!baseVar || !baseVar->IsValid())
 				continue;
 
+			auto& sep = effect.uiVariables[entries[0].index].separation;
+			if (sep == "ExteriorWeather" && cd.eInteriorFactor > 0.0f)
+				continue;
+
 			float totalWeight = 0.0f;
 			for (auto& e : entries)
 				totalWeight += e.weight;
@@ -1223,32 +1232,18 @@ namespace ENBExtender
 
 			auto& firstVar = effect.uiVariables[entries[0].index];
 
-			if (firstVar.type == Effect::UIVariableType::Int || firstVar.type == Effect::UIVariableType::Bool) {
-				size_t bestIdx = entries[0].index;
-				float bestWeight = entries[0].weight;
-				for (size_t i = 1; i < entries.size(); ++i)
-					if (entries[i].weight > bestWeight) { bestWeight = entries[i].weight; bestIdx = entries[i].index; }
-				auto& best = effect.uiVariables[bestIdx];
-				switch (best.type) {
-				case Effect::UIVariableType::Int: baseVar->AsScalar()->SetInt(best.intValue); break;
-				case Effect::UIVariableType::Bool: baseVar->AsScalar()->SetBool(best.boolValue); break;
-				default: break;
-				}
-				continue;
-			}
-
 			if (firstVar.type == Effect::UIVariableType::Float) {
 				float result = 0.0f;
 				for (auto& e : entries)
 					result += effect.uiVariables[e.index].floatValue * (e.weight / totalWeight);
 				baseVar->AsScalar()->SetFloat(result);
 			} else {
-				int comps = (firstVar.type == Effect::UIVariableType::Float2) ? 2 : (firstVar.type == Effect::UIVariableType::Color3) ? 3 : 4;
+				int comps = (firstVar.type == Effect::UIVariableType::Float2) ? 2 : (firstVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
 				float result[4] = {};
 				for (auto& e : entries) {
 					float w = e.weight / totalWeight;
 					for (int c = 0; c < comps; ++c)
-						result[c] += effect.uiVariables[e.index].colorValue[c] * w;
+						result[c] += effect.uiVariables[e.index].vectorValue[c] * w;
 				}
 				baseVar->AsVector()->SetFloatVector(result);
 			}

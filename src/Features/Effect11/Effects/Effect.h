@@ -67,14 +67,13 @@ public:
 		Float2,
 		Int,
 		Bool,
-		Color3,
-		Color4
+		Float3,
+		Float4
 	};
 
 	enum class UIWidgetType
 	{
 		Default,
-		Spinner,
 		Dropdown,
 		Vector,
 		Quality,
@@ -99,12 +98,11 @@ public:
 		};
 
 		// Color value storage
-		float colorValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		float vectorValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 		// UI properties
 		float floatMin = 0.0f;
 		float floatMax = 1.0f;
-		float floatStep = 0.01f;
 		int intMin = 0;
 		int intMax = 100;
 		int ordering = 0;
@@ -121,7 +119,6 @@ public:
 		std::string uiBindingProperty;
 		std::string uiBindingCondition;
 		bool ignorePerfMode = false;
-		bool isWeatherString = false;
 		bool isWeatherOnlyString = false;
 
 		// Weather separation ("ExteriorWeather" or "Weather")
@@ -182,7 +179,6 @@ public:
 		int intMax = 100;
 		float floatMin = 0.0f;
 		float floatMax = 1.0f;
-		float floatStep = 0.01f;
 		int ordering = 0;
 		bool hasExplicitOrdering = false;
 	};
