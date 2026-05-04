@@ -242,9 +242,13 @@ bool Effect::Load()
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
 
 	for (auto& uiVar : uiVariables) {
-		if (!uiVar.effectVariable || uiVar.isSeparator)
+		if (uiVar.isSeparator || uiVar.isLabel)
 			continue;
-		std::string iniKey = uiVar.group.empty() ? uiVar.displayName : (uiVar.group + "." + uiVar.displayName);
+		if (!uiVar.effectVariable && !uiVar.isDefine)
+			continue;
+		std::string iniKey = GetVariableIniKey(uiVar);
+		if (iniKey.empty())
+			continue;
 		std::vector<char> valueBuffer(1024);
 		DWORD result = GetPrivateProfileStringA(section.c_str(), iniKey.c_str(), "", valueBuffer.data(), 1024, iniPath.string().c_str());
 		if (result > 0) {
@@ -276,7 +280,12 @@ void Effect::Save()
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
 
 	for (const auto& uiVar : uiVariables) {
-		if (!uiVar.effectVariable || uiVar.isSeparator)
+		if (uiVar.isSeparator || uiVar.isLabel)
+			continue;
+		if (!uiVar.effectVariable && !uiVar.isDefine)
+			continue;
+		std::string iniKey = GetVariableIniKey(uiVar);
+		if (iniKey.empty())
 			continue;
 
 		std::string value;
@@ -307,7 +316,6 @@ void Effect::Save()
 			break;
 		}
 
-		std::string iniKey = uiVar.group.empty() ? uiVar.displayName : (uiVar.group + "." + uiVar.displayName);
 		BOOL result = WritePrivateProfileStringA(section.c_str(), iniKey.c_str(), value.c_str(), iniPath.string().c_str());
 		if (!result) {
 			logger::warn("[ENBPP] Failed to write key '{}' to ini file '{}'", iniKey, iniPath.string());
@@ -440,7 +448,6 @@ bool Effect::LoadFXFile()
 			return false;
 		ENBExtender::ParseSourceGroupScopes(pp, *this);
 		StripLineDirectives(pp);
-		ENBExtender::ConvertFxGroups(pp);
 		return compile(pp, nullptr);
 	};
 
@@ -459,7 +466,6 @@ bool Effect::LoadFXFile()
 	}
 
 	if (!compiled) {
-		ENBExtender::ConvertFxGroups(sourceCode);
 		PresetInclude includeHandler(enbseriesPath, uiDefines, iniPathStr, iniSection);
 		winrt::com_ptr<ID3DBlob> compiledShader, errorBlob;
 		HRESULT hr = D3DCompile(sourceCode.c_str(), sourceCode.size(), filePathStr.c_str(),
@@ -664,63 +670,71 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 	return srv.get();
 }
 
-template <typename Callback>
-static void ForEachTechniqueSequence(ID3DX11Effect* effect, Callback&& callback)
+void Effect::LoadTechniques()
 {
 	D3DX11_EFFECT_DESC effectDesc;
 	if (FAILED(effect->GetDesc(&effectDesc)))
 		return;
 
-	std::string currentSequenceBaseName;
-	int currentSequenceIndex = 0;
-
-	for (UINT i = 0; i < effectDesc.Techniques; ++i) {
-		auto technique = effect->GetTechniqueByIndex(i);
-		if (!technique->IsValid())
+	for (UINT g = 0; g < effectDesc.Groups; ++g) {
+		auto group = effect->GetGroupByIndex(g);
+		if (!group || !group->IsValid())
 			continue;
 
-		D3DX11_TECHNIQUE_DESC techDesc;
-		if (FAILED(technique->GetDesc(&techDesc)))
+		D3DX11_GROUP_DESC groupDesc;
+		if (FAILED(group->GetDesc(&groupDesc)))
 			continue;
 
-		std::string techniqueName = techDesc.Name ? techDesc.Name : ("technique" + std::to_string(i));
-		std::string baseName;
-		int sequenceNumber = 0;
+		std::string groupName = groupDesc.Name ? groupDesc.Name : "";
 
-		if (!currentSequenceBaseName.empty()) {
-			std::string expectedName = currentSequenceBaseName + std::to_string(currentSequenceIndex + 1);
-			if (techniqueName == expectedName) {
-				baseName = currentSequenceBaseName;
-				sequenceNumber = currentSequenceIndex + 1;
-				currentSequenceIndex++;
-			} else {
-				baseName = techniqueName;
-				currentSequenceBaseName = techniqueName;
-				currentSequenceIndex = 0;
+		if (groupName.empty()) {
+			// Null group: standalone techniques use name-suffix convention for sequences
+			std::string currentBase;
+			int currentIndex = 0;
+
+			for (UINT t = 0; t < groupDesc.Techniques; ++t) {
+				auto technique = group->GetTechniqueByIndex(t);
+				if (!technique || !technique->IsValid())
+					continue;
+				D3DX11_TECHNIQUE_DESC techDesc;
+				if (FAILED(technique->GetDesc(&techDesc)))
+					continue;
+
+				std::string techName = techDesc.Name ? techDesc.Name : ("technique" + std::to_string(t));
+				std::string baseName;
+				int seqNum = 0;
+
+				if (!currentBase.empty() && techName == currentBase + std::to_string(currentIndex + 1)) {
+					baseName = currentBase;
+					seqNum = ++currentIndex;
+				} else {
+					baseName = techName;
+					currentBase = techName;
+					currentIndex = 0;
+				}
+
+				TechniqueInfo info;
+				info.technique.copy_from(technique);
+				info.renderTargetName = GetTechniqueAnnotation(technique, "RenderTarget");
+				auto& seq = techniques[baseName];
+				if (seq.size() <= static_cast<size_t>(seqNum))
+					seq.resize(seqNum + 1);
+				seq[seqNum] = std::move(info);
 			}
 		} else {
-			baseName = techniqueName;
-			currentSequenceBaseName = techniqueName;
-			currentSequenceIndex = 0;
+			// Named group: techniques form a sequence keyed by group name
+			for (UINT t = 0; t < groupDesc.Techniques; ++t) {
+				auto technique = group->GetTechniqueByIndex(t);
+				if (!technique || !technique->IsValid())
+					continue;
+
+				TechniqueInfo info;
+				info.technique.copy_from(technique);
+				info.renderTargetName = GetTechniqueAnnotation(technique, "RenderTarget");
+				techniques[groupName].push_back(std::move(info));
+			}
 		}
-
-		callback(technique, baseName, techniqueName, sequenceNumber);
 	}
-}
-
-void Effect::LoadTechniques()
-{
-	ForEachTechniqueSequence(effect.get(), [this](ID3DX11EffectTechnique* technique, const std::string& baseName, [[maybe_unused]] const std::string& techniqueName, int sequenceNumber) {
-		std::string renderTargetName = GetTechniqueAnnotation(technique, "RenderTarget");
-
-		if (techniques[baseName].size() <= static_cast<size_t>(sequenceNumber))
-			techniques[baseName].resize(sequenceNumber + 1);
-
-		TechniqueInfo techInfo;
-		techInfo.technique.copy_from(technique);
-		techInfo.renderTargetName = renderTargetName;
-		techniques[baseName][sequenceNumber] = std::move(techInfo);
-	});
 }
 
 void Effect::LoadUITechniques()
@@ -728,24 +742,79 @@ void Effect::LoadUITechniques()
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
 
+	D3DX11_EFFECT_DESC effectDesc;
+	if (FAILED(effect->GetDesc(&effectDesc)))
+		return;
+
 	ENBExtender::LoadTechniqueDropdownMetadata(*this);
 
 	uint32_t defaultIndex = 0;
-	ForEachTechniqueSequence(effect.get(), [this, &defaultIndex](ID3DX11EffectTechnique* technique, const std::string& baseName, [[maybe_unused]] const std::string& techniqueName, [[maybe_unused]] int sequenceNumber) {
-		std::string uiName = GetTechniqueAnnotation(technique, "UIName");
-		if (uiName.empty())
-			return;
 
-		for (const auto& existing : uiTechniques)
-			if (existing.techniqueName == baseName)
-				return;
+	for (UINT g = 0; g < effectDesc.Groups; ++g) {
+		auto group = effect->GetGroupByIndex(g);
+		if (!group || !group->IsValid())
+			continue;
 
-		std::string isDefault = GetTechniqueAnnotation(technique, "UIDefault");
-		if (!isDefault.empty() && isDefault != "0" && isDefault != "false")
-			defaultIndex = static_cast<uint32_t>(uiTechniques.size());
+		D3DX11_GROUP_DESC groupDesc;
+		if (FAILED(group->GetDesc(&groupDesc)))
+			continue;
 
-		uiTechniques.push_back({ baseName, uiName });
-	});
+		std::string groupName = groupDesc.Name ? groupDesc.Name : "";
+
+		if (!groupName.empty()) {
+			// Named group: UIName/UIDefault come from group annotations
+			std::string uiName = GetGroupAnnotation(group, "UIName");
+			if (uiName.empty())
+				continue;
+
+			std::string isDefault = GetGroupAnnotation(group, "UIDefault");
+			if (!isDefault.empty() && isDefault != "0" && isDefault != "false")
+				defaultIndex = static_cast<uint32_t>(uiTechniques.size());
+
+			uiTechniques.push_back({ groupName, uiName });
+		} else {
+			// Null group: standalone techniques, UIName on first technique of each sequence
+			std::string currentBase;
+			int currentIndex = 0;
+
+			for (UINT t = 0; t < groupDesc.Techniques; ++t) {
+				auto technique = group->GetTechniqueByIndex(t);
+				if (!technique || !technique->IsValid())
+					continue;
+				D3DX11_TECHNIQUE_DESC techDesc;
+				if (FAILED(technique->GetDesc(&techDesc)))
+					continue;
+
+				std::string techName = techDesc.Name ? techDesc.Name : "";
+				std::string baseName;
+
+				if (!currentBase.empty() && techName == currentBase + std::to_string(currentIndex + 1)) {
+					currentIndex++;
+					continue;
+				}
+				baseName = techName;
+				currentBase = techName;
+				currentIndex = 0;
+
+				std::string uiName = GetTechniqueAnnotation(technique, "UIName");
+				if (uiName.empty())
+					continue;
+
+				for (const auto& existing : uiTechniques)
+					if (existing.techniqueName == baseName)
+						goto next_technique;
+
+				{
+					std::string isDefault = GetTechniqueAnnotation(technique, "UIDefault");
+					if (!isDefault.empty() && isDefault != "0" && isDefault != "false")
+						defaultIndex = static_cast<uint32_t>(uiTechniques.size());
+
+					uiTechniques.push_back({ baseName, uiName });
+				}
+				next_technique:;
+			}
+		}
+	}
 
 	if (defaultIndex < uiTechniques.size())
 		selectedTechniqueIndex = defaultIndex;
@@ -919,6 +988,56 @@ std::string Effect::GetTechniqueAnnotation(ID3DX11EffectTechnique* technique, co
 	return "";
 }
 
+std::string Effect::GetGroupAnnotation(ID3DX11EffectGroup* group, const std::string& annotationName)
+{
+	if (!group)
+		return "";
+
+	D3DX11_GROUP_DESC groupDesc;
+	if (FAILED(group->GetDesc(&groupDesc)))
+		return "";
+
+	for (UINT i = 0; i < groupDesc.Annotations; ++i) {
+		auto annotation = group->GetAnnotationByIndex(i);
+		if (!annotation || !annotation->IsValid())
+			continue;
+
+		D3DX11_EFFECT_VARIABLE_DESC annotationDesc;
+		if (FAILED(annotation->GetDesc(&annotationDesc)))
+			continue;
+
+		if (annotationDesc.Name == annotationName) {
+			auto stringVar = annotation->AsString();
+			if (stringVar && stringVar->IsValid()) {
+				LPCSTR value = nullptr;
+				if (SUCCEEDED(stringVar->GetString(&value)) && value)
+					return std::string(value);
+			}
+			auto scalarVar = annotation->AsScalar();
+			if (scalarVar && scalarVar->IsValid()) {
+				int intValue;
+				if (SUCCEEDED(scalarVar->GetInt(&intValue)))
+					return std::to_string(intValue);
+			}
+		}
+	}
+	return "";
+}
+
+std::string Effect::GetVariableIniKey(const UIVariable& uiVar)
+{
+	if (uiVar.effectVariable) {
+		auto uniqueName = GetUIAnnotation(uiVar.effectVariable.get(), "UniqueName");
+		if (!uniqueName.empty())
+			return uniqueName;
+		auto uiName = GetUIAnnotation(uiVar.effectVariable.get(), "UIName");
+		return uiVar.group.empty() ? uiName : uiVar.group + "." + uiName;
+	}
+	if (!uiVar.uniqueName.empty())
+		return uiVar.uniqueName;
+	return uiVar.group.empty() ? uiVar.displayName : uiVar.group + "." + uiVar.displayName;
+}
+
 void Effect::LoadUIVariableValue(UIVariable& uiVar)
 {
 	switch (uiVar.type) {
@@ -945,11 +1064,13 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 		switch (uiVar.type) {
 		case UIVariableType::Float:
 			uiVar.floatValue = std::stof(value);
-			uiVar.effectVariable->AsScalar()->SetFloat(uiVar.floatValue);
+			if (uiVar.effectVariable)
+				uiVar.effectVariable->AsScalar()->SetFloat(uiVar.floatValue);
 			break;
 		case UIVariableType::Int:
 			uiVar.intValue = std::stoi(value);
-			uiVar.effectVariable->AsScalar()->SetInt(uiVar.intValue);
+			if (uiVar.effectVariable)
+				uiVar.effectVariable->AsScalar()->SetInt(uiVar.intValue);
 			break;
 		case UIVariableType::Bool:
 			{
@@ -961,7 +1082,8 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 					uiVar.boolValue = false;
 				else
 					uiVar.boolValue = std::stoi(value) != 0;
-				uiVar.effectVariable->AsScalar()->SetBool(uiVar.boolValue);
+				if (uiVar.effectVariable)
+					uiVar.effectVariable->AsScalar()->SetBool(uiVar.boolValue);
 			}
 			break;
 		case UIVariableType::Float2:
@@ -976,7 +1098,8 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 					if (ss.peek() == ',')
 						ss >> sep;
 				}
-				uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.colorValue);
+				if (uiVar.effectVariable)
+					uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.colorValue);
 			}
 			break;
 		}

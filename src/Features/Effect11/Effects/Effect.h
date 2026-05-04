@@ -112,6 +112,7 @@ public:
 		bool isSeparator = false;
 		bool isLabel = false;
 		bool isReadOnly = false;
+		bool isDefine = false;
 		bool isTopLevel = false;
 		bool isHidden = false;
 		std::string uniqueName;
@@ -225,6 +226,7 @@ public:
 	// UI annotation helpers (public for ENBExtender access)
 	std::string GetUIAnnotation(ID3DX11EffectVariable* variable, const std::string& annotationName);
 	static std::string GetTechniqueAnnotation(ID3DX11EffectTechnique* technique, const std::string& annotationName);
+	static std::string GetGroupAnnotation(ID3DX11EffectGroup* group, const std::string& annotationName);
 
 protected:
 	ID3DX11EffectVariable* GetCachedVariable(const std::string& name);
@@ -247,6 +249,7 @@ private:
 	ID3D11RenderTargetView* GetRenderTargetView(const std::string& renderTargetName, ID3D11RenderTargetView* fallback);
 
 	// UI Variable helpers (private)
+	std::string GetVariableIniKey(const UIVariable& uiVar);
 	void LoadUIVariableValue(UIVariable& uiVar);
 	void LoadVariableFromString(UIVariable& uiVar, const std::string& value);
 };

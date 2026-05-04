@@ -15,7 +15,6 @@ namespace ENBExtender
 
 	// Source preprocessing
 	void ConvertExtenderSyntax(std::string& content, const std::filesystem::path& enbseriesPath, std::vector<Effect::UIDefineInfo>& uiDefines, const std::string& iniPath = "", const std::string& iniSection = "");
-	void ConvertFxGroups(std::string& content);
 
 	// UI variable processing
 	void ParseSourceGroupScopes(const std::string& preprocessedSource, Effect& effect);
