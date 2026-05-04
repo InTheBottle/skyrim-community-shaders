@@ -64,6 +64,7 @@ public:
 	enum class UIVariableType
 	{
 		Float,
+		Float2,
 		Int,
 		Bool,
 		Color3,
@@ -119,6 +120,7 @@ public:
 		std::string uiBindingProperty;
 		std::string uiBindingCondition;
 		bool ignorePerfMode = false;
+		bool isWeatherString = false;
 		bool isWeatherOnlyString = false;
 
 		// Weather separation ("ExteriorWeather" or "Weather")
@@ -137,6 +139,7 @@ public:
 		int ordering = 0;
 		bool defaultOpen = false;
 		bool hasOrdering = false;
+		bool isTopLevel = false;
 	};
 	std::unordered_map<std::string, GroupMeta> groupMeta;
 
