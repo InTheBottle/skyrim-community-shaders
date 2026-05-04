@@ -164,9 +164,8 @@ public:
 	std::vector<std::string> errors;
 
 
-	// Pre-compiled group map from source preprocessing (variable name → group path)
+	// Source-parsed group map and declaration order (compiled effect reorders variable types)
 	std::unordered_map<std::string, std::string> sourceGroupMap;
-	// Source declaration order (variable name → declaration index)
 	std::unordered_map<std::string, int> sourceOrderMap;
 
 
