@@ -491,7 +491,6 @@ bool Effect::LoadFXFile()
 
 	LoadUIVariables();
 
-
 	logger::info("[ENBPP] Successfully loaded FX file: {}", filePathStr);
 	return true;
 }
