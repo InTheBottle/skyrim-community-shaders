@@ -29,6 +29,8 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	auto colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
 	data.VolumetricRaysColorFilter = { colorFilter.x, colorFilter.y, colorFilter.z };
 
+	data.LightSpriteIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "LIGHTSPRITE");
+
 	return data;
 }
 

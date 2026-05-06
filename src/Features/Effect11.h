@@ -25,7 +25,7 @@ public:
 		uint Enable;
 		uint EnableSky;
 		float ColorPow;
-		float pad0;
+		float LightSpriteIntensity;
 
 		float CloudsCurve;
 		float CloudsDesaturation;

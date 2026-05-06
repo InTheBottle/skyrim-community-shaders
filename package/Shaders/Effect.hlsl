@@ -863,6 +863,10 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 #		if defined(ADDBLEND)
 	float3 blendedColor = lightColor * (1 - fogFactor);
+	
+	if (SharedData::enbSettings.Enable)
+		blendedColor *= SharedData::enbSettings.LightSpriteIntensity;
+
 #		elif defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 	float3 blendedColor = lerp(lightColor, 1.0.xxx, saturate(1.5 * fogFactor).xxx);
 #		else
