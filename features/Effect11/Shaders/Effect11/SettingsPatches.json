@@ -1,0 +1,23 @@
+[
+	{
+		"file": "enbeffectpostpass.fx",
+		"patches": [
+			{
+				"variable": "AA.|- SMAA Enable",
+				"value": "false"
+			},
+			{
+				"variable": "AA.|- FXAA Enable",
+				"value": "false"
+			},
+			{
+				"variable": "CinBorders.|- Enable",
+				"value": "false"
+			},
+			{
+				"variable": "KiSharp.|- Enable",
+				"value": "false"
+			}
+		]
+	}
+]

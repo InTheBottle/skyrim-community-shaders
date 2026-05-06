@@ -205,8 +205,8 @@ void TextureManager::CreateDownsampleResources()
 		nullptr,
 		downsamplePS.put()));
 
-	// Create box blur pixel shader (1px radius)
-	auto blurPixelShaderSource = EffectManager::LoadShaderFile("Data\\Shaders\\Effect11\\BoxBlurPS.hlsl");
+	// Create Kawase blur pixel shader
+	auto blurPixelShaderSource = EffectManager::LoadShaderFile("Data\\Shaders\\Effect11\\KawaseBlurPS.hlsl");
 	if (blurPixelShaderSource.empty())
 		return;
 
@@ -216,7 +216,7 @@ void TextureManager::CreateDownsampleResources()
 	HRESULT blurResult = D3DCompile(
 		blurPixelShaderSource.data(),
 		blurPixelShaderSource.size(),
-		"BoxBlurPS.hlsl",
+		"KawaseBlurPS.hlsl",
 		nullptr,
 		nullptr,
 		"main",
@@ -327,7 +327,7 @@ void TextureManager::DownsampleToFixed(ID3D11ShaderResourceView* source, Downsam
 	context->PSSetShader(downsamplePS.get(), nullptr, 0);
 	context->Draw(4, 0);
 
-	// Pass 2: Box blur from temp into final texture
+	// Pass 2: Kawase blur from temp into final texture
 	ID3D11ShaderResourceView* nullSRV[] = { nullptr };
 	context->PSSetShaderResources(0, 1, nullSRV);
 

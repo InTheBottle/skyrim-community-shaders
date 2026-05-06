@@ -9,6 +9,7 @@
 #include "../PresetManager.h"
 #include "../TextureManager.h"
 #include "State.h"
+#include "Utils/SettingsPatches.h"
 #include "Utils/ShaderPatches.h"
 
 bool Effect::Load()
@@ -76,7 +77,9 @@ bool Effect::Load()
 		}
 	}
 
-	logger::info("[ENBPP] Loaded settings from '{}' for effect '{}'", iniPath.string(), GetName());
+	Util::SettingsPatches::Apply(*this);
+
+	logger::debug("[ENBPP] Loaded settings from '{}' for effect '{}'", iniPath.string(), GetName());
 	return true;
 }
 
