@@ -888,9 +888,12 @@ namespace ENBExtender
 		if (readOnly)
 			ImGui::BeginDisabled();
 		bool changed = false;
+		float floatStep = (uiVar.floatMax - uiVar.floatMin) / 100.0f;
 		switch (uiVar.type) {
 		case Effect::UIVariableType::Float:
-			changed = ImGui::SliderFloat(id.c_str(), &uiVar.floatValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
+			changed = ImGui::InputFloat(id.c_str(), &uiVar.floatValue, floatStep, floatStep * 10.0f, "%.3f");
+			if (changed)
+				uiVar.floatValue = std::clamp(uiVar.floatValue, uiVar.floatMin, uiVar.floatMax);
 			break;
 		case Effect::UIVariableType::Int:
 			if ((uiVar.widgetType == Effect::UIWidgetType::Dropdown || uiVar.widgetType == Effect::UIWidgetType::Quality) && !uiVar.dropdownItems.empty()) {
@@ -907,28 +910,42 @@ namespace ENBExtender
 					ImGui::EndCombo();
 				}
 			} else {
-				changed = ImGui::SliderInt(id.c_str(), &uiVar.intValue, uiVar.intMin, uiVar.intMax);
+				changed = ImGui::InputInt(id.c_str(), &uiVar.intValue, 1, 10);
+				if (changed)
+					uiVar.intValue = std::clamp(uiVar.intValue, uiVar.intMin, uiVar.intMax);
 			}
 			break;
 		case Effect::UIVariableType::Bool:
 			changed = ImGui::Checkbox(id.c_str(), &uiVar.boolValue);
 			break;
 		case Effect::UIVariableType::Float2:
-			changed = ImGui::SliderFloat2(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
+			changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 2, &floatStep, nullptr, "%.3f");
+			if (changed)
+				for (int i = 0; i < 2; ++i)
+					uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], uiVar.floatMin, uiVar.floatMax);
 			break;
 		case Effect::UIVariableType::Float3:
-			if (uiVar.widgetType == Effect::UIWidgetType::Color)
+			if (uiVar.widgetType == Effect::UIWidgetType::Color) {
 				changed = ImGui::ColorEdit3(id.c_str(), uiVar.vectorValue);
-			else if (uiVar.widgetType == Effect::UIWidgetType::Vector)
-				changed = ImGui::SliderFloat3(id.c_str(), uiVar.vectorValue, -1.0f, 1.0f, "%.3f");
-			else
-				changed = ImGui::SliderFloat3(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
+			} else {
+				float min3 = (uiVar.widgetType == Effect::UIWidgetType::Vector) ? -1.0f : uiVar.floatMin;
+				float max3 = (uiVar.widgetType == Effect::UIWidgetType::Vector) ? 1.0f : uiVar.floatMax;
+				float step3 = (max3 - min3) / 100.0f;
+				changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 3, &step3, nullptr, "%.3f");
+				if (changed)
+					for (int i = 0; i < 3; ++i)
+						uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], min3, max3);
+			}
 			break;
 		case Effect::UIVariableType::Float4:
-			if (uiVar.widgetType == Effect::UIWidgetType::Color)
+			if (uiVar.widgetType == Effect::UIWidgetType::Color) {
 				changed = ImGui::ColorEdit4(id.c_str(), uiVar.vectorValue);
-			else
-				changed = ImGui::SliderFloat4(id.c_str(), uiVar.vectorValue, uiVar.floatMin, uiVar.floatMax, "%.3f");
+			} else {
+				changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 4, &floatStep, nullptr, "%.3f");
+				if (changed)
+					for (int i = 0; i < 4; ++i)
+						uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], uiVar.floatMin, uiVar.floatMax);
+			}
 			break;
 		}
 		if (changed)
