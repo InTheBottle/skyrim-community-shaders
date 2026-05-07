@@ -45,7 +45,7 @@ groupshared sh2 sharedB[TOTAL_SAMPLES];
 
 	float3 color = EnvTexture.SampleLevel(LinearSampler, sampleDir, 0).xyz;
 	
-	if (SharedData::enbSettings.Enable){
+	if (SharedData::enbSettings.Enable)
 		color *= saturate(-rayDir.z * 0.65 + 0.35);
 
 	// Compute spherical harmonics basis for this direction
