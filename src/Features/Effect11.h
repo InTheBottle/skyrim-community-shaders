@@ -34,6 +34,10 @@ public:
 
 		float VolumetricRaysDesaturation;
 		float3 VolumetricRaysColorFilter;
+
+		uint UseProceduralGradientWeights;
+		float ProceduralGradientWeightCurve;
+		float2 pad0;
 	};
 
 	bool enableEffect = false;

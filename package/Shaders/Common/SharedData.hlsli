@@ -260,6 +260,10 @@ namespace SharedData
 
 		float VolumetricRaysDesaturation;
 		float3 VolumetricRaysColorFilter;
+
+		uint UseProceduralGradientWeights;
+		float ProceduralGradientWeightCurve;
+		float2 pad0;
 	};
 	struct TerrainBlendingSettings
 	{

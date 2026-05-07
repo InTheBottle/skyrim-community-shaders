@@ -29,6 +29,9 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	auto colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
 	data.VolumetricRaysColorFilter = { colorFilter.x, colorFilter.y, colorFilter.z };
 
+	data.UseProceduralGradientWeights = enableEffect && settingManager.GetValue<bool>("UseProceduralGradientWeights", "SKY");
+	data.ProceduralGradientWeightCurve = settingManager.GetInterpolatedTimeOfDayValue("ProceduralGradientWeightCurve", "SKY");
+
 	data.LightSpriteIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "LIGHTSPRITE");
 
 	return data;

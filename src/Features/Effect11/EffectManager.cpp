@@ -177,6 +177,9 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterFloatSetting("CloudsEdgeIntensity", "SKY", 0.0f, 0.0f, 10.0f, 0.01f, false);
 	settingManager.RegisterFloatSetting("CloudsEdgeMoonMultiplier", "SKY", 0.0f, 0.0f, 10.0f, 0.01f, false);
 
+	settingManager.RegisterBoolSetting("UseProceduralGradientWeights", "SKY", false, false);
+	settingManager.RegisterTimeOfDaySetting("ProceduralGradientWeightCurve", "SKY", 1.0f, 1.0f, 32.0f, 0.01f, true);
+
 	// ENVIRONMENT
 	settingManager.RegisterTimeOfDaySetting("DirectLightingIntensity", "ENVIRONMENT", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("DirectLightingCurve", "ENVIRONMENT", 1.0f, 0.1f, 8.0f, 0.01f, true);

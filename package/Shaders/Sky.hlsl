@@ -44,6 +44,11 @@ struct VS_OUTPUT
 	float4 Color: COLOR0;
 #endif
 
+#if !defined(OCCLUSION) && !defined(MOONMASK) && !defined(HORIZFADE)
+	float4 SkyBlendColor0: TEXCOORD5;
+	float4 SkyBlendColor2: TEXCOORD6;
+#endif
+
 	float4 WorldPosition: POSITION1;
 	float4 PreviousWorldPosition: POSITION2;
 #if defined(VR)
@@ -134,6 +139,8 @@ VS_OUTPUT main(VS_INPUT input)
 
 	vsout.Color.xyz = VParams * skyColor;
 	vsout.Color.w = BlendColor[0].w * input.Color.w;
+	vsout.SkyBlendColor0 = float4(BlendColor[0].xyz * VParams, 0);
+	vsout.SkyBlendColor2 = float4(BlendColor[2].xyz * VParams, 0);
 #	endif      // OCCLUSION MOONMASK HORIZFADE
 
 	vsout.Position = mul(WorldViewProj[eyeIndex], inputPosition).xyww;
@@ -306,7 +313,16 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color.xyz = (sunGlareColor + skyScale) + noiseGrad;
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
-	psout.Color.xyz = (skyScale + Color::Sky(input.Color.xyz)) + noiseGrad;
+	float3 skyGradientColor = input.Color.xyz;
+	if (SharedData::enbSettings.UseProceduralGradientWeights) {
+		float3 viewDir = normalize(input.WorldPosition.xyz);
+		float t = pow(1.0 - saturate(viewDir.z), SharedData::enbSettings.ProceduralGradientWeightCurve);
+
+		float3 labA = Color::Correct::BT709ToOKLab(input.SkyBlendColor2.xyz);
+		float3 labB = Color::Correct::BT709ToOKLab(input.SkyBlendColor0.xyz);
+		skyGradientColor = Color::Correct::OkLabToBT709(lerp(labA, labB, t));
+	}
+	psout.Color.xyz = (skyScale + Color::Sky(skyGradientColor)) + noiseGrad;
 
 	psout.Color.w = input.Color.w;
 #			endif  // TEX
