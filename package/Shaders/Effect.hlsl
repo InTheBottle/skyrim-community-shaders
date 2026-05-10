@@ -615,11 +615,6 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
 #		endif
 
-	if (SharedData::enbSettings.Enable) {
-		dirColor *= SharedData::enbSettings.ParticleLightingInfluence;
-		ambientColor *= SharedData::enbSettings.ParticleAmbientInfluence;
-	}
-
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);
 
