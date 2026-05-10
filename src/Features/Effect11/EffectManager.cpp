@@ -397,6 +397,7 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterBoolSetting("EnableCloudShadows", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableImageBasedLighting", "EFFECT", true, false);
+	settingManager.RegisterBoolSetting("EnableProceduralSun", "EFFECT", true, false);
 
 	// ADAPTATION
 	settingManager.RegisterFloatSetting("AdaptationSensitivity", "ADAPTATION", 1.0f, 0.0f, 1.0f, 0.01f, false);
@@ -488,6 +489,12 @@ void EffectManager::RegisterSettings()
 	// VOLUMETRICFOG
 	settingManager.RegisterTimeOfDaySetting("Intensity", "VOLUMETRICFOG", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 	settingManager.RegisterColorTimeOfDaySetting("ColorFilter", "VOLUMETRICFOG", { 1.0f, 1.0f, 1.0f }, true);
+
+	// PROCEDURALSUN
+	settingManager.RegisterFloatSetting("Size", "PROCEDURALSUN", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("EdgeSoftness", "PROCEDURALSUN", 1.0f, 0.0f, 1.0f, 0.01f, false);
+	settingManager.RegisterTimeOfDaySetting("GlowIntensity", "PROCEDURALSUN", 1.0f, 0.0f, 1000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("GlowCurve", "PROCEDURALSUN", 1.0f, 0.1f, 100.0f, 0.01f, true);
 
 	// LIGHTSPRITE
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);

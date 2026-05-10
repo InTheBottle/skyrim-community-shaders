@@ -34,6 +34,12 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 
 	data.LightSpriteIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "LIGHTSPRITE");
 
+	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
+	data.ProceduralSunSize = settingManager.GetValue<float>("Size", "PROCEDURALSUN");
+	data.ProceduralSunEdgeSoftness = settingManager.GetValue<float>("EdgeSoftness", "PROCEDURALSUN");
+	data.ProceduralSunGlowIntensity = settingManager.GetInterpolatedTimeOfDayValue("GlowIntensity", "PROCEDURALSUN");
+	data.ProceduralSunGlowCurve = settingManager.GetInterpolatedTimeOfDayValue("GlowCurve", "PROCEDURALSUN");
+
 	return data;
 }
 
