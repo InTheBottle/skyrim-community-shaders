@@ -384,8 +384,8 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterBoolSetting("EnableLocationWeather", "WEATHER", true, false);
 
 	// COLORCORRECTION
-	settingManager.RegisterFloatSetting("Brightness", "COLORCORRECTION", 1.0f, 0.0f, 10000.0f, 0.001f, false);
-	settingManager.RegisterFloatSetting("GammaCurve", "COLORCORRECTION", 1.0f, 1.0f, 2.5f, 0.01f, false);
+	settingManager.RegisterFloatSetting("Brightness", "COLORCORRECTION", 1.0f, 0.0f, 10000.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("GammaCurve", "COLORCORRECTION", 1.0f, 1.0f, 2.2f, 0.01f, false);
 
 	// EFFECT
 	settingManager.RegisterBoolSetting("UseOriginalPostProcessing", "EFFECT", false, false);
@@ -491,10 +491,10 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterColorTimeOfDaySetting("ColorFilter", "VOLUMETRICFOG", { 1.0f, 1.0f, 1.0f }, true);
 
 	// PROCEDURALSUN
-	settingManager.RegisterFloatSetting("Size", "PROCEDURALSUN", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("Size", "PROCEDURALSUN", 1.0f, 0.0f, 12.0f, 0.01f, false);
 	settingManager.RegisterFloatSetting("EdgeSoftness", "PROCEDURALSUN", 1.0f, 0.0f, 1.0f, 0.01f, false);
-	settingManager.RegisterTimeOfDaySetting("GlowIntensity", "PROCEDURALSUN", 1.0f, 0.0f, 1000.0f, 0.01f, true);
-	settingManager.RegisterTimeOfDaySetting("GlowCurve", "PROCEDURALSUN", 1.0f, 0.1f, 100.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("GlowIntensity", "PROCEDURALSUN", 1.0f, 0.0f, 30000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("GlowCurve", "PROCEDURALSUN", 1.0f, 0.0f, 10.0f, 0.01f, true);
 
 	// LIGHTSPRITE
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
