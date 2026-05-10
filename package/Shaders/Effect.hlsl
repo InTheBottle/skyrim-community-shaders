@@ -875,6 +875,8 @@ PS_OUTPUT main(PS_INPUT input)
 #		if defined(ADDBLEND)
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lightColor * (1 - vanillaFogFactor) * (1 - expFogFactor);
+	if (SharedData::enbSettings.Enable)
+		blendedColor *= SharedData::enbSettings.LightSpriteIntensity;
 #			else
 	float3 blendedColor = lightColor * (1 - fogFactor);
 #			endif
@@ -895,9 +897,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	float3 blendedColor = lightColor.xyz;
 #	endif
-
-	if (SharedData::enbSettings.Enable)
-		blendedColor *= SharedData::enbSettings.LightSpriteIntensity;
     
 	alpha = Color::EffectAlpha(alpha);
 
