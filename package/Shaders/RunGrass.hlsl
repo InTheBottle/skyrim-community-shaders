@@ -737,18 +737,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
 #				if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (SharedData::iblSettings.EnableIBL)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
-	}
 #				endif
 
 #				if defined(SKYLIGHTING)
-#					if defined(IBL)
-	if (!SharedData::iblSettings.EnableIBL)
-#					endif
-	{
-		directionalAmbientColor *= MultiBounceAO(albedo, skylightingDiffuse);
-	}
+	directionalAmbientColor *= MultiBounceAO(albedo, skylightingDiffuse);
 #				endif
 
 	diffuseColor += directionalAmbientColor;
@@ -908,24 +902,17 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
 #			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (SharedData::iblSettings.EnableIBL)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
-	}
 #			endif
 
+	float3 albedo = baseColor.xyz * vertexColor;
+
 #			if defined(SKYLIGHTING)
-#				if defined(IBL)
-	if (!SharedData::iblSettings.EnableIBL)
-#				endif
-	{
-		float3 albedo = baseColor.xyz * vertexColor;
-		directionalAmbientColor *= MultiBounceAO(albedo, skylightingDiffuse);
-	}
+	directionalAmbientColor *= MultiBounceAO(albedo, skylightingDiffuse);
 #			endif
 
 	diffuseColor += directionalAmbientColor;
-
-	float3 albedo = baseColor.xyz * vertexColor;
 
 	diffuseColor *= albedo;
 	directionalAmbientColor *= albedo;

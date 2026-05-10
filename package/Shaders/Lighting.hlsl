@@ -2858,11 +2858,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(ambientNormal)));
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
-		if (SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection) {
+	if (SharedData::iblSettings.EnableIBL)
+		if (SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection)
 			directionalAmbientColor = ImageBasedLighting::GetStaticDiffuseIBL(ambientNormal, SampColorSampler);
-		}
-	}
 #	endif
 
 #	if defined(SKYLIGHTING)
@@ -2897,20 +2895,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif  // defined (HAIR)
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
-		if (!(SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection)) {
+	if (SharedData::iblSettings.EnableIBL)
+		if (!(SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection))
 			directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -ambientNormal);
-		}
-	}
 #	endif
 
 #	if defined(SKYLIGHTING)
-#		if defined(IBL)
-	if (!SharedData::iblSettings.EnableIBL)
-#		endif
-	{
-		directionalAmbientColor *= MultiBounceAO(baseColor.xyz, skylightingDiffuse);
-	}
+	directionalAmbientColor *= MultiBounceAO(baseColor.xyz, skylightingDiffuse);
 #	endif
 
 	float3 reflectionDiffuseColor = diffuseColor + directionalAmbientColor;
