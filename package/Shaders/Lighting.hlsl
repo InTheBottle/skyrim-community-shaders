@@ -2870,6 +2870,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		skylightingFadeOutFactor = Skylighting::GetFadeOutFactor(input.WorldPosition.xyz);
 		skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, ambientNormal, skylightingFadeOutFactor);
 	}
+	skylightingDiffuse = Color::IrradianceToGamma(skylightingDiffuse);
 #	endif
 
 #	if defined(HAIR)
