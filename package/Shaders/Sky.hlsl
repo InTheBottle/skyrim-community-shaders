@@ -259,7 +259,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 viewDir = normalize(input.WorldPosition.xyz);
 		float cosAngle = dot(viewDir, SharedData::SunDirection.xyz);
 
-		float sunSize = SharedData::enbSettings.ProceduralSunSize * 2.5;
+		float sunSize = SharedData::enbSettings.ProceduralSunSize * 4.0;
 		float halfAngle = sunSize * (Math::PI / 180.0);
 		float cosSunRadius = cos(halfAngle);
 		float t = saturate((cosAngle - cosSunRadius) / (1.0 - cosSunRadius));
@@ -269,7 +269,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float distanceFromCenter = 1.0 - saturate(length(input.TexCoord0.xy * 2.0 - 1.0) * sqrt(2));
 
 		float sunGlow = distanceFromCenter * 1.1;
-		sunGlow = pow(sunGlow, 50);
+		sunGlow = pow(sunGlow, 64);
 		sunGlow = pow(sunGlow, SharedData::enbSettings.ProceduralSunGlowCurve);
 		sunGlow *= SharedData::enbSettings.ProceduralSunGlowIntensity;
 
