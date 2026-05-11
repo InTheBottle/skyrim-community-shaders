@@ -42,7 +42,8 @@ public:
 
 		float ProceduralSunEdgeSoftness;
 		float ProceduralSunGlowIntensity;
-		float2 pad0;
+		float ProceduralSunGlowCurve;
+		float pad0;
 	};
 
 	bool enableEffect = false;

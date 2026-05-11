@@ -205,6 +205,31 @@ cbuffer AlphaTestRefCB : register(b11)
 
 Texture2D<float> TexDepthSampler : register(t17);
 
+float3 ComputeProceduralSun(float2 uv)
+{
+	const float diskSq      = pow(SharedData::enbSettings.ProceduralSunSize * 0.04, 2);
+	const float outerSpan   = max(1.0 - diskSq, EPSILON_DIVISION);
+	const float invOuterSq  = 1.0 / outerSpan;
+	const float softSq      = max(saturate(pow(SharedData::enbSettings.ProceduralSunEdgeSoftness, 2)), EPSILON_DIVISION);
+	const float invDiskSoft = 1.0 / (max(diskSq, EPSILON_DIVISION) * softSq);
+	const float k           = 100.0 / (outerSpan * max(SharedData::enbSettings.ProceduralSunGlowCurve, EPSILON_DIVISION));
+
+	float2 p      = uv * 2.0 - 1.0;
+	float  rDelta = dot(p, p) - diskSq;
+
+	// Corona
+	float x      = saturate(rDelta * invOuterSq);
+	float corona = ((1.0 - x) / (k * x + 1.0)) * SharedData::enbSettings.ProceduralSunGlowIntensity;
+
+	// Disk
+	float t    = saturate(-rDelta * invDiskSoft);
+	float disk = t * (1.0 + t * (t * t - 1.0));
+
+	float horizonFade = smoothstep(-0.1, 0.1, SharedData::SunDirection.z);
+
+	return (corona + disk) * horizonFade;
+}
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -255,25 +280,10 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if defined(TEX)
-	if (SharedData::enbSettings.EnableProceduralSun && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
-		float3 viewDir = normalize(input.WorldPosition.xyz);
-		float cosAngle = dot(viewDir, SharedData::SunDirection.xyz);
-
-		float sunSize = SharedData::enbSettings.ProceduralSunSize * 5.0;
-		float halfAngle = sunSize * (Math::PI / 180.0);
-		float cosSunRadius = cos(halfAngle);
-		float t = saturate((cosAngle - cosSunRadius) / (1.0 - cosSunRadius));
-
-		float sun = smoothstep(0.0, SharedData::enbSettings.ProceduralSunEdgeSoftness, t);
-
-		float sunGlow = 1.0 - saturate(length(input.TexCoord0.xy * 2.0 - 1.0) * sqrt(2));
-		sunGlow *= sunGlow;
-		sunGlow *= 0.5;
-		sunGlow *= SharedData::enbSettings.ProceduralSunGlowIntensity;
-
-		sun += sunGlow;
-
-		baseColor = sun;
+	if (SharedData::enbSettings.EnableProceduralSun &&
+	    (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
+		baseColor.xyz = ComputeProceduralSun(input.TexCoord0.xy);
+		baseColor.w  = 1.0;
 	}
 #		endif
 
@@ -284,8 +294,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			ifdef TEX
 	float3 sunGlareColor = Color::Sky(input.Color.xyz) * baseColor.xyz;
-	// Dither/noise term is the legacy sky path contribution for gradient smoothing.
-	psout.Color.xyz = (sunGlareColor + skyScale) + noiseGrad;
+	psout.Color.xyz = (sunGlareColor + skyScale * baseColor.w) + noiseGrad * baseColor.w;
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
 	float3 skyGradientColor = input.Color.xyz;

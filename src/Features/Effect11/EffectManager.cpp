@@ -494,6 +494,7 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterFloatSetting("Size", "PROCEDURALSUN", 1.0f, 0.0f, 12.0f, 0.01f, false);
 	settingManager.RegisterFloatSetting("EdgeSoftness", "PROCEDURALSUN", 1.0f, 0.0f, 1.0f, 0.01f, false);
 	settingManager.RegisterTimeOfDaySetting("GlowIntensity", "PROCEDURALSUN", 1.0f, 0.0f, 30000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("GlowCurve", "PROCEDURALSUN", 1.0f, 0.1f, 100.0f, 0.01f, true);
 
 	// LIGHTSPRITE
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
