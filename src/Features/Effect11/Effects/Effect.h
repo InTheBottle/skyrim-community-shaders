@@ -27,7 +27,8 @@ public:
 	virtual bool Apply();   // Clear resources, load settings, recompile, create resources
 	virtual void Unload();  // Clear all resources
 
-	bool IsCompiled() const { return errors.empty(); }
+	bool IsCompiled() const { return filePresent && errors.empty(); }
+	bool IsFilePresent() const { return filePresent; }
 	const std::vector<std::string>& GetErrors() const { return errors; }
 
 	virtual void Execute() = 0;
@@ -163,6 +164,7 @@ public:
 	uint32_t selectedTechniqueIndex = 0;
 
 	// Error tracking
+	bool filePresent = false;
 	std::vector<std::string> errors;
 
 

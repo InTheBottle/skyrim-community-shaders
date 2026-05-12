@@ -163,6 +163,10 @@ bool Effect::Apply()
 	Unload();
 
 	if (!LoadFXFile()) {
+		if (!filePresent) {
+			logger::info("[ENBPP] Effect file not found for '{}', skipping", GetName());
+			return true;
+		}
 		errors.push_back("Failed to compile FX file");
 		logger::error("[ENBPP] Failed to compile FX file for effect '{}'", GetName());
 		return false;
@@ -199,6 +203,7 @@ void Effect::Unload()
 
 	ClearVariableCache();
 
+	filePresent = false;
 	errors.clear();
 
 	lastIniWriteTime = {};
@@ -210,6 +215,12 @@ bool Effect::LoadFXFile()
 {
 	auto filePath = PresetManager::GetSingleton().GetENBSeriesPath();
 	filePath /= GetName();
+
+	if (!std::filesystem::exists(filePath)) {
+		filePresent = false;
+		return false;
+	}
+	filePresent = true;
 
 	std::ifstream mainFile(filePath, std::ios::binary | std::ios::ate);
 	if (!mainFile.is_open()) {
