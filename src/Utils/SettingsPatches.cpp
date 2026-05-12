@@ -67,6 +67,7 @@ namespace Util::SettingsPatches
 				continue;
 
 			for (auto& patch : entry.patches) {
+				bool found = false;
 				for (auto& uiVar : effect.uiVariables) {
 					if (uiVar.isSeparator || uiVar.isLabel)
 						continue;
@@ -74,6 +75,7 @@ namespace Util::SettingsPatches
 					if (GetUniqueKey(uiVar) != patch.variable)
 						continue;
 
+					found = true;
 					bool patched = false;
 					switch (uiVar.type) {
 					case Effect::UIVariableType::Float:
@@ -117,6 +119,10 @@ namespace Util::SettingsPatches
 							patch.variable, effect.GetName(), patch.value);
 					}
 					break;
+				}
+				if (!found) {
+					logger::debug("[SettingsPatches] No match for '{}' in '{}'",
+						patch.variable, effect.GetName());
 				}
 			}
 		}

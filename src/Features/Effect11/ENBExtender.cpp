@@ -620,6 +620,8 @@ namespace ENBExtender
 		std::string uiName = get("UIName");
 		if (uiName.empty())
 			return false;
+		if (uiName.find_first_not_of(" \t") != std::string::npos)
+			Trim(uiName);
 
 		out = {};
 		out.name = varDesc.Name;
