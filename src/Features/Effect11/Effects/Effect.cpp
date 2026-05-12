@@ -18,13 +18,13 @@ bool Effect::Load()
 	iniPath /= GetName() + ".ini";
 
 	if (!std::filesystem::exists(iniPath)) {
-		logger::info("[ENBPP] Could not find ini file '{}' for effect '{}', using defaults", iniPath.string(), GetName());
+		logger::info("[EFFECT11] Could not find ini file '{}' for effect '{}', using defaults", iniPath.string(), GetName());
 		return true;
 	}
 
 	auto writeTime = std::filesystem::last_write_time(iniPath);
 	if (writeTime == lastIniWriteTime) {
-		logger::info("[ENBPP] Skipping unchanged ini file '{}' for effect '{}'", iniPath.string(), GetName());
+		logger::info("[EFFECT11] Skipping unchanged ini file '{}' for effect '{}'", iniPath.string(), GetName());
 		return true;
 	}
 	lastIniWriteTime = writeTime;
@@ -79,7 +79,7 @@ bool Effect::Load()
 
 	Util::SettingsPatches::Apply(*this);
 
-	logger::debug("[ENBPP] Loaded settings from '{}' for effect '{}'", iniPath.string(), GetName());
+	logger::debug("[EFFECT11] Loaded settings from '{}' for effect '{}'", iniPath.string(), GetName());
 	return true;
 }
 
@@ -123,7 +123,7 @@ void Effect::Save()
 					std::string compValue = std::to_string(uiVar.vectorValue[i]);
 					BOOL compResult = WritePrivateProfileStringA(section.c_str(), compKey.c_str(), compValue.c_str(), iniPath.string().c_str());
 					if (!compResult)
-						logger::warn("[ENBPP] Failed to write key '{}' to ini file '{}'", compKey, iniPath.string());
+						logger::warn("[EFFECT11] Failed to write key '{}' to ini file '{}'", compKey, iniPath.string());
 				}
 				continue;
 			} else {
@@ -141,47 +141,47 @@ void Effect::Save()
 
 		BOOL result = WritePrivateProfileStringA(section.c_str(), iniKey.c_str(), value.c_str(), iniPath.string().c_str());
 		if (!result) {
-			logger::warn("[ENBPP] Failed to write key '{}' to ini file '{}'", iniKey, iniPath.string());
+			logger::warn("[EFFECT11] Failed to write key '{}' to ini file '{}'", iniKey, iniPath.string());
 		}
 	}
 
 	std::string techniqueValue = std::to_string(selectedTechniqueIndex + 1u);
 	BOOL techniqueResult = WritePrivateProfileStringA(section.c_str(), "TECHNIQUE", techniqueValue.c_str(), iniPath.string().c_str());
 	if (!techniqueResult) {
-		logger::warn("[ENBPP] Failed to write TECHNIQUE key to ini file '{}'", iniPath.string());
+		logger::warn("[EFFECT11] Failed to write TECHNIQUE key to ini file '{}'", iniPath.string());
 	}
 
 	WritePrivateProfileStringA(NULL, NULL, NULL, iniPath.string().c_str());
 
-	logger::info("[ENBPP] Saved settings to '{}' for effect '{}'", iniPath.string(), GetName());
+	logger::info("[EFFECT11] Saved settings to '{}' for effect '{}'", iniPath.string(), GetName());
 }
 
 bool Effect::Apply()
 {
-	logger::info("[ENBPP] Applying effect '{}'", GetName());
+	logger::info("[EFFECT11] Applying effect '{}'", GetName());
 
 	Unload();
 
 	if (!LoadFXFile()) {
 		if (!filePresent) {
-			logger::info("[ENBPP] Effect file not found for '{}', skipping", GetName());
+			logger::info("[EFFECT11] Effect file not found for '{}', skipping", GetName());
 			return true;
 		}
 		errors.push_back("Failed to compile FX file");
-		logger::error("[ENBPP] Failed to compile FX file for effect '{}'", GetName());
+		logger::error("[EFFECT11] Failed to compile FX file for effect '{}'", GetName());
 		return false;
 	}
 
 	if (!Load()) {
 		errors.push_back("Failed to load settings");
-		logger::error("[ENBPP] Failed to load settings for effect '{}'", GetName());
+		logger::error("[EFFECT11] Failed to load settings for effect '{}'", GetName());
 		return false;
 	}
 
 
 	CreateEffectTextures();
 
-	logger::info("[ENBPP] Successfully applied effect '{}'", GetName());
+	logger::info("[EFFECT11] Successfully applied effect '{}'", GetName());
 	return true;
 }
 
@@ -208,7 +208,7 @@ void Effect::Unload()
 
 	lastIniWriteTime = {};
 
-	logger::info("[ENBPP] Unloaded effect '{}'", GetName());
+	logger::info("[EFFECT11] Unloaded effect '{}'", GetName());
 }
 
 bool Effect::LoadFXFile()
@@ -260,7 +260,7 @@ bool Effect::LoadFXFile()
 			nullptr, include, nullptr, "fx_5_0", 0, 0, compiled.put(), err.put());
 		if (FAILED(hr)) {
 			if (err)
-				logger::warn("[ENBPP] D3DCompile failed for '{}': {}", filePathStr,
+				logger::warn("[EFFECT11] D3DCompile failed for '{}': {}", filePathStr,
 					std::string(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize()));
 			return false;
 		}
@@ -309,12 +309,12 @@ bool Effect::LoadFXFile()
 			std::string errorMsg = "Compilation failed";
 			if (errorBlob) {
 				errorMsg = std::string(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
-				logger::error("[ENBPP] Effect compilation failed for '{}'", filePathStr);
+				logger::error("[EFFECT11] Effect compilation failed for '{}'", filePathStr);
 				std::istringstream errorStream(errorMsg);
 				std::string errorLine;
 				while (std::getline(errorStream, errorLine))
 					if (!errorLine.empty())
-						logger::error("[ENBPP]   {}", errorLine);
+						logger::error("[EFFECT11]   {}", errorLine);
 			}
 			errors.push_back(errorMsg);
 			return false;
@@ -333,7 +333,7 @@ bool Effect::LoadFXFile()
 
 	LoadUIVariables();
 
-	logger::info("[ENBPP] Successfully loaded FX file: {}", filePathStr);
+	logger::info("[EFFECT11] Successfully loaded FX file: {}", filePathStr);
 	return true;
 }
 
@@ -449,7 +449,7 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 		hr = DirectX::CreateShaderResourceView(device, image.GetImages(), image.GetImageCount(), image.GetMetadata(), srv.put());
 
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to load texture file: {} (HRESULT: 0x{:08X})", filepath.string(), static_cast<uint32_t>(hr));
+		logger::error("[EFFECT11] Failed to load texture file: {} (HRESULT: 0x{:08X})", filepath.string(), static_cast<uint32_t>(hr));
 		return nullptr;
 	}
 
@@ -629,7 +629,7 @@ void Effect::LoadUIVariables()
 
 		auto externBinding = GetUIAnnotation(variable, "ExternBinding");
 		if (!externBinding.empty()) {
-			logger::info("[ENBPP] ExternBinding '{}' requested by variable '{}' in '{}' (not yet implemented)",
+			logger::info("[EFFECT11] ExternBinding '{}' requested by variable '{}' in '{}' (not yet implemented)",
 				externBinding, varDesc.Name, GetName());
 			continue;
 		}
@@ -643,7 +643,7 @@ void Effect::LoadUIVariables()
 
 	ENBExtender::InsertUIDefines(*this);
 
-	logger::info("[ENBPP] Loaded {} UI variables for effect '{}'", uiVariables.size(), GetName());
+	logger::info("[EFFECT11] Loaded {} UI variables for effect '{}'", uiVariables.size(), GetName());
 }
 
 static std::string ReadAnnotationValue(ID3DX11EffectVariable* annotation)
@@ -800,7 +800,7 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 			break;
 		}
 	} catch (const std::exception& e) {
-		logger::warn("[ENBPP] Failed to parse value '{}' for variable '{}': {}", value, uiVar.name, e.what());
+		logger::warn("[EFFECT11] Failed to parse value '{}' for variable '{}': {}", value, uiVar.name, e.what());
 	}
 }
 

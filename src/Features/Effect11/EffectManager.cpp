@@ -600,7 +600,7 @@ std::string EffectManager::LoadShaderFile(const char* path)
 {
 	std::ifstream ifs(path, std::ios::binary);
 	if (!ifs.is_open()) {
-		logger::error("[ENBPP] Failed to open shader file: {}", path);
+		logger::error("[EFFECT11] Failed to open shader file: {}", path);
 		return {};
 	}
 	return { std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>() };
@@ -658,7 +658,7 @@ void EffectManager::CreateQuadGeometry()
 
 	if (FAILED(hr)) {
 		if (errorBlob) {
-			logger::error("[ENBPP] Failed to compile input layout vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
+			logger::error("[EFFECT11] Failed to compile input layout vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
 		}
 		return;
 	}
@@ -668,7 +668,7 @@ void EffectManager::CreateQuadGeometry()
 		vertexShaderBlob->GetBufferSize(),
 		inputLayout.put());
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to create shared input layout for ENB effects");
+		logger::error("[EFFECT11] Failed to create shared input layout for ENB effects");
 	}
 }
 
@@ -711,14 +711,14 @@ void EffectManager::CreateCopyShaders()
 
 	if (FAILED(hr)) {
 		if (errorBlob) {
-			logger::error("[ENBPP] Failed to compile copy vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
+			logger::error("[EFFECT11] Failed to compile copy vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
 		}
 		return;
 	}
 
 	hr = globals::d3d::device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, copyVertexShader.put());
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to create copy vertex shader");
+		logger::error("[EFFECT11] Failed to create copy vertex shader");
 		return;
 	}
 
@@ -732,18 +732,18 @@ void EffectManager::CreateCopyShaders()
 
 	if (FAILED(hr)) {
 		if (errorBlob) {
-			logger::error("[ENBPP] Failed to compile copy pixel shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
+			logger::error("[EFFECT11] Failed to compile copy pixel shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
 		}
 		return;
 	}
 
 	hr = globals::d3d::device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, copyPixelShader.put());
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to create copy pixel shader");
+		logger::error("[EFFECT11] Failed to create copy pixel shader");
 		return;
 	}
 
-	logger::info("[ENBPP] Created texture copy shaders successfully");
+	logger::info("[EFFECT11] Created texture copy shaders successfully");
 }
 
 void EffectManager::CreateColorCorrectionShader()
@@ -758,14 +758,14 @@ void EffectManager::CreateColorCorrectionShader()
 
 	if (FAILED(hr)) {
 		if (errorBlob) {
-			logger::error("[ENBPP] Failed to compile color correction compute shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
+			logger::error("[EFFECT11] Failed to compile color correction compute shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
 		}
 		return;
 	}
 
 	hr = globals::d3d::device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, colorCorrectionComputeShader.put());
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to create color correction compute shader");
+		logger::error("[EFFECT11] Failed to create color correction compute shader");
 		return;
 	}
 
@@ -778,11 +778,11 @@ void EffectManager::CreateColorCorrectionShader()
 
 	hr = globals::d3d::device->CreateBuffer(&cbDesc, nullptr, colorCorrectionConstantBuffer.put());
 	if (FAILED(hr)) {
-		logger::error("[ENBPP] Failed to create color correction constant buffer");
+		logger::error("[EFFECT11] Failed to create color correction constant buffer");
 		return;
 	}
 
-	logger::info("[ENBPP] Created color correction compute shader successfully");
+	logger::info("[EFFECT11] Created color correction compute shader successfully");
 }
 
 void EffectManager::UpdateCommonData()
@@ -1010,7 +1010,7 @@ void EffectManager::UpdateCommonVariablesForEffect(ID3DX11Effect* effect)
 void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11RenderTargetView* a_dest)
 {
 	if (!a_source || !a_dest || !copyPixelShader || !copyVertexShader) {
-		logger::critical("[ENBPP] Invalid parameters or shaders not initialized for texture copy");
+		logger::critical("[EFFECT11] Invalid parameters or shaders not initialized for texture copy");
 		return;
 	}
 
@@ -1021,7 +1021,7 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 	a_dest->GetResource(resource.put());
 	winrt::com_ptr<ID3D11Texture2D> texture;
 	if (!resource || !resource.try_as(texture) || !texture) {
-		logger::error("[ENBPP] Failed to get Texture2D from destination render target");
+		logger::error("[EFFECT11] Failed to get Texture2D from destination render target");
 		return;
 	}
 	D3D11_TEXTURE2D_DESC texDesc;
@@ -1068,7 +1068,7 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 {
 	if (!textureUAV || !colorCorrectionComputeShader || !colorCorrectionConstantBuffer) {
-		logger::warn("[ENBPP] Invalid parameters or shaders not initialized for color correction");
+		logger::warn("[EFFECT11] Invalid parameters or shaders not initialized for color correction");
 		return;
 	}
 
@@ -1086,7 +1086,7 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	HRESULT hr = context->Map(colorCorrectionConstantBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 	if (FAILED(hr)) {
-		logger::warn("[ENBPP] Failed to map color correction constant buffer");
+		logger::warn("[EFFECT11] Failed to map color correction constant buffer");
 		return;
 	}
 	{
@@ -1107,7 +1107,7 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	textureUAV->GetResource(resource.put());
 	winrt::com_ptr<ID3D11Texture2D> texture;
 	if (!resource || !resource.try_as(texture) || !texture) {
-		logger::error("[ENBPP] Failed to get Texture2D from UAV in ApplyColorCorrection");
+		logger::error("[EFFECT11] Failed to get Texture2D from UAV in ApplyColorCorrection");
 	} else {
 		D3D11_TEXTURE2D_DESC texDesc;
 		texture->GetDesc(&texDesc);
