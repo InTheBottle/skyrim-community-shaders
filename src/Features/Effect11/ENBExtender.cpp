@@ -666,6 +666,15 @@ namespace ENBExtender
 		if (out.isHidden)
 			return false;
 
+		if (!out.isReadOnly) {
+			if ((out.type == Effect::UIVariableType::Float || out.type == Effect::UIVariableType::Float2 ||
+					out.type == Effect::UIVariableType::Float3 || out.type == Effect::UIVariableType::Float4) &&
+				out.floatMin == out.floatMax)
+				out.isReadOnly = true;
+			else if (out.type == Effect::UIVariableType::Int && out.intMin == out.intMax)
+				out.isReadOnly = true;
+		}
+
 		ParseTimePeriod(out);
 		return true;
 	}
