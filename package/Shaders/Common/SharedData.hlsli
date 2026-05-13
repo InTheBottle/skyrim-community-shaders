@@ -271,6 +271,11 @@ namespace SharedData
 		float ProceduralSunGlowIntensity;
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
+
+		float ParticleIntensity;
+		float ParticleLightingInfluence;
+		float ParticleAmbientInfluence;
+		float ParticlePointLightingInfluence;
 	};
 	struct TerrainBlendingSettings
 	{

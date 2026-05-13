@@ -44,6 +44,11 @@ public:
 		float ProceduralSunGlowIntensity;
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
+
+		float ParticleIntensity;
+		float ParticleLightingInfluence;
+		float ParticleAmbientInfluence;
+		float ParticlePointLightingInfluence;
 	};
 
 	bool enableEffect = false;

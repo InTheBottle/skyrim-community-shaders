@@ -517,6 +517,12 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("GlowIntensity", "PROCEDURALSUN", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("GlowCurve", "PROCEDURALSUN", 1.0f, 0.0f, 100.0f, 0.01f, true);
 
+	// PARTICLE
+	settingManager.RegisterTimeOfDaySetting("Intensity", "PARTICLE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("LightingInfluence", "PARTICLE", 0.5f, 0.0f, 10.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("AmbientInfluence", "PARTICLE", 1.0f, 0.0f, 10.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("PointLightingInfluence", "PARTICLE", 1.0f, 0.0f, 10.0f, 0.01f, true);
+
 	// LIGHTSPRITE
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 
