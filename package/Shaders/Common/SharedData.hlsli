@@ -308,7 +308,7 @@ namespace SharedData
 		uint EnableCloudsScattering;
 		uint EnableVolumetricRays;
 		float VolumetricRaysIntensity;
-		float VolumetricRaysDensity;
+		float VolumetricRaysExtinction;
 
 		float VolumetricRaysSkyColorAmount;
 		float3 _pad0;

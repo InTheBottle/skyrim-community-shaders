@@ -63,15 +63,13 @@ PS_OUTPUT main(PS_INPUT input)
 		float depth = SharedData::GetDepth(uv);
 		float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
 		float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
-		positionMS.xyz = positionMS.xyz / positionMS.w;
+		positionMS.xyz /= positionMS.w;
 
 		float3 viewDirection = normalize(positionMS.xyz);
 
-		float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
-
 		float surfaceShadow;
-		float volumetricShadow = ShadowSampling::Get3DFilteredShadowVolumetric(positionMS.xyz, viewDirection, input.Position.xy, eyeIndex, 0.000003 * rcp(SharedData::enbSettings.VolumetricRaysDensity), surfaceShadow);
-		
+		float volumetricShadow = ShadowSampling::Get3DFilteredShadowVolumetric(positionMS.xyz, viewDirection, input.Position.xy, eyeIndex, SharedData::enbSettings.VolumetricRaysExtinction, surfaceShadow);
+
 		float3 ibl = ImageBasedLighting::GetSkyIBL(float3(0, 0, -1));
 		ibl = lerp(dot(ibl, 1.0 / 3.0), ibl, 2.0);
 

@@ -560,7 +560,7 @@ void EffectManager::RegisterSettings()
 
 	// VOLUMETRICRAYS
 	settingManager.RegisterTimeOfDaySetting("Intensity", "VOLUMETRICRAYS", 1.0f, 0.0f, 1000.0f, 0.01f, true);
-	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.0f, 100.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.1f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
 	// Cache IDs for performance
