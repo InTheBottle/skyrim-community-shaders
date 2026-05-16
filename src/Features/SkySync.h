@@ -65,11 +65,6 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct Moon_Update
-	{
-		static void thunk(RE::Moon* moon, RE::Sky* sky);
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
 
 private:
 	enum class CellFlagExt : uint16_t
@@ -147,32 +142,19 @@ private:
 	static constexpr float RenderDistance = 325000.0f;
 	static constexpr float SunHorizonDistance = 280.0f;
 	static constexpr float SunPeakDistance = 400.0f;
-	static constexpr float SunScaleFactor = Util::Sky::SunScaleFactor;
-
 	static constexpr float SouthernSunAngle = 90.0f - 35.0f;
 	static constexpr float NorthernSunAngle = 90.0f + 35.0f;
 	static constexpr float VanillaSunAngle = 90.0f + 5.0f;
 
-	static constexpr float SecundaIntensityFactor = Util::Sky::SecundaIntensityFactor;
-	static constexpr float NewMoonIntensityFactor = Util::Moon::NewMoonIntensityFactor;
-	static constexpr float CrescentMoonIntensityFactor = Util::Moon::CrescentMoonIntensityFactor;
-	static constexpr float FullMoonIntensityFactor = Util::Moon::FullMoonIntensityFactor;
-
 	inline static RE::NiPoint3* gSunPosition = nullptr;
-	inline static float* gSunGlareSize = nullptr;
-	inline static uint32_t* gMasserSize = nullptr;
-	inline static uint32_t* gSecundaSize = nullptr;
 
 	bool moonAndStarsLoaded = false;
 	RE::TESObjectCELL* currentCell = nullptr;
 	float sunAngle = 90.0f;
 	float currentSkyRotation = D3D11_FLOAT32_MAX;
-	float masserPhaseIntensityFactor = 0.0f;
-	float secundaPhaseIntensityFactor = 0.0f;
 
 	ClimateTimings timings = {};
 
-	RE::NiPoint3 rawDirections[3];
 	RE::NiPoint3 directions[3];
 	float intensities[3] = {};
 	ShadowFader shadowFader;
@@ -185,9 +167,9 @@ private:
 
 	void SetSkyRotation(const RE::Sky* sky, RE::TESObjectCELL* cell);
 
-	void ProcessSun(const RE::Sun* sun, float time, float altitude, bool isDayTime);
+	void ProcessSun(const RE::Sun* sun, float time, float altitude);
 
-	void ProcessMoon(const RE::Moon* moon, float time, Caster type, float altitude, bool isDayTime);
+	void ProcessMoon(const RE::Sky* sky, Caster type, float altitude);
 
 	static void CalculateSunDirectionAndDistance(const RE::Sun* sun, RE::NiPoint3& outDir, float& outDistance);
 
@@ -198,10 +180,4 @@ private:
 	static void SetSunPosition(const RE::Sun* sun, const RE::NiPoint3& dir, float distance);
 
 	static void SetMoonDirection(const RE::Moon* moon, const RE::NiPoint3& dir);
-
-	static float CalculateVisibility(const RE::NiPoint3& dir, float dist, float radius);
-
-	static void SetSunBaseVisibility(const RE::Sun* sun, float visibility);
-
-	static float SmoothStep(float start, float end, float x);
 };

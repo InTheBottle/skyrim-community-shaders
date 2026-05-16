@@ -112,14 +112,10 @@ void SkySync::PostPostLoad()
 		return;
 	}
 
-	stl::detour_thunk<Moon_Update>(REL::RelocationID(25626, 26169));
 	stl::detour_thunk<Sky_Update>(REL::RelocationID(25682, 26229));
 	stl::detour_thunk<Sky_OnNewClimate>(REL::RelocationID(25695, 26242));
 
 	gSunPosition = reinterpret_cast<RE::NiPoint3*>(REL::RelocationID(527924, 414871).address());
-	gSunGlareSize = reinterpret_cast<float*>(REL::RelocationID(502611, 370235).address());
-	gMasserSize = reinterpret_cast<uint32_t*>(REL::RelocationID(502558, 370155).address());
-	gSecundaSize = reinterpret_cast<uint32_t*>(REL::RelocationID(502570, 370173).address());
 
 	logger::info("[Sky Sync] Installed hooks");
 }
@@ -177,9 +173,9 @@ void SkySync::Update(const RE::Sky* sky)
 	const auto worldSpace = player->GetWorldspace();
 	const float altitude = worldSpace ? player->GetPositionZ() - worldSpace->GetDefaultWaterHeight() : 0.0f;
 
-	ProcessSun(sun, time, altitude, isDayTime);
-	ProcessMoon(sky->masser, time, Caster::Masser, altitude, isDayTime);
-	ProcessMoon(sky->secunda, time, Caster::Secunda, altitude, isDayTime);
+	ProcessSun(sun, time, altitude);
+	ProcessMoon(sky, Caster::Masser, altitude);
+	ProcessMoon(sky, Caster::Secunda, altitude);
 
 	shadowFader.Update(sun, directions, intensities, isDayTime);
 }
@@ -219,7 +215,7 @@ void SkySync::SetSkyRotation(const RE::Sky* sky, RE::TESObjectCELL* cell)
 	sky->root->Update(updateData);
 }
 
-void SkySync::ProcessSun(const RE::Sun* sun, const float time, const float altitude, const bool isDayTime)
+void SkySync::ProcessSun(const RE::Sun* sun, const float time, const float altitude)
 {
 	RE::NiPoint3 dir;
 	float dist;
@@ -229,64 +225,55 @@ void SkySync::ProcessSun(const RE::Sun* sun, const float time, const float altit
 	} else
 		CalculateSunDirectionAndDistance(sun, dir, dist);
 
-	rawDirections[static_cast<int>(Caster::Sun)] = dir;
-
 	const RE::NiPoint3 apparentDir = GetApparentDirection(dir, altitude);
 	SetSunPosition(sun, apparentDir, dist);
 
 	directions[static_cast<int>(Caster::Sun)] = apparentDir;
 
-	float visibility = isDayTime ? CalculateVisibility(dir, dist, *gSunGlareSize * SunScaleFactor) : 0.0f;
-	SetSunBaseVisibility(sun, visibility);
-
-	intensities[static_cast<int>(Caster::Sun)] = visibility;
+	float sunAlpha = 0.0f;
+	if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunBase->GetGeometryRuntimeData().shaderProperty.get()))
+		sunAlpha = prop->kBlendColor.alpha;
+	intensities[static_cast<int>(Caster::Sun)] = sunAlpha;
 }
 
-void SkySync::ProcessMoon(const RE::Moon* moon, const float time, const Caster type, const float altitude, const bool isDayTime)
+void SkySync::ProcessMoon(const RE::Sky* sky, const Caster type, const float altitude)
 {
 	intensities[static_cast<int>(type)] = 0.0f;
 	directions[static_cast<int>(type)] = { 0.0f, 0.0f, 1.0f };
-	rawDirections[static_cast<int>(type)] = { 0.0f, 0.0f, -1.0f };
 
+	const auto moon = type == Caster::Masser ? sky->masser : sky->secunda;
 	if (!moon)
 		return;
 
 	const auto dir = moon->root->local.rotate.GetVectorY();
 
-	rawDirections[static_cast<int>(type)] = dir;
-
 	auto apparentDir = GetApparentDirection(dir, altitude);
 	SetMoonDirection(moon, apparentDir);
 
-	// Moon and Stars adjusts some intermediary rotation matrices for the moon
-	// Directly changing the directions here avoids 3 matrix multiplications and a vector rotation
 	if (moonAndStarsLoaded)
 		apparentDir = { apparentDir.y, -apparentDir.x, apparentDir.z };
 
 	directions[static_cast<int>(type)] = apparentDir;
-
-	if (isDayTime)
-		return;
 
 	const auto src = static_cast<MoonLightSource>(settings.MoonLightSource);
 	const bool isValidSource = src == MoonLightSource::Brightest || (src == MoonLightSource::Masser && type == Caster::Masser) || (src == MoonLightSource::Secunda && type == Caster::Secunda);
 	if (!isValidSource)
 		return;
 
-	const float moonRadius = type == Caster::Masser ? static_cast<float>(*gMasserSize) : static_cast<float>(*gSecundaSize);
-	float intensity = CalculateVisibility(dir, moon->moonMesh->local.translate.y, moonRadius);
+	auto& moonGlareColor = sky->skyColor[(uint)RE::TESWeather::ColorTypes::kMoonGlare];
+	const float4 glareColor = { moonGlareColor.red, moonGlareColor.green, moonGlareColor.blue, 0.0f };
+	const float4 baseColor = type == Caster::Masser ? Util::Moon::MasserBaseColor : Util::Moon::SecundaBaseColor;
+	const float intensityScale = type == Caster::Masser ? 1.0f : Util::Moon::SecundaIntensityFactor;
 
-	if (type == Caster::Masser)
-		intensity *= masserPhaseIntensityFactor;
-	else if (type == Caster::Secunda)
-		intensity *= secundaPhaseIntensityFactor * SecundaIntensityFactor;
+	float4 color = Util::Moon::CalculateColor(moon, glareColor, baseColor, intensityScale);
 
-	if (time >= timings.sunriseFadeOutMoonStart && time <= timings.sunriseFadeOutMoonEnd)
-		intensity *= SmoothStep(timings.sunriseFadeOutMoonEnd, timings.sunriseFadeOutMoonStart, time);
-	else if (time >= timings.sunsetFadeInMoonStart && time <= timings.sunsetFadeInMoonEnd)
-		intensity *= SmoothStep(timings.sunsetFadeInMoonStart, timings.sunsetFadeInMoonEnd, time);
+	float fade = 0.0f;
+	if (moon->moonMesh) {
+		if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get()))
+			fade = prop->kBlendColor.alpha;
+	}
 
-	intensities[static_cast<int>(type)] = intensity;
+	intensities[static_cast<int>(type)] = (color.x + color.y + color.z) * (1.0f / 3.0f) * fade;
 }
 
 inline void SkySync::CalculateSunDirectionAndDistance(const RE::Sun* sun, RE::NiPoint3& outDir, float& outDistance)
@@ -353,16 +340,6 @@ inline void SkySync::SetMoonDirection(const RE::Moon* moon, const RE::NiPoint3& 
 	m.entry[2][1] = dir.z;
 }
 
-inline float SkySync::CalculateVisibility(const RE::NiPoint3& dir, const float dist, const float radius)
-{
-	return Util::Sky::CalculateVisibility(dir, dist, radius);
-}
-
-inline void SkySync::SetSunBaseVisibility(const RE::Sun* sun, const float visibility)
-{
-	if (const auto property = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunBase->GetGeometryRuntimeData().shaderProperty.get()))
-		property->kBlendColor.alpha = visibility;
-}
 
 void SkySync::ShadowFader::Reset()
 {
@@ -498,55 +475,4 @@ void SkySync::Sky_OnNewClimate::thunk(RE::Sky* sky)
 	func(sky);
 }
 
-void SkySync::Moon_Update::thunk(RE::Moon* moon, RE::Sky* sky)
-{
-	const auto updateMoonTexture = moon->updateMoonTexture;
 
-	func(moon, sky);
-
-	if (auto& singleton = globals::features::skySync; singleton.settings.Enabled && updateMoonTexture != moon->updateMoonTexture) {
-		// Gets the texture name of the current moon phase when it changes rather than reading direct global variables
-		// Allows for compatability with other mods that don't directly update the in-game phase values
-		const auto moonShaderProperty = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());
-
-		const auto name = moonShaderProperty->GetBaseTexture()->name.c_str();
-		const size_t len = std::strlen(name);
-		std::string lower;
-		lower.reserve(len);
-		for (size_t i = 0; i < len; ++i) {
-			lower.push_back(static_cast<char>(std::tolower(name[i])));
-		}
-
-		static constexpr std::array<std::pair<std::string_view, RE::Moon::Phases::Phase>, 8> Lookup{
-			{ { "full", RE::Moon::Phases::Phase::kFull },
-				{ "three_wan", RE::Moon::Phases::Phase::kWaningGibbous },
-				{ "half_wan", RE::Moon::Phases::Phase::kWaningQuarter },
-				{ "one_wan", RE::Moon::Phases::Phase::kWaningCrescent },
-				{ "new", RE::Moon::Phases::Phase::kNewMoon },
-				{ "one_wax", RE::Moon::Phases::Phase::kWaxingCrescent },
-				{ "half_wax", RE::Moon::Phases::Phase::kWaxingQuarter },
-				{ "three_wax", RE::Moon::Phases::Phase::kWaxingGibbous } }
-		};
-
-		RE::Moon::Phases::Phase phase = RE::Moon::Phases::Phase::kFull;
-		for (auto& [suffix, id] : Lookup) {
-			if (lower.find(suffix) != std::string::npos) {
-				phase = id;
-				break;
-			}
-		}
-
-		float* intensityFactor = moon == sky->masser ? &singleton.masserPhaseIntensityFactor : &singleton.secundaPhaseIntensityFactor;
-		if (phase == RE::Moon::Phases::Phase::kNewMoon) {
-			*intensityFactor = NewMoonIntensityFactor;
-		} else {
-			const float t = (abs(static_cast<float>(phase) - static_cast<float>(RE::Moon::Phases::Phase::kNewMoon)) - 1.0f) / 3.0f;
-			*intensityFactor = std::lerp(CrescentMoonIntensityFactor, FullMoonIntensityFactor, t);
-		}
-	}
-}
-
-inline float SkySync::SmoothStep(const float start, const float end, const float x)
-{
-	return Util::Sky::SmoothStep(start, end, x);
-}

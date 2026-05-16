@@ -4,21 +4,6 @@
 
 namespace Util::Sky
 {
-	static constexpr float SunScaleFactor = 48.0f / 2048.0f;
-	static constexpr float SecundaIntensityFactor = Util::Moon::SecundaIntensityFactor;
-
-	inline float SmoothStep(float edge0, float edge1, float x)
-	{
-		float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-		return t * t * (3.0f - 2.0f * t);
-	}
-
-	inline float CalculateVisibility(const RE::NiPoint3& dir, float dist, float radius)
-	{
-		float height = dir.z * dist;
-		return SmoothStep(-radius, radius, height);
-	}
-
 	struct ClimateTimings
 	{
 		float sunriseBegin = 0.0f;
