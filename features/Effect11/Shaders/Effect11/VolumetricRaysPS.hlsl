@@ -32,7 +32,7 @@ float4 main(VS_OUTPUT_POST input) : SV_Target0
 
 	float volumetricShadow = ShadowSampling::Get3DFilteredShadowVolumetric(positionMS.xyz, viewDirection, input.pos.xy, eyeIndex, SharedData::enbSettings.VolumetricRaysExtinction);
 	
-	float phase = dot(viewDirection, SharedData::DirLightDirection.xyz) * 0.5 + 0.5;
+	float phase = dot(viewDirection, SharedData::SunDirection.xyz) * 0.5 + 0.5;
 	float3 lightColor = SharedData::SunColor.xyz * phase;
 
 #if defined(IBL)

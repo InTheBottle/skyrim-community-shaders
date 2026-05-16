@@ -543,7 +543,7 @@ void Effect11::DrawVolumetricRays()
 		if (REL::Module::IsVR())
 			defines.push_back({ "FRAMEBUFFER", nullptr });
 
-		volumetricRaysPS = static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricRaysPS.hlsl", defines, "ps_5_0"));
+		volumetricRaysPS = static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effect11\\VolumetricRaysPS.hlsl", defines, "ps_5_0"));
 		if (!volumetricRaysPS)
 			return;
 	}
