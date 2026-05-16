@@ -38,7 +38,7 @@ float4 main(VS_OUTPUT_POST input) : SV_Target0
 #if defined(IBL)
 	float3 ibl = ImageBasedLighting::GetSkyIBL(float3(0, 0, -1));
 	ibl = lerp(dot(ibl, 1.0 / 3.0), ibl, 2.0);
-	lightColor += ibl * SharedData::enbSettings.VolumetricRaysSkyColorAmount;
+	lightColor += ibl * SharedData::enbSettings.VolumetricRaysSkyColorAmount * SharedData::SunColor.w;
 #endif
 
 	float3 volumetricColor = volumetricShadow * lightColor * SharedData::enbSettings.VolumetricRaysIntensity;

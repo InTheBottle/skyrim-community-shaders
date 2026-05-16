@@ -1008,7 +1008,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 					sunFade = prop->kBlendColor.alpha;
 
 				auto& sunColor = sky->skyColor[(uint)RE::TESWeather::ColorTypes::kSun];
-				data.SunColor = { sunColor.red * sunFade, sunColor.green * sunFade, sunColor.blue * sunFade, 0.0f };
+				data.SunColor = { sunColor.red * sunFade, sunColor.green * sunFade, sunColor.blue * sunFade, sunFade };
 			}
 
 			// Process moons
@@ -1024,7 +1024,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 					if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(masser->moonMesh->GetGeometryRuntimeData().shaderProperty.get()))
 						fade = prop->kBlendColor.alpha;
 				}
-				data.MasserColor = { color.x * fade, color.y * fade, color.z * fade, color.w };
+				data.MasserColor = { color.x * fade, color.y * fade, color.z * fade, fade };
 			}
 
 			if (auto secunda = sky->secunda) {
@@ -1036,7 +1036,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 					if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(secunda->moonMesh->GetGeometryRuntimeData().shaderProperty.get()))
 						fade = prop->kBlendColor.alpha;
 				}
-				data.SecundaColor = { color.x * fade, color.y * fade, color.z * fade, color.w };
+				data.SecundaColor = { color.x * fade, color.y * fade, color.z * fade, fade };
 			}
 		}
 
