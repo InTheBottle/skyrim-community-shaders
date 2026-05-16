@@ -1001,8 +1001,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				sunDirection.Normalize();
 				data.SunDirection = { sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
 
+				float sunFade = std::clamp(sunDirection.z * 2.0f + 1.0f, 0.0f, 1.0f);
 				auto& sunColor = sky->skyColor[(uint)RE::TESWeather::ColorTypes::kSun];
-				data.SunColor = { sunColor.red, sunColor.green, sunColor.blue, 0.0f };
+				data.SunColor = { sunColor.red * sunFade, sunColor.green * sunFade, sunColor.blue * sunFade, 0.0f };
 			}
 
 			// Process moons using shared utility
@@ -1011,14 +1012,16 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 			if (auto masser = sky->masser) {
 				auto [dir, color] = Util::Moon::ProcessMoon(masser, glareColor, Util::Moon::MasserBaseColor, 1.0f, moonAndStarsLoaded);
+				float fade = std::clamp(dir.z * 2.0f + 1.0f, 0.0f, 1.0f);
 				data.MasserDirection = dir;
-				data.MasserColor = color;
+				data.MasserColor = { color.x * fade, color.y * fade, color.z * fade, color.w };
 			}
 
 			if (auto secunda = sky->secunda) {
 				auto [dir, color] = Util::Moon::ProcessMoon(secunda, glareColor, Util::Moon::SecundaBaseColor, 1.0f, moonAndStarsLoaded);
+				float fade = std::clamp(dir.z * 2.0f + 1.0f, 0.0f, 1.0f);
 				data.SecundaDirection = dir;
-				data.SecundaColor = color;
+				data.SecundaColor = { color.x * fade, color.y * fade, color.z * fade, color.w };
 			}
 		}
 

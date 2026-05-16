@@ -207,16 +207,15 @@ Texture2D<float> TexDepthSampler : register(t17);
 
 float ComputeProceduralSun(float2 uv)
 {
-	float2 centeredUV = uv * 2.0 - 1.0;
-	float dist = dot(centeredUV, centeredUV) - SharedData::enbSettings.ProceduralSunDiskRadiusSq;
+	float2 p = uv * 2.0 - 1.0;
+	float dist = dot(p, p) - SharedData::enbSettings.ProceduralSunDiskRadiusSq;
 
 	float c = saturate(dist * SharedData::enbSettings.ProceduralSunCoronaScale);
 	float corona = (1.0 - c) * rcp(SharedData::enbSettings.ProceduralSunCoronaFalloff * c + 1.0) * SharedData::enbSettings.ProceduralSunGlowIntensity;
 
-	float d = saturate(-dist * SharedData::enbSettings.ProceduralSunDiskEdgeScale);
-	float disk = d * d * (3.0 - 2.0 * d);
+	float disk = smoothstep(0, 1, saturate(-dist * SharedData::enbSettings.ProceduralSunDiskEdgeScale));
 
-	return (corona + disk) * smoothstep(-0.1, 0.1, SharedData::SunDirection.z);
+	return corona + disk;
 }
 
 PS_OUTPUT main(PS_INPUT input)
@@ -373,7 +372,7 @@ PS_OUTPUT main(PS_INPUT input)
 		colorLit = lerp(cloudColor, colorLit, SharedData::enbSettings.SkyScatteringAmount);
 
 		if (SharedData::enbSettings.CloudsEdgeIntensity > 0.0) {
-			float cloudsEdgeAlpha = saturate(1.0 - baseColor.w);
+			float cloudsEdgeAlpha = 1.0 - baseColor.w;
 			bool useScatteringShadows = SharedData::enbSettings.CalculateCloudsEdgeFromScattering && SharedData::enbSettings.EnableCloudsScattering;
 
 			float sunEdge = useScatteringShadows ? sunShadow : cloudsEdgeAlpha;
