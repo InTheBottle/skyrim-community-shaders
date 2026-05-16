@@ -387,26 +387,24 @@ void SkySync::ShadowFader::Update(const RE::Sun* sun, RE::NiPoint3 dirs[3], floa
 
 	if (current == Caster::None) {
 		fadePhase = Phase::None;
-		SetLighting(sun, { 0.0f, 0.0f, 1.0f }, 0.0f);
+		SetLighting(sun, { 0.0f, 0.0f, 1.0f });
 		return;
 	}
 
 	const auto& dir = dirs[static_cast<int>(current)];
-	const auto intensity = intensities[static_cast<int>(current)];
 
 	if (fadePhase == Phase::None) {
-		SetLighting(sun, dir, intensity);
+		SetLighting(sun, dir);
 		return;
 	}
 
 	fadeTimer = std::min(fadeTimer + *globals::game::deltaTime * timeScale, FadeTime);
 
 	const float t = fadeTimer / FadeTime;
-	const float fade = fadePhase == Phase::FadeIn ? t : 1.0f - t;
-	SetLighting(sun, dir, intensity * fade);
+	SetLighting(sun, dir);
 
 	if (fadePhase == Phase::FadeOut) {
-		if (t >= 1.0f || intensity <= 0.0f) {
+		if (t >= 1.0f || intensities[static_cast<int>(current)] <= 0.0f) {
 			current = target;
 			fadePhase = Phase::FadeIn;
 			fadeTimer = 0.0f;
@@ -417,7 +415,7 @@ void SkySync::ShadowFader::Update(const RE::Sun* sun, RE::NiPoint3 dirs[3], floa
 	}
 }
 
-void SkySync::ShadowFader::SetLighting(const RE::Sun* sun, RE::NiPoint3 dir, float intensity)
+void SkySync::ShadowFader::SetLighting(const RE::Sun* sun, RE::NiPoint3 dir)
 {
 	ClampDirection(dir);
 
@@ -428,8 +426,6 @@ void SkySync::ShadowFader::SetLighting(const RE::Sun* sun, RE::NiPoint3 dir, flo
 
 	RE::NiUpdateData updateData;
 	sun->light->Update(updateData);
-
-	intensity = std::clamp(intensity, 0.0f, 1.0f);
 }
 
 inline void SkySync::ShadowFader::ClampDirection(RE::NiPoint3& dir)

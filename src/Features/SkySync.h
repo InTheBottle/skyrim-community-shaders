@@ -134,7 +134,7 @@ private:
 		float previousHoursPassed = 0.0f;
 
 		void Update(const RE::Sun* sun, RE::NiPoint3 dirs[], float intensities[], bool isDayTime);
-		static void SetLighting(const RE::Sun* sun, RE::NiPoint3 dir, float intensity);
+		static void SetLighting(const RE::Sun* sun, RE::NiPoint3 dir);
 		static void ClampDirection(RE::NiPoint3& dir);
 		void Reset();
 	};
