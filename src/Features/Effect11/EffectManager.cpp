@@ -420,6 +420,7 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterBoolSetting("EnableCloudsScattering", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableImageBasedLighting", "EFFECT", true, false);
 	settingManager.RegisterBoolSetting("EnableProceduralSun", "EFFECT", true, false);
+	settingManager.RegisterBoolSetting("EnableVolumetricRays", "EFFECT", true, false);
 
 	// ADAPTATION
 	settingManager.RegisterFloatSetting("AdaptationSensitivity", "ADAPTATION", 1.0f, 0.0f, 1.0f, 0.01f, false);
@@ -556,6 +557,11 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("RangeFactor", "GAMEVOLUMETRICRAYS", 1.0f, 0.0f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("Desaturation", "GAMEVOLUMETRICRAYS", 0.0f, -1.0f, 1.0f, 0.01f, true);
 	settingManager.RegisterColorTimeOfDaySetting("ColorFilter", "GAMEVOLUMETRICRAYS", { 1.0f, 1.0f, 1.0f }, true);
+
+	// VOLUMETRICRAYS
+	settingManager.RegisterTimeOfDaySetting("Intensity", "VOLUMETRICRAYS", 1.0f, 0.0f, 1000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.0f, 100.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
 	// Cache IDs for performance
 	ids.useBloom = settingManager.GetSettingID("EnableBloom", "EFFECT");

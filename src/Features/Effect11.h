@@ -79,6 +79,11 @@ public:
 		float SkyScatteringCloudsLightingMoonIntensity;
 
 		uint EnableCloudsScattering;
+		uint EnableVolumetricRays;
+		float VolumetricRaysIntensity;
+		float VolumetricRaysDensity;
+
+		float VolumetricRaysSkyColorAmount;
 		float3 _pad0;
 	};
 
