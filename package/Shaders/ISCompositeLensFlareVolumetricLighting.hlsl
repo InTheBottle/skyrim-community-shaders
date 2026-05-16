@@ -22,6 +22,13 @@ cbuffer PerGeometry : register(b2)
 	float4 VolumetricLightingColor : packoffset(c0);
 };
 
+#	define LinearSampler VLSourceSampler
+#	include "Common/ShadowSampling.hlsli"
+
+#	if defined(IBL)
+#		include "IBL/IBL.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -47,6 +54,29 @@ PS_OUTPUT main(PS_INPUT input)
 		color += lensFlareColor;
 	}
 #	endif
+
+	if (SharedData::enbSettings.Enable && SharedData::enbSettings.EnableVolumetricRays) {
+		uint eyeIndex = 0;
+
+		float2 uv = input.TexCoord.xy;
+
+		float depth = SharedData::GetDepth(uv);
+		float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
+		float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
+		positionMS.xyz = positionMS.xyz / positionMS.w;
+
+		float3 viewDirection = normalize(positionMS.xyz);
+
+		float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
+
+		float surfaceShadow;
+		float volumetricShadow = ShadowSampling::Get3DFilteredShadowVolumetric(positionMS.xyz, viewDirection, input.Position.xy, eyeIndex, 0.000003 * rcp(SharedData::enbSettings.VolumetricRaysDensity), surfaceShadow);
+		
+		float3 ibl = ImageBasedLighting::GetSkyIBL(float3(0, 0, -1));
+		ibl = lerp(dot(ibl, 1.0 / 3.0), ibl, 2.0);
+
+		color.xyz += volumetricShadow * (SharedData::SunColor.xyz + ibl * SharedData::enbSettings.VolumetricRaysSkyColorAmount) * SharedData::enbSettings.VolumetricRaysIntensity;
+	}
 
 	psout.Color = color;
 
