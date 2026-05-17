@@ -261,8 +261,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float noiseGrad =
 		TexNoiseGradSampler.Sample(SampNoiseGradSampler, noiseGradUv).x * 0.03125 + -0.0078125;
 
-#			if defined(TEX)
-	psout.Color.xyz = (Color::Sky(input.Color.xyz) * baseColor.xyz) + noiseGrad + skyScale;
+#			ifdef TEX
+	float3 skyVertColor = ENABLE_LL ? (input.Color.xyz + noiseGrad) : input.Color.xyz;
+	float3 sunGlareColor = Color::Sky(skyVertColor) * baseColor.xyz;
+	psout.Color.xyz = (sunGlareColor + skyScale) + (ENABLE_LL ? 0.0 : noiseGrad);
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
 	float3 skyGradientColor = input.Color.xyz;
@@ -273,7 +275,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 labB = Color::Correct::BT709ToOKLab(input.SkyBlendColor0.xyz);
 		skyGradientColor = Color::Correct::OkLabToBT709(lerp(labA, labB, gradientPosition));
 	}
-	psout.Color.xyz = (skyScale + Color::Sky(skyGradientColor)) + noiseGrad;
+	psout.Color.xyz = skyScale + Color::Sky(skyGradientColor + noiseGrad);
 	psout.Color.w = input.Color.w;
 #			endif  // TEX
 

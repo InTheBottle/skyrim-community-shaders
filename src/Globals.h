@@ -36,6 +36,7 @@ struct WeatherEditor;
 struct Effect11;
 struct ExponentialHeightFog;
 struct HDRDisplay;
+struct ScreenshotFeature;
 
 class State;
 class Deferred;
@@ -93,6 +94,7 @@ namespace globals
 		extern HDRDisplay hdrDisplay;
 		extern Effect11 effect11;
 		extern RenderDoc renderDoc;
+		extern ScreenshotFeature screenshotFeature;
 		extern WeatherEditor weatherEditor;
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;

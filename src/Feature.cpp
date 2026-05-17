@@ -22,6 +22,7 @@
 #include "Features/RenderDoc.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
+#include "Features/ScreenshotFeature.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -242,6 +243,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::upscaling,
 		&globals::features::renderDoc,
 		&globals::features::weatherEditor,
+		&globals::features::screenshotFeature,
 		&globals::features::linearLighting,
 		&globals::features::effect11,
 		&globals::features::unifiedWater,
