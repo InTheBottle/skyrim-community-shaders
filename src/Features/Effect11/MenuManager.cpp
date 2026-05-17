@@ -392,8 +392,8 @@ void MenuManager::RenderAllSettings()
 									if (ImGui::IsItemHovered()) {
 										ImGui::SetTooltip("When enabled, uses enbseries.ini values instead of weather-specific values for exterior areas");
 									}
-								} else {
-									// Show interior ignore setting when inside
+								} else if (!settingManager.IsCategoryExteriorOnly(category)) {
+									// Show interior ignore setting when inside (skip for exterior-only categories)
 									ImGui::TableNextRow();
 									ImGui::TableSetColumnIndex(0);
 									ImGui::Text("IgnoreWeatherSystemInterior");
@@ -449,15 +449,21 @@ void MenuManager::RenderAllSettings()
 								case SettingType::TimeOfDay:
 									{
 										auto v = settingManager.GetValue<TimeOfDayValue>(settingID, true);
+										bool exteriorOnly = settingManager.IsCategoryExteriorOnly(category);
 
 										bool changed = false;
+										bool firstRow = true;
 
 										for (int i = 0; i < 8; ++i) {
-											if (i > 0) {
+											if (exteriorOnly && i >= 6)
+												continue;
+
+											if (!firstRow) {
 												ImGui::TableNextRow();
 												ImGui::TableSetColumnIndex(0);
 												ImGui::TableSetColumnIndex(1);
 											}
+											firstRow = false;
 
 											// Style the input based on activity
 											float blendFactor = GetTimeOfDayBlendFactor(i);
@@ -492,15 +498,21 @@ void MenuManager::RenderAllSettings()
 								case SettingType::ColorTimeOfDay:
 									{
 										auto v = settingManager.GetValue<ColorTimeOfDayValue>(settingID, true);
+										bool exteriorOnly = settingManager.IsCategoryExteriorOnly(category);
 
 										bool changed = false;
+										bool firstRow = true;
 
 										for (int i = 0; i < 8; ++i) {
-											if (i > 0) {
+											if (exteriorOnly && i >= 6)
+												continue;
+
+											if (!firstRow) {
 												ImGui::TableNextRow();
 												ImGui::TableSetColumnIndex(0);
 												ImGui::TableSetColumnIndex(1);
 											}
+											firstRow = false;
 
 											// Style the color picker based on activity
 											float blendFactor = GetTimeOfDayBlendFactor(i);

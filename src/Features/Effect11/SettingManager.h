@@ -156,6 +156,8 @@ public:
 	std::vector<std::string> GetSettingsByCategory(const std::string& category) const;
 	std::vector<std::string> GetAllCategories() const;
 	bool CategoryHasWeatherSupport(const std::string& category) const;
+	void SetCategoryExteriorOnly(const std::string& category, bool exteriorOnly);
+	bool IsCategoryExteriorOnly(const std::string& category) const;
 
 	// Weather integration
 	void SetWeatherBlendFactors(uint32_t currentWeatherID, uint32_t lastWeatherID, float blendFactor);
@@ -191,6 +193,7 @@ private:
 		bool ignoreWeatherSystemInterior = true;
 		bool lastSavedIgnoreWeatherSystem = false;
 		bool lastSavedIgnoreWeatherSystemInterior = true;
+		bool exteriorOnly = false;
 	};
 
 	std::vector<Setting> allSettings;

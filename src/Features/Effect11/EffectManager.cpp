@@ -294,6 +294,13 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.1f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
+	settingManager.SetCategoryExteriorOnly("CLOUDSHADOWS", true);
+	settingManager.SetCategoryExteriorOnly("IMAGEBASEDLIGHTING", true);
+	settingManager.SetCategoryExteriorOnly("VOLUMETRICRAYS", true);
+	settingManager.SetCategoryExteriorOnly("SKYSCATTERING", true);
+	settingManager.SetCategoryExteriorOnly("VOLUMETRICFOG", true);
+	settingManager.SetCategoryExteriorOnly("GAMEVOLUMETRICRAYS", true);
+
 	// Cache IDs for performance
 	ids.useBloom = settingManager.GetSettingID("EnableBloom", "EFFECT");
 	ids.useLens = settingManager.GetSettingID("EnableLens", "EFFECT");

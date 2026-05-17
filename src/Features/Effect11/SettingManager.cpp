@@ -401,6 +401,23 @@ bool SettingManager::CategoryHasWeatherSupport(const std::string& category) cons
 	return false;
 }
 
+void SettingManager::SetCategoryExteriorOnly(const std::string& category, bool exteriorOnly)
+{
+	std::unique_lock lock(mutex);
+	auto it = categories.find(category);
+	if (it != categories.end())
+		it->second.exteriorOnly = exteriorOnly;
+}
+
+bool SettingManager::IsCategoryExteriorOnly(const std::string& category) const
+{
+	std::shared_lock lock(mutex);
+	auto it = categories.find(category);
+	if (it == categories.end())
+		return false;
+	return it->second.exteriorOnly;
+}
+
 void SettingManager::SetWeatherBlendFactors(uint32_t newCurrentWeatherID, uint32_t newLastWeatherID, float blendFactor)
 {
 	std::unique_lock lock(mutex);
