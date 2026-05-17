@@ -14,6 +14,7 @@
 #include "State.h"
 #include "TerrainShadows.h"
 #include "Utils/D3D.h"
+#include "Utils/Game.h"
 
 Effect11::PerFrame Effect11::GetCommonBufferData()
 {
@@ -514,6 +515,9 @@ void Effect11::DrawVolumetricRays()
 	if (!enableEffect)
 		return;
 
+	if (Util::IsInterior())
+		return;
+
 	auto& settingManager = SettingManager::GetSingleton();
 	if (!settingManager.GetValue<bool>("EnableVolumetricRays", "EFFECT"))
 		return;
@@ -567,7 +571,9 @@ void Effect11::DrawVolumetricRays()
 
 	D3D11_TEXTURE2D_DESC texDesc{};
 	main.texture->GetDesc(&texDesc);
-	D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height), 0, 1 };
+	float2 resolution = { static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) };
+	resolution = Util::ConvertToDynamic(resolution);
+	D3D11_VIEWPORT viewport{ 0, 0, resolution.x, resolution.y, 0, 1 };
 	context->RSSetViewports(1, &viewport);
 
 	context->OMSetBlendState(additiveBlendState, nullptr, 0xFFFFFFFF);
