@@ -29,7 +29,7 @@ public:
 	struct Settings
 	{
 		bool Enabled = true;
-		bool UseAlternateSunPath = true;
+		bool UseAlternateSunPath = false;
 		int32_t MoonLightSource = 0;
 		int32_t SunPath = 0;
 		float CustomAngle = -35.0f;
