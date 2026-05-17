@@ -379,6 +379,9 @@ void EffectManager::ExecuteEffects()
 	if (textureSDRTemp) {
 		auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer.RTV);
+
+		auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
+		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer2.RTV);
 	}
 
 	stateBackup.Restore(context);
