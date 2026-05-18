@@ -1,16 +1,11 @@
-#include "Common/Color.hlsli"
-#include "Common/FrameBuffer.hlsli"
-#include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 
 #if defined(IBL)
 #	define IBL_DEFERRED
+#	include "IBL/IBL.hlsli"
 #endif
 
-#define LinearSampler defaultSampler
-SamplerState defaultSampler : register(s0);
-
-#include "Common/ShadowSampling.hlsli"
+Texture2D<float> BlurredShadowTexture : register(t0);
 
 struct VS_OUTPUT_POST
 {
@@ -23,6 +18,8 @@ float4 main(VS_OUTPUT_POST input) : SV_Target0
 	float2 uv = input.txcoord0;
 	uint eyeIndex = 0;
 
+	float volumetricShadow = BlurredShadowTexture.Load(int3(input.pos.xy, 0));
+
 	float depth = SharedData::GetDepth(uv);
 	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
 	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
@@ -30,8 +27,6 @@ float4 main(VS_OUTPUT_POST input) : SV_Target0
 
 	float3 viewDirection = normalize(positionMS.xyz);
 
-	float volumetricShadow = ShadowSampling::Get3DFilteredShadowVolumetric(positionMS.xyz, viewDirection, input.pos.xy, eyeIndex, SharedData::enbSettings.VolumetricRaysExtinction);
-	
 	float phase = dot(viewDirection, SharedData::SunDirection.xyz) * 0.5 + 0.5;
 	float3 lightColor = SharedData::SunColor.xyz * phase;
 

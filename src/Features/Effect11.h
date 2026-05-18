@@ -1,5 +1,9 @@
 #pragma once
 
+#include "Buffer.h"
+
+#include <memory>
+
 struct Effect11 : Feature
 {
 public:
@@ -89,8 +93,15 @@ public:
 
 	bool enableEffect = false;
 
-	ID3D11PixelShader* volumetricRaysPS = nullptr;
+	ID3D11PixelShader* raymarchVolumetricRaysPS = nullptr;
+	ID3D11PixelShader* applyVolumetricRaysPS = nullptr;
+	ID3D11ComputeShader* blurHCS = nullptr;
+	ID3D11ComputeShader* blurVCS = nullptr;
 	ID3D11BlendState* additiveBlendState = nullptr;
+
+	std::unique_ptr<Texture2D> vrTexA;
+	std::unique_ptr<Texture2D> vrTexB;
+	std::unique_ptr<ConstantBuffer> vrBlurCB;
 
 	PerFrame GetCommonBufferData();
 

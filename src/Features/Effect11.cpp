@@ -120,9 +120,21 @@ void Effect11::Reset()
 
 void Effect11::ClearShaderCache()
 {
-	if (volumetricRaysPS) {
-		volumetricRaysPS->Release();
-		volumetricRaysPS = nullptr;
+	if (raymarchVolumetricRaysPS) {
+		raymarchVolumetricRaysPS->Release();
+		raymarchVolumetricRaysPS = nullptr;
+	}
+	if (applyVolumetricRaysPS) {
+		applyVolumetricRaysPS->Release();
+		applyVolumetricRaysPS = nullptr;
+	}
+	if (blurHCS) {
+		blurHCS->Release();
+		blurHCS = nullptr;
+	}
+	if (blurVCS) {
+		blurVCS->Release();
+		blurVCS = nullptr;
 	}
 }
 
@@ -525,23 +537,41 @@ void Effect11::DrawVolumetricRays()
 	if (!effectManager.IsInitialized() || !effectManager.copyVertexShader)
 		return;
 
-	if (!volumetricRaysPS) {
+	if (!raymarchVolumetricRaysPS) {
 		std::vector<std::pair<const char*, const char*>> defines;
-
 		if (globals::features::cloudShadows.loaded)
 			defines.push_back({ "CLOUD_SHADOWS", nullptr });
-
 		if (globals::features::terrainShadows.loaded)
 			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
-
-		if (globals::features::ibl.loaded)
-			defines.push_back({ "IBL", nullptr });
-
 		if (REL::Module::IsVR())
 			defines.push_back({ "FRAMEBUFFER", nullptr });
 
-		volumetricRaysPS = static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effect11\\VolumetricRaysPS.hlsl", defines, "ps_5_0"));
-		if (!volumetricRaysPS)
+		raymarchVolumetricRaysPS = static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effect11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0"));
+		if (!raymarchVolumetricRaysPS)
+			return;
+	}
+
+	if (!applyVolumetricRaysPS) {
+		std::vector<std::pair<const char*, const char*>> defines;
+		if (globals::features::ibl.loaded)
+			defines.push_back({ "IBL", nullptr });
+		if (REL::Module::IsVR())
+			defines.push_back({ "FRAMEBUFFER", nullptr });
+
+		applyVolumetricRaysPS = static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effect11\\ApplyVolumetricRaysPS.hlsl", defines, "ps_5_0"));
+		if (!applyVolumetricRaysPS)
+			return;
+	}
+
+	if (!blurHCS) {
+		blurHCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ISVolumetricLightingBlurHCS.hlsl", {}, "cs_5_0"));
+		if (!blurHCS)
+			return;
+	}
+
+	if (!blurVCS) {
+		blurVCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ISVolumetricLightingBlurVCS.hlsl", {}, "cs_5_0"));
+		if (!blurVCS)
 			return;
 	}
 
@@ -562,45 +592,171 @@ void Effect11::DrawVolumetricRays()
 	auto renderer = globals::game::renderer;
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
+	D3D11_TEXTURE2D_DESC mainTexDesc{};
+	main.texture->GetDesc(&mainTexDesc);
+	float2 resolution = { static_cast<float>(mainTexDesc.Width), static_cast<float>(mainTexDesc.Height) };
+	resolution = Util::ConvertToDynamic(resolution);
+	uint32_t dynWidth = static_cast<uint32_t>(resolution.x);
+	uint32_t dynHeight = static_cast<uint32_t>(resolution.y);
+
+	if (!vrTexA || vrTexA->desc.Width != mainTexDesc.Width || vrTexA->desc.Height != mainTexDesc.Height) {
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = mainTexDesc.Width;
+		desc.Height = mainTexDesc.Height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R16_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+		rtvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+		vrTexA = std::make_unique<Texture2D>(desc, "Effect11::VRTexA");
+		vrTexA->CreateSRV(srvDesc);
+		vrTexA->CreateRTV(rtvDesc);
+		vrTexA->CreateUAV(uavDesc);
+
+		vrTexB = std::make_unique<Texture2D>(desc, "Effect11::VRTexB");
+		vrTexB->CreateSRV(srvDesc);
+		vrTexB->CreateUAV(uavDesc);
+	}
+
+	if (!vrBlurCB)
+		vrBlurCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc(16), "Effect11::VRBlurCB");
+
 	Effect11Util::D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 
-	ID3D11RenderTargetView* rtv = main.RTV;
-	context->OMSetRenderTargets(1, &rtv, nullptr);
-
-	D3D11_TEXTURE2D_DESC texDesc{};
-	main.texture->GetDesc(&texDesc);
-	float2 resolution = { static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) };
-	resolution = Util::ConvertToDynamic(resolution);
-	D3D11_VIEWPORT viewport{ 0, 0, resolution.x, resolution.y, 0, 1 };
-	context->RSSetViewports(1, &viewport);
-
-	context->OMSetBlendState(additiveBlendState, nullptr, 0xFFFFFFFF);
-	context->RSSetState(effectManager.rasterizerState.get());
-	context->OMSetDepthStencilState(nullptr, 0);
-
-	UINT stride = 20;
-	UINT offset = 0;
-	ID3D11Buffer* vbs[] = { effectManager.quadVertexBuffer.get() };
-	context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
-	context->IASetInputLayout(effectManager.inputLayout.get());
-	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-
-	context->VSSetShader(effectManager.copyVertexShader.get(), nullptr, 0);
-	context->PSSetShader(volumetricRaysPS, nullptr, 0);
-
-	auto& ibl = globals::features::ibl;
-	ID3D11ShaderResourceView* srvs[16]{};
-	if (ibl.loaded) {
-		srvs[14] = ibl.envIBLTexture->srv.get();
-		srvs[15] = ibl.skyIBLTexture->srv.get();
-	}
-	context->PSSetShaderResources(0, 16, srvs);
-
 	ID3D11SamplerState* sampler = Deferred::GetSingleton()->linearSampler;
-	context->PSSetSamplers(0, 1, &sampler);
+	D3D11_VIEWPORT viewport{ 0, 0, resolution.x, resolution.y, 0, 1 };
 
-	context->Draw(4, 0);
+	// Pass 1: Raymarch shadow → R16F texture
+	{
+		ID3D11RenderTargetView* rtv = vrTexA->rtv.get();
+		context->OMSetRenderTargets(1, &rtv, nullptr);
+		context->RSSetViewports(1, &viewport);
+
+		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		context->RSSetState(effectManager.rasterizerState.get());
+		context->OMSetDepthStencilState(nullptr, 0);
+
+		UINT stride = 20;
+		UINT offset = 0;
+		ID3D11Buffer* vbs[] = { effectManager.quadVertexBuffer.get() };
+		context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+		context->IASetInputLayout(effectManager.inputLayout.get());
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+		context->VSSetShader(effectManager.copyVertexShader.get(), nullptr, 0);
+		context->PSSetShader(raymarchVolumetricRaysPS, nullptr, 0);
+		context->PSSetSamplers(0, 1, &sampler);
+
+		context->Draw(4, 0);
+
+		ID3D11RenderTargetView* nullRTV = nullptr;
+		context->OMSetRenderTargets(1, &nullRTV, nullptr);
+	}
+
+	// Blur setup
+	auto depthSRV = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+
+	struct VLData
+	{
+		int32_t screenX, screenY, screenXMin1, screenYMin1;
+	};
+	VLData vlData = { static_cast<int32_t>(dynWidth), static_cast<int32_t>(dynHeight), static_cast<int32_t>(dynWidth) - 1, static_cast<int32_t>(dynHeight) - 1 };
+	vrBlurCB->Update(vlData);
+
+	static constexpr uint32_t tgDim = 256;
+	static constexpr uint32_t blurWindow = 12;
+	static constexpr uint32_t effectiveGroupSize = tgDim - blurWindow * 2;
+
+	// Pass 2: Blur horizontal (texA → texB)
+	{
+		context->CSSetShader(blurHCS, nullptr, 0);
+
+		ID3D11ShaderResourceView* csSRVs[2] = { vrTexA->srv.get(), depthSRV };
+		context->CSSetShaderResources(0, 2, csSRVs);
+
+		ID3D11UnorderedAccessView* csUAVs[1] = { vrTexB->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, csUAVs, nullptr);
+
+		ID3D11Buffer* csCBs[2] = { nullptr, vrBlurCB->CB() };
+		context->CSSetConstantBuffers(0, 2, csCBs);
+
+		uint32_t groupsX = (dynWidth + effectiveGroupSize - 1) / effectiveGroupSize;
+		context->Dispatch(groupsX, dynHeight, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
+		context->CSSetShaderResources(0, 2, nullSRVs);
+		ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+	}
+
+	// Pass 3: Blur vertical (texB → texA)
+	{
+		context->CSSetShader(blurVCS, nullptr, 0);
+
+		ID3D11ShaderResourceView* csSRVs[2] = { vrTexB->srv.get(), depthSRV };
+		context->CSSetShaderResources(0, 2, csSRVs);
+
+		ID3D11UnorderedAccessView* csUAVs[1] = { vrTexA->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, csUAVs, nullptr);
+
+		uint32_t groupsY = (dynHeight + effectiveGroupSize - 1) / effectiveGroupSize;
+		context->Dispatch(dynWidth, groupsY, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
+		context->CSSetShaderResources(0, 2, nullSRVs);
+		ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
+
+	// Pass 4: Apply blurred shadow with color → main RT (additive)
+	{
+		ID3D11RenderTargetView* rtv = main.RTV;
+		context->OMSetRenderTargets(1, &rtv, nullptr);
+		context->RSSetViewports(1, &viewport);
+
+		context->OMSetBlendState(additiveBlendState, nullptr, 0xFFFFFFFF);
+		context->RSSetState(effectManager.rasterizerState.get());
+		context->OMSetDepthStencilState(nullptr, 0);
+
+		UINT stride = 20;
+		UINT offset = 0;
+		ID3D11Buffer* vbs[] = { effectManager.quadVertexBuffer.get() };
+		context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+		context->IASetInputLayout(effectManager.inputLayout.get());
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+		context->VSSetShader(effectManager.copyVertexShader.get(), nullptr, 0);
+		context->PSSetShader(applyVolumetricRaysPS, nullptr, 0);
+
+		auto& ibl = globals::features::ibl;
+		ID3D11ShaderResourceView* srvs[16]{};
+		srvs[0] = vrTexA->srv.get();
+		if (ibl.loaded) {
+			srvs[14] = ibl.envIBLTexture->srv.get();
+			srvs[15] = ibl.skyIBLTexture->srv.get();
+		}
+		context->PSSetShaderResources(0, 16, srvs);
+		context->PSSetSamplers(0, 1, &sampler);
+
+		context->Draw(4, 0);
+	}
 
 	stateBackup.Restore(context);
 	stateBackup.Release();
