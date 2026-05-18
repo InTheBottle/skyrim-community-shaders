@@ -50,7 +50,7 @@ public:
 		float ParticleAmbientInfluence;
 		float ParticlePointLightingInfluence;
 
-		uint CalculateCloudsEdgeFromScattering;
+		uint _pad1;
 		uint EnableCloudsLightingFromMoon;
 		uint ScatteringColorHDRWeighting;
 		float SkyScatteringAtmosphereThickness;
