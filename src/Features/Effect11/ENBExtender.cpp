@@ -409,10 +409,6 @@ namespace ENBExtender
 			result.append(source, pos, found - pos);
 			result += "\"" + arg + "\"";
 			pos = argEnd;
-
-			// Skip stray '.' after closing paren (known typo in some ENB presets)
-			if (pos < source.size() && source[pos] == '.')
-				++pos;
 		}
 
 		return result;
