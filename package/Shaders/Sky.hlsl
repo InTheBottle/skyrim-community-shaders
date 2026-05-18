@@ -213,7 +213,7 @@ float ComputeProceduralSun(float2 uv)
 	float c = saturate(dist * SharedData::enbSettings.ProceduralSunCoronaScale);
 	float corona = (1.0 - c) * rcp(SharedData::enbSettings.ProceduralSunCoronaFalloff * c + 1.0) * SharedData::enbSettings.ProceduralSunGlowIntensity;
 
-	float disk = smoothstep(0, 1, saturate(-dist * SharedData::enbSettings.ProceduralSunDiskEdgeScale));
+	float disk = saturate(-dist * SharedData::enbSettings.ProceduralSunDiskEdgeScale);
 
 	return corona + disk;
 }
