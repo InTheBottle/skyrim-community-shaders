@@ -2,7 +2,7 @@ Texture2D SourceTexture : register(t0);
 
 cbuffer DitherParams : register(b0)
 {
-	float Timer;
+	uint FrameCount;
 };
 
 struct PS_INPUT
@@ -11,17 +11,29 @@ struct PS_INPUT
 	float2 txcoord0 : TEXCOORD0;
 };
 
-// http://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
-float3 ScreenSpaceDither(float2 vScreenPos)
+uint3 pcg3d(uint3 v)
 {
-	float3 vDither = dot(float2(171.0, 231.0), vScreenPos.xy + Timer).xxx;
-	vDither.rgb = frac(vDither.rgb / float3(103.0, 71.0, 97.0)) - float3(0.5, 0.5, 0.5);
-	return vDither.rgb / 255.0;
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	return v;
+}
+
+float3 TriDither(float2 screenPos, uint frameCount)
+{
+	uint3 seed1 = uint3(screenPos, frameCount);
+	uint3 seed2 = uint3(screenPos, frameCount + 4729u);
+	return (pcg3d(seed1) - pcg3d(seed2)) / float(0xFFFFFFFFu);
 }
 
 float4 main(PS_INPUT input) : SV_TARGET
 {
 	float3 color = SourceTexture.Load(int3(input.pos.xy, 0)).rgb;
-	color += ScreenSpaceDither(input.pos.xy);
+	color += TriDither(input.pos.xy, FrameCount) / 255.0;
 	return float4(color, 1.0);
 }

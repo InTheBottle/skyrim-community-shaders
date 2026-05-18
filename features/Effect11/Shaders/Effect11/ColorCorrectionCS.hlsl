@@ -2,17 +2,29 @@ cbuffer ColorCorrectionParams : register(b0)
 {
 	float Brightness;
 	float GammaCurve;
-	float Timer;
+	uint FrameCount;
 };
 
 RWTexture2D<float4> OutputTexture : register(u0);
 
-// http://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
-float3 ScreenSpaceDither(float2 vScreenPos)
+uint3 pcg3d(uint3 v)
 {
-	float3 vDither = dot(float2(171.0, 231.0), vScreenPos.xy + Timer).xxx;
-	vDither.rgb = frac(vDither.rgb / float3(103.0, 71.0, 97.0)) - float3(0.5, 0.5, 0.5);
-	return vDither.rgb / 255.0;
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	return v;
+}
+
+float3 TriDither(float2 screenPos, uint frameCount)
+{
+	uint3 seed1 = uint3(screenPos, frameCount);
+	uint3 seed2 = uint3(screenPos, frameCount + 4729u);
+	return (pcg3d(seed1) - pcg3d(seed2)) / float(0xFFFFFFFFu);
 }
 
 [numthreads(8, 8, 1)] void main(uint3 id
@@ -27,6 +39,6 @@ float3 ScreenSpaceDither(float2 vScreenPos)
 	float4 color = OutputTexture[id.xy];
 	color.rgb = pow(abs(color.rgb), GammaCurve);
 	color.rgb *= Brightness;
-	color.rgb += ScreenSpaceDither(float2(id.xy));
+	color.rgb += TriDither(float2(id.xy), FrameCount) / 1023.0;
 	OutputTexture[id.xy] = color;
 }

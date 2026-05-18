@@ -96,6 +96,7 @@ public:
 		float eNightDayFactor;
 		float eInteriorFactor;
 	} commonData;
+	uint32_t frameCount = 0;
 
 	void UpdateCommonData();
 

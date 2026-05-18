@@ -567,8 +567,6 @@ void EffectManager::UpdateCommonData()
 		static double timer = 0.0f;
 		timer += delta;
 
-		static uint frameCount = 0;
-
 		auto modifiedTimer = std::fmodf(static_cast<float>(timer) * 1000.0f, 16777216);
 		modifiedTimer /= 16777216.0f;
 
@@ -823,11 +821,11 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 	context->VSSetShader(copyVertexShader.get(), nullptr, 0);
 	context->PSSetShader(copyPixelShader.get(), nullptr, 0);
 
-	// Update dither timer
+	// Update dither frame count
 	if (ditherConstantBuffer) {
 		D3D11_MAPPED_SUBRESOURCE mapped;
 		if (SUCCEEDED(context->Map(ditherConstantBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			*static_cast<float*>(mapped.pData) = commonData.timer[0];
+			*static_cast<uint32_t*>(mapped.pData) = frameCount;
 			context->Unmap(ditherConstantBuffer.get(), 0);
 		}
 		ID3D11Buffer* cbs[] = { ditherConstantBuffer.get() };
@@ -867,10 +865,17 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 		return;
 	}
 	{
-		float* cbData = static_cast<float*>(mapped.pData);
-		cbData[0] = brightness;
-		cbData[1] = gammaCurve;
-		cbData[2] = commonData.timer[0];
+		struct ColorCorrectionCB
+		{
+			float brightness;
+			float gammaCurve;
+			uint32_t frameCount;
+			uint32_t pad;
+		};
+		auto* cbData = static_cast<ColorCorrectionCB*>(mapped.pData);
+		cbData->brightness = brightness;
+		cbData->gammaCurve = gammaCurve;
+		cbData->frameCount = frameCount;
 		context->Unmap(colorCorrectionConstantBuffer.get(), 0);
 	}
 
