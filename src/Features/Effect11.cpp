@@ -136,6 +136,8 @@ void Effect11::ClearShaderCache()
 		blurVCS->Release();
 		blurVCS = nullptr;
 	}
+
+	EffectManager::GetSingleton().ReloadShaders();
 }
 
 void Effect11::Prepass()

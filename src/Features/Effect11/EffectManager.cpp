@@ -69,6 +69,7 @@ void EffectManager::Initialize()
 		{ copyPixelShader.get(), "copyPixelShader" },
 		{ colorCorrectionComputeShader.get(), "colorCorrectionComputeShader" },
 		{ colorCorrectionConstantBuffer.get(), "colorCorrectionConstantBuffer" },
+		{ ditherConstantBuffer.get(), "ditherConstantBuffer" },
 	};
 
 	bool resourcesValid = true;
@@ -489,7 +490,7 @@ void EffectManager::CreateCopyShaders()
 
 	winrt::com_ptr<ID3DBlob> psBlob;
 	hr = D3DCompile(pixelShaderSource.data(), pixelShaderSource.size(), "CopyPS.hlsl", nullptr, nullptr,
-		"main", "ps_4_0", 0, 0, psBlob.put(), errorBlob.put());
+		"main", "ps_5_0", 0, 0, psBlob.put(), errorBlob.put());
 
 	if (FAILED(hr)) {
 		if (errorBlob) {
@@ -503,6 +504,13 @@ void EffectManager::CreateCopyShaders()
 		logger::error("[EFFECT11] Failed to create copy pixel shader");
 		return;
 	}
+
+	D3D11_BUFFER_DESC cbDesc{};
+	cbDesc.ByteWidth = 16;
+	cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	globals::d3d::device->CreateBuffer(&cbDesc, nullptr, ditherConstantBuffer.put());
 
 	logger::info("[EFFECT11] Created texture copy shaders successfully");
 }
@@ -815,6 +823,17 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 	context->VSSetShader(copyVertexShader.get(), nullptr, 0);
 	context->PSSetShader(copyPixelShader.get(), nullptr, 0);
 
+	// Update dither timer
+	if (ditherConstantBuffer) {
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		if (SUCCEEDED(context->Map(ditherConstantBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+			*static_cast<float*>(mapped.pData) = commonData.timer[0];
+			context->Unmap(ditherConstantBuffer.get(), 0);
+		}
+		ID3D11Buffer* cbs[] = { ditherConstantBuffer.get() };
+		context->PSSetConstantBuffers(0, 1, cbs);
+	}
+
 	// Set source texture
 	context->PSSetShaderResources(0, 1, &a_source);
 
@@ -838,9 +857,6 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	auto brightness = settingManager.GetValue<float>(ids.brightness);
 	auto gammaCurve = settingManager.GetValue<float>(ids.gammaCurve);
 
-	if (brightness == 1.0f && gammaCurve == 1.0f)
-		return;
-
 	auto context = globals::d3d::context;
 
 	// Update constant buffer with current settings
@@ -854,6 +870,7 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 		float* cbData = static_cast<float*>(mapped.pData);
 		cbData[0] = brightness;
 		cbData[1] = gammaCurve;
+		cbData[2] = commonData.timer[0];
 		context->Unmap(colorCorrectionConstantBuffer.get(), 0);
 	}
 
@@ -885,6 +902,15 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	context->CSSetShader(nullptr, nullptr, 0);
 	context->CSSetConstantBuffers(0, 1, &nullCB);
 	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+}
+
+void EffectManager::ReloadShaders()
+{
+	copyVertexShader = nullptr;
+	copyPixelShader = nullptr;
+	colorCorrectionComputeShader = nullptr;
+	CreateCopyShaders();
+	CreateColorCorrectionShader();
 }
 
 void EffectManager::RenderEffectsList()

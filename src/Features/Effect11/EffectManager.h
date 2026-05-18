@@ -72,6 +72,7 @@ public:
 	// Copy shader resources
 	winrt::com_ptr<ID3D11VertexShader> copyVertexShader;
 	winrt::com_ptr<ID3D11PixelShader> copyPixelShader;
+	winrt::com_ptr<ID3D11Buffer> ditherConstantBuffer;
 
 	// Color correction compute shader resources
 	winrt::com_ptr<ID3D11ComputeShader> colorCorrectionComputeShader;
@@ -133,6 +134,8 @@ public:
 
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
+
+	void ReloadShaders();
 
 	// Error reporting for overlay display
 	uint32_t GetFailedEffectCount() const;
