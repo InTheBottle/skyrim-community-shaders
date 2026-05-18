@@ -7,6 +7,7 @@ cbuffer ColorCorrectionParams : register(b0)
 
 RWTexture2D<float4> OutputTexture : register(u0);
 
+// http://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
 float3 ScreenSpaceDither(float2 vScreenPos)
 {
 	float3 vDither = dot(float2(171.0, 231.0), vScreenPos.xy + Timer).xxx;
