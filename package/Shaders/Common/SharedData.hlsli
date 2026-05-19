@@ -316,8 +316,8 @@ namespace SharedData
 
 		float VolumetricRaysSkyColorAmount;
 		float RainBrightness;
-		float SnowBrightness;
-		float SnowLightingInfluence;
+		uint EnableRain;
+		float _padSnow;
 
 		float RainRefractionFactor;
 		float RainMotionStretch;

@@ -111,7 +111,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 viewPosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if defined(RAIN)
 	float3 rainVelocity = Velocity.xyz;
-	if (SharedData::enbSettings.Enable) {
+	if (SharedData::enbSettings.EnableRain) {
 		float3 normVel = normalize(rainVelocity);
 		rainVelocity = lerp(normVel, rainVelocity, SharedData::enbSettings.RainMotionStretch);
 	}
@@ -303,11 +303,11 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
-	if (SharedData::enbSettings.Enable) {
+	if (SharedData::enbSettings.EnableRain) {
 		if (saturate(input.RaindropData.x) != input.RaindropData.x || saturate(input.RaindropData.y) != input.RaindropData.y)
 			discard;
 
-		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, input.RaindropData.xy, 0.0);
+		float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, input.RaindropData.xy);
 
 		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
 
@@ -400,11 +400,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	psout.Color.xyz = propertyColor * baseColor.xyz;
-#	if defined(SNOW)
-	if (SharedData::enbSettings.Enable) {
-		psout.Color.xyz = baseColor.xyz * lerp(1.0, propertyColor, SharedData::enbSettings.SnowLightingInfluence) * SharedData::enbSettings.SnowBrightness;
-	}
-#	endif
 	psout.Color.w = baseColor.w;
 	psout.Normal.w = baseColor.w;
 	psout.Normal.xyz = float3(0, 1, 0);

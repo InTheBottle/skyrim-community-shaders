@@ -82,13 +82,13 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	}
 	data.VolumetricRaysSkyColorAmount = settingManager.GetInterpolatedTimeOfDayValue("SkyColorAmount", "VOLUMETRICRAYS");
 
+	data.EnableRain = enableEffect && raindropSRV && settingManager.GetValue<bool>("Enable", "RAIN");
 	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
 	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
 	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 	data._padRain = 0;
-	data.SnowBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "SNOW");
-	data.SnowLightingInfluence = settingManager.GetInterpolatedTimeOfDayValue("LightingInfluence", "SNOW");
+	data._padSnow = 0;
 
 	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
 
@@ -141,8 +141,16 @@ void Effect11::LoadRaindropTexture()
 		return;
 	}
 
+	DirectX::ScratchImage mipImage;
+	hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(),
+		DirectX::TEX_FILTER_DEFAULT, 0, mipImage);
+	if (FAILED(hr)) {
+		logger::error("[Effect11] Failed to generate mipmaps for raindrop texture");
+		return;
+	}
+
 	DirectX::ScratchImage bc7Image;
-	hr = DirectX::Compress(image.GetImages(), image.GetImageCount(), image.GetMetadata(),
+	hr = DirectX::Compress(mipImage.GetImages(), mipImage.GetImageCount(), mipImage.GetMetadata(),
 		DXGI_FORMAT_BC7_UNORM_SRGB, DirectX::TEX_COMPRESS_BC7_QUICK, 1.0f, bc7Image);
 	if (FAILED(hr)) {
 		logger::error("[Effect11] Failed to compress raindrop texture to BC7");
@@ -175,10 +183,11 @@ void Effect11::LoadRaindropTexture()
 
 	Util::SetResourceName(raindropSRV.get(), "Effect11::RaindropTexture SRV");
 
-	logger::info("[Effect11] Loaded raindrop texture: {} ({}x{}, BC7)",
+	logger::info("[Effect11] Loaded raindrop texture: {} ({}x{}, BC7, {} mips)",
 		raindropPath.string(),
 		bc7Image.GetMetadata().width,
-		bc7Image.GetMetadata().height);
+		bc7Image.GetMetadata().height,
+		bc7Image.GetMetadata().mipLevels);
 }
 
 void Effect11::SetupResources()

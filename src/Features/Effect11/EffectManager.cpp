@@ -2,6 +2,7 @@
 
 #include "D3D11StateBackup.h"
 #include "ENBExtender.h"
+#include "Features/Effect11.h"
 #include "State.h"
 
 #include "SettingManager.h"
@@ -90,6 +91,8 @@ void EffectManager::Initialize()
 
 void EffectManager::Apply()
 {
+	globals::features::effect11.LoadRaindropTexture();
+
 	enbBloom.Apply();
 	enbLens.Apply();
 	enbAdaptation.Apply();
@@ -246,13 +249,11 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 
+	settingManager.RegisterBoolSetting("Enable", "RAIN", true);
 	settingManager.RegisterTimeOfDaySetting("Brightness", "RAIN", 1.0f, 0.0f, 30.0f, 0.01f, true);
 	settingManager.RegisterFloatSetting("RefractionFactor", "RAIN", -0.33f, -2.0f, 2.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("MotionStretch", "RAIN", 0.28f, 0.0f, 1.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("MotionTransparency", "RAIN", 0.1f, 0.0f, 1.0f, 0.01f, true);
-
-	settingManager.RegisterTimeOfDaySetting("Brightness", "SNOW", 1.0f, 0.0f, 30.0f, 0.01f, true);
-	settingManager.RegisterTimeOfDaySetting("LightingInfluence", "SNOW", 0.5f, 0.0f, 1.0f, 0.01f, true);
 
 	settingManager.RegisterTimeOfDaySetting("Amount", "CLOUDSHADOWS", 0.8f, 0.0f, 4.0f, 0.01f, true);
 
@@ -266,7 +267,6 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
 	settingManager.SetCategoryExteriorOnly("RAIN", true);
-	settingManager.SetCategoryExteriorOnly("SNOW", true);
 	settingManager.SetCategoryExteriorOnly("CLOUDSHADOWS", true);
 	settingManager.SetCategoryExteriorOnly("IMAGEBASEDLIGHTING", true);
 	settingManager.SetCategoryExteriorOnly("VOLUMETRICRAYS", true);
