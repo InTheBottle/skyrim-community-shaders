@@ -320,8 +320,8 @@ namespace SharedData
 		float SnowLightingInfluence;
 
 		float RainRefractionFactor;
+		float RainMotionStretch;
 		float RainMotionTransparency;
-		float RainMotionBluriness;
 		float _padRain;
 	};
 	struct TerrainBlendingSettings

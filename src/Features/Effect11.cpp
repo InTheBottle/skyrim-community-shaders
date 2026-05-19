@@ -84,8 +84,9 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 
 	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
 	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
+	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
-	data.RainMotionBluriness = settingManager.GetInterpolatedTimeOfDayValue("MotionBluriness", "RAIN");
+	data._padRain = 0;
 	data.SnowBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "SNOW");
 	data.SnowLightingInfluence = settingManager.GetInterpolatedTimeOfDayValue("LightingInfluence", "SNOW");
 
@@ -608,6 +609,9 @@ void Effect11::ModifyParticle(RE::BSRenderPass* Pass)
 	auto context = globals::d3d::context;
 	ID3D11ShaderResourceView* srv = raindropSRV.get();
 	context->PSSetShaderResources(80, 1, &srv);
+
+	auto* sharedDataBuf = globals::state->sharedDataCB->CB();
+	context->VSSetConstantBuffers(5, 1, &sharedDataBuf);
 }
 
 struct BSParticleShader_SetupGeometry

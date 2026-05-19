@@ -110,7 +110,12 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 viewPosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if defined(RAIN)
-	float4 adjustedMsPosition = msPosition - float4(Velocity.xyz, 0);
+	float3 rainVelocity = Velocity.xyz;
+	if (SharedData::enbSettings.Enable) {
+		float3 normVel = normalize(rainVelocity);
+		rainVelocity = lerp(normVel, rainVelocity, SharedData:enbSettings.RainMotionStretch);
+	}
+	float4 adjustedMsPosition = msPosition - float4(rainVelocity, 0);
 	float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
 	float4 adjustedViewPosition = mul(WorldViewProj[eyeIndex], adjustedMsPosition);
 	float4 finalViewPosition = lerp(adjustedViewPosition, viewPosition, positionBlendParam);
@@ -127,9 +132,6 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 precipitationOcclusionTexCoord = mul(PrecipitationOcclusionWorldViewProj, msPosition);
 	precipitationOcclusionTexCoord.y = -precipitationOcclusionTexCoord.y;
 	vsout.PrecipitationOcclusionTexCoord = precipitationOcclusionTexCoord;
-#		if defined(RAIN)
-	vsout.RaindropData.xy = input.TexCoord1.xy;
-#		endif
 #	else
 	float tmp2 = input.Normal.w * input.Position.w;
 	float tmp1 = tmp2 / fVars0.y;
@@ -211,6 +213,11 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ClipDistance.x = VRout.ClipDistance;
 	vsout.CullDistance.x = VRout.CullDistance;
 #	endif  // VR
+
+#		if defined(RAIN)
+	vsout.RaindropData.xy = input.TexCoord1.xy * 0.5 + 0.5;
+#		endif
+
 	return vsout;
 }
 #endif
@@ -284,6 +291,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(ENVCUBE)
 	float2 precipitationOcclusionUV = (input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5);
+	float2 precipitationOcclusionUV = input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5;
 #		ifdef VR
 	precipitationOcclusionUV *= FrameBuffer::DynamicResolutionParams1.x;  // only difference in VR
 #		endif
@@ -367,18 +375,13 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color.xyz = propertyColor * baseColor.xyz;
 #	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
 	if (SharedData::enbSettings.Enable) {
-		float2 raindropUV = input.RaindropData.xy;
+		float2 raindropUV = frac(input.RaindropData.xy);
 
-		float2 cutoff = abs(raindropUV * 2.0 - 1.0);
-		if (max(cutoff.x, cutoff.y) > 1.0)
-			discard;
-
-		float4 normalAlpha = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);
+		float4 normalAlpha = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);	
 		
-		float alpha = saturate(normalAlpha.w * SharedData::enbSettings.RainMotionTransparency);
-
-		if (alpha == 0.0)
-			discard;
+		float alpha = saturate(normalAlpha.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
+		
+		clip(normalAlpha.w - (4.0 / 255.0));
 
 		float3 normalDecoded = normalAlpha.xyz * 2.0 - 1.0;
 		normalDecoded.y = -normalDecoded.y;
@@ -392,10 +395,9 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 refractionPosition = FrameBuffer::ViewToWorld(refractedViewDirection, false, eyeIndex);
 
 		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractionPosition), 0).xyz;
-
 		refractedColor *= SharedData::enbSettings.RainBrightness;
 
-		psout.Color.xyz = 1;
+		psout.Color.xyz = refractedColor;
 		psout.Color.w = alpha;
 		psout.Normal.w = alpha;
 		psout.Normal.xyz = float3(0, 1, 0);
