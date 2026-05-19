@@ -33,6 +33,9 @@ struct VS_OUTPUT
 #if defined(ENVCUBE)
 	float4 PrecipitationOcclusionTexCoord: TEXCOORD1;
 #endif
+#if defined(ENVCUBE) && defined(RAIN)
+	float2 RaindropData: TEXCOORD2;
+#endif
 #if defined(VR)
 	float ClipDistance: SV_ClipDistance0;  // o11
 	float CullDistance: SV_CullDistance0;  // p11
@@ -124,6 +127,9 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 precipitationOcclusionTexCoord = mul(PrecipitationOcclusionWorldViewProj, msPosition);
 	precipitationOcclusionTexCoord.y = -precipitationOcclusionTexCoord.y;
 	vsout.PrecipitationOcclusionTexCoord = precipitationOcclusionTexCoord;
+#		if defined(RAIN)
+	vsout.RaindropData.xy = input.TexCoord1.xy;
+#		endif
 #	else
 	float tmp2 = input.Normal.w * input.Position.w;
 	float tmp1 = tmp2 / fVars0.y;
@@ -244,6 +250,9 @@ Texture2D<float4> TexGrayscaleTexture : register(t1);
 Texture2D<float4> TexPrecipitationOcclusionTexture : register(t2);
 Texture2D<float4> TexUnderwaterMask : register(t3);
 #	endif
+#	if defined(ENVCUBE) && defined(RAIN)
+Texture2D<float4> TexRaindropNormals : register(t80);
+#	endif
 
 cbuffer PerGeometry : register(b2)
 {
@@ -258,6 +267,11 @@ cbuffer PerGeometry : register(b2)
 #		include "IBL/IBL.hlsli"
 #	endif
 
+#	if defined(DYNAMIC_CUBEMAPS)
+#		define SampColorSampler SampSourceTexture
+#		include "DynamicCubemaps/DynamicCubemaps.hlsli"
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -269,11 +283,11 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif  // !VR
 
 #	if defined(ENVCUBE)
-	float2 precipitationOcclusionUV = (input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5) * TextureSize.x;
+	float2 precipitationOcclusionUV = (input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5);
 #		ifdef VR
 	precipitationOcclusionUV *= FrameBuffer::DynamicResolutionParams1.x;  // only difference in VR
 #		endif
-	float precipitationOcclusion = -input.PrecipitationOcclusionTexCoord.z + TexPrecipitationOcclusionTexture.Load(float3(precipitationOcclusionUV, 0)).x;
+	float precipitationOcclusion = -input.PrecipitationOcclusionTexCoord.z + TexPrecipitationOcclusionTexture.SampleLevel(SampSourceTexture, precipitationOcclusionUV, 0.0);
 	float2 underwaterMaskUv = TextureSize.yz * input.Position.xy;
 	float underwaterMask = TexUnderwaterMask.Sample(SampUnderwaterMask, underwaterMaskUv).x;
 	if (precipitationOcclusion - underwaterMask < 0) {
@@ -302,6 +316,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 positionWS = float4(2 * float2(uv.x, -uv.y + 1) - 1, input.Position.z, 1);
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
+	
+	float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 
 	float unusedDetailedShadow;
 	float3 dirLightColor = SharedData::DirLightColor.xyz * ShadowSampling::GetLightingShadow(positionWS.xyz, eyeIndex, unusedDetailedShadow);
@@ -318,7 +334,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	if defined(LIGHT_LIMIT_FIX)
 	uint lightCount = 0;
 	{
-		float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 		float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 
 		uint clusterIndex = 0;
@@ -350,6 +365,47 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	psout.Color.xyz = propertyColor * baseColor.xyz;
+#	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
+	if (SharedData::enbSettings.Enable) {
+		float2 raindropUV = input.RaindropData.xy;
+
+		float2 cutoff = abs(raindropUV * 2.0 - 1.0);
+		if (max(cutoff.x, cutoff.y) > 1.0)
+			discard;
+
+		float4 normalAlpha = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);
+		
+		float alpha = saturate(normalAlpha.w * SharedData::enbSettings.RainMotionTransparency);
+
+		if (alpha == 0.0)
+			discard;
+
+		float3 normalDecoded = normalAlpha.xyz * 2.0 - 1.0;
+		normalDecoded.y = -normalDecoded.y;
+		normalDecoded = normalize(normalDecoded);
+
+		float3 normalOffset = 64.0 * normalDecoded * SharedData::enbSettings.RainRefractionFactor;
+
+		float3 refractedViewDirection = normalize(viewPosition + normalOffset);
+		refractedViewDirection.z = abs(refractedViewDirection.z);
+	
+		float3 refractionPosition = FrameBuffer::ViewToWorld(refractedViewDirection, false, eyeIndex);
+
+		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractionPosition), 0).xyz;
+
+		refractedColor *= SharedData::enbSettings.RainBrightness;
+
+		psout.Color.xyz = 1;
+		psout.Color.w = alpha;
+		psout.Normal.w = alpha;
+		psout.Normal.xyz = float3(0, 1, 0);
+		return psout;
+	}
+#	elif defined(SNOW)
+	if (SharedData::enbSettings.Enable) {
+		psout.Color.xyz = baseColor.xyz * lerp(1.0, propertyColor, SharedData::enbSettings.SnowLightingInfluence) * SharedData::enbSettings.SnowBrightness;
+	}
+#	endif
 	psout.Color.w = baseColor.w;
 	psout.Normal.w = baseColor.w;
 	psout.Normal.xyz = float3(0, 1, 0);

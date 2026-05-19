@@ -1,5 +1,7 @@
 #include "Effect11.h"
 
+#include <DirectXTex.h>
+
 #include "Effect11/D3D11StateBackup.h"
 #include "Effect11/ENBHelper.h"
 #include "Effect11/EffectManager.h"
@@ -11,6 +13,7 @@
 #include "CloudShadows.h"
 #include "Deferred.h"
 #include "IBL.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "TerrainShadows.h"
 #include "Utils/D3D.h"
@@ -79,6 +82,13 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	}
 	data.VolumetricRaysSkyColorAmount = settingManager.GetInterpolatedTimeOfDayValue("SkyColorAmount", "VOLUMETRICRAYS");
 
+	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
+	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
+	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
+	data.RainMotionBluriness = settingManager.GetInterpolatedTimeOfDayValue("MotionBluriness", "RAIN");
+	data.SnowBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "SNOW");
+	data.SnowLightingInfluence = settingManager.GetInterpolatedTimeOfDayValue("LightingInfluence", "SNOW");
+
 	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
 
 	{
@@ -107,10 +117,74 @@ void Effect11::DrawSettings()
 	MenuManager::GetSingleton().RenderImGui();
 }
 
+void Effect11::LoadRaindropTexture()
+{
+	raindropTexture = nullptr;
+	raindropSRV = nullptr;
+
+	auto& presetManager = PresetManager::GetSingleton();
+	auto enbPath = presetManager.GetENBSeriesPath();
+	auto raindropPath = enbPath / "enbraindrops.png";
+
+	if (!std::filesystem::exists(raindropPath)) {
+		logger::debug("[Effect11] Raindrop texture not found: {}", raindropPath.string());
+		return;
+	}
+
+	std::wstring widePath = raindropPath.wstring();
+
+	DirectX::ScratchImage image;
+	HRESULT hr = DirectX::LoadFromWICFile(widePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
+	if (FAILED(hr)) {
+		logger::error("[Effect11] Failed to load raindrop texture: {}", raindropPath.string());
+		return;
+	}
+
+	DirectX::ScratchImage bc7Image;
+	hr = DirectX::Compress(image.GetImages(), image.GetImageCount(), image.GetMetadata(),
+		DXGI_FORMAT_BC7_UNORM_SRGB, DirectX::TEX_COMPRESS_BC7_QUICK, 1.0f, bc7Image);
+	if (FAILED(hr)) {
+		logger::error("[Effect11] Failed to compress raindrop texture to BC7");
+		return;
+	}
+
+	auto device = globals::d3d::device;
+	hr = DirectX::CreateTexture(device,
+		bc7Image.GetImages(), bc7Image.GetImageCount(), bc7Image.GetMetadata(),
+		reinterpret_cast<ID3D11Resource**>(raindropTexture.put()));
+	if (FAILED(hr)) {
+		logger::error("[Effect11] Failed to create raindrop GPU texture");
+		return;
+	}
+
+	Util::SetResourceName(raindropTexture.get(), "Effect11::RaindropTexture");
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	srvDesc.Format = DXGI_FORMAT_BC7_UNORM_SRGB;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = static_cast<UINT>(bc7Image.GetMetadata().mipLevels);
+	srvDesc.Texture2D.MostDetailedMip = 0;
+
+	hr = device->CreateShaderResourceView(raindropTexture.get(), &srvDesc, raindropSRV.put());
+	if (FAILED(hr)) {
+		logger::error("[Effect11] Failed to create raindrop SRV");
+		raindropTexture = nullptr;
+		return;
+	}
+
+	Util::SetResourceName(raindropSRV.get(), "Effect11::RaindropTexture SRV");
+
+	logger::info("[Effect11] Loaded raindrop texture: {} ({}x{}, BC7)",
+		raindropPath.string(),
+		bc7Image.GetMetadata().width,
+		bc7Image.GetMetadata().height);
+}
+
 void Effect11::SetupResources()
 {
 	PresetManager::GetSingleton().Initialize();
 	EffectManager::GetSingleton().Initialize();
+	LoadRaindropTexture();
 }
 
 void Effect11::Reset()
@@ -523,6 +597,60 @@ struct BSSkyShader_SetupMaterial
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+void Effect11::ModifyParticle(RE::BSRenderPass* Pass)
+{
+	if (!enableEffect || !raindropSRV)
+		return;
+
+	if (!Pass)
+		return;
+
+	auto context = globals::d3d::context;
+	ID3D11ShaderResourceView* srv = raindropSRV.get();
+	context->PSSetShaderResources(80, 1, &srv);
+}
+
+struct BSParticleShader_SetupGeometry
+{
+	static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+	{
+		func(This, Pass, RenderFlags);
+		globals::features::effect11.ModifyParticle(Pass);
+	}
+
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+void Effect11::ParticleShaderHacks()
+{
+	if (!enableEffect || !raindropSRV)
+		return;
+
+	auto state = State::GetSingleton();
+	if (!state->currentShader || state->currentShader->shaderType.get() != RE::BSShader::Type::Particle)
+		return;
+	if (state->currentPixelDescriptor != static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain))
+		return;
+
+	auto context = globals::d3d::context;
+
+	if (!alphaBlendState) {
+		D3D11_BLEND_DESC blendDesc{};
+		blendDesc.RenderTarget[0].BlendEnable = TRUE;
+		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		globals::d3d::device->CreateBlendState(&blendDesc, &alphaBlendState);
+	}
+
+	float blendFactor[4] = { 0, 0, 0, 0 };
+	context->OMSetBlendState(alphaBlendState, blendFactor, 0xFFFFFFFF);
+}
+
 void Effect11::DrawVolumetricRays()
 {
 	if (!enableEffect)
@@ -772,4 +900,5 @@ void Effect11::PostPostLoad()
 
 	stl::detour_thunk<Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
 	stl::write_vfunc<0x6, BSSkyShader_SetupMaterial>(RE::VTABLE_BSSkyShader[0]);
+	stl::write_vfunc<0x6, BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 }

@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CloudShadows.h"
+#include "Features/Effect11.h"
 #include "Features/SkySync.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
@@ -75,6 +76,11 @@ void State::Draw()
 		if (cloudShadows.loaded) {
 			ZoneScopedN("CloudShadows::SkyShaderHacks");
 			cloudShadows.SkyShaderHacks();
+		}
+
+		{
+			ZoneScopedN("Effect11::ParticleShaderHacks");
+			globals::features::effect11.ParticleShaderHacks();
 		}
 
 		if (terrainHelper.loaded) {

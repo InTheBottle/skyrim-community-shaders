@@ -246,6 +246,14 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 
+	settingManager.RegisterTimeOfDaySetting("Brightness", "RAIN", 1.0f, 0.0f, 30.0f, 0.01f, true);
+	settingManager.RegisterFloatSetting("RefractionFactor", "RAIN", -0.33f, -2.0f, 2.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("MotionTransparency", "RAIN", 0.1f, 0.0f, 1.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("MotionBluriness", "RAIN", 0.5f, 0.0f, 4.0f, 0.01f, true);
+
+	settingManager.RegisterTimeOfDaySetting("Brightness", "SNOW", 1.0f, 0.0f, 30.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("LightingInfluence", "SNOW", 0.5f, 0.0f, 1.0f, 0.01f, true);
+
 	settingManager.RegisterTimeOfDaySetting("Amount", "CLOUDSHADOWS", 0.8f, 0.0f, 4.0f, 0.01f, true);
 
 	settingManager.RegisterTimeOfDaySetting("Intensity", "GAMEVOLUMETRICRAYS", 1.0f, 0.0f, 1000.0f, 0.01f, true);
@@ -257,6 +265,8 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.1f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
+	settingManager.SetCategoryExteriorOnly("RAIN", true);
+	settingManager.SetCategoryExteriorOnly("SNOW", true);
 	settingManager.SetCategoryExteriorOnly("CLOUDSHADOWS", true);
 	settingManager.SetCategoryExteriorOnly("IMAGEBASEDLIGHTING", true);
 	settingManager.SetCategoryExteriorOnly("VOLUMETRICRAYS", true);

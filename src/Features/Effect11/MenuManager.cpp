@@ -209,7 +209,7 @@ std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSetti
 	};
 
 	// Weather-Based Settings - Categories that change with weather/time
-	categorizedSettings["Weather"] = { "BLOOM", "LENS", "ENVIRONMENT", "SKY", "SKYSCATTERING", "PROCEDURALSUN", "VOLUMETRICFOG", "VOLUMETRICRAYS", "IMAGEBASEDLIGHTING", "PARTICLE", "LIGHTSPRITE", "GAMEVOLUMETRICRAYS", "SUNGLARE", "CLOUDSHADOWS" };
+	categorizedSettings["Weather"] = { "BLOOM", "LENS", "ENVIRONMENT", "SKY", "SKYSCATTERING", "PROCEDURALSUN", "VOLUMETRICFOG", "VOLUMETRICRAYS", "IMAGEBASEDLIGHTING", "PARTICLE", "RAIN", "SNOW", "LIGHTSPRITE", "GAMEVOLUMETRICRAYS", "SUNGLARE", "CLOUDSHADOWS" };
 
 	// Presets
 	categorizedSettings["Presets"] = {};

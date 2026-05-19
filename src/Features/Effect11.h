@@ -3,6 +3,7 @@
 #include "Buffer.h"
 
 #include <memory>
+#include <winrt/base.h>
 
 struct Effect11 : Feature
 {
@@ -88,7 +89,14 @@ public:
 		float VolumetricRaysExtinction;
 
 		float VolumetricRaysSkyColorAmount;
-		float3 _pad0;
+		float RainBrightness;
+		float SnowBrightness;
+		float SnowLightingInfluence;
+
+		float RainRefractionFactor;
+		float RainMotionTransparency;
+		float RainMotionBluriness;
+		float _padRain;
 	};
 
 	bool enableEffect = false;
@@ -98,10 +106,15 @@ public:
 	ID3D11ComputeShader* blurHCS = nullptr;
 	ID3D11ComputeShader* blurVCS = nullptr;
 	ID3D11BlendState* additiveBlendState = nullptr;
+	ID3D11BlendState* alphaBlendState = nullptr;
 
 	std::unique_ptr<Texture2D> vrTexA;
 	std::unique_ptr<Texture2D> vrTexB;
 	std::unique_ptr<ConstantBuffer> vrBlurCB;
+
+	winrt::com_ptr<ID3D11Texture2D> raindropTexture;
+	winrt::com_ptr<ID3D11ShaderResourceView> raindropSRV;
+	void LoadRaindropTexture();
 
 	PerFrame GetCommonBufferData();
 
@@ -125,5 +138,7 @@ public:
 	void OverrideAmbientLighting(DirectionalAmbientColors& DirectionalAmbientColors);
 
 	void ModifySky(RE::BSRenderPass* Pass);
+	__declspec(noinline) void ModifyParticle(RE::BSRenderPass* Pass);
+	void ParticleShaderHacks();
 	virtual void PostPostLoad() override;
 };
