@@ -302,6 +302,33 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 
+#	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
+	if (SharedData::enbSettings.Enable) {
+		float2 raindropUV = frac(input.RaindropData.xy);
+
+		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);
+
+		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
+
+		clip(alpha - (1.0 / 255.0));
+
+		float3 normalDecoded = normalize(float3((raindropNormal.xy * 2.0 - 1.0) * float2(1, -1), raindropNormal.z * 2.0 - 1.0));
+
+		float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
+		float2 refractedUV = saturate(uv - normalDecoded.xy * SharedData::enbSettings.RainRefractionFactor);
+
+		float4 refractedPosCS = float4(2 * float2(refractedUV.x, 1 - refractedUV.y) - 1, input.Position.z, 1);
+		float4 refractedPosWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], refractedPosCS);
+
+		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractedPosWS.xyz / refractedPosWS.w), 0).xyz;
+
+		psout.Color.xyz = refractedColor * SharedData::enbSettings.RainBrightness;
+		psout.Color.w = alpha;
+		psout.Normal = float4(0, 1, 0, alpha);
+		return psout;
+	}
+#	endif
+
 	float4 sourceColor = TexSourceTexture.Sample(SampSourceTexture, input.TexCoord0);
 	float4 baseColor = input.Color * sourceColor;
 	baseColor.xyz = Color::Diffuse(baseColor.xyz);
@@ -323,7 +350,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 positionWS = float4(2 * float2(uv.x, -uv.y + 1) - 1, input.Position.z, 1);
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
-	
+
 	float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 
 	float unusedDetailedShadow;
@@ -372,36 +399,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	psout.Color.xyz = propertyColor * baseColor.xyz;
-#	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
-	if (SharedData::enbSettings.Enable) {
-		float2 raindropUV = frac(input.RaindropData.xy);
-
-		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);	
-		
-		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
-		
-		clip(alpha - (1.0 / 255.0));
-
-		float3 normalDecoded = raindropNormal.xyz * 2.0 - 1.0;
-		normalDecoded.y = -normalDecoded.y;
-		normalDecoded = normalize(normalDecoded);
-
-		float2 refractedUV = saturate(uv - normalDecoded.xy * SharedData::enbSettings.RainRefractionFactor);
-
-		float4 refractedPosWS = float4(2 * float2(refractedUV.x, -refractedUV.y + 1) - 1, input.Position.z, 1);
-		refractedPosWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], refractedPosWS);
-		refractedPosWS.xyz /= refractedPosWS.w;
-
-		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractedPosWS.xyz), 0).xyz;
-		refractedColor *= SharedData::enbSettings.RainBrightness;
-
-		psout.Color.xyz = refractedColor;
-		psout.Color.w = alpha;
-		psout.Normal.w = alpha;
-		psout.Normal.xyz = float3(0, 1, 0);
-		return psout;
-	}
-#	elif defined(SNOW)
+#	if defined(SNOW)
 	if (SharedData::enbSettings.Enable) {
 		psout.Color.xyz = baseColor.xyz * lerp(1.0, propertyColor, SharedData::enbSettings.SnowLightingInfluence) * SharedData::enbSettings.SnowBrightness;
 	}
