@@ -304,9 +304,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
 	if (SharedData::enbSettings.Enable) {
-		float2 raindropUV = frac(input.RaindropData.xy);
+		if (saturate(input.RaindropData.x) != input.RaindropData.x || saturate(input.RaindropData.y) != input.RaindropData.y)
+			discard;
 
-		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);
+		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, input.RaindropData.xy, 0.0);
 
 		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
 
