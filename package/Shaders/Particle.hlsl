@@ -113,7 +113,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float3 rainVelocity = Velocity.xyz;
 	if (SharedData::enbSettings.Enable) {
 		float3 normVel = normalize(rainVelocity);
-		rainVelocity = lerp(normVel, rainVelocity, SharedData:enbSettings.RainMotionStretch);
+		rainVelocity = lerp(normVel, rainVelocity, SharedData::enbSettings.RainMotionStretch);
 	}
 	float4 adjustedMsPosition = msPosition - float4(rainVelocity, 0);
 	float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
@@ -290,7 +290,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif  // !VR
 
 #	if defined(ENVCUBE)
-	float2 precipitationOcclusionUV = (input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5);
 	float2 precipitationOcclusionUV = input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5;
 #		ifdef VR
 	precipitationOcclusionUV *= FrameBuffer::DynamicResolutionParams1.x;  // only difference in VR
@@ -377,24 +376,23 @@ PS_OUTPUT main(PS_INPUT input)
 	if (SharedData::enbSettings.Enable) {
 		float2 raindropUV = frac(input.RaindropData.xy);
 
-		float4 normalAlpha = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);	
+		float4 raindropNormal = TexRaindropNormals.SampleLevel(SampSourceTexture, raindropUV, 0.0);	
 		
-		float alpha = saturate(normalAlpha.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
+		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
 		
-		clip(normalAlpha.w - (4.0 / 255.0));
+		clip(alpha - (1.0 / 255.0));
 
-		float3 normalDecoded = normalAlpha.xyz * 2.0 - 1.0;
+		float3 normalDecoded = raindropNormal.xyz * 2.0 - 1.0;
 		normalDecoded.y = -normalDecoded.y;
 		normalDecoded = normalize(normalDecoded);
 
-		float3 normalOffset = 64.0 * normalDecoded * SharedData::enbSettings.RainRefractionFactor;
+		float2 refractedUV = saturate(uv - normalDecoded.xy * SharedData::enbSettings.RainRefractionFactor);
 
-		float3 refractedViewDirection = normalize(viewPosition + normalOffset);
-		refractedViewDirection.z = abs(refractedViewDirection.z);
-	
-		float3 refractionPosition = FrameBuffer::ViewToWorld(refractedViewDirection, false, eyeIndex);
+		float4 refractedPosWS = float4(2 * float2(refractedUV.x, -refractedUV.y + 1) - 1, input.Position.z, 1);
+		refractedPosWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], refractedPosWS);
+		refractedPosWS.xyz /= refractedPosWS.w;
 
-		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractionPosition), 0).xyz;
+		float3 refractedColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, normalize(refractedPosWS.xyz), 0).xyz;
 		refractedColor *= SharedData::enbSettings.RainBrightness;
 
 		psout.Color.xyz = refractedColor;

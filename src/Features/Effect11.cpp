@@ -610,8 +610,8 @@ void Effect11::ModifyParticle(RE::BSRenderPass* Pass)
 	ID3D11ShaderResourceView* srv = raindropSRV.get();
 	context->PSSetShaderResources(80, 1, &srv);
 
-	auto* sharedDataBuf = globals::state->sharedDataCB->CB();
-	context->VSSetConstantBuffers(5, 1, &sharedDataBuf);
+	ID3D11Buffer* cbs[] = { globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
+	context->VSSetConstantBuffers(5, 2, cbs);
 }
 
 struct BSParticleShader_SetupGeometry
