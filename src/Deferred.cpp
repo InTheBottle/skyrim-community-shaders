@@ -180,7 +180,9 @@ void Deferred::ReflectionsPrepasses()
 
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
-	Feature::ForEachLoadedFeature("ReflectionsPrepass", [](Feature* feature) { feature->ReflectionsPrepass(); }, true);
+	Feature::ForEachLoadedFeature("ReflectionsPrepass", [](Feature* feature) {
+		feature->ReflectionsPrepass();
+	}, true);
 }
 
 void Deferred::EarlyPrepasses()
@@ -203,7 +205,9 @@ void Deferred::EarlyPrepasses()
 	// Shadow maps have just been rendered — upload BSShadowDirectionalLight data to t98.
 	CopyShadowLightData();
 
-	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* feature) { feature->EarlyPrepass(); }, true);
+	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* feature) {
+		feature->EarlyPrepass();
+	}, true);
 }
 
 void Deferred::PrepassPasses()
@@ -219,7 +223,9 @@ void Deferred::PrepassPasses()
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
-	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) { feature->Prepass(); }, true);
+	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) {
+		feature->Prepass();
+	}, true);
 }
 
 void Deferred::StartDeferred()
@@ -332,6 +338,8 @@ void Deferred::DeferredPasses()
 
 	auto& skylighting = globals::features::skylighting;
 
+	auto* gpuTimers = globals::gpuTimers;
+
 	auto& ssgi = globals::features::screenSpaceGI;
 	if (ssgi.loaded)
 		ssgi.DrawSSGI();
@@ -394,7 +402,9 @@ void Deferred::DeferredPasses()
 
 		{
 			TracyD3D11Zone(globals::state->tracyCtx, "Deferred Composite - Dispatch");
+			gpuTimers->BeginPass("DeferredComposite");
 			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			gpuTimers->EndPass();
 		}
 
 		// Unbind mode texture SRV
@@ -414,7 +424,9 @@ void Deferred::DeferredPasses()
 	// VR: Stereo reprojection fills Eye 1 holes here (after DeferredComposite, before SSR/water/sky)
 	// so that ISReflectionsRayTracing sees valid pixels in both eyes.
 	if (globals::game::isVR) {
+		gpuTimers->BeginPass("VR::StereoBlend");
 		globals::features::vr.DrawStereoBlend();
+		gpuTimers->EndPass();
 	}
 
 	// Clear

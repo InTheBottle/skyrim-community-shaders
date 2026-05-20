@@ -43,6 +43,7 @@ class Deferred;
 struct TruePBR;
 class RenderDoc;
 class Menu;
+class GPUTimers;
 
 namespace SIE
 {
@@ -264,6 +265,7 @@ namespace globals
 	extern Deferred* deferred;
 	extern Menu* menu;
 	extern SIE::ShaderCache* shaderCache;
+	extern GPUTimers* gpuTimers;
 
 	void OnInit();
 	void ReInit();

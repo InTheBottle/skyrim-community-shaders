@@ -94,6 +94,7 @@ void IBL::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Disables IBL in interior cells.");
 	}
+
 }
 
 void IBL::LoadSettings(json& o_json)
@@ -266,9 +267,10 @@ void IBL::Prepass()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(GetDiffuseIBLCS(), nullptr, 0);
+		globals::gpuTimers->BeginPass("IBL::EnvDiffuseIBL");
 		context->Dispatch(1, 1, 1);
+		globals::gpuTimers->EndPass();
 	} else {
-		// Still need to set sampler and shader for sky IBL dispatch below
 		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 		context->CSSetShader(GetDiffuseIBLCS(), nullptr, 0);
 	}
@@ -282,7 +284,9 @@ void IBL::Prepass()
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		globals::gpuTimers->BeginPass("IBL::SkyDiffuseIBL");
 		context->Dispatch(1, 1, 1);
+		globals::gpuTimers->EndPass();
 	}
 
 	// Reset

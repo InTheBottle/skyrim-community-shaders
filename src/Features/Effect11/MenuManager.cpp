@@ -581,8 +581,17 @@ void MenuManager::RenderStatisticsTab()
 
 	if (timeSinceLastUpdate >= 1.0f) {
 		timeSinceLastUpdate = 0.0f;
-		cachedTimerResults = effectManager.gpuTimers.GetResults();
-		cachedTotalTimeMs = effectManager.gpuTimers.GetTotalTimeMs();
+		cachedTimerResults.clear();
+		cachedTotalTimeMs = 0.0f;
+		for (const auto& result : globals::gpuTimers->GetResults()) {
+			bool isEffect11 = result.name.find(" Pass ") != std::string::npos ||
+			                   result.name.starts_with("Effect11::");
+			if (isEffect11) {
+				cachedTimerResults.push_back(result);
+				if (result.valid)
+					cachedTotalTimeMs += result.gpuTimeMs;
+			}
+		}
 	}
 
 	// GPU Timings — tree view grouped by shader/effect

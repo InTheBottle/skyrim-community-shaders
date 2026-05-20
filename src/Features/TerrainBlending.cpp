@@ -786,8 +786,6 @@ void TerrainBlending::BlendPrepassDepths()
 {
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Blend Prepass Depths");
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("Terrain Blending - Blend Prepass Depths");
 
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -806,7 +804,9 @@ void TerrainBlending::BlendPrepassDepths()
 
 		context->CSSetShader(GetDepthBlendShader(), nullptr, 0);
 
+		globals::gpuTimers->BeginPass("TerrainBlending::DepthBlend");
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		globals::gpuTimers->EndPass();
 	}
 
 	ID3D11ShaderResourceView* views[2] = { nullptr, nullptr };
@@ -820,11 +820,6 @@ void TerrainBlending::BlendPrepassDepths()
 
 	auto stateUpdateFlags = globals::game::stateUpdateFlags;
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-	// CopyResource(terrainDepth <- mainDepth) eliminated: main depth is now written
-	// directly into mainDepthCopy (u2) by the CS above, saving a full-stereo D24S8 copy.
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void TerrainBlending::ClearShaderCache()

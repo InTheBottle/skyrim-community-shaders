@@ -267,6 +267,7 @@ struct PerformanceOverlay : OverlayFeature
 
 		bool ShowInOverlay = true;  // was: Enabled
 		bool ShowDrawCalls = true;
+		bool ShowCSPasses = true;
 		bool ShowVRAM = true;
 		bool ShowFPS = true;
 		bool ShowPreFGFrameTimeGraph = true;

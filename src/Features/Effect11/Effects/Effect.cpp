@@ -1037,10 +1037,10 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 
 	for (UINT p = 0; p < techDesc.Passes; p++) {
 		if (gpuTimers)
-			gpuTimers->BeginTimer(context, std::format("{} Pass {}", GetName(), passOffset + p));
+			gpuTimers->BeginPass(std::format("Effect11::{} Pass {}", GetName(), passOffset + p));
 		technique->GetPassByIndex(p)->Apply(0, context);
 		context->Draw(4, 0);
 		if (gpuTimers)
-			gpuTimers->EndTimer(context);
+			gpuTimers->EndPass();
 	}
 }

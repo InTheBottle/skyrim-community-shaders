@@ -1041,20 +1041,13 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 	if (!globals::game::isVR)
 		return;
 
-	auto state = globals::state;
-	if (state->frameAnnotations)
-		state->BeginPerfEvent("VR Upscaling Prepare");
-
 	auto context = globals::d3d::context;
+
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
-	// Textures guaranteed to exist: EnsureVRIntermediateTextures() was called in Upscale()
-	// Read the original game depth SRV for ClearHMDMask — the combined stereo buffer is
-	// definitively valid here, whereas the per-eye copy may silently produce zeros on some
-	// depth-stencil format / driver combinations.
 	auto& depthTexture = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto& motionVectorRT = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -1069,9 +1062,6 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 		ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), depthTexture.depthSRV,
 			eyeWidthIn, eyeHeightIn, depthOffset, 0);
 	}
-
-	if (state->frameAnnotations)
-		state->EndPerfEvent();
 }
 
 void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
@@ -1082,12 +1072,9 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 	if (!globals::game::isVR)
 		return;
 
-	auto state = globals::state;
-	if (state->frameAnnotations)
-		state->BeginPerfEvent("VR Upscaling Finalize");
-
 	auto context = globals::d3d::context;
-	auto screenSize = state->screenSize;
+
+	auto screenSize = globals::state->screenSize;
 
 	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
 	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
@@ -1098,9 +1085,6 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 		D3D11_BOX outBox = { 0, 0, 0, eyeWidthOut, eyeHeightOut, 1 };
 		context->CopySubresourceRegion(colorDst, 0, offsetXOut, 0, 0, vrIntermediateColorOut[i]->resource.get(), 0, &outBox);
 	}
-
-	if (state->frameAnnotations)
-		state->EndPerfEvent();
 }
 
 void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,
@@ -1145,7 +1129,9 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
 
+		globals::gpuTimers->BeginPass("Upscaling::ClearHMDMask");
 		context->Dispatch(dispatchX, dispatchY, 1);
+		globals::gpuTimers->EndPass();
 
 		// Unbind
 		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
@@ -1369,8 +1355,6 @@ void Upscaling::CopySharedD3D12Resources()
 {
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Copy Shared D3D12 Resources");
-	globals::state->BeginPerfEvent("Copy Shared D3D12 Resources");
-
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 
@@ -1415,7 +1399,9 @@ void Upscaling::CopySharedD3D12Resources()
 
 		context->PSSetShader(copyDepthToSharedBufferPS.get(), nullptr, 0);
 
+		globals::gpuTimers->BeginPass("Upscaling::CopyDepthD3D12");
 		context->Draw(3, 0);
+		globals::gpuTimers->EndPass();
 	}
 
 	// Clean up
@@ -1425,8 +1411,6 @@ void Upscaling::CopySharedD3D12Resources()
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 	context->PSSetShader(nullptr, nullptr, 0);
 	context->VSSetShader(nullptr, nullptr, 0);
-
-	globals::state->EndPerfEvent();
 }
 
 void UpdateCameraData()
@@ -1700,7 +1684,6 @@ void Upscaling::Upscale()
 	ZoneScoped;
 	auto upscaleMethod = GetUpscaleMethod();
 
-	auto state = globals::state;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 
@@ -1710,7 +1693,7 @@ void Upscaling::Upscale()
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
 	{
-		state->BeginPerfEvent("Encode Upscaling Textures");
+		globals::gpuTimers->BeginPass("Upscaling::EncodeTextures");
 		TracyD3D11Zone(globals::state->tracyCtx, "Encode Upscaling Textures");
 
 		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
@@ -1768,18 +1751,14 @@ void Upscaling::Upscale()
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 
-		state->EndPerfEvent();
+		globals::gpuTimers->EndPass();
 	}
 
 	{
-		state->BeginPerfEvent("Upscaling");
+		globals::gpuTimers->BeginPass("Upscaling::Upscale");
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
-			// VR-only workaround: a worldspace/cell transition causes ~2-3ms persistent GPU-time
-			// regression in the DLSS feature that only clears on a manual mode/preset toggle.
-			// Mirror that toggle by tearing down the DLSS feature on LoadingMenu close — the next
-			// SetDLSSOptions/slEvaluateFeature call below recreates it with current per-eye extents.
 			if (globals::game::isVR && pendingDLSSReset.exchange(false, std::memory_order_relaxed)) {
 				logger::debug("[Upscaling] LoadingMenu close detected — rebuilding DLSS feature");
 				streamline.DestroyDLSSResources();
@@ -1789,7 +1768,7 @@ void Upscaling::Upscale()
 			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
 		}
 
-		state->EndPerfEvent();
+		globals::gpuTimers->EndPass();
 	}
 }
 
@@ -1857,8 +1836,6 @@ void Upscaling::UpscaleDepth()
 	if (!fullscreenVS || !depthUpscalePS || !underwaterMaskPS) {
 		return;
 	}
-
-	state->BeginPerfEvent("Render Target Upscaling");
 
 	// Set up Input Assembler for fullscreen triangle (no vertex/index buffers needed)
 	context->IASetInputLayout(nullptr);
@@ -1948,7 +1925,9 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(2, rtvs, depth.views[0]);
 
 		context->PSSetShader(depthUpscalePS, nullptr, 0);
+		globals::gpuTimers->BeginPass("Upscaling::DepthUpscale");
 		context->Draw(3, 0);
+		globals::gpuTimers->EndPass();
 	}
 
 	{
@@ -1971,7 +1950,9 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
 		context->PSSetShader(underwaterMaskPS, nullptr, 0);
+		globals::gpuTimers->BeginPass("Upscaling::UnderwaterMaskUpscale");
 		context->Draw(3, 0);
+		globals::gpuTimers->EndPass();
 	}
 
 	// Now propagate the upscaled depth to kMAIN_COPY so downstream VR passes see it.
@@ -1982,8 +1963,6 @@ void Upscaling::UpscaleDepth()
 
 	ID3D11ShaderResourceView* nullPSResources[3] = { nullptr, nullptr, nullptr };
 	context->PSSetShaderResources(0, ARRAYSIZE(nullPSResources), nullPSResources);
-
-	state->EndPerfEvent();
 }
 
 void Upscaling::ApplySharpening()

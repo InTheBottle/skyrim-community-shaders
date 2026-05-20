@@ -37,7 +37,6 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "RCAS Sharpening");
 
-	auto state = globals::state;
 	auto context = globals::d3d::context;
 
 	if (!rcasComputeShader) {
@@ -45,10 +44,10 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 		return;
 	}
 
-	state->BeginPerfEvent("RCAS Sharpening");
+	globals::gpuTimers->BeginPass("Upscaling::RCAS");
 
-	uint32_t screenWidth = (uint32_t)state->screenSize.x;
-	uint32_t screenHeight = (uint32_t)state->screenSize.y;
+	uint32_t screenWidth = (uint32_t)globals::state->screenSize.x;
+	uint32_t screenHeight = (uint32_t)globals::state->screenSize.y;
 
 	RCASConfig config{};
 	config.sharpness = sharpness;
@@ -77,5 +76,5 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 
 	context->CSSetShader(nullptr, nullptr, 0);
 
-	state->EndPerfEvent();
+	globals::gpuTimers->EndPass();
 }

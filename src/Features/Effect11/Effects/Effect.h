@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <winrt/base.h>
 
-#include "../GPUTimers.h"
+#include "Utils/GPUTimers.h"
 #include "../TextureManager.h"
 
 class Effect

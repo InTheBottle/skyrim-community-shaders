@@ -88,7 +88,6 @@ void EffectManager::Initialize()
 		initialized = true;
 	}
 
-	gpuTimers.Initialize(globals::d3d::device);
 }
 
 void EffectManager::Apply()
@@ -304,14 +303,11 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 	if (enableSettingID != 0xFFFFFFFF && !SettingManager::GetSingleton().GetValue<bool>(enableSettingID))
 		return;
 
-	auto state = globals::state;
-	state->BeginPerfEvent(a_effect.GetName());
-	a_effect.gpuTimers = &gpuTimers;
+	a_effect.gpuTimers = globals::gpuTimers;
 	UpdateCommonVariablesForEffect(a_effect.GetEffect());
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
 	a_effect.gpuTimers = nullptr;
-	state->EndPerfEvent();
 }
 
 void EffectManager::ExecuteEffects()
@@ -342,15 +338,13 @@ void EffectManager::ExecuteEffects()
 	context->IASetInputLayout(inputLayout.get());
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
-	gpuTimers.BeginTimer(context, "ColorCorrection");
+	globals::gpuTimers->BeginPass("Effect11::ColorCorrection");
 	ApplyColorCorrection(textureOriginal.UAV);
-	gpuTimers.EndTimer(context);
+	globals::gpuTimers->EndPass();
 
 	auto& textureManager = TextureManager::GetSingleton();
 
-	gpuTimers.BeginTimer(context, "Downsample");
 	textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
-	gpuTimers.EndTimer(context);
 
 	ExecuteEffect(enbBloom, ids.useBloom);
 	ExecuteEffect(enbLens, ids.useLens);
@@ -360,18 +354,18 @@ void EffectManager::ExecuteEffects()
 
 	textureManager.IncrementTextureSwap();
 
-	gpuTimers.BeginTimer(context, "CopyToFramebuffer");
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 	if (textureSDRTemp) {
 		auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
+		globals::gpuTimers->BeginPass("Effect11::CopyToFramebuffer");
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer.RTV);
+		globals::gpuTimers->EndPass();
 
 		auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
+		globals::gpuTimers->BeginPass("Effect11::CopyToFramebuffer2");
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer2.RTV);
+		globals::gpuTimers->EndPass();
 	}
-	gpuTimers.EndTimer(context);
-
-	gpuTimers.EndFrame(context);
 
 	stateBackup.Restore(context);
 	stateBackup.Release();

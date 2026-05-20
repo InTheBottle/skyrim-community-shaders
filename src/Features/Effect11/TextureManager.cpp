@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 
 #include "EffectManager.h"
+#include "Globals.h"
 #include "State.h"
 
 TextureManager& TextureManager::GetSingleton()
@@ -325,7 +326,9 @@ void TextureManager::DownsampleToFixed(ID3D11ShaderResourceView* source, Downsam
 	context->OMSetRenderTargets(1, tempRTV, nullptr);
 	context->PSSetShaderResources(0, 1, &source);
 	context->PSSetShader(downsamplePS.get(), nullptr, 0);
+	globals::gpuTimers->BeginPass("Effect11::Downsample");
 	context->Draw(4, 0);
+	globals::gpuTimers->EndPass();
 
 	// Pass 2: Kawase blur from temp into final texture
 	ID3D11ShaderResourceView* nullSRV[] = { nullptr };
@@ -337,7 +340,9 @@ void TextureManager::DownsampleToFixed(ID3D11ShaderResourceView* source, Downsam
 	ID3D11ShaderResourceView* tempSRV[] = { downsampleTempTexture.srv.get() };
 	context->PSSetShaderResources(0, 1, tempSRV);
 	context->PSSetShader(blurPS.get(), nullptr, 0);
+	globals::gpuTimers->BeginPass("Effect11::DownsampleBlur");
 	context->Draw(4, 0);
+	globals::gpuTimers->EndPass();
 
 	context->GenerateMips(texture.srvChain.get());
 }

@@ -128,8 +128,6 @@ public:
 
 	bool performanceMode = false;
 
-	GPUTimers gpuTimers;
-
 	// Execute a single effect with perf events and common variable setup
 	void ExecuteEffect(Effect& effect, uint32_t enableSettingID = 0xFFFFFFFF);
 

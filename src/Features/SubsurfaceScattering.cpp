@@ -119,6 +119,7 @@ void SubsurfaceScattering::DrawSettings()
 
 		ImGui::TreePop();
 	}
+
 }
 
 float3 SubsurfaceScattering::Gaussian(DiffusionProfile& a_profile, float variance, float r)
@@ -279,7 +280,9 @@ void SubsurfaceScattering::DrawSSS()
 			auto shader = GetComputeShaderPrepass();
 			context->CSSetShader(shader, nullptr, 0);
 
+			globals::gpuTimers->BeginPass("SubsurfaceScattering::DiffuseExtract");
 			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			globals::gpuTimers->EndPass();
 
 			uav = nullptr;
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
@@ -300,7 +303,9 @@ void SubsurfaceScattering::DrawSSS()
 				auto shader = GetComputeShaderHorizontalBlur();
 				context->CSSetShader(shader, nullptr, 0);
 
+				globals::gpuTimers->BeginPass("SubsurfaceScattering::HorizontalBlur");
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+				globals::gpuTimers->EndPass();
 
 				uav = nullptr;
 				context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
@@ -319,7 +324,9 @@ void SubsurfaceScattering::DrawSSS()
 				auto shader = GetComputeShaderVerticalBlur();
 				context->CSSetShader(shader, nullptr, 0);
 
+				globals::gpuTimers->BeginPass("SubsurfaceScattering::VerticalBlur");
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+				globals::gpuTimers->EndPass();
 			}
 		} else if (settings.SSMode == 1) {
 			// Burley pass: diffuseNoAlbedoTex -> main (SSS pixels only)
@@ -332,7 +339,9 @@ void SubsurfaceScattering::DrawSSS()
 				auto shader = GetComputeShaderBurley();
 				context->CSSetShader(shader, nullptr, 0);
 
+				globals::gpuTimers->BeginPass("SubsurfaceScattering::Burley");
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+				globals::gpuTimers->EndPass();
 			}
 		}
 	}

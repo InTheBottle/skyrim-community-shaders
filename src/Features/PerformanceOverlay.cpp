@@ -24,6 +24,7 @@
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "Menu.h"
+#include "Menu/StatisticsRenderer.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
@@ -103,6 +104,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShowInOverlay,
 	ShowDrawCalls,
 	ShowVRAM,
+	ShowCSPasses,
 	ShowFPS,
 	ShowPreFGFrameTimeGraph,
 	ShowPostFGFrameTimeGraph,
@@ -171,6 +173,7 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Checkbox("Show FPS Counter", &this->settings.ShowFPS);
 		ImGui::Checkbox("Show Draw Calls", &this->settings.ShowDrawCalls);
 		ImGui::Checkbox("Show VRAM Usage", &this->settings.ShowVRAM);
+		ImGui::Checkbox("Show CS Render Passes", &this->settings.ShowCSPasses);
 
 		bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 		if (this->settings.ShowFPS && isFrameGenerationActive) {
@@ -383,6 +386,12 @@ void PerformanceOverlay::DrawOverlay()
 		DrawDrawCallsTable(mainRows, summaryRows);
 	}
 
+	// CS Render Passes (GPU-timed)
+	if (this->settings.ShowCSPasses) {
+		ImGui::Separator();
+		StatisticsRenderer::RenderStatistics();
+	}
+
 	// VRAM & GPU Usage
 	if (this->settings.ShowVRAM && menu->GetDXGIAdapter3()) {
 		DrawVRAM();
@@ -491,6 +500,7 @@ void PerformanceOverlay::DrawFPS()
 		this->DrawPostFGFrameTimeGraph();
 	}
 }
+
 
 void PerformanceOverlay::DrawVRAM()
 {
