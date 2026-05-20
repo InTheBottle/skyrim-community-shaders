@@ -1,4 +1,4 @@
-#include "StatisticsRenderer.h"
+#include "ProfilingRenderer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,7 +39,7 @@ static ImU32 HslToImU32(float h, float s, float l)
 
 static constexpr float kGoldenRatio = 0.618033988749895f;
 
-ImU32 StatisticsRenderer::GetGroupColor(const std::string& groupName)
+ImU32 ProfilingRenderer::GetGroupColor(const std::string& groupName)
 {
 	auto it = groupColorMap.find(groupName);
 	if (it != groupColorMap.end())
@@ -52,7 +52,7 @@ ImU32 StatisticsRenderer::GetGroupColor(const std::string& groupName)
 	return color;
 }
 
-uint32_t StatisticsRenderer::ToLegitColor(ImU32 imColor)
+uint32_t ProfilingRenderer::ToLegitColor(ImU32 imColor)
 {
 	uint8_t r = (imColor >> 0) & 0xFF;
 	uint8_t g = (imColor >> 8) & 0xFF;
@@ -60,7 +60,7 @@ uint32_t StatisticsRenderer::ToLegitColor(ImU32 imColor)
 	return (0xFF << 24) | (b << 16) | (g << 8) | r;
 }
 
-ImVec4 StatisticsRenderer::HeatColor(float value, float maxValue)
+ImVec4 ProfilingRenderer::HeatColor(float value, float maxValue)
 {
 	if (maxValue <= 0.0f)
 		return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -81,14 +81,14 @@ ImVec4 StatisticsRenderer::HeatColor(float value, float maxValue)
 	return ImVec4(std::clamp(r, 0.0f, 1.0f), std::clamp(g, 0.0f, 1.0f), std::clamp(b, 0.0f, 1.0f), alpha);
 }
 
-void StatisticsRenderer::TextHeat(const char* fmt, float value, float maxValue)
+void ProfilingRenderer::TextHeat(const char* fmt, float value, float maxValue)
 {
 	ImVec4 bg = HeatColor(value, maxValue);
 	ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::GetColorU32(bg));
 	ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), fmt, value);
 }
 
-void StatisticsRenderer::RenderGraph()
+void ProfilingRenderer::RenderGraph()
 {
 	auto& profiler = (*globals::profiler);
 	const auto& results = profiler.GetResults();
@@ -125,6 +125,7 @@ void StatisticsRenderer::RenderGraph()
 	if (tasks.empty())
 		return;
 
+
 	gpuGraph.LoadFrameData(tasks.data(), tasks.size());
 
 	float maxFrameTimeSec = gpuGraph.GetPeakFrameTime() * 1.2f;
@@ -141,22 +142,23 @@ void StatisticsRenderer::RenderGraph()
 	ImGui::Spacing();
 }
 
-void StatisticsRenderer::RenderStatistics()
+void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 {
 	auto& profiler = (*globals::profiler);
 
-	int mode = static_cast<int>(timingMode);
-	ImGui::RadioButton("GPU", &mode, 0);
-	ImGui::SameLine();
-	ImGui::RadioButton("CPU", &mode, 1);
-	if (static_cast<TimingMode>(mode) != timingMode) {
-		timingMode = static_cast<TimingMode>(mode);
-		timeSinceLastUpdate = 1.0f;
+	bool cpuMode = false;
+	if (showModeToggle) {
+		int mode = static_cast<int>(timingMode);
+		ImGui::RadioButton("GPU", &mode, 0);
+		ImGui::SameLine();
+		ImGui::RadioButton("CPU", &mode, 1);
+		if (static_cast<TimingMode>(mode) != timingMode) {
+			timingMode = static_cast<TimingMode>(mode);
+			timeSinceLastUpdate = 1.0f;
+		}
+		cpuMode = (timingMode == TimingMode::CPU);
+		ImGui::Separator();
 	}
-
-	bool cpuMode = (timingMode == TimingMode::CPU);
-
-	ImGui::Separator();
 
 	float currentTime = static_cast<float>(ImGui::GetTime());
 	float deltaTime = currentTime - lastFrameTime;
@@ -223,72 +225,72 @@ void StatisticsRenderer::RenderStatistics()
 
 	RenderGraph();
 
-	float availHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+	if (showTable) {
+		float availHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
 
-	if (ImGui::BeginTable("##Profiler", 5,
-			ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_ScrollY,
-			ImVec2(0.0f, availHeight))) {
-		ImGui::TableSetupScrollFreeze(0, 1);
-		ImGui::TableSetupColumn("Pass", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-		ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-		ImGui::TableSetupColumn("P95", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-		ImGui::TableSetupColumn("P99", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-		ImGui::TableSetupColumn("%%", ImGuiTableColumnFlags_WidthFixed, 45.0f);
-		ImGui::TableHeadersRow();
+		if (ImGui::BeginTable("##Profiler", 5,
+				ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_ScrollY,
+				ImVec2(0.0f, availHeight))) {
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableSetupColumn("Pass", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+			ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+			ImGui::TableSetupColumn("P95", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+			ImGui::TableSetupColumn("P99", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+			ImGui::TableSetupColumn("%%", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+			ImGui::TableHeadersRow();
 
-		for (const auto& group : cachedGroups) {
-			ImGui::TableNextRow();
-			ImGui::TableNextColumn();
+			for (const auto& group : cachedGroups) {
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
 
-			if (group.passes.empty()) {
-				ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
-				ImGui::TableNextColumn();
-				if (cachedTotalAvgMs > 0.0f)
-					TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
-			} else {
-				bool open = ImGui::TreeNodeEx(group.name.c_str(), 0);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
-				ImGui::TableNextColumn();
-				TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
-				ImGui::TableNextColumn();
-				if (cachedTotalAvgMs > 0.0f)
-					TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
-				if (open) {
-					for (const auto& pass : group.passes) {
-						ImGui::TableNextRow();
-						ImGui::TableNextColumn();
-						ImGui::TreeNodeEx(pass.label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-						ImGui::TableNextColumn();
-						TextHeat("%.3f", pass.avgMs, cachedMaxAvgMs);
-						ImGui::TableNextColumn();
-						TextHeat("%.3f", pass.p95Ms, cachedMaxP95Ms);
-						ImGui::TableNextColumn();
-						TextHeat("%.3f", pass.p99Ms, cachedMaxP99Ms);
-						ImGui::TableNextColumn();
-						if (cachedTotalAvgMs > 0.0f)
-							TextHeat("%5.1f", (pass.avgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
+				if (group.passes.empty()) {
+					ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
+					ImGui::TableNextColumn();
+					if (cachedTotalAvgMs > 0.0f)
+						TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
+				} else {
+					bool open = ImGui::TreeNodeEx(group.name.c_str(), 0);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
+					ImGui::TableNextColumn();
+					TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
+					ImGui::TableNextColumn();
+					if (cachedTotalAvgMs > 0.0f)
+						TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
+					if (open) {
+						for (const auto& pass : group.passes) {
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::TreeNodeEx(pass.label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+							ImGui::TableNextColumn();
+							TextHeat("%.3f", pass.avgMs, cachedMaxAvgMs);
+							ImGui::TableNextColumn();
+							TextHeat("%.3f", pass.p95Ms, cachedMaxP95Ms);
+							ImGui::TableNextColumn();
+							TextHeat("%.3f", pass.p99Ms, cachedMaxP99Ms);
+							ImGui::TableNextColumn();
+							if (cachedTotalAvgMs > 0.0f)
+								TextHeat("%5.1f", (pass.avgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
+						}
+						ImGui::TreePop();
 					}
-					ImGui::TreePop();
 				}
 			}
+			ImGui::EndTable();
 		}
-		ImGui::EndTable();
 	}
 
-	const char* modeLabel = cpuMode ? "CPU" : "GPU";
-	ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "Total: %.3f ms (%s avg)", cachedTotalAvgMs, modeLabel);
 }
 
-void StatisticsRenderer::RenderFeatureTimers(const std::string& featurePrefix)
+void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
 {
 	auto& profiler = (*globals::profiler);
 	const auto& results = profiler.GetResults();

@@ -16,7 +16,7 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Menu/HomePageRenderer.h"
-#include "Menu/StatisticsRenderer.h"
+#include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -282,7 +282,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		BuiltInMenu{ "Home", []() { HomePageRenderer::RenderHomePage(); } },
 		BuiltInMenu{ "General", drawGeneralSettings },
 		BuiltInMenu{ "Advanced", drawAdvancedSettings },
-		BuiltInMenu{ "Profiling", []() { StatisticsRenderer::RenderStatistics(); } }
+		BuiltInMenu{ "Profiling", []() { ProfilingRenderer::RenderStatistics(); } }
 	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
 	// persist correctly. This is acceptable since the list is small and built
 	// infrequently, but could be optimized if performance becomes an issue.
@@ -755,7 +755,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 			feat->DrawSettings();
 
 			ImGui::SeparatorText("Profiling");
-			StatisticsRenderer::RenderFeatureTimers(feat->GetShortName());
+			ProfilingRenderer::RenderFeatureTimers(feat->GetShortName());
 
 			ImVec2 cursorPosAfter = ImGui::GetCursorPos();
 

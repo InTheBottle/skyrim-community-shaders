@@ -16,7 +16,8 @@ struct DrawCallRow;
 enum class SpecialShaderType
 {
 	Total = -1,
-	Other = -2
+	Other = -2,
+	CSPasses = -3
 };
 
 // Constants for special draw call values

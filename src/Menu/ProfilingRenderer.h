@@ -9,7 +9,7 @@
 #include "Profiler.h"
 #include "Utils/LegitProfiler.h"
 
-class StatisticsRenderer
+class ProfilingRenderer
 {
 public:
 	enum class TimingMode
@@ -18,7 +18,7 @@ public:
 		CPU
 	};
 
-	static void RenderStatistics();
+	static void RenderStatistics(bool showTable = true, bool showModeToggle = true);
 	static void RenderFeatureTimers(const std::string& featurePrefix);
 
 private:
