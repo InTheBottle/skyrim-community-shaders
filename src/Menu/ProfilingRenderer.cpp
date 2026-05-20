@@ -146,7 +146,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 {
 	auto& profiler = (*globals::profiler);
 
-	bool cpuMode = false;
+	bool cpuMode = (timingMode == TimingMode::CPU);
 	if (showModeToggle) {
 		int mode = static_cast<int>(timingMode);
 		ImGui::RadioButton("GPU", &mode, 0);
@@ -158,6 +158,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 		}
 		cpuMode = (timingMode == TimingMode::CPU);
 		ImGui::Separator();
+	}
 	}
 
 	float currentTime = static_cast<float>(ImGui::GetTime());
