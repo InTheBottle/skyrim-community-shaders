@@ -87,6 +87,8 @@ void EffectManager::Initialize()
 	} else {
 		initialized = true;
 	}
+
+	gpuTimers.Initialize(globals::d3d::device);
 }
 
 void EffectManager::Apply()
@@ -304,9 +306,11 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 
 	auto state = globals::state;
 	state->BeginPerfEvent(a_effect.GetName());
+	a_effect.gpuTimers = &gpuTimers;
 	UpdateCommonVariablesForEffect(a_effect.GetEffect());
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
+	a_effect.gpuTimers = nullptr;
 	state->EndPerfEvent();
 }
 
@@ -338,13 +342,15 @@ void EffectManager::ExecuteEffects()
 	context->IASetInputLayout(inputLayout.get());
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
-	// Apply brightness and gamma curve
+	gpuTimers.BeginTimer(context, "ColorCorrection");
 	ApplyColorCorrection(textureOriginal.UAV);
+	gpuTimers.EndTimer(context);
 
 	auto& textureManager = TextureManager::GetSingleton();
 
-	// Downsampled texture shared between bloom, lens and adaptation
+	gpuTimers.BeginTimer(context, "Downsample");
 	textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+	gpuTimers.EndTimer(context);
 
 	ExecuteEffect(enbBloom, ids.useBloom);
 	ExecuteEffect(enbLens, ids.useLens);
@@ -354,7 +360,7 @@ void EffectManager::ExecuteEffects()
 
 	textureManager.IncrementTextureSwap();
 
-	// Copy final render target to framebuffer
+	gpuTimers.BeginTimer(context, "CopyToFramebuffer");
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 	if (textureSDRTemp) {
 		auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
@@ -363,6 +369,9 @@ void EffectManager::ExecuteEffects()
 		auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer2.RTV);
 	}
+	gpuTimers.EndTimer(context);
+
+	gpuTimers.EndFrame(context);
 
 	stateBackup.Restore(context);
 	stateBackup.Release();

@@ -3,6 +3,7 @@
 #include "EffectManager.h"
 #include "PresetManager.h"
 #include "SettingManager.h"
+#include "TextureManager.h"
 #include "Utils/ShaderPatches.h"
 
 static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
@@ -217,6 +218,9 @@ std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSetti
 	// Debug Information
 	categorizedSettings["Debug"] = {};
 
+	// Statistics
+	categorizedSettings["Statistics"] = {};
+
 	return categorizedSettings;
 }
 
@@ -282,7 +286,7 @@ void MenuManager::RenderAllSettings()
 	auto categorizedSettings = GetCategorizedSettings();
 
 	// Define explicit order for tabs
-	const std::vector<std::string> tabOrder = { "Presets", "Main", "Weather", "Debug" };
+	const std::vector<std::string> tabOrder = { "Presets", "Main", "Weather", "Debug", "Statistics" };
 
 	if (ImGui::BeginTabBar("SettingsTabBar", ImGuiTabBarFlags_None)) {
 		for (const auto& tabName : tabOrder) {
@@ -362,6 +366,10 @@ void MenuManager::RenderAllSettings()
 
 				if (tabName == "Debug") {
 					RenderDebugControl();
+				}
+
+				if (tabName == "Statistics") {
+					RenderStatisticsTab();
 				}
 
 				for (const auto& category : categories) {
@@ -558,6 +566,165 @@ void MenuManager::RenderAllSettings()
 			}
 		}
 		ImGui::EndTabBar();
+	}
+}
+
+void MenuManager::RenderStatisticsTab()
+{
+	auto& effectManager = EffectManager::GetSingleton();
+
+	// Update cached timings ~once per second
+	float currentTime = static_cast<float>(ImGui::GetTime());
+	float deltaTime = currentTime - lastFrameTime;
+	lastFrameTime = currentTime;
+	timeSinceLastUpdate += deltaTime;
+
+	if (timeSinceLastUpdate >= 1.0f) {
+		timeSinceLastUpdate = 0.0f;
+		cachedTimerResults = effectManager.gpuTimers.GetResults();
+		cachedTotalTimeMs = effectManager.gpuTimers.GetTotalTimeMs();
+	}
+
+	// GPU Timings — tree view grouped by shader/effect
+	if (ImGui::CollapsingHeader("GPU Timings", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (cachedTimerResults.empty()) {
+			ImGui::TextDisabled("No timing data available");
+		} else {
+			struct PassEntry
+			{
+				std::string label;
+				float ms;
+			};
+			struct GroupEntry
+			{
+				std::string name;
+				float totalMs = 0.0f;
+				std::vector<PassEntry> passes;
+			};
+
+			std::vector<GroupEntry> groups;
+			for (const auto& result : cachedTimerResults) {
+				if (!result.valid)
+					continue;
+
+				auto pos = result.name.find(" Pass ");
+				if (pos != std::string::npos) {
+					std::string groupName = result.name.substr(0, pos);
+					std::string passLabel = result.name.substr(pos + 1);
+
+					if (groups.empty() || groups.back().name != groupName)
+						groups.push_back({ groupName });
+
+					groups.back().totalMs += result.gpuTimeMs;
+					groups.back().passes.push_back({ passLabel, result.gpuTimeMs });
+				} else {
+					groups.push_back({ result.name, result.gpuTimeMs, {} });
+				}
+			}
+
+			for (const auto& group : groups) {
+				if (group.passes.empty()) {
+					ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 130.0f);
+					ImGui::Text("%.3f ms", group.totalMs);
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 45.0f);
+					if (cachedTotalTimeMs > 0.0f)
+						ImGui::Text("%5.1f%%", (group.totalMs / cachedTotalTimeMs) * 100.0f);
+				} else {
+					bool open = ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 130.0f);
+					ImGui::Text("%.3f ms", group.totalMs);
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 45.0f);
+					if (cachedTotalTimeMs > 0.0f)
+						ImGui::Text("%5.1f%%", (group.totalMs / cachedTotalTimeMs) * 100.0f);
+					if (open) {
+						for (const auto& pass : group.passes) {
+							ImGui::TreeNodeEx(pass.label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+							ImGui::SameLine(ImGui::GetContentRegionAvail().x - 130.0f);
+							ImGui::Text("%.3f ms", pass.ms);
+							ImGui::SameLine(ImGui::GetContentRegionAvail().x - 45.0f);
+							if (cachedTotalTimeMs > 0.0f)
+								ImGui::Text("%5.1f%%", (pass.ms / cachedTotalTimeMs) * 100.0f);
+						}
+						ImGui::TreePop();
+					}
+				}
+			}
+
+			ImGui::Separator();
+			ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "Total: %.3f ms", cachedTotalTimeMs);
+		}
+	}
+
+	// Effect Textures
+	if (ImGui::CollapsingHeader("Effect Textures", ImGuiTreeNodeFlags_DefaultOpen)) {
+		Effect* allEffects[] = { &effectManager.enbBloom, &effectManager.enbLens, &effectManager.enbAdaptation, &effectManager.enbEffect, &effectManager.enbEffectPostPass };
+
+		for (auto* effect : allEffects) {
+			if (!effect->IsCompiled())
+				continue;
+
+			bool hasTextures = !effect->customTextureCache.empty() || !effect->effectTextureCache.empty();
+			if (!hasTextures)
+				continue;
+
+			if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+				if (!effect->customTextureCache.empty()) {
+					if (ImGui::BeginTable(("CustomTex_" + effect->GetName()).c_str(), 2, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+						ImGui::TableSetupColumn("Filename", ImGuiTableColumnFlags_WidthStretch);
+						ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+						ImGui::TableHeadersRow();
+
+						for (const auto& [filename, srv] : effect->customTextureCache) {
+							if (!srv)
+								continue;
+
+							winrt::com_ptr<ID3D11Resource> resource;
+							srv->GetResource(resource.put());
+							winrt::com_ptr<ID3D11Texture2D> tex2d;
+							if (resource && resource.try_as(tex2d) && tex2d) {
+								D3D11_TEXTURE2D_DESC desc{};
+								tex2d->GetDesc(&desc);
+
+								ImGui::TableNextRow();
+								ImGui::TableSetColumnIndex(0);
+								ImGui::Text("%s", filename.c_str());
+								ImGui::TableSetColumnIndex(1);
+								ImGui::Text("%ux%u", desc.Width, desc.Height);
+							}
+						}
+
+						ImGui::EndTable();
+					}
+				}
+
+				if (!effect->effectTextureCache.empty()) {
+					if (ImGui::BeginTable(("EffectTex_" + effect->GetName()).c_str(), 2, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+						ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+						ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+						ImGui::TableHeadersRow();
+
+						for (const auto& [texName, tex] : effect->effectTextureCache) {
+							if (!tex.texture)
+								continue;
+
+							D3D11_TEXTURE2D_DESC desc{};
+							tex.texture->GetDesc(&desc);
+
+							ImGui::TableNextRow();
+							ImGui::TableSetColumnIndex(0);
+							ImGui::Text("%s", texName.c_str());
+							ImGui::TableSetColumnIndex(1);
+							ImGui::Text("%ux%u", desc.Width, desc.Height);
+						}
+
+						ImGui::EndTable();
+					}
+				}
+
+				ImGui::TreePop();
+			}
+		}
 	}
 }
 

@@ -5,6 +5,7 @@
 #include "Effects/ENBEffect.h"
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
+#include "GPUTimers.h"
 
 enum class TimeOfDay1Index : int
 {
@@ -126,6 +127,8 @@ public:
 	bool IsInitialized() const { return initialized; }
 
 	bool performanceMode = false;
+
+	GPUTimers gpuTimers;
 
 	// Execute a single effect with perf events and common variable setup
 	void ExecuteEffect(Effect& effect, uint32_t enableSettingID = 0xFFFFFFFF);

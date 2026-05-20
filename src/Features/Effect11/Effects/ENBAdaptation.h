@@ -10,7 +10,8 @@ public:
 	virtual void Execute() override;
 	virtual void UpdateEffectVariables() override;
 
+	TextureManager::Texture textureCurrent;
+
 protected:
-	// Override virtual texture creation function
 	void CreateEffectTextures() override;
 };

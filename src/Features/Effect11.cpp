@@ -785,8 +785,12 @@ void Effect11::DrawVolumetricRays()
 	ID3D11SamplerState* sampler = Deferred::GetSingleton()->linearSampler;
 	D3D11_VIEWPORT viewport{ 0, 0, resolution.x, resolution.y, 0, 1 };
 
+	auto& gpuTimers = effectManager.gpuTimers;
+
 	// Pass 1: Raymarch shadow → R16F texture
 	{
+		gpuTimers.BeginTimer(context, "VolumetricRays Pass 0");
+
 		ID3D11RenderTargetView* rtv = vrTexA->rtv.get();
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->RSSetViewports(1, &viewport);
@@ -810,6 +814,8 @@ void Effect11::DrawVolumetricRays()
 
 		ID3D11RenderTargetView* nullRTV = nullptr;
 		context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+		gpuTimers.EndTimer(context);
 	}
 
 	// Blur setup
@@ -828,6 +834,7 @@ void Effect11::DrawVolumetricRays()
 
 	// Pass 2: Blur horizontal (texA → texB)
 	{
+		gpuTimers.BeginTimer(context, "VolumetricRays Pass 1");
 		context->CSSetShader(blurHCS, nullptr, 0);
 
 		ID3D11ShaderResourceView* csSRVs[2] = { vrTexA->srv.get(), depthSRV };
@@ -846,10 +853,12 @@ void Effect11::DrawVolumetricRays()
 		context->CSSetShaderResources(0, 2, nullSRVs);
 		ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
 		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+		gpuTimers.EndTimer(context);
 	}
 
 	// Pass 3: Blur vertical (texB → texA)
 	{
+		gpuTimers.BeginTimer(context, "VolumetricRays Pass 2");
 		context->CSSetShader(blurVCS, nullptr, 0);
 
 		ID3D11ShaderResourceView* csSRVs[2] = { vrTexB->srv.get(), depthSRV };
@@ -866,10 +875,12 @@ void Effect11::DrawVolumetricRays()
 		ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
 		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 		context->CSSetShader(nullptr, nullptr, 0);
+		gpuTimers.EndTimer(context);
 	}
 
 	// Pass 4: Apply blurred shadow with color → main RT (additive)
 	{
+		gpuTimers.BeginTimer(context, "VolumetricRays Pass 3");
 		ID3D11RenderTargetView* rtv = main.RTV;
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->RSSetViewports(1, &viewport);
@@ -899,6 +910,7 @@ void Effect11::DrawVolumetricRays()
 		context->PSSetSamplers(0, 1, &sampler);
 
 		context->Draw(4, 0);
+		gpuTimers.EndTimer(context);
 	}
 
 	stateBackup.Restore(context);

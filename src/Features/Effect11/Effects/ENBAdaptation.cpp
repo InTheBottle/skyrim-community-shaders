@@ -14,14 +14,12 @@ void ENBAdaptation::Execute()
 
 	SetShaderResourceVariable("TextureCurrent", currentSRV);
 
-	auto it = effectTextureCache.find("TextureCurrent");
-	if (it == effectTextureCache.end()) {
+	if (!textureCurrent.texture)
 		return;
-	}
 
-	ExecuteTechnique("Downsample", it->second);
+	ExecuteTechnique("Downsample", textureCurrent);
 
-	SetShaderResourceVariable("TextureCurrent", it->second.srv.get());
+	SetShaderResourceVariable("TextureCurrent", textureCurrent.srv.get());
 
 	// Use swap mechanism to determine input/output
 	const char* texturePreviousName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptationSwap" : "TextureAdaptation";
@@ -62,5 +60,5 @@ void ENBAdaptation::UpdateEffectVariables()
 
 void ENBAdaptation::CreateEffectTextures()
 {
-	effectTextureCache["TextureCurrent"] = CreateTexture(16, 16, DXGI_FORMAT_R32_FLOAT, "ENBAdaptation::TextureCurrent");
+	textureCurrent = CreateTexture(16, 16, DXGI_FORMAT_R32_FLOAT, "ENBAdaptation::TextureCurrent");
 }

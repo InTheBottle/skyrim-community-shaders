@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <winrt/base.h>
 
+#include "../GPUTimers.h"
 #include "../TextureManager.h"
 
 class Effect
@@ -61,6 +62,8 @@ public:
 		std::string renderTargetName;
 		std::vector<TechniqueBinding> bindings;
 	};
+
+	GPUTimers* gpuTimers = nullptr;
 
 	winrt::com_ptr<ID3DX11Effect> effect;
 	std::unordered_map<std::string, std::vector<TechniqueInfo>> techniques;
@@ -224,7 +227,7 @@ public:
 	// Helper function for safe vector variable access
 	bool SetVectorVariable(const std::string& variableName, const void* data, uint32_t size);
 
-	void RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV);
+	void RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV, uint32_t passOffset = 0);
 
 	// UI annotation helpers (public for ENBExtender access)
 	std::string GetUIAnnotation(ID3DX11EffectVariable* variable, const std::string& annotationName);
