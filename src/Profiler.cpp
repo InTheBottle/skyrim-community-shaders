@@ -73,6 +73,7 @@ void Profiler::Release()
 	}
 	results.clear();
 	knownTimers.clear();
+	knownTimerIndex.clear();
 	totalTimeMs = 0.0f;
 	cpuTotalTimeMs = 0.0f;
 	initialized = false;
@@ -192,22 +193,15 @@ void Profiler::CollectResults()
 			activeTotalMs += ms;
 			activeCpuTotalMs += timer.cpuMs;
 
-			bool isNew = true;
-			for (auto& known : knownTimers) {
-				if (known.name == timer.name) {
-					isNew = false;
-					known.gpu.PushSample(ms);
-					known.cpu.PushSample(timer.cpuMs);
-					break;
-				}
-			}
-			if (isNew) {
+			auto [it, inserted] = knownTimerIndex.try_emplace(timer.name, knownTimers.size());
+			if (inserted) {
 				KnownTimer kt;
 				kt.name = timer.name;
-				kt.gpu.PushSample(ms);
-				kt.cpu.PushSample(timer.cpuMs);
 				knownTimers.push_back(std::move(kt));
 			}
+			auto& known = knownTimers[it->second];
+			known.gpu.PushSample(ms);
+			known.cpu.PushSample(timer.cpuMs);
 		}
 	}
 

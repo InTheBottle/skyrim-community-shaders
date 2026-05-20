@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <winrt/base.h>
 
@@ -82,15 +83,20 @@ public:
 	{
 		results.clear();
 		knownTimers.clear();
+		knownTimerIndex.clear();
 		totalTimeMs = 0.0f;
 		cpuTotalTimeMs = 0.0f;
 	}
 
 	void ClearTimersForFeature(const std::string& featureName)
 	{
-		std::erase_if(knownTimers, [&featureName](const KnownTimer& kt) {
-			return kt.name.starts_with(featureName + "::");
+		std::string prefix = featureName + "::";
+		std::erase_if(knownTimers, [&prefix](const KnownTimer& kt) {
+			return kt.name.starts_with(prefix);
 		});
+		knownTimerIndex.clear();
+		for (size_t i = 0; i < knownTimers.size(); i++)
+			knownTimerIndex[knownTimers[i].name] = i;
 	}
 
 private:
@@ -132,6 +138,7 @@ private:
 		RollingHistory cpu;
 	};
 	std::vector<KnownTimer> knownTimers;
+	std::unordered_map<std::string, size_t> knownTimerIndex;
 	float totalTimeMs = 0.0f;
 	float cpuTotalTimeMs = 0.0f;
 

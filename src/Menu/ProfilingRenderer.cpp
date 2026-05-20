@@ -125,7 +125,6 @@ void ProfilingRenderer::RenderGraph()
 	if (tasks.empty())
 		return;
 
-
 	gpuGraph.LoadFrameData(tasks.data(), tasks.size());
 
 	float maxFrameTimeSec = gpuGraph.GetPeakFrameTime() * 1.2f;
@@ -158,7 +157,6 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 		}
 		cpuMode = (timingMode == TimingMode::CPU);
 		ImGui::Separator();
-	}
 	}
 
 	float currentTime = static_cast<float>(ImGui::GetTime());
