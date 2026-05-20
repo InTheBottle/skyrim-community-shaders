@@ -4,7 +4,10 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <map>
 #include <sstream>
 #include <string>
@@ -178,7 +181,7 @@ namespace ImGuiUtils
 				for (const auto& task : frame.tasks) {
 					float taskStartHeight = (float(task.startTime) / maxFrameTime) * graphSize.y;
 					float taskEndHeight = (float(task.endTime) / maxFrameTime) * graphSize.y;
-					if (abs(taskEndHeight - taskStartHeight) > heightThreshold)
+					if (std::abs(taskEndHeight - taskStartHeight) > heightThreshold)
 						Rect(drawList, ImVec2(taskPos.x, taskPos.y - taskStartHeight), ImVec2(taskPos.x + frameWidth, taskPos.y - taskEndHeight), task.color, true);
 				}
 			}

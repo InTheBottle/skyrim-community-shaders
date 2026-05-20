@@ -764,6 +764,8 @@ void State::SetupResources()
 		globals::profiler->SetPerfEventCallbacks(
 			[this](std::string_view name) { BeginPerfEvent(name); },
 			[this](std::string_view) { EndPerfEvent(); });
+	} else {
+		globals::profiler->SetPerfEventCallbacks({}, {});
 	}
 }
 

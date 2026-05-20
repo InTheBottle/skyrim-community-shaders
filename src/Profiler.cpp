@@ -166,8 +166,8 @@ void Profiler::CollectResults()
 
 	struct ActiveTimerData
 	{
-		float gpuMs;
-		float cpuMs;
+		float gpuMs = 0.0f;
+		float cpuMs = 0.0f;
 	};
 	std::unordered_map<std::string, ActiveTimerData> activeTimers;
 	float activeTotalMs = 0.0f;
@@ -186,7 +186,9 @@ void Profiler::CollectResults()
 				continue;
 
 			float ms = static_cast<float>(static_cast<double>(tsEnd - tsBegin) * ticksToMs);
-			activeTimers[timer.name] = { ms, timer.cpuMs };
+			auto& entry = activeTimers[timer.name];
+			entry.gpuMs += ms;
+			entry.cpuMs += timer.cpuMs;
 			activeTotalMs += ms;
 			activeCpuTotalMs += timer.cpuMs;
 
