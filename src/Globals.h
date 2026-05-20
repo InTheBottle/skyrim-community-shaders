@@ -32,6 +32,7 @@ struct PerformanceOverlay;
 struct WetnessEffects;
 struct ExtendedTranslucency;
 struct Upscaling;
+class Profiler;
 struct WeatherEditor;
 struct ExponentialHeightFog;
 struct HDRDisplay;
