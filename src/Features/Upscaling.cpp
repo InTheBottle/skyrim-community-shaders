@@ -1129,9 +1129,9 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
 
-		globals::gpuTimers->BeginPass("Upscaling::ClearHMDMask");
+		globals::profiler->BeginPass("Upscaling::ClearHMDMask");
 		context->Dispatch(dispatchX, dispatchY, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		// Unbind
 		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
@@ -1399,9 +1399,9 @@ void Upscaling::CopySharedD3D12Resources()
 
 		context->PSSetShader(copyDepthToSharedBufferPS.get(), nullptr, 0);
 
-		globals::gpuTimers->BeginPass("Upscaling::CopyDepthD3D12");
+		globals::profiler->BeginPass("Upscaling::CopyDepthD3D12");
 		context->Draw(3, 0);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	// Clean up
@@ -1693,7 +1693,7 @@ void Upscaling::Upscale()
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
 	{
-		globals::gpuTimers->BeginPass("Upscaling::EncodeTextures");
+		globals::profiler->BeginPass("Upscaling::EncodeTextures");
 		TracyD3D11Zone(globals::state->tracyCtx, "Encode Upscaling Textures");
 
 		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
@@ -1751,11 +1751,11 @@ void Upscaling::Upscale()
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	{
-		globals::gpuTimers->BeginPass("Upscaling::Upscale");
+		globals::profiler->BeginPass("Upscaling::Upscale");
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
@@ -1768,7 +1768,7 @@ void Upscaling::Upscale()
 			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
 		}
 
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 }
 
@@ -1925,9 +1925,9 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(2, rtvs, depth.views[0]);
 
 		context->PSSetShader(depthUpscalePS, nullptr, 0);
-		globals::gpuTimers->BeginPass("Upscaling::DepthUpscale");
+		globals::profiler->BeginPass("Upscaling::DepthUpscale");
 		context->Draw(3, 0);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	{
@@ -1950,9 +1950,9 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
 		context->PSSetShader(underwaterMaskPS, nullptr, 0);
-		globals::gpuTimers->BeginPass("Upscaling::UnderwaterMaskUpscale");
+		globals::profiler->BeginPass("Upscaling::UnderwaterMaskUpscale");
 		context->Draw(3, 0);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	// Now propagate the upscaled depth to kMAIN_COPY so downstream VR passes see it.

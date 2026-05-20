@@ -338,7 +338,7 @@ void Deferred::DeferredPasses()
 
 	auto& skylighting = globals::features::skylighting;
 
-	auto* gpuTimers = globals::gpuTimers;
+	auto* profiler = globals::profiler;
 
 	auto& ssgi = globals::features::screenSpaceGI;
 	if (ssgi.loaded)
@@ -402,9 +402,9 @@ void Deferred::DeferredPasses()
 
 		{
 			TracyD3D11Zone(globals::state->tracyCtx, "Deferred Composite - Dispatch");
-			gpuTimers->BeginPass("DeferredComposite");
+			profiler->BeginPass("DeferredComposite");
 			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-			gpuTimers->EndPass();
+			profiler->EndPass();
 		}
 
 		// Unbind mode texture SRV
@@ -424,9 +424,9 @@ void Deferred::DeferredPasses()
 	// VR: Stereo reprojection fills Eye 1 holes here (after DeferredComposite, before SSR/water/sky)
 	// so that ISReflectionsRayTracing sees valid pixels in both eyes.
 	if (globals::game::isVR) {
-		gpuTimers->BeginPass("VR::StereoBlend");
+		profiler->BeginPass("VR::StereoBlend");
 		globals::features::vr.DrawStereoBlend();
-		gpuTimers->EndPass();
+		profiler->EndPass();
 	}
 
 	// Clear

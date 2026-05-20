@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <winrt/base.h>
 
-#include "Utils/GPUTimers.h"
+#include "Profiler.h"
 #include "../TextureManager.h"
 
 class Effect
@@ -63,7 +63,7 @@ public:
 		std::vector<TechniqueBinding> bindings;
 	};
 
-	GPUTimers* gpuTimers = nullptr;
+	Profiler* profiler = nullptr;
 
 	winrt::com_ptr<ID3DX11Effect> effect;
 	std::unordered_map<std::string, std::vector<TechniqueInfo>> techniques;

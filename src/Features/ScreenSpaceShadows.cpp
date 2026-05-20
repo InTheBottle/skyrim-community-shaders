@@ -197,7 +197,7 @@ void ScreenSpaceShadows::DrawShadows()
 	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, const float* lightProj,
 						   float invTexSizeX, float invTexSizeY) {
 		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		globals::gpuTimers->BeginPass(timerName);
+		globals::profiler->BeginPass(timerName);
 
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -237,7 +237,7 @@ void ScreenSpaceShadows::DrawShadows()
 			}
 		}
 
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	};
 
 	float InvTexSizeX = 1.0f / (float)viewportSize[0];
@@ -292,7 +292,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	TracyD3D11Zone(globals::state->tracyCtx, "SSS - Stereo Sync");
 
 	auto context = globals::d3d::context;
-	globals::gpuTimers->BeginPass("ScreenSpaceShadows::StereoSync");
+	globals::profiler->BeginPass("ScreenSpaceShadows::StereoSync");
 
 	context->CopyResource(stereoSyncCopyTex->resource.get(), screenSpaceShadowsTexture->resource.get());
 
@@ -332,7 +332,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	context->CSSetConstantBuffers(1, 1, &cbPtr);
 	context->CSSetShader(nullptr, nullptr, 0);
 
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 }
 
 void ScreenSpaceShadows::Prepass()

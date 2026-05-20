@@ -1,41 +1,45 @@
-#include "GPUTimers.h"
+#include "Profiler.h"
 
 #include <algorithm>
 #include <unordered_map>
 
-float GPUTimers::KnownTimer::GetAverage() const
+float Profiler::RollingHistory::GetAverage() const
 {
-	if (historyCount == 0)
+	if (count == 0)
 		return lastMs;
 	float sum = 0.0f;
-	for (uint32_t i = 0; i < historyCount; i++)
+	for (uint32_t i = 0; i < count; i++)
 		sum += history[i];
-	return sum / static_cast<float>(historyCount);
+	return sum / static_cast<float>(count);
 }
 
-float GPUTimers::KnownTimer::GetPercentile(float p) const
+float Profiler::RollingHistory::GetPercentile(float p) const
 {
-	if (historyCount == 0)
+	if (count == 0)
 		return lastMs;
 
 	thread_local std::vector<float> sorted;
-	sorted.resize(historyCount);
-	for (uint32_t i = 0; i < historyCount; i++)
+	sorted.resize(count);
+	for (uint32_t i = 0; i < count; i++)
 		sorted[i] = history[i];
 	std::sort(sorted.begin(), sorted.end());
 
-	float idx = (p / 100.0f) * static_cast<float>(historyCount - 1);
+	float idx = (p / 100.0f) * static_cast<float>(count - 1);
 	uint32_t lo = static_cast<uint32_t>(idx);
-	uint32_t hi = std::min(lo + 1, historyCount - 1);
+	uint32_t hi = std::min(lo + 1, count - 1);
 	float frac = idx - static_cast<float>(lo);
 	return sorted[lo] * (1.0f - frac) + sorted[hi] * frac;
 }
 
-void GPUTimers::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
+void Profiler::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
 {
 	Release();
 
 	context = a_context;
+
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency(&freq);
+	cpuTicksToMs = 1000.0 / static_cast<double>(freq.QuadPart);
 
 	for (auto& frame : frames) {
 		D3D11_QUERY_DESC disjointDesc{};
@@ -59,7 +63,7 @@ void GPUTimers::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
 	initialized = true;
 }
 
-void GPUTimers::Release()
+void Profiler::Release()
 {
 	for (auto& frame : frames) {
 		frame.disjoint = nullptr;
@@ -70,11 +74,12 @@ void GPUTimers::Release()
 	results.clear();
 	knownTimers.clear();
 	totalTimeMs = 0.0f;
+	cpuTotalTimeMs = 0.0f;
 	initialized = false;
 	context = nullptr;
 }
 
-void GPUTimers::BeginFrame()
+void Profiler::BeginFrame()
 {
 	if (!initialized || !context || frameActive)
 		return;
@@ -88,7 +93,7 @@ void GPUTimers::BeginFrame()
 	context->Begin(frame.disjoint.get());
 }
 
-void GPUTimers::BeginPass(const std::string& name)
+void Profiler::BeginPass(const std::string& name)
 {
 	if (!initialized || !context)
 		return;
@@ -103,12 +108,13 @@ void GPUTimers::BeginPass(const std::string& name)
 	auto& timer = frame.timers[frame.activeCount];
 	timer.name = name;
 	context->End(timer.begin.get());
+	QueryPerformanceCounter(&timer.cpuBegin);
 
 	if (beginPerfEvent)
 		beginPerfEvent(name);
 }
 
-void GPUTimers::EndPass()
+void Profiler::EndPass()
 {
 	if (!initialized || !context || !frameActive)
 		return;
@@ -117,14 +123,20 @@ void GPUTimers::EndPass()
 	if (frame.activeCount >= kMaxTimers)
 		return;
 
-	context->End(frame.timers[frame.activeCount].end.get());
+	auto& timer = frame.timers[frame.activeCount];
+
+	LARGE_INTEGER cpuEnd;
+	QueryPerformanceCounter(&cpuEnd);
+	timer.cpuMs = static_cast<float>(static_cast<double>(cpuEnd.QuadPart - timer.cpuBegin.QuadPart) * cpuTicksToMs);
+
+	context->End(timer.end.get());
 	frame.activeCount++;
 
 	if (endPerfEvent)
 		endPerfEvent({});
 }
 
-void GPUTimers::EndFrame()
+void Profiler::EndFrame()
 {
 	if (!initialized || !context || !frameActive)
 		return;
@@ -135,7 +147,7 @@ void GPUTimers::EndFrame()
 	framesSinceInit++;
 }
 
-void GPUTimers::CollectResults()
+void Profiler::CollectResults()
 {
 	if (framesSinceInit < kFrameLatency)
 		return;
@@ -152,8 +164,14 @@ void GPUTimers::CollectResults()
 
 	frame.inFlight = false;
 
-	std::unordered_map<std::string, float> activeTimers;
+	struct ActiveTimerData
+	{
+		float gpuMs;
+		float cpuMs;
+	};
+	std::unordered_map<std::string, ActiveTimerData> activeTimers;
 	float activeTotalMs = 0.0f;
+	float activeCpuTotalMs = 0.0f;
 
 	if (!disjointData.Disjoint) {
 		double ticksToMs = 1000.0 / static_cast<double>(disjointData.Frequency);
@@ -168,27 +186,31 @@ void GPUTimers::CollectResults()
 				continue;
 
 			float ms = static_cast<float>(static_cast<double>(tsEnd - tsBegin) * ticksToMs);
-			activeTimers[timer.name] = ms;
+			activeTimers[timer.name] = { ms, timer.cpuMs };
 			activeTotalMs += ms;
+			activeCpuTotalMs += timer.cpuMs;
 
 			bool isNew = true;
 			for (auto& known : knownTimers) {
 				if (known.name == timer.name) {
 					isNew = false;
-					known.PushSample(ms);
+					known.gpu.PushSample(ms);
+					known.cpu.PushSample(timer.cpuMs);
 					break;
 				}
 			}
 			if (isNew) {
 				KnownTimer kt;
 				kt.name = timer.name;
-				kt.PushSample(ms);
+				kt.gpu.PushSample(ms);
+				kt.cpu.PushSample(timer.cpuMs);
 				knownTimers.push_back(std::move(kt));
 			}
 		}
 	}
 
 	totalTimeMs = activeTotalMs;
+	cpuTotalTimeMs = activeCpuTotalMs;
 
 	results.clear();
 	results.reserve(knownTimers.size());
@@ -197,14 +219,22 @@ void GPUTimers::CollectResults()
 		result.name = known.name;
 		auto it = activeTimers.find(known.name);
 		if (it != activeTimers.end()) {
-			result.gpuTimeMs = it->second;
+			result.gpuTimeMs = it->second.gpuMs;
+			result.cpuTimeMs = it->second.cpuMs;
 		} else {
-			result.gpuTimeMs = known.lastMs;
+			result.gpuTimeMs = known.gpu.lastMs;
+			result.cpuTimeMs = known.cpu.lastMs;
 		}
-		result.avgMs = known.GetAverage();
-		result.p95Ms = known.GetPercentile(95.0f);
-		result.p99Ms = known.GetPercentile(99.0f);
+		result.avgMs = known.gpu.GetAverage();
+		result.p95Ms = known.gpu.GetPercentile(95.0f);
+		result.p99Ms = known.gpu.GetPercentile(99.0f);
+		result.cpuAvgMs = known.cpu.GetAverage();
+		result.cpuP95Ms = known.cpu.GetPercentile(95.0f);
+		result.cpuP99Ms = known.cpu.GetPercentile(99.0f);
 		result.valid = true;
+		result.historyBuffer = known.gpu.history;
+		result.historyHead = known.gpu.head;
+		result.historyCount = known.gpu.count;
 		results.push_back(std::move(result));
 	}
 }

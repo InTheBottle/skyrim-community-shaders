@@ -21,14 +21,7 @@ private:
 
 	// Helper UI methods
 	void RenderAllSettings();
-	void RenderStatisticsTab();
 	std::map<std::string, std::vector<std::string>> GetCategorizedSettings() const;
 	std::vector<int> GetActiveTimeOfDayIndices() const;
 	float GetTimeOfDayBlendFactor(int timeIndex) const;
-
-	// Cached GPU timing display (updated ~1s)
-	std::vector<GPUTimers::TimerResult> cachedTimerResults;
-	float cachedTotalTimeMs = 0.0f;
-	float timeSinceLastUpdate = 0.0f;
-	float lastFrameTime = 0.0f;
 };

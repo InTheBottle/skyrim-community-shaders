@@ -780,9 +780,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(prefilterDepthsCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::PrefilterDepths");
+		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterDepths");
 		context->Dispatch((resolution[0] + 15) >> 4, (resolution[1] + 15) >> 4, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	// fetch radiance and disocclusion
@@ -812,9 +812,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::RadianceDisocc");
+		globals::profiler->BeginPass("ScreenSpaceGI::RadianceDisocc");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling.
 		// radianceDisocc wrote mip 0 directly to texRadianceTemp above, so we can bind it
@@ -833,9 +833,9 @@ void ScreenSpaceGI::DrawSSGI()
 			context->CSSetShaderResources(0, 1, srvs.data());
 			context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 			context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
-			globals::gpuTimers->BeginPass("ScreenSpaceGI::PrefilterRadiance");
+			globals::profiler->BeginPass("ScreenSpaceGI::PrefilterRadiance");
 			context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-			globals::gpuTimers->EndPass();
+			globals::profiler->EndPass();
 		}
 
 		inputAoTexIdx = !inputAoTexIdx;
@@ -858,9 +858,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, 1, srvs.data());
 		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::PrefilterNormals");
+		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterNormals");
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	// GI
@@ -887,9 +887,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(giCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::GI");
+		globals::profiler->BeginPass("ScreenSpaceGI::GI");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;
@@ -915,9 +915,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(blurCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::Blur");
+		globals::profiler->BeginPass("ScreenSpaceGI::Blur");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		inputGITexIdx = !inputGITexIdx;
 		lastFrameGITexIdx = inputGITexIdx;
@@ -945,9 +945,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(stereoSyncCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::StereoSync");
+		globals::profiler->BeginPass("ScreenSpaceGI::StereoSync");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;
@@ -973,9 +973,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(upsampleCompute.get(), nullptr, 0);
-		globals::gpuTimers->BeginPass("ScreenSpaceGI::Upsample");
+		globals::profiler->BeginPass("ScreenSpaceGI::Upsample");
 		context->Dispatch((resolution[0] + 7u) >> 3, (resolution[1] + 7u) >> 3, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;

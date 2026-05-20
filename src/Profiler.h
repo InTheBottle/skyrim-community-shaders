@@ -6,7 +6,7 @@
 #include <vector>
 #include <winrt/base.h>
 
-class GPUTimers
+class Profiler
 {
 public:
 	static constexpr uint32_t kMaxTimers = 128;
@@ -15,6 +15,26 @@ public:
 
 	using PerfEventCallback = std::function<void(std::string_view)>;
 
+	struct RollingHistory
+	{
+		float history[kHistorySize]{};
+		uint32_t head = 0;
+		uint32_t count = 0;
+		float lastMs = 0.0f;
+
+		void PushSample(float ms)
+		{
+			history[head] = ms;
+			head = (head + 1) % kHistorySize;
+			if (count < kHistorySize)
+				count++;
+			lastMs = ms;
+		}
+
+		float GetAverage() const;
+		float GetPercentile(float p) const;
+	};
+
 	struct TimerResult
 	{
 		std::string name;
@@ -22,7 +42,22 @@ public:
 		float avgMs = 0.0f;
 		float p95Ms = 0.0f;
 		float p99Ms = 0.0f;
+		float cpuTimeMs = 0.0f;
+		float cpuAvgMs = 0.0f;
+		float cpuP95Ms = 0.0f;
+		float cpuP99Ms = 0.0f;
 		bool valid = false;
+
+		const float* historyBuffer = nullptr;
+		uint32_t historyHead = 0;
+		uint32_t historyCount = 0;
+
+		float GetHistorySample(uint32_t index) const
+		{
+			if (!historyBuffer || index >= historyCount)
+				return 0.0f;
+			return historyBuffer[(historyHead - historyCount + index + kHistorySize) % kHistorySize];
+		}
 	};
 
 	void Initialize(ID3D11Device* device, ID3D11DeviceContext* context);
@@ -41,12 +76,14 @@ public:
 
 	const std::vector<TimerResult>& GetResults() const { return results; }
 	float GetTotalTimeMs() const { return totalTimeMs; }
+	float GetCpuTotalTimeMs() const { return cpuTotalTimeMs; }
 
 	void ClearTimers()
 	{
 		results.clear();
 		knownTimers.clear();
 		totalTimeMs = 0.0f;
+		cpuTotalTimeMs = 0.0f;
 	}
 
 	void ClearTimersForFeature(const std::string& featureName)
@@ -65,6 +102,8 @@ private:
 			winrt::com_ptr<ID3D11Query> begin;
 			winrt::com_ptr<ID3D11Query> end;
 			std::string name;
+			LARGE_INTEGER cpuBegin{};
+			float cpuMs = 0.0f;
 		};
 		std::vector<TimerPair> timers;
 		uint32_t activeCount = 0;
@@ -79,6 +118,7 @@ private:
 	uint32_t framesSinceInit = 0;
 	bool initialized = false;
 	bool frameActive = false;
+	double cpuTicksToMs = 0.0;
 
 	PerfEventCallback beginPerfEvent;
 	PerfEventCallback endPerfEvent;
@@ -88,25 +128,12 @@ private:
 	struct KnownTimer
 	{
 		std::string name;
-		float lastMs = 0.0f;
-		float history[kHistorySize]{};
-		uint32_t historyHead = 0;
-		uint32_t historyCount = 0;
-
-		void PushSample(float ms)
-		{
-			history[historyHead] = ms;
-			historyHead = (historyHead + 1) % kHistorySize;
-			if (historyCount < kHistorySize)
-				historyCount++;
-			lastMs = ms;
-		}
-
-		float GetAverage() const;
-		float GetPercentile(float p) const;
+		RollingHistory gpu;
+		RollingHistory cpu;
 	};
 	std::vector<KnownTimer> knownTimers;
 	float totalTimeMs = 0.0f;
+	float cpuTotalTimeMs = 0.0f;
 
 	void CollectResults();
 };

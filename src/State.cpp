@@ -171,7 +171,7 @@ void State::Debug()
 
 void State::Reset()
 {
-	globals::gpuTimers->EndFrame();
+	globals::profiler->EndFrame();
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	if (!globals::game::ui->GameIsPaused())
@@ -773,10 +773,10 @@ void State::SetupResources()
 	Feature::SetTracyCtx(tracyCtx);
 #endif
 
-	globals::gpuTimers->Initialize(globals::d3d::device, globals::d3d::context);
+	globals::profiler->Initialize(globals::d3d::device, globals::d3d::context);
 
 	if (frameAnnotations) {
-		globals::gpuTimers->SetPerfEventCallbacks(
+		globals::profiler->SetPerfEventCallbacks(
 			[this](std::string_view name) { BeginPerfEvent(name); },
 			[this](std::string_view) { EndPerfEvent(); });
 	}

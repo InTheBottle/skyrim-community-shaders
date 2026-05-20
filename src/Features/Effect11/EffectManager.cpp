@@ -303,11 +303,11 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 	if (enableSettingID != 0xFFFFFFFF && !SettingManager::GetSingleton().GetValue<bool>(enableSettingID))
 		return;
 
-	a_effect.gpuTimers = globals::gpuTimers;
+	a_effect.profiler = globals::profiler;
 	UpdateCommonVariablesForEffect(a_effect.GetEffect());
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
-	a_effect.gpuTimers = nullptr;
+	a_effect.profiler = nullptr;
 }
 
 void EffectManager::ExecuteEffects()
@@ -338,9 +338,9 @@ void EffectManager::ExecuteEffects()
 	context->IASetInputLayout(inputLayout.get());
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
-	globals::gpuTimers->BeginPass("Effect11::ColorCorrection");
+	globals::profiler->BeginPass("Effect11::ColorCorrection");
 	ApplyColorCorrection(textureOriginal.UAV);
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 
 	auto& textureManager = TextureManager::GetSingleton();
 
@@ -357,14 +357,14 @@ void EffectManager::ExecuteEffects()
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 	if (textureSDRTemp) {
 		auto textureFramebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY];
-		globals::gpuTimers->BeginPass("Effect11::CopyToFramebuffer");
+		globals::profiler->BeginPass("Effect11::CopyToFramebuffer");
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer.RTV);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 
 		auto textureFramebuffer2 = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY2];
-		globals::gpuTimers->BeginPass("Effect11::CopyToFramebuffer2");
+		globals::profiler->BeginPass("Effect11::CopyToFramebuffer2");
 		CopyTexture(textureSDRTemp->srv.get(), textureFramebuffer2.RTV);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	stateBackup.Restore(context);

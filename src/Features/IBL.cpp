@@ -267,9 +267,9 @@ void IBL::Prepass()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(GetDiffuseIBLCS(), nullptr, 0);
-		globals::gpuTimers->BeginPass("IBL::EnvDiffuseIBL");
+		globals::profiler->BeginPass("IBL::EnvDiffuseIBL");
 		context->Dispatch(1, 1, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	} else {
 		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 		context->CSSetShader(GetDiffuseIBLCS(), nullptr, 0);
@@ -284,9 +284,9 @@ void IBL::Prepass()
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		globals::gpuTimers->BeginPass("IBL::SkyDiffuseIBL");
+		globals::profiler->BeginPass("IBL::SkyDiffuseIBL");
 		context->Dispatch(1, 1, 1);
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	// Reset

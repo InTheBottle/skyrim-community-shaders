@@ -385,9 +385,9 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 
 	context->CSSetShader(a_reflections ? (fakeReflections ? GetComputeShaderUpdateFakeReflections() : GetComputeShaderUpdateReflections()) : GetComputeShaderUpdate(), nullptr, 0);
 
-	globals::gpuTimers->BeginPass(a_reflections ? "DynamicCubemaps::CaptureReflections" : "DynamicCubemaps::Capture");
+	globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::CaptureReflections" : "DynamicCubemaps::Capture");
 	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 
 	uavs[0] = nullptr;
 	uavs[1] = nullptr;
@@ -428,9 +428,9 @@ void DynamicCubemaps::Inferrence(bool a_reflections)
 
 	context->CSSetShader(a_reflections ? (fakeReflections ? GetComputeShaderInferrenceFakeReflections() : GetComputeShaderInferrenceReflections()) : GetComputeShaderInferrence(), nullptr, 0);
 
-	globals::gpuTimers->BeginPass(a_reflections ? "DynamicCubemaps::InferReflections" : "DynamicCubemaps::Infer");
+	globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::InferReflections" : "DynamicCubemaps::Infer");
 	context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 
 	srvs[0] = nullptr;
 	srvs[1] = nullptr;
@@ -473,7 +473,7 @@ void DynamicCubemaps::Irradiance(bool a_reflections)
 
 		std::uint32_t size = std::max(envTexture->desc.Width, envTexture->desc.Height) / 2;
 
-		globals::gpuTimers->BeginPass(a_reflections ? "DynamicCubemaps::IrradianceReflections" : "DynamicCubemaps::Irradiance");
+		globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::IrradianceReflections" : "DynamicCubemaps::Irradiance");
 		for (std::uint32_t level = 1; level < MIPLEVELS; level++, size /= 2) {
 			const UINT numGroups = (UINT)std::max(1u, size / 8);
 
@@ -485,7 +485,7 @@ void DynamicCubemaps::Irradiance(bool a_reflections)
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 			context->Dispatch(numGroups, numGroups, 6);
 		}
-		globals::gpuTimers->EndPass();
+		globals::profiler->EndPass();
 	}
 
 	ID3D11ShaderResourceView* nullSRV = { nullptr };
@@ -520,7 +520,7 @@ void DynamicCubemaps::CompressToBC6H(bool a_reflections)
 
 	std::uint32_t mipDim = std::max(envTexture->desc.Width, envTexture->desc.Height);
 
-	globals::gpuTimers->BeginPass(a_reflections ? "DynamicCubemaps::BC6HReflections" : "DynamicCubemaps::BC6H");
+	globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::BC6HReflections" : "DynamicCubemaps::BC6H");
 	for (std::uint32_t level = 0; level < bc6hMipLevels; ++level) {
 		std::uint32_t srcWidth = std::max(1u, mipDim >> level);
 		std::uint32_t srcHeight = std::max(1u, mipDim >> level);
@@ -539,7 +539,7 @@ void DynamicCubemaps::CompressToBC6H(bool a_reflections)
 		std::uint32_t dispatchY = std::max(1u, (blocksY + 7) / 8);
 		context->Dispatch(dispatchX, dispatchY, 6);
 	}
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 
 	{
 		ID3D11ShaderResourceView* nullSRV = nullptr;

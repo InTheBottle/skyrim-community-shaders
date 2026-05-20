@@ -413,9 +413,9 @@ void TerrainShadows::UpdateShadow()
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(newer.uavs), newer.uavs, nullptr);
 	context->CSSetConstantBuffers(0, 1, &newer.buffer);
 	context->CSSetShader(shadowUpdateProgram.get(), nullptr, 0);
-	globals::gpuTimers->BeginPass("TerrainShadows::ShadowUpdate");
+	globals::profiler->BeginPass("TerrainShadows::ShadowUpdate");
 	context->Dispatch(abs(shadowUpdateCBData.LightPxDir.x) >= abs(shadowUpdateCBData.LightPxDir.y) ? height : width, 1, 1);
-	globals::gpuTimers->EndPass();
+	globals::profiler->EndPass();
 
 	/* ---- RESTORE ---- */
 	context->CSSetShaderResources(0, ARRAYSIZE(old.srvs), old.srvs);

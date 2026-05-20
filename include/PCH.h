@@ -205,7 +205,7 @@ using float4x4 = DirectX::SimpleMath::Matrix;
 using uint = uint32_t;
 
 #include "Globals.h"
-#include "GPUTimers.h"
+#include "Profiler.h"
 #include "Util.h"
 #include "Feature.h"
 #include "Buffer.h"

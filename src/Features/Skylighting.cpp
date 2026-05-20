@@ -228,9 +228,9 @@ void Skylighting::Prepass()
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-			globals::gpuTimers->BeginPass("Skylighting::ProbeUpdate");
+			globals::profiler->BeginPass("Skylighting::ProbeUpdate");
 			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
-			globals::gpuTimers->EndPass();
+			globals::profiler->EndPass();
 		}
 
 		// Reset
@@ -516,9 +516,9 @@ void Skylighting::RenderOcclusion()
 					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
 
-					globals::gpuTimers->BeginPass("Skylighting::PrecipMask");
+					globals::profiler->BeginPass("Skylighting::PrecipMask");
 					precip->RenderMask(rain);
-					globals::gpuTimers->EndPass();
+					globals::profiler->EndPass();
 				}
 
 				state->EndPerfEvent();
@@ -591,9 +591,9 @@ void Skylighting::RenderOcclusion()
 				BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
 				{
 					TracyD3D11Zone(state->tracyCtx, "Skylighting - Render Height Map");
-					globals::gpuTimers->BeginPass("Skylighting::OcclusionMask");
+					globals::profiler->BeginPass("Skylighting::OcclusionMask");
 					precip->RenderMask((RE::BSParticleShaderRainEmitter*)rain);
-					globals::gpuTimers->EndPass();
+					globals::profiler->EndPass();
 				}
 				inOcclusion = false;
 

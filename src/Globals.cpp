@@ -37,7 +37,7 @@
 #include "Features/WaterEffects.h"
 #include "Features/WeatherEditor.h"
 #include "Features/WetnessEffects.h"
-#include "GPUTimers.h"
+#include "Profiler.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -159,8 +159,8 @@ namespace globals
 	Menu* menu = nullptr;
 	SIE::ShaderCache* shaderCache = nullptr;
 
-	static GPUTimers gpuTimersInstance;
-	GPUTimers* gpuTimers = &gpuTimersInstance;
+	static Profiler profilerInstance;
+	Profiler* profiler = &profilerInstance;
 
 	void OnInit()
 	{

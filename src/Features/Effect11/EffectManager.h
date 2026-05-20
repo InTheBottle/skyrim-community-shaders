@@ -5,7 +5,7 @@
 #include "Effects/ENBEffect.h"
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
-#include "GPUTimers.h"
+#include "Profiler.h"
 
 enum class TimeOfDay1Index : int
 {
