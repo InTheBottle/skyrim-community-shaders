@@ -70,6 +70,44 @@
 			{ "variable": "------------------  Border  ------------------", "value": "false" },
 			{ "variable": "----------------  Letterbox  -----------------", "value": "false" },
 
+			{ "variable": "Enable Grain", "value": "false" },
+			{ "variable": "|- Grain - Enable", "value": "false" },
+			{ "variable": "|- Grain: Enable", "value": "false" },
+			{ "variable": "| Enable Grain", "value": "false" },
+			{ "variable": "| - Enable Grain", "value": "false" },
+			{ "variable": "Grain Enable", "value": "false" },
+			{ "variable": "KiGrain.|- Enable", "value": "false" },
+			{ "variable": "Distortion.GRAIN.Enable Grain", "value": "false" },
+
+			{ "variable": "Enable Vignette", "value": "false" },
+			{ "variable": "|- Vignette - Enable", "value": "false" },
+			{ "variable": "|- Vignette: Enable", "value": "false" },
+			{ "variable": "V: Enable Vignette", "value": "false" },
+			{ "variable": "Vignette Enable", "value": "false" },
+			{ "variable": "Vignette enabled", "value": "false" },
+			{ "variable": "EnableVignette", "value": "false" },
+			{ "variable": "NE: Vignette Enable", "value": "false" },
+			{ "variable": "Vignette.|- Enable", "value": "false" },
+			{ "variable": "Enable : Vignette Effect", "value": "false" },
+			{ "variable": "Film Effect.Vignette.Enable Vignette", "value": "false" },
+			{ "variable": "Blur.Enable : Vignette Effect", "value": "false" },
+			{ "variable": "|- Blur - Vignette - Enable", "value": "false" },
+
+			{ "variable": "|- Enable Chromatic Aberration", "value": "false" },
+			{ "variable": "|- CA - Enable Chromatic Aberration", "value": "false" },
+			{ "variable": "| Enable Chromatic Aberration", "value": "false" },
+			{ "variable": "EnableChromaticAberration", "value": "false" },
+			{ "variable": "Chromatic Aberration enabled", "value": "false" },
+			{ "variable": "Chromatic Aberration.|- Enable Chromatic Aberration", "value": "false" },
+			{ "variable": "Distortion.ChromaticAberration.Enable C.A", "value": "false" },
+
+			{ "variable": "Enable Dither", "value": "false" },
+			{ "variable": "Enable Dithering", "value": "false" },
+			{ "variable": "Dither.|- Enable", "value": "false" },
+			{ "variable": "Dither.|- Enable (screen out)", "value": "false" },
+
+			{ "variable": "| Enable Lens Distortion", "value": "false" },
+
 			{ "variable": "Enable SMAA", "value": "false" },
 			{ "variable": "Use SMAA", "value": "false" },
 			{ "variable": "SMAA", "value": "false" },
@@ -81,6 +119,13 @@
 			{ "variable": "---------- FXAA: Use FXAA ----------", "value": "false" },
 			{ "variable": "ANTIALIASING.SMAA.Enable SMAA", "value": "false" },
 			{ "variable": "ANTIALIASING.CREAA.Enable CREAA", "value": "false" }
+		]
+	},
+	{
+		"file": "enblens.fx",
+		"patches": [
+			{ "variable": "|- Enable Chromatic Aberration", "value": "false" },
+			{ "variable": "Chromatic Aberration.|- Enable Chromatic Aberration", "value": "false" }
 		]
 	},
 	{
