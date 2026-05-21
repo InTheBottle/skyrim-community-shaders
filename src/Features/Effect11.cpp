@@ -82,18 +82,14 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	}
 	data.VolumetricRaysSkyColorAmount = settingManager.GetInterpolatedTimeOfDayValue("SkyColorAmount", "VOLUMETRICRAYS");
 
-	data.EnableRain = enableEffect && raindropSRV && settingManager.GetValue<bool>("Enable", "RAIN");
-	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
-	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
-	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
-	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
-	data._padRain = 0;
-	data._padSnow = 0;
-
 	data.FireIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "FIRE");
 	data.FireCurve = settingManager.GetInterpolatedTimeOfDayValue("Curve", "FIRE");
 	data.AuroraIntensity = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisIntensity", "SKY");
 	data.AuroraCurve = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisCurve", "SKY");
+
+	data.EnableRain = enableEffect && raindropSRV && settingManager.GetValue<bool>("Enable", "RAIN");
+	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
+	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 
 	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
 

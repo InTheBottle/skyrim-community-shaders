@@ -55,7 +55,7 @@ public:
 		float ParticleAmbientInfluence;
 		float ParticlePointLightingInfluence;
 
-		uint _pad1;
+		uint EnableCloudsScattering;
 		uint EnableCloudsLightingFromMoon;
 		uint ScatteringColorHDRWeighting;
 		float SkyScatteringAtmosphereThickness;
@@ -83,28 +83,20 @@ public:
 		float SkyScatteringCloudsLightingSunMultiplier;
 		float SkyScatteringCloudsLightingMoonIntensity;
 
-		uint EnableCloudsScattering;
 		uint EnableVolumetricRays;
 		float VolumetricRaysIntensity;
 		float VolumetricRaysExtinction;
-
 		float VolumetricRaysSkyColorAmount;
-		float RainBrightness;
-		uint EnableRain;
-		float _padSnow;
-
-		float RainRefractionFactor;
-		float RainMotionStretch;
-		float RainMotionTransparency;
-		float _padRain;
 
 		float FireIntensity;
 		float FireCurve;
 		float AuroraIntensity;
 		float AuroraCurve;
 
-		float3 NormFactor;
-		float _padNormFactor;
+		uint EnableRain;
+		float RainMotionStretch;
+		float RainMotionTransparency;
+		uint pad0;
 	};
 
 	bool enableEffect = false;

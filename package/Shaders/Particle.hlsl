@@ -343,7 +343,7 @@ if (SharedData::enbSettings.EnableRain) {
     float3 reflectColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, 0).xyz;
     float3 refractColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 0).xyz;
 
-    psout.Color.xyz = lerp(refractColor, reflectColor, fresnel) * SharedData::enbSettings.RainBrightness;
+    psout.Color.xyz = lerp(refractColor, reflectColor, fresnel);
     psout.Color.w = alpha;
     psout.Normal = float4(0, 1, 0, alpha);
     return psout;

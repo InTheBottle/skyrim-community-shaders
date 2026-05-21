@@ -257,7 +257,6 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("AuroraBorealisCurve", "SKY", 1.0f, 0.1f, 8.0f, 0.01f, true);
 
 	settingManager.RegisterBoolSetting("Enable", "RAIN", true);
-	settingManager.RegisterTimeOfDaySetting("Brightness", "RAIN", 1.0f, 0.0f, 30.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("MotionStretch", "RAIN", 0.28f, 0.0f, 1.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("MotionTransparency", "RAIN", 0.1f, 0.0f, 1.0f, 0.01f, true);
 
