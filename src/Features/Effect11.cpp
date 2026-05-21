@@ -193,7 +193,6 @@ void Effect11::LoadRaindropTexture()
 
 void Effect11::SetupResources()
 {
-	PresetManager::GetSingleton().Initialize();
 	EffectManager::GetSingleton().Initialize();
 	LoadRaindropTexture();
 }

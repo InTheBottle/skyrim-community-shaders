@@ -6,7 +6,6 @@
 #include <unordered_set>
 
 #include "EffectManager.h"
-#include "PresetManager.h"
 #include "Utils/ShaderPatches.h"
 
 namespace ENBExtender
