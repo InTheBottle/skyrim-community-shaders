@@ -90,7 +90,10 @@ void MenuManager::RenderSettingsPanel()
 
 	ImGui::Separator();
 
-	RenderAllSettings();
+	if (ImGui::BeginChild("SettingsScroll", ImVec2(0, 0), false)) {
+		RenderAllSettings();
+	}
+	ImGui::EndChild();
 }
 
 void MenuManager::RenderWeatherControl()

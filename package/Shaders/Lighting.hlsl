@@ -2878,7 +2878,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #	elif defined(SKYLIGHTING)
 	float3 vertexColor = input.Color.xyz;
+#		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
+	float vertexAO = 1;
+#		else
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+#		endif
 #		if defined(TRUE_PBR)
 	vertexAO = lerp(1, vertexAO, SharedData::truePBRSettings.VertexAOStrength);
 	vertexColor = 1;
@@ -2890,7 +2894,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		else
 	float3 vertexColor = input.Color.xyz;
 #		endif
+#		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
+	float vertexAO = 1;
+#		else
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+#		endif
 #	endif  // defined (HAIR)
 
 #	if defined(IBL)
