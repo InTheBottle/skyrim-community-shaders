@@ -84,7 +84,7 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 
 	data.EnableRain = enableEffect && raindropSRV && settingManager.GetValue<bool>("Enable", "RAIN");
 	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
-	data._padRainRefractionFactor = 0;
+	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
 	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 	data._padRain = 0;

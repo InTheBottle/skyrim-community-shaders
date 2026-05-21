@@ -93,7 +93,7 @@ public:
 		uint EnableRain;
 		float _padSnow;
 
-		float _padRainRefractionFactor;
+		float RainRefractionFactor;
 		float RainMotionStretch;
 		float RainMotionTransparency;
 		float _padRain;
