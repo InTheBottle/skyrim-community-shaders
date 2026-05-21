@@ -115,6 +115,7 @@ struct PS_OUTPUT
 	float4 Normal: SV_Target2;
 	float4 Albedo: SV_Target3;
 	float4 Masks: SV_Target6;
+	float4 Masks2: SV_Target7;
 #	endif  // DEFERRED
 #endif      // !RENDER_DEPTH
 };
@@ -262,6 +263,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Albedo = float4(baseColor.xyz, 1);
 	psout.Masks = float4(0, 0, 1, 0);
+	psout.Masks2 = float4(1, 0, 0, 0);
 #		else
 	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
