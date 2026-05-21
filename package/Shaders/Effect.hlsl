@@ -557,9 +557,8 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 
 	float3 dirColor = ShadowSampling::GetDirectionalLighting();
 	float3 ambientColor = ShadowSampling::GetAmbientLighting();
-
-	float3 normFactor = max(FLT_MIN, dirColor + ambientColor);
-	normFactor = lerp(rcp(normFactor), rcp(Color::RGBToLuminance(normFactor)), 0.5);
+	
+	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
 
 	if (SharedData::enbSettings.Enable){
 		dirColor *= SharedData::enbSettings.ParticleLightingInfluence;
@@ -616,9 +615,8 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 {
 	float3 dirColor = ShadowSampling::GetDirectionalLighting();
 	float3 ambientColor = ShadowSampling::GetAmbientLighting();
-
-	float3 normFactor = max(FLT_MIN, dirColor + ambientColor);
-	normFactor = lerp(rcp(normFactor), rcp(Color::RGBToLuminance(normFactor)), 0.5);
+	
+	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
 
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);

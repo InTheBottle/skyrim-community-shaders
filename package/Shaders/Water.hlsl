@@ -1183,9 +1183,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 dirColor = ShadowSampling::GetDirectionalLighting();
 	float3 ambientColor = ShadowSampling::GetAmbientLighting();
 
-	float3 normFactor = max(FLT_MIN, dirColor + ambientColor);
-	normFactor = lerp(rcp(normFactor), rcp(Color::RGBToLuminance(normFactor)), 0.5);
-	
+	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
+
 	dirColor *= dirShadow;
 
 #				if defined(SKYLIGHTING)
