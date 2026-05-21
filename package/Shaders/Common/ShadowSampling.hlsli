@@ -17,7 +17,6 @@
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
 #elif defined(SKYLIGHTING)
-// sh2 type is needed for the ExtractLighting overload that accepts a visibility SH
 #	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
@@ -210,6 +209,26 @@ namespace ShadowSampling
 	float3 GetSceneLightingColor()
 	{
 		return GetAmbientLighting() + GetDirectionalLighting();
+	}
+
+	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
+	{
+		float3 ambientColorAmb = GetAmbientLighting();
+		float3 dirLightColorDir = GetDirectionalLighting();
+
+		float inputLuma = Color::RGBToLuminance(inputColor);
+		float ambientLuma = Color::RGBToLuminance(ambientColorAmb);
+		float dirLightLuma = Color::RGBToLuminance(dirLightColorDir);
+
+		float totalLuma = ambientLuma + dirLightLuma;
+
+		if (totalLuma > 0.0 && ambientLuma > 0.0)
+			ambientColorAmb *= inputLuma / totalLuma;
+
+		float3 dirLightColorAmb = max(0.0, inputColor - ambientColorAmb);
+
+		dirColor = dirLightColorAmb;
+		ambientColor = ambientColorAmb;
 	}
 }
 

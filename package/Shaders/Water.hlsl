@@ -1180,10 +1180,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float surfaceShadow;
 	float dirShadow = ShadowSampling::Get3DFilteredShadow(input.WPosition.xyz, diffuseOutput.refractedViewDirection, input.HPosition.xy, eyeIndex, surfaceShadow);
 
-	float3 dirColor = ShadowSampling::GetDirectionalLighting();
-	float3 ambientColor = ShadowSampling::GetAmbientLighting();
-
-	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
+	float3 dirColor;
+	float3 ambientColor;
+	ShadowSampling::ExtractLighting(diffuseOutput.refractionDiffuseColor, dirColor, ambientColor);
 
 	dirColor *= dirShadow;
 
@@ -1193,7 +1192,7 @@ PS_OUTPUT main(PS_INPUT input)
 	ambientColor = Color::IrradianceToGamma(ambientColor);
 #				endif
 
-	diffuseOutput.refractionDiffuseColor *= (dirColor + ambientColor) * normFactor;
+	diffuseOutput.refractionDiffuseColor = dirColor + ambientColor;
 
 	float3 diffuseColor = lerp(diffuseOutput.refractionColor, diffuseOutput.refractionDiffuseColor, diffuseOutput.refractionMul);
 

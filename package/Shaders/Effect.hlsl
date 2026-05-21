@@ -555,12 +555,13 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(positionMSSkylight));
 #		endif
 
-	float3 dirColor = ShadowSampling::GetDirectionalLighting();
-	float3 ambientColor = ShadowSampling::GetAmbientLighting();
-	
-	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
+	float3 dirColor;
+	float3 ambientColor;
+	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
 
-	if (SharedData::enbSettings.Enable){
+	if (SharedData::enbSettings.Enable) {
+		dirColor = ShadowSampling::GetDirectionalLighting();
+		ambientColor = ShadowSampling::GetAmbientLighting();
 		dirColor *= SharedData::enbSettings.ParticleLightingInfluence;
 		ambientColor *= SharedData::enbSettings.ParticleAmbientInfluence;
 	}
@@ -591,10 +592,7 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	ambientColor = Color::IrradianceToGamma(ambientColor);
 #		endif
 
-	if (SharedData::enbSettings.Enable)
-		color = dirColor + ambientColor;
-	else
-		color *= (dirColor + ambientColor) * normFactor;
+	color = dirColor + ambientColor;
 
 #		if defined(LIGHT_LIMIT_FIX)
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
@@ -613,10 +611,9 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #	else
 float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance)
 {
-	float3 dirColor = ShadowSampling::GetDirectionalLighting();
-	float3 ambientColor = ShadowSampling::GetAmbientLighting();
-	
-	float normFactor = max(FLT_MIN, Color::RGBToLuminance(dirColor + ambientColor));
+	float3 dirColor;
+	float3 ambientColor;
+	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
 
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);
@@ -658,9 +655,7 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 	}
 #		endif
 
-	color *= (dirColor + ambientColor) * normFactor;
-
-	return color;
+	return dirColor + ambientColor;
 }
 #	endif
 
