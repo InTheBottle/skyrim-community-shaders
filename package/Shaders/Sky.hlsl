@@ -259,11 +259,11 @@ PS_OUTPUT main(PS_INPUT input)
 #		if defined(DITHER)
 	float2 noiseGradUv = float2(0.125, 0.125) * input.Position.xy;
 	float noiseGrad = TexNoiseGradSampler.Sample(SampNoiseGradSampler, noiseGradUv).x * 0.03125 - 0.0078125;
+	noiseGrad *= 10.0;
 
 #			ifdef TEX
 	psout.Color.xyz = Color::Sky(input.Color.xyz) * baseColor.xyz + skyScale;
-	psout.Color.xyz *= 1.0 + noiseGrad * 10;
-	psout.Color.xyz += noiseGrad;
+	psout.Color.xyz *= 1.0 + noiseGrad;
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
 	float3 skyGradientColor = input.Color.xyz;
@@ -275,8 +275,7 @@ PS_OUTPUT main(PS_INPUT input)
 		skyGradientColor = Color::Correct::OkLabToBT709(lerp(labA, labB, gradientPosition));
 	}
 	psout.Color.xyz = Color::Sky(skyGradientColor) + skyScale;
-	psout.Color.xyz *= 1.0 + noiseGrad * 10;
-	psout.Color.xyz += noiseGrad;
+	psout.Color.xyz *= 1.0 + noiseGrad;
 	psout.Color.w = input.Color.w;
 #			endif  // TEX
 
