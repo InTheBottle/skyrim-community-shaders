@@ -215,7 +215,10 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // VR
 
 #		if defined(RAIN)
-	vsout.RaindropData.xy = input.TexCoord1.xy * 0.5 + 0.5;
+	float2 uv = input.TexCoord1.xy;
+    uv.y *= 1.25; // UV fix
+	uv.xy *= 0.5; // UV unfix
+	vsout.RaindropData.xy = uv * 0.5 + 0.5;
 #		endif
 
 	return vsout;
@@ -279,7 +282,7 @@ cbuffer PerGeometry : register(b2)
 #		include "DynamicCubemaps/DynamicCubemaps.hlsli"
 #	endif
 
-PS_OUTPUT main(PS_INPUT input)
+PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
 
@@ -303,14 +306,11 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	if defined(RAIN) && defined(DYNAMIC_CUBEMAPS)
-if (SharedData::enbSettings.EnableRain) {
-    if (saturate(input.RaindropData.x) != input.RaindropData.x || saturate(input.RaindropData.y) != input.RaindropData.y)
-        discard;
-
-    float2 uvDrop = input.RaindropData.xy;
-    float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, uvDrop);
-    float alpha = saturate(raindropNormal.w * 4.0 * (1.0 - SharedData::enbSettings.RainMotionTransparency));
-    clip(alpha - (1.0 / 255.0));
+if (SharedData::enbSettings.EnableRain) {	
+	float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, input.RaindropData.xy);
+    float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
+   	clip(alpha - (4.0 / 255.0));
+	raindropNormal.y = 1.0 - raindropNormal.y;
 
     // Reconstruct camera-relative worldspace position (camera at origin).
     float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
@@ -325,48 +325,23 @@ if (SharedData::enbSettings.EnableRain) {
     float3 B = cross(N, T);
     float3x3 TBN = float3x3(T, B, N);
 
+    float3 normalTS = normalize(raindropNormal.xyz * 2.0 - 1.0);
+    float3 normalWS = normalize(mul(normalTS, TBN));
+
+	if (frontFace)
+		normalWS = -normalWS;
+
     float3 V = normalize(-posWS.xyz);
+    float NdotV = saturate(dot(normalWS, V));
+    float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
 
-    // SSAA disc offsets (equilateral triangle), scaled by screen-space normal-map UV footprint.
-    static const float2 discOffsets[3] = {
-        float2( 0.000,  0.707),
-        float2( 0.612, -0.354),
-        float2(-0.612, -0.354)
-    };
-    float dUVx = ddx(uvDrop.x);
-    float dUVy = ddy(uvDrop.y);
-    float2 tapRadius = float2(abs(dUVx), abs(dUVy));
+    float3 reflectDir = reflect(-V, normalWS);
+    float3 refractDir = refract(-V, normalWS, 1.0 / 1.33);
+    if (dot(refractDir, refractDir) < 1e-4)
+        refractDir = -V;
 
-    float3 reflectAccum = 0;
-    float3 refractAccum = 0;
-    float  fresnelAccum = 0;
-
-    [unroll] for (int i = 0; i < 4; i++) {
-        float2 sampleUV = uvDrop;
-        if (i > 0)
-            sampleUV += tapRadius * discOffsets[i - 1];
-
-        float4 nTex = TexRaindropNormals.SampleLevel(SampSourceTexture, sampleUV, 0.0);
-
-        float3 normalTS = normalize(float3((nTex.xy * 2.0 - 1.0) * float2(1.0, -1.0), nTex.z * 2.0 - 1.0));
-        float3 normalWS = normalize(mul(normalTS, TBN));
-
-        float NdotV = saturate(dot(normalWS, V));
-        float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
-
-        float3 reflectDir = reflect(-V, normalWS);
-        float3 refractDir = refract(-V, normalWS, 1.0 / 1.33);
-        if (dot(refractDir, refractDir) < 1e-4)
-            refractDir = -V;
-
-        reflectAccum += DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, 1).xyz;
-        refractAccum += DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 1).xyz;
-        fresnelAccum += fresnel;
-    }
-
-    float3 reflectColor = reflectAccum * 0.25;
-    float3 refractColor = refractAccum * 0.25;
-    float  fresnel      = fresnelAccum * 0.25;
+    float3 reflectColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, 0).xyz;
+    float3 refractColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 0).xyz;
 
     psout.Color.xyz = lerp(refractColor, reflectColor, fresnel) * SharedData::enbSettings.RainBrightness;
     psout.Color.w = alpha;
