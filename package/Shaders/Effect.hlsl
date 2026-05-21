@@ -555,15 +555,13 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(positionMSSkylight));
 #		endif
 
-	float3 dirColor;
-	float3 ambientColor;
-#		if defined(SKYLIGHTING)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
-#		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
-#		endif
+	float3 dirColor = ShadowSampling::GetDirectionalLighting();
+	float3 ambientColor = ShadowSampling::GetAmbientLighting();
 
-	if (SharedData::enbSettings.Enable) {
+	float3 normFactor = max(FLT_MIN, dirColor + ambientColor);
+	normFactor = lerp(rcp(normFactor), rcp(Color::RGBToLuminance(normFactor)), 0.5);
+
+	if (SharedData::enbSettings.Enable){
 		dirColor *= SharedData::enbSettings.ParticleLightingInfluence;
 		ambientColor *= SharedData::enbSettings.ParticleAmbientInfluence;
 	}
@@ -594,7 +592,10 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	ambientColor = Color::IrradianceToGamma(ambientColor);
 #		endif
 
-	color = dirColor + ambientColor;
+	if (SharedData::enbSettings.Enable)
+		color = dirColor + ambientColor;
+	else
+		color *= (dirColor + ambientColor) * normFactor;
 
 #		if defined(LIGHT_LIMIT_FIX)
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
@@ -613,14 +614,11 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #	else
 float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance)
 {
-	float3 dirColor;
-	float3 ambientColor;
-	float skylightingDiffuse = 1.0;
-#		if defined(SKYLIGHTING)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
-#		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
-#		endif
+	float3 dirColor = ShadowSampling::GetDirectionalLighting();
+	float3 ambientColor = ShadowSampling::GetAmbientLighting();
+
+	float3 normFactor = max(FLT_MIN, dirColor + ambientColor);
+	normFactor = lerp(rcp(normFactor), rcp(Color::RGBToLuminance(normFactor)), 0.5);
 
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);
@@ -662,7 +660,9 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 	}
 #		endif
 
-	return dirColor + ambientColor;
+	color *= (dirColor + ambientColor) * normFactor;
+
+	return color;
 }
 #	endif
 

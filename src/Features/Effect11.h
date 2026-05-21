@@ -97,6 +97,14 @@ public:
 		float RainMotionStretch;
 		float RainMotionTransparency;
 		float _padRain;
+
+		float FireIntensity;
+		float FireCurve;
+		float AuroraIntensity;
+		float AuroraCurve;
+
+		float3 NormFactor;
+		float _padNormFactor;
 	};
 
 	bool enableEffect = false;

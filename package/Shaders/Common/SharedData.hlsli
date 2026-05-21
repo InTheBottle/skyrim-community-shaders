@@ -323,6 +323,12 @@ namespace SharedData
 		float RainMotionStretch;
 		float RainMotionTransparency;
 		float _padRain;
+
+		float FireIntensity;
+		float FireCurve;
+		float AuroraIntensity;
+		float AuroraCurve;
+
 	};
 	struct TerrainBlendingSettings
 	{

@@ -183,14 +183,14 @@ namespace ShadowSampling
 #endif
 	}
 
-	float3 GetRawAmbientLighting(float3 normal)
+	float3 GetRawAmbientLighting()
 	{
-		return max(0, SharedData::GetAmbient(normal));
+		return max(0, SharedData::GetAmbient(LightingSampleNormal));
 	}
 
-	float3 GetAmbientLighting(float3 normal)
+	float3 GetAmbientLighting()
 	{
-		float3 ambientColor = GetRawAmbientLighting(normal);
+		float3 ambientColor = GetRawAmbientLighting();
 
 #if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
@@ -201,21 +201,6 @@ namespace ShadowSampling
 		return ambientColor;
 	}
 
-#if defined(SKYLIGHTING) && !defined(INTERIOR)
-	float3 GetAmbientLighting(float3 normal, float skylightingDiffuse)
-	{
-		float3 ambientColor = GetRawAmbientLighting(normal);
-
-#	if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
-			ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, ImageBasedLightingNormal);
-		}
-#	endif
-
-		return ambientColor;
-	}
-#endif
-
 	float3 GetDirectionalLighting()
 	{
 		float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
@@ -224,37 +209,7 @@ namespace ShadowSampling
 
 	float3 GetSceneLightingColor()
 	{
-		return GetAmbientLighting(LightingSampleNormal) + GetDirectionalLighting();
-	}
-
-#if defined(SKYLIGHTING) && !defined(INTERIOR)
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
-#else
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
-#endif
-	{
-#if defined(SKYLIGHTING) && !defined(INTERIOR)
-		float3 ambientColorAmb = GetAmbientLighting(LightingSampleNormal, skylightingDiffuse);
-#else
-		float3 ambientColorAmb = GetAmbientLighting(LightingSampleNormal);
-#endif
-
-		float3 dirLightColorDir = GetDirectionalLighting();
-
-		float inputLuma = Color::RGBToLuminance(inputColor);
-		float ambientLuma = Color::RGBToLuminance(ambientColorAmb);
-		float dirLightLuma = Color::RGBToLuminance(dirLightColorDir);
-
-		float totalLuma = ambientLuma + dirLightLuma;
-
-		// Scale ambientColorAmb so total luma matches input luma
-		if (totalLuma > 0.0 && ambientLuma > 0.0)
-			ambientColorAmb *= inputLuma / totalLuma;
-
-		float3 dirLightColorAmb = max(0.0, inputColor - ambientColorAmb);
-
-		dirColor = dirLightColorAmb;
-		ambientColor = ambientColorAmb;
+		return GetAmbientLighting() + GetDirectionalLighting();
 	}
 }
 

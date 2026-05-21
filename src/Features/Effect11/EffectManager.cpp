@@ -250,6 +250,12 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 
+	settingManager.RegisterTimeOfDaySetting("Intensity", "FIRE", 6.0f, 0.0f, 30000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("Curve", "FIRE", 1.0f, 0.1f, 8.0f, 0.01f, true);
+
+	settingManager.RegisterTimeOfDaySetting("AuroraBorealisIntensity", "SKY", 1.0f, 0.0f, 30000.0f, 0.01f, true);
+	settingManager.RegisterTimeOfDaySetting("AuroraBorealisCurve", "SKY", 1.0f, 0.1f, 8.0f, 0.01f, true);
+
 	settingManager.RegisterBoolSetting("Enable", "RAIN", true);
 	settingManager.RegisterTimeOfDaySetting("Brightness", "RAIN", 1.0f, 0.0f, 30.0f, 0.01f, true);
 	settingManager.RegisterFloatSetting("RefractionFactor", "RAIN", -0.33f, -2.0f, 2.0f, 0.01f, true);

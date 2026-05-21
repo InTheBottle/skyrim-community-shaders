@@ -90,6 +90,11 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	data._padRain = 0;
 	data._padSnow = 0;
 
+	data.FireIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "FIRE");
+	data.FireCurve = settingManager.GetInterpolatedTimeOfDayValue("Curve", "FIRE");
+	data.AuroraIntensity = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisIntensity", "SKY");
+	data.AuroraCurve = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisCurve", "SKY");
+
 	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
 
 	{
