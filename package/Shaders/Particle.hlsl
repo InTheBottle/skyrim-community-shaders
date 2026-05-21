@@ -327,46 +327,27 @@ if (SharedData::enbSettings.EnableRain) {
 
     float3 V = normalize(-posWS.xyz);
 
-    // SSAA disc offsets (equilateral triangle), scaled by screen-space normal-map UV footprint.
-    static const float2 discOffsets[3] = {
-        float2( 0.000,  0.707),
-        float2( 0.612, -0.354),
-        float2(-0.612, -0.354)
-    };
-    float dUVx = ddx(uvDrop.x);
-    float dUVy = ddy(uvDrop.y);
-    float2 tapRadius = float2(abs(dUVx), abs(dUVy));
+    float3 rawNormal = float3((raindropNormal.xy * 2.0 - 1.0) * float2(1.0, -1.0), raindropNormal.z * 2.0 - 1.0);
+    float avgNormalLen = length(rawNormal);
+    float3 normalTS = rawNormal / max(avgNormalLen, 1e-6);
+    float3 normalWS = normalize(mul(normalTS, TBN));
 
-    float3 reflectAccum = 0;
-    float3 refractAccum = 0;
-    float  fresnelAccum = 0;
+    // Toksvig: adjust cubemap mip based on normal variance within pixel footprint
+    float specPower = 256.0;
+    float adjustedPower = specPower * avgNormalLen / (avgNormalLen + specPower * (1.0 - avgNormalLen));
+    float adjustedRoughness = sqrt(2.0 / (adjustedPower + 2.0));
+    float mipLevel = adjustedRoughness * 7.0;
 
-    [unroll] for (int i = 0; i < 4; i++) {
-        float2 sampleUV = uvDrop;
-        if (i > 0)
-            sampleUV += tapRadius * discOffsets[i - 1];
+    float NdotV = saturate(dot(normalWS, V));
+    float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
 
-        float4 nTex = TexRaindropNormals.SampleLevel(SampSourceTexture, sampleUV, 0.0);
+    float3 reflectDir = reflect(-V, normalWS);
+    float3 refractDir = refract(-V, normalWS, 1.0 / 1.33);
+    if (dot(refractDir, refractDir) < 1e-4)
+        refractDir = -V;
 
-        float3 normalTS = normalize(float3((nTex.xy * 2.0 - 1.0) * float2(1.0, -1.0), nTex.z * 2.0 - 1.0));
-        float3 normalWS = normalize(mul(normalTS, TBN));
-
-        float NdotV = saturate(dot(normalWS, V));
-        float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
-
-        float3 reflectDir = reflect(-V, normalWS);
-        float3 refractDir = refract(-V, normalWS, 1.0 / 1.33);
-        if (dot(refractDir, refractDir) < 1e-4)
-            refractDir = -V;
-
-        reflectAccum += DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, 1).xyz;
-        refractAccum += DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 1).xyz;
-        fresnelAccum += fresnel;
-    }
-
-    float3 reflectColor = reflectAccum * 0.25;
-    float3 refractColor = refractAccum * 0.25;
-    float  fresnel      = fresnelAccum * 0.25;
+    float3 reflectColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, mipLevel).xyz;
+    float3 refractColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, mipLevel).xyz;
 
     psout.Color.xyz = lerp(refractColor, reflectColor, fresnel) * SharedData::enbSettings.RainBrightness;
     psout.Color.w = alpha;

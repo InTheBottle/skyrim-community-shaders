@@ -84,7 +84,7 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 
 	data.EnableRain = enableEffect && raindropSRV && settingManager.GetValue<bool>("Enable", "RAIN");
 	data.RainBrightness = settingManager.GetInterpolatedTimeOfDayValue("Brightness", "RAIN");
-	data.RainRefractionFactor = settingManager.GetValue<float>("RefractionFactor", "RAIN");
+	data._padRainRefractionFactor = 0;
 	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 	data._padRain = 0;
@@ -140,7 +140,7 @@ void Effect11::LoadRaindropTexture()
 	std::wstring widePath = raindropPath.wstring();
 
 	DirectX::ScratchImage image;
-	HRESULT hr = DirectX::LoadFromWICFile(widePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
+	HRESULT hr = DirectX::LoadFromWICFile(widePath.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
 	if (FAILED(hr)) {
 		logger::error("[Effect11] Failed to load raindrop texture: {}", raindropPath.string());
 		return;
@@ -156,7 +156,7 @@ void Effect11::LoadRaindropTexture()
 
 	DirectX::ScratchImage bc7Image;
 	hr = DirectX::Compress(mipImage.GetImages(), mipImage.GetImageCount(), mipImage.GetMetadata(),
-		DXGI_FORMAT_BC7_UNORM_SRGB, DirectX::TEX_COMPRESS_BC7_QUICK, 1.0f, bc7Image);
+		DXGI_FORMAT_BC7_UNORM, DirectX::TEX_COMPRESS_BC7_QUICK, 1.0f, bc7Image);
 	if (FAILED(hr)) {
 		logger::error("[Effect11] Failed to compress raindrop texture to BC7");
 		return;
@@ -174,7 +174,7 @@ void Effect11::LoadRaindropTexture()
 	Util::SetResourceName(raindropTexture.get(), "Effect11::RaindropTexture");
 
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = DXGI_FORMAT_BC7_UNORM_SRGB;
+	srvDesc.Format = DXGI_FORMAT_BC7_UNORM;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = static_cast<UINT>(bc7Image.GetMetadata().mipLevels);
 	srvDesc.Texture2D.MostDetailedMip = 0;

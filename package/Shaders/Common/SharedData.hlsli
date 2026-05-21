@@ -319,7 +319,7 @@ namespace SharedData
 		uint EnableRain;
 		float _padSnow;
 
-		float RainRefractionFactor;
+		float _padRainRefractionFactor;
 		float RainMotionStretch;
 		float RainMotionTransparency;
 		float _padRain;
