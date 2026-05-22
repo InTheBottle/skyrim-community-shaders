@@ -137,6 +137,7 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterBoolSetting("EnableCloudsScattering", "EFFECT", false, false);
 	settingManager.RegisterBoolSetting("EnableImageBasedLighting", "EFFECT", false, false);
 	settingManager.RegisterBoolSetting("EnableVolumetricRays", "EFFECT", false, false);
+	settingManager.RegisterBoolSetting("EnableSkylighting", "EFFECT", false, false);
 
 	settingManager.RegisterFloatSetting("Brightness", "COLORCORRECTION", 1.0f, 0.0f, 10000.0f, 0.01f, false);
 	settingManager.RegisterFloatSetting("GammaCurve", "COLORCORRECTION", 1.0f, 1.0f, 2.2f, 0.01f, false);
@@ -262,6 +263,8 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterTimeOfDaySetting("Amount", "CLOUDSHADOWS", 0.8f, 0.0f, 4.0f, 0.01f, true);
 
+	settingManager.RegisterTimeOfDaySetting("AmbientMinLevel", "SKYLIGHTING", 0.0f, 0.0f, 1.0f, 0.01f, true);
+
 	settingManager.RegisterTimeOfDaySetting("Intensity", "GAMEVOLUMETRICRAYS", 1.0f, 0.0f, 1000.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("RangeFactor", "GAMEVOLUMETRICRAYS", 1.0f, 0.0f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("Desaturation", "GAMEVOLUMETRICRAYS", 0.0f, -1.0f, 1.0f, 0.01f, true);
@@ -272,6 +275,7 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
 	settingManager.SetCategoryExteriorOnly("RAIN", true);
+	settingManager.SetCategoryExteriorOnly("SKYLIGHTING", true);
 	settingManager.SetCategoryExteriorOnly("CLOUDSHADOWS", true);
 	settingManager.SetCategoryExteriorOnly("IMAGEBASEDLIGHTING", true);
 	settingManager.SetCategoryExteriorOnly("VOLUMETRICRAYS", true);

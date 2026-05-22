@@ -588,6 +588,7 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #		endif
 
 #		if defined(SKYLIGHTING)
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 	ambientColor = Color::IrradianceToLinear(ambientColor);
 	ambientColor *= skylightingDiffuse;
 	ambientColor = Color::IrradianceToGamma(ambientColor);

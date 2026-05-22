@@ -1187,6 +1187,7 @@ PS_OUTPUT main(PS_INPUT input)
 	dirColor *= dirShadow;
 
 #				if defined(SKYLIGHTING)
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 	ambientColor = Color::IrradianceToLinear(ambientColor);
 	ambientColor *= skylightingDiffuse;
 	ambientColor = Color::IrradianceToGamma(ambientColor);

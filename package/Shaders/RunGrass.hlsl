@@ -599,10 +599,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
+	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
+
+#			if defined(VOLUMETRIC_SHADOWS)
+	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
+		float vsmDetailedShadow;
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, eyeIndex, vsmDetailedShadow);
+	}
+#			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow *= shadowColor.x;
+
+#			if !defined(VOLUMETRIC_SHADOWS)
+	dirSoftShadow = dirDetailedShadow;
+#			endif
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (!SharedData::InInterior && dirLightAngle >= 0.0)
@@ -643,6 +655,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #				endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
@@ -825,10 +838,22 @@ PS_OUTPUT main(PS_INPUT input)
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
+	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
+
+#			if defined(VOLUMETRIC_SHADOWS)
+	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
+		float vsmDetailedShadow;
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, eyeIndex, vsmDetailedShadow);
+	}
+#			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow = shadowColor.x;
+
+#			if !defined(VOLUMETRIC_SHADOWS)
+	dirSoftShadow = dirDetailedShadow;
+#			endif
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (!SharedData::InInterior)
@@ -901,6 +926,7 @@ PS_OUTPUT main(PS_INPUT input)
 #				endif
 	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #			endif  // SKYLIGHTING
 
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));

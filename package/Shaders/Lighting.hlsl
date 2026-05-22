@@ -2875,6 +2875,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #		if defined(SKYLIGHTING)
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal);
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #		endif
 #	elif defined(SKYLIGHTING)
 	float3 vertexColor = input.Color.xyz;
@@ -2888,6 +2889,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	vertexColor = 1;
 #		endif
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal, vertexAO);
+	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #	else
 #		if defined(TRUE_PBR)
 	float3 vertexColor = 1;
@@ -3287,7 +3289,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Masks = float4(0, 0, masksZ, psout.Diffuse.w);
 #		endif
 
-	psout.Masks2 = float4(vertexAO, 0, 0, 0);
+	psout.Masks2 = float4(vertexAO, 0, 0, psout.Diffuse.w);
 
 	float stochasticBlend = (screenNoise * screenNoise) < psout.Diffuse.w ? 1.0 : 0.0;
 	psout.NormalGlossiness.w = stochasticBlend;
