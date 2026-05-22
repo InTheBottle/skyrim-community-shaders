@@ -2355,9 +2355,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #		endif
 #		if defined(DEFERRED)
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
 #		else
-	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal) : Skylighting::UNIT_SH;
+	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy) : Skylighting::UNIT_SH;
 #		endif
 
 #	endif
@@ -2489,7 +2489,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
 	if (inWorld && !inReflection && ShadowSampling::HasDirectionalShadows())
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, worldNormal, eyeIndex, dirVSMDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, worldNormal, input.Position.xy, eyeIndex, dirVSMDetailedShadow);
 #	endif
 
 	float dirDetailedShadow = 1.0;

@@ -375,7 +375,7 @@ if (SharedData::enbSettings.EnableRain) {
 	float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 
 	float unusedDetailedShadow;
-	float3 dirLightColor = SharedData::DirLightColor.xyz * ShadowSampling::GetLightingShadow(positionWS.xyz, float3(0, 0, 1), eyeIndex, unusedDetailedShadow);
+	float3 dirLightColor = SharedData::DirLightColor.xyz * ShadowSampling::GetLightingShadow(positionWS.xyz, float3(0, 0, 1), input.Position.xy, eyeIndex, unusedDetailedShadow);
 	float3 ambientColor = max(0, SharedData::GetAmbient(float3(0, 0, 1)));
 #	if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {

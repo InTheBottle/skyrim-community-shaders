@@ -2,6 +2,7 @@
 #define __SKYLIGHTING_DEPENDENCY_HLSL__
 
 #include "Common/Math.hlsli"
+#include "Common/Random.hlsli"
 #include "Common/Shading.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
@@ -79,7 +80,7 @@ namespace Skylighting
 #endif
 
 #if defined(PSHADER) || defined(SKYLIGHTING_PROBE_REGISTER)
-	sh2 Sample(float3 positionMS, float3 normalWS)
+	sh2 Sample(float3 positionMS, float3 normalWS, float2 screenPosition)
 	{
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
@@ -87,6 +88,11 @@ namespace Skylighting
 			return scaledUnitSH;
 
 		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
+
+		if (SharedData::FrameCount) {
+			float3 offset = float3(Random::pcg3d(uint3(screenPosition.xy, SharedData::FrameCount))) / 4294967295.0 * 2.0 - 1.0;
+			positionMS.xyz += offset * CELL_SIZE * 0.5;
+		}
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
@@ -190,12 +196,17 @@ namespace Skylighting
 #endif
 
 #if defined(PSHADER)
-	float SampleShadowVisibility(float3 positionMS, float3 normalWS)
+	float SampleShadowVisibility(float3 positionMS, float3 normalWS, float2 screenPosition)
 	{
 		if (SharedData::InInterior)
 			return 1.0;
 
 		positionMS.xyz += normalWS * CELL_SIZE * 0.5;
+
+		if (SharedData::FrameCount) {
+			float3 offset = float3(Random::pcg3d(uint3(screenPosition.xy, SharedData::FrameCount))) / 4294967295.0 * 2.0 - 1.0;
+			positionMS.xyz += offset * CELL_SIZE * 0.5;
+		}
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;

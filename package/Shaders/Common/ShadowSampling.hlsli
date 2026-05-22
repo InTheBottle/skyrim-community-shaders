@@ -168,7 +168,7 @@ namespace ShadowSampling
 		return scattering;
 	}
 
-	float GetLightingShadow(float3 worldPosition, float3 normal, uint eyeIndex, out float detailedShadow)
+	float GetLightingShadow(float3 worldPosition, float3 normal, float2 screenPosition, uint eyeIndex, out float detailedShadow)
 	{
 		if (!HasDirectionalShadows()) {
 			detailedShadow = 1.0;
@@ -179,7 +179,7 @@ namespace ShadowSampling
 		detailedShadow = 1.0;
 
 #if defined(SKYLIGHTING) && defined(PSHADER)
-		shadow = min(shadow, Skylighting::SampleShadowVisibility(worldPosition, normal));
+		shadow = min(shadow, Skylighting::SampleShadowVisibility(worldPosition, normal, screenPosition));
 #endif
 
 #if defined(VOLUMETRIC_SHADOWS)

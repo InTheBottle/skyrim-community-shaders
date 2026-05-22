@@ -605,7 +605,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
 	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
 		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, eyeIndex, vsmDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, input.HPosition.xy, eyeIndex, vsmDetailedShadow);
 	}
 #			endif
 
@@ -653,7 +653,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #					endif
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #				endif  // SKYLIGHTING
@@ -844,7 +844,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
 	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
 		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, eyeIndex, vsmDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, input.HPosition.xy, eyeIndex, vsmDetailedShadow);
 	}
 #			endif
 
@@ -924,7 +924,7 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #				endif
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #			endif  // SKYLIGHTING
