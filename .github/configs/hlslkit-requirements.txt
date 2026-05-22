@@ -2,4 +2,4 @@
 # To update: find the latest commit on https://github.com/alandtse/hlslkit
 # and replace the @<hash> below, then delete the stale cache entry in
 # GitHub → Actions → Caches so the next CI run rebuilds the wheel.
-hlslkit @ git+https://github.com/alandtse/hlslkit.git
+hlslkit @ git+https://github.com/alandtse/hlslkit.git@d30266d2d5280a2d8c5bef1949c5a8ae1d550c60
