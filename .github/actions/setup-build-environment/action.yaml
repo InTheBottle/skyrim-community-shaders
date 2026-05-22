@@ -28,32 +28,11 @@ runs:
           with:
               cmakeVersion: "~4.2.0"
 
-        - name: Install Visual Studio 2026 Build Tools
-          shell: pwsh
-          run: |
-              $installerUrl = "https://aka.ms/vs/stable/vs_BuildTools.exe"
-              $installerPath = "$env:TEMP\vs_buildtools.exe"
-              Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-              $proc = Start-Process -FilePath $installerPath -ArgumentList `
-                  "--quiet", "--wait", "--norestart", "--nocache", `
-                  "--add", "Microsoft.VisualStudio.Workload.VCTools", `
-                  "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", `
-                  "--add", "Microsoft.VisualStudio.Component.Windows11SDK.26100" `
-                  -Wait -NoNewWindow -PassThru
-              $successExitCodes = @(0, 3010) # 3010 = ERROR_SUCCESS_REBOOT_REQUIRED
-              if ($successExitCodes -notcontains $proc.ExitCode) {
-                  throw "Visual Studio Build Tools installer failed with exit code $($proc.ExitCode)."
-              }
-              if ($proc.ExitCode -eq 3010) {
-                  Write-Warning "Visual Studio Build Tools installer requested a reboot; continuing on GitHub runner."
-              }
-              Remove-Item $installerPath -ErrorAction SilentlyContinue
-
         - name: Setup MSVC environment
-          # Swapped from ilammy/msvc-dev-cmd@v1 (node20, deprecated) to
-          # TheMrMilchmann/setup-msvc-dev@v4 (node24). The new action has no
-          # `vsversion` input — the prior step installs only VS Build Tools
-          # 2026, so default detection picks it up.
+          # windows-2025 runners have VS 2022 Enterprise pre-installed.
+          # We rely on that instead of downloading VS 2026 Build Tools (~8-12 min).
+          # TheMrMilchmann/setup-msvc-dev auto-detects the highest available VS
+          # installation — on this runner image that is VS 2022.
           uses: TheMrMilchmann/setup-msvc-dev@v4.0.0
           with:
               arch: x64
