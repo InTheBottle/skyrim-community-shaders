@@ -1,28 +1,51 @@
 name: "Prepare Shaders"
-description: "Prepare shaders for validation or analysis (requires setup-build-environment to be called first)"
+description: "Copy shaders into build/ALL/aio/Shaders for validation. Uses direct robocopy rather than cmake so the action needs no MSVC toolchain."
 
 inputs:
     cmake-preset:
-        description: "The CMake configure/build preset to use."
+        description: "Unused — kept for API compatibility. Shaders are now copied directly without invoking cmake."
         required: false
         default: "ALL"
+    output-dir:
+        description: "Destination directory for the assembled shader tree."
+        required: false
+        default: "build/ALL/aio/Shaders"
 
 runs:
     using: "composite"
     steps:
-        - name: Prepare shaders
-          uses: lukka/run-cmake@v10
-          with:
-              configurePreset: ${{ inputs.cmake-preset }}
-              configurePresetAdditionalArgs: "['-DBUILD_SHADER_TESTS=OFF']"
-              buildPreset: ${{ inputs.cmake-preset }}
-              buildPresetAdditionalArgs: "['--target prepare_shaders']"
+        # Copy shaders without invoking cmake or requiring a C++ toolchain.
+        # Matches the logic of the cmake prepare_shaders target:
+        #   1. package/Shaders/** → <output-dir>/
+        #   2. features/*/Shaders/** → <output-dir>/ (Tests/ excluded)
+        - name: Copy shaders
+          shell: pwsh
+          run: |
+              $dest = "${{ inputs.output-dir }}"
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+              # Package base shaders
+              robocopy "package/Shaders" $dest /E /COPY:DAT /NFL /NDL /NJH /NJS /R:1 /W:1
+              $rc = $LASTEXITCODE; if ($rc -ge 8) { throw "robocopy package/Shaders failed (rc=$rc)" }
+
+              # Feature shaders (skip Tests subdirectories)
+              Get-ChildItem -Path features -Filter "Shaders" -Recurse -Directory |
+                Where-Object { $_.FullName -notmatch '\\Tests($|\\)' } |
+                ForEach-Object {
+                    robocopy $_.FullName $dest /E /COPY:DAT /NFL /NDL /NJH /NJS /R:1 /W:1 /XD "$($_.FullName)\Tests"
+                    $rc = $LASTEXITCODE; if ($rc -ge 8) { throw "robocopy $($_.FullName) failed (rc=$rc)" }
+                }
+
+              $count = (Get-ChildItem -Recurse -File -Path $dest).Count
+              Write-Host "Prepared $count shader files in $dest"
 
         - name: Setup Python
-          uses: actions/setup-python@v5
+          uses: actions/setup-python@v6
           with:
               python-version: "3.11"
+              cache: "pip"
+              cache-dependency-path: ".github/configs/hlslkit-requirements.txt"
 
         - name: Install hlslkit
-          run: pip install git+https://github.com/alandtse/hlslkit.git
+          run: pip install -r .github/configs/hlslkit-requirements.txt
           shell: bash

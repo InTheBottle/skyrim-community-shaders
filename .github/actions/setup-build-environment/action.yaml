@@ -100,7 +100,11 @@ runs:
           uses: actions/cache@v5
           with:
               path: ${{ inputs.build-dir }}
-              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+              # Use submodule HEAD refs instead of hashing all of extern/** (~79 MB)
+              # to avoid slow hash computation on every cache lookup.
+              # actions/checkout with submodules:recursive writes .git/modules/<name>/HEAD
+              # for each submodule; hashing those 3 small files detects any submodule SHA change.
+              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', '.git/modules/CommonLibSSE-NG/HEAD', '.git/modules/FidelityFX-SDK/HEAD', '.git/modules/Streamline-DX12/HEAD', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
               restore-keys: |
                   ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
                   ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-

@@ -42,6 +42,9 @@ target_precompile_headers(
 
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
+# RelWithDebInfo is the fast-iteration developer config; skip LTO so
+# link time stays short while keeping /O2 optimisation for realistic perf.
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
 
 set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_STATIC_RUNTIME ON)

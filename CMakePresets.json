@@ -71,6 +71,20 @@
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF"
             },
             "inherits": "skyrim"
+        },
+        {
+            "name": "ALL-FastDev",
+            "description": "Like ALL but disables zip packaging so the configure step is leaner",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF",
+                "BUILD_SHADER_TESTS": "OFF"
+            },
+            "inherits": "skyrim"
         }
     ],
     "buildPresets": [
@@ -115,6 +129,13 @@
             "configurePreset": "ALL",
             "configuration": "Debug",
             "targets": ["CommunityShaders", "AIO"]
+        },
+        {
+            "name": "FastDev",
+            "description": "RelWithDebInfo build: /O2 optimisation but NO LTO/LTCG and no zip packaging. Typical link is 3-4x faster than Release. Use for rapid shader/feature iteration.",
+            "configurePreset": "ALL-FastDev",
+            "configuration": "RelWithDebInfo",
+            "targets": ["CommunityShaders", "PREPARE_AIO"]
         }
     ]
 }

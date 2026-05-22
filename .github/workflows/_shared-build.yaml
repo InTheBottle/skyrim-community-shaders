@@ -142,19 +142,15 @@ jobs:
               with:
                   ref: ${{ inputs.ref }}
                   repository: ${{ inputs.repository }}
-                  submodules: recursive
+                  # Shader validation only needs source files — submodules (CommonLibSSE-NG,
+                  # FidelityFX, Streamline) are C++ dependencies not required here.
+                  submodules: false
 
             - name: Check for HLSL Changes
               id: check-hlsl
               uses: ./.github/actions/check-hlsl-changes
               with:
                   hlsl-should-build: ${{ inputs.hlsl-should-build }}
-            - name: Setup Build Environment
-              id: setup
-              if: steps.check-hlsl.outputs.skip != 'true'
-              uses: ./.github/actions/setup-build-environment
-              with:
-                  cache-key-suffix: "validation-${{ matrix.config.name }}${{ inputs.cache-key-suffix }}"
             - name: Prepare shaders
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/prepare-shaders
@@ -195,7 +191,7 @@ jobs:
                     echo "fxc.exe not found - shader validation requires fxc.exe. Set --fxc to a valid path or ensure fxc.exe is in PATH." >&2
                     exit 1
                   fi
-                  hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519
+                  hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519 --jobs $(nproc) --strip-debug-defines
 
             - name: Upload shader validation logs
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
