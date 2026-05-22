@@ -1,0 +1,182 @@
+name: "PR: Privileged (prerelease & comments)"
+
+# Runs from the BASE branch after "PR: Checks" completes.
+# This workflow has write permissions but NEVER executes fork code —
+# it only consumes pre-built artifacts produced by the build workflow.
+#
+# Pattern: pull_request builds (sandboxed, PR head) → artifacts →
+#          workflow_run posts releases/comments (trusted, base branch).
+on:
+    workflow_run:
+        workflows: ["PR: Checks"]
+        types: [completed]
+
+permissions:
+    contents: write
+    pull-requests: write
+
+concurrency:
+    group: pr-privileged-${{ github.event.workflow_run.id }}
+    cancel-in-progress: false
+
+jobs:
+    prerelease:
+        name: Post Prerelease from PR
+        # Only fire for pull_request-triggered runs (not manual dispatches etc.)
+        if: github.event.workflow_run.event == 'pull_request'
+        runs-on: windows-2025
+        steps:
+            - name: Download PR context
+              id: download-context
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  name: pr-context
+                  path: pr-context/
+
+            - name: Read PR context
+              id: ctx
+              if: steps.download-context.outcome == 'success'
+              shell: bash
+              run: |
+                  echo "number=$(cat pr-context/pr-number.txt)"         >> $GITHUB_OUTPUT
+                  echo "repo=$(cat pr-context/pr-repo.txt)"             >> $GITHUB_OUTPUT
+                  echo "base-sha=$(cat pr-context/pr-base-sha.txt)"     >> $GITHUB_OUTPUT
+                  echo "head-sha=$(cat pr-context/pr-head-sha.txt)"     >> $GITHUB_OUTPUT
+                  echo "author=$(cat pr-context/pr-author.txt)"         >> $GITHUB_OUTPUT
+                  echo "version=$(cat pr-context/pr-version.txt)"       >> $GITHUB_OUTPUT
+                  echo "cpp-built=$(cat pr-context/pr-cpp-built.txt)"   >> $GITHUB_OUTPUT
+
+            - name: Download dist artifacts
+              id: download-dist
+              # Skips gracefully when the C++ build was skipped (shader-only PRs)
+              if: steps.ctx.outputs.cpp-built == 'true'
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  name: dist-artifacts
+                  path: dist/
+
+            - name: Generate release notes
+              id: gen_notes
+              if: steps.ctx.outputs.cpp-built == 'true' && steps.download-dist.outcome == 'success'
+              continue-on-error: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              shell: bash
+              run: |
+                  PR_NUMBER="${{ steps.ctx.outputs.number }}"
+                  REPO="${{ github.repository }}"
+                  BASE_SHA="${{ steps.ctx.outputs.base-sha }}"
+                  HEAD_SHA="${{ steps.ctx.outputs.head-sha }}"
+                  PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
+
+                  if PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author -q '.author.login' 2>/dev/null); then
+                    echo "✅ Found PR author: $PR_AUTHOR"
+                  else
+                    PR_AUTHOR="${{ steps.ctx.outputs.author }}"
+                    echo "⚠️ Using fallback PR author: $PR_AUTHOR"
+                  fi
+
+                  echo "🔍 Comparing $BASE_SHA...$HEAD_SHA"
+
+                  if NOTES=$(gh api repos/$REPO/compare/$BASE_SHA...$HEAD_SHA 2>/dev/null | jq -r --arg author "$PR_AUTHOR" '
+                    .commits[]
+                    | "- \(.commit.message | split("\n")[0]) by @\(.author.login // $author)"
+                  ' 2>/dev/null) && [[ -n "$NOTES" ]]; then
+                    echo "$NOTES" > release-notes.md
+                    echo -e "\n[View Pull Request]($PR_URL)" >> release-notes.md
+                    echo "notes_generated=true" >> "$GITHUB_OUTPUT"
+                    echo "✅ Generated custom release notes"
+                  else
+                    echo "⚠️ Failed to generate notes. Will use GitHub autogeneration." >&2
+                    echo "notes_generated=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Upload prerelease (custom notes)
+              if: steps.ctx.outputs.cpp-built == 'true' && steps.download-dist.outcome == 'success' && steps.gen_notes.outputs.notes_generated == 'true'
+              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+              with:
+                  name: "Community Shaders ${{ steps.ctx.outputs.version }} PR #${{ steps.ctx.outputs.number }}"
+                  tag: v${{ steps.ctx.outputs.version }}-pr${{ steps.ctx.outputs.number }}
+                  prerelease: true
+                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
+                  bodyFile: release-notes.md
+                  allowUpdates: true
+                  replacesArtifacts: true
+                  removeArtifacts: true
+
+            - name: Upload prerelease (auto-generated notes)
+              if: steps.ctx.outputs.cpp-built == 'true' && steps.download-dist.outcome == 'success' && steps.gen_notes.outputs.notes_generated != 'true'
+              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+              with:
+                  name: "Community Shaders ${{ steps.ctx.outputs.version }} PR #${{ steps.ctx.outputs.number }}"
+                  tag: v${{ steps.ctx.outputs.version }}-pr${{ steps.ctx.outputs.number }}
+                  prerelease: true
+                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
+                  generateReleaseNotes: true
+                  allowUpdates: true
+                  replacesArtifacts: true
+                  removeArtifacts: true
+
+            - name: Comment on PR
+              if: steps.ctx.outputs.cpp-built == 'true' && steps.download-dist.outcome == 'success' && success()
+              uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3
+              with:
+                  pr-number: ${{ steps.ctx.outputs.number }}
+                  mode: upsert
+                  comment-tag: prerelease-build
+                  message: |
+                      ✅ A pre-release build is available for this PR:
+                      [Download](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.ctx.outputs.version }}-pr${{ steps.ctx.outputs.number }})
+
+    feature-audit-pr-comment:
+        name: Comment on PR with audit results
+        if: github.event.workflow_run.event == 'pull_request'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download PR context
+              id: download-context
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  name: pr-context
+                  path: pr-context/
+
+            - name: Read PR number
+              id: ctx
+              if: steps.download-context.outcome == 'success'
+              shell: bash
+              run: echo "number=$(cat pr-context/pr-number.txt)" >> $GITHUB_OUTPUT
+
+            - name: Download feature audit markdown
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  name: pr-feature-audit
+                  path: .
+
+            - name: Create fallback audit markdown
+              if: ${{ hashFiles('pr-feature-audit.md') == '' }}
+              shell: bash
+              run: |
+                  cat > pr-feature-audit.md <<'EOF'
+                  ⚠️ Feature version audit did not produce a report. Check the `Feature Version Audit (PR)` job logs.
+                  EOF
+
+            - name: Comment on PR with audit results
+              if: steps.ctx.outputs.number != ''
+              uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3
+              with:
+                  pr-number: ${{ steps.ctx.outputs.number }}
+                  file-path: pr-feature-audit.md
+                  mode: upsert
+                  comment-tag: feature-version-audit

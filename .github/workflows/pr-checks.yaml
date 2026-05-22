@@ -1,13 +1,18 @@
 name: "PR: Checks"
 
 on:
-    # `paths` is restricted to files that pr-checks can actually validate on
-    # this PR. Workflow definitions (.github/workflows/**) and composite
-    # actions (.github/actions/**) resolve from the BASE branch under
-    # pull_request_target, so they can never be tested by their own PR's
-    # run — keeping them in `paths` would only fire the unconditional
-    # feature-audit job for changes that have no validatable impact.
-    pull_request_target:
+    # pull_request (not pull_request_target) so workflow and action files resolve
+    # from the PR head, not the base branch. This means changes to
+    # .github/workflows/ and .github/actions/ are actually exercised in CI.
+    #
+    # Security: fork PRs running under pull_request get a read-only GITHUB_TOKEN
+    # and no repository secrets regardless of the permissions block — GitHub
+    # enforces this for all fork contributions. The compiled fork code runs in a
+    # sandboxed environment with permissions: contents: read only.
+    # Privileged operations (prerelease posting, PR comments requiring write
+    # access) are handled in pr-privileged.yaml via workflow_run, which always
+    # executes from the base branch.
+    pull_request:
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
             - "**.cpp"
@@ -29,8 +34,10 @@ on:
             - "package/Shaders/**"
             - "tests/shaders/**"
             - ".github/configs/**"
+            - ".github/workflows/**"
+            - ".github/actions/**"
 
-# Least-privilege defaults; individual jobs override where needed.
+# Least-privilege defaults.
 permissions:
     contents: read
     pull-requests: read
@@ -44,13 +51,6 @@ jobs:
         name: Check for changes in PRs
         runs-on: ubuntu-latest
         outputs:
-            # `build_ci` is CI changes that can actually be validated on a PR.
-            # Under pull_request_target, workflow definitions and composite
-            # actions resolve from the BASE branch ref — so changes to
-            # pr-checks.yaml, _shared-build.yaml, or .github/actions/** are not
-            # exercised by their own PR's runs (they only take effect on the
-            # NEXT PR after merge). Only files read from the PR's checkout
-            # (shader-validation configs) genuinely benefit from a rebuild.
             should-build: ${{ steps.changed-files.outputs.build_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
             hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
             shader-tests-should-build: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
@@ -91,12 +91,10 @@ jobs:
                         - 'CMakeLists.txt'
                         - 'CMakePresets.json'
                         - 'cmake/**'
-                      # Only files read from the PR's checkout during the build
-                      # belong here. Workflow definitions and composite actions
-                      # are resolved from the base branch under pull_request_target,
-                      # so changes to them cannot be validated on the PR itself.
                       build_ci:
                         - '.github/configs/**'
+                        - '.github/workflows/**'
+                        - '.github/actions/**'
                       hlsl:
                         - '**.hlsl'
                         - '**.hlsli'
@@ -107,11 +105,6 @@ jobs:
                   base_sha: ${{ github.event.pull_request.base.sha }}
                   sha: ${{ github.event.pull_request.head.sha }}
 
-    # Security: this job compiles untrusted fork code.
-    # It uses _shared-build.yaml which enforces permissions: contents: read and receives NO secrets.
-    # The absence of a `secrets:` block here is intentional — passing secrets to a reusable
-    # workflow from pull_request_target triggered by a fork causes GitHub to reject the
-    # entire workflow file at parse time (0 jobs, "workflow file issue").
     build:
         name: Build (PR)
         needs: [check-changes]
@@ -128,96 +121,37 @@ jobs:
             hlsl-should-build: ${{ needs.check-changes.outputs.hlsl-should-build || 'true' }}
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
 
-    # Security: this job uses GITHUB_TOKEN with write permissions but does NOT execute
-    # fork code — it only downloads pre-built artifacts from the build job above.
-    prerelease:
-        name: Post Prerelease from PR
+    # Save PR metadata and build outputs as artifacts so pr-privileged.yaml
+    # (workflow_run, runs from base branch with write access) can consume them
+    # without re-executing any fork code.
+    save-pr-context:
+        name: Save PR context for downstream
         needs: [build]
-        if: >
-            always() && !cancelled() &&
-            needs.build.outputs.cpp-built == 'true'
-        runs-on: windows-2025
-        permissions:
-            contents: write
-            pull-requests: write
+        runs-on: ubuntu-latest
+        if: always()
         steps:
-            - name: Download dist artifacts
-              uses: actions/download-artifact@v7
-              with:
-                  name: dist-artifacts
-                  path: dist/
-
-            - name: Generate release notes comparing against base version tag
-              id: gen_notes
-              continue-on-error: true
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Write context files
               shell: bash
               run: |
-                  TAG="v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}"
-                  REPO="${{ github.repository }}"
-                  BASE_SHA="${{ github.event.pull_request.base.sha }}"
-                  HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-                  PR_NUMBER="${{ github.event.pull_request.number }}"
-                  PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
-
-                  if PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author -q '.author.login' 2>/dev/null); then
-                    echo "✅ Found PR author: $PR_AUTHOR"
-                  else
-                    PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-                    echo "⚠️ Using fallback PR author: $PR_AUTHOR"
-                  fi
-
-                  echo "🔍 Comparing $BASE_SHA...$HEAD_SHA"
-
-                  if NOTES=$(gh api repos/$REPO/compare/$BASE_SHA...$HEAD_SHA 2>/dev/null | jq -r --arg author "$PR_AUTHOR" '
-                    .commits[]
-                    | "- \(.commit.message | split("\n")[0]) by @\(.author.login // $author)"
-                  ' 2>/dev/null) && [[ -n "$NOTES" ]]; then
-                    echo "$NOTES" > release-notes.md
-                    echo -e "\n[View Pull Request]($PR_URL)" >> release-notes.md
-                    echo "notes_generated=true" >> "$GITHUB_OUTPUT"
-                    echo "✅ Generated custom release notes"
-                  else
-                    echo "⚠️ Failed to generate notes from commit diff. Will use GitHub autogeneration." >&2
-                    echo "notes_generated=false" >> "$GITHUB_OUTPUT"
-                  fi
-
-            - name: Upload prerelease (custom notes)
-              if: steps.gen_notes.outputs.notes_generated == 'true'
-              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+                  printf '%s' '${{ github.event.pull_request.number }}' > pr-number.txt
+                  printf '%s' '${{ github.event.pull_request.head.repo.full_name }}' > pr-repo.txt
+                  printf '%s' '${{ github.event.pull_request.base.sha }}' > pr-base-sha.txt
+                  printf '%s' '${{ github.event.pull_request.head.sha }}' > pr-head-sha.txt
+                  printf '%s' '${{ github.event.pull_request.user.login }}' > pr-author.txt
+                  printf '%s' '${{ needs.build.outputs.version }}' > pr-version.txt
+                  printf '%s' '${{ needs.build.outputs.cpp-built }}' > pr-cpp-built.txt
+            - uses: actions/upload-artifact@v7
               with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
-                  tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
-                  prerelease: true
-                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-                  bodyFile: release-notes.md
-                  allowUpdates: true
-                  replacesArtifacts: true
-                  removeArtifacts: true
-
-            - name: Upload prerelease (auto-generated notes)
-              if: steps.gen_notes.outputs.notes_generated != 'true'
-              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
-              with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
-                  tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
-                  prerelease: true
-                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-                  generateReleaseNotes: true
-                  allowUpdates: true
-                  replacesArtifacts: true
-                  removeArtifacts: true
-
-            - name: Comment on PR
-              if: success()
-              uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3
-              with:
-                  mode: upsert
-                  comment-tag: prerelease-build
-                  message: |
-                      ✅ A pre-release build is available for this PR:
-                      [Download](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }})
+                  name: pr-context
+                  path: |
+                      pr-number.txt
+                      pr-repo.txt
+                      pr-base-sha.txt
+                      pr-head-sha.txt
+                      pr-author.txt
+                      pr-version.txt
+                      pr-cpp-built.txt
+                  retention-days: 1
 
     feature-audit-pr:
         name: Feature Version Audit (PR)
@@ -257,33 +191,3 @@ jobs:
               with:
                   name: pr-feature-audit
                   path: pr-feature-audit.md
-
-    feature-audit-pr-comment:
-        name: Comment on PR with audit results
-        if: always() && (needs.feature-audit-pr.result == 'success' || needs.feature-audit-pr.result == 'failure')
-        needs: feature-audit-pr
-        runs-on: ubuntu-latest
-        permissions:
-            pull-requests: write
-        steps:
-            - name: Download feature audit markdown (PR)
-              continue-on-error: true
-              uses: actions/download-artifact@v7
-              with:
-                  name: pr-feature-audit
-                  path: .
-
-            - name: Create fallback audit markdown
-              if: ${{ hashFiles('pr-feature-audit.md') == '' }}
-              shell: bash
-              run: |
-                  cat > pr-feature-audit.md <<'EOF'
-                  ⚠️ Feature version audit did not produce a report. Check the `Feature Version Audit (PR)` job logs.
-                  EOF
-
-            - name: Comment on PR with audit results
-              uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3
-              with:
-                  file-path: pr-feature-audit.md
-                  mode: upsert
-                  comment-tag: feature-version-audit
