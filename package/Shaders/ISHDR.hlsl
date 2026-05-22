@@ -156,6 +156,11 @@ PS_OUTPUT main(PS_INPUT input)
 		inputColor *= avgValue.y / avgValue.x;
 	inputColor = max(0, inputColor);
 
+	if (ENABLE_LL) {
+		inputColor = Color::LinearToGammaSafe(inputColor);
+		bloomColor = Color::LinearToGammaSafe(bloomColor);
+	}
+
 	float3 blendedColor;
 
 	[branch] if (Param.z > 0.5)
@@ -173,6 +178,10 @@ PS_OUTPUT main(PS_INPUT input)
 		// soft-saturation form (1 - exp2(-x)) which bleeds bloom into specular peaks intentionally.
 		float3 bloomMask = isHDR ? saturate(Param.x - (1.0 - exp2(-blendedColor))) : saturate(Param.x - blendedColor);
 		blendedColor += bloomMask * bloomColor;
+	}
+
+	if (ENABLE_LL) {
+		blendedColor = Color::GammaToLinearSafe(blendedColor);
 	}
 
 	float blendedLuminance = Color::RGBToLuminance(blendedColor);
