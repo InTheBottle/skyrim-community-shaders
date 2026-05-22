@@ -107,9 +107,9 @@ namespace ShadowSampling
 
 #if defined(VOLUMETRIC_SHADOWS)
 		if (HasDirectionalShadows()) {
-			float vsmSurfaceShadow;
-			float shadow = VolumetricShadows::GetVSMShadow3D(startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
-			surfaceShadow *= vsmSurfaceShadow;
+			float froxelSurfaceShadow;
+			float shadow = VolumetricShadows::GetShadow3D(startPosition, endPosition, noise, sampleCount, eyeIndex, froxelSurfaceShadow);
+			surfaceShadow *= froxelSurfaceShadow;
 			return worldShadow * shadow;
 		}
 #else
@@ -127,7 +127,7 @@ namespace ShadowSampling
 		}
 
 #if defined(VOLUMETRIC_SHADOWS)
-		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, detailedShadow);
+		float shadow = VolumetricShadows::GetShadow2D(worldPosition, eyeIndex, detailedShadow);
 		return shadow;
 #else
 		detailedShadow = 1.0;
