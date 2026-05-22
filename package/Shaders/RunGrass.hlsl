@@ -632,9 +632,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	vertexColor /= max(max(max(vertexColor.r, vertexColor.g), vertexColor.b), EPSILON_DIVISION);
-
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #				if defined(SKYLIGHTING)
 #					if defined(VR)
@@ -891,9 +890,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 normal = -normalize(cross(ddx, ddy));
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	vertexColor /= max(max(max(vertexColor.r, vertexColor.g), vertexColor.b), EPSILON_DIVISION);
-
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #			if defined(SKYLIGHTING)
 #				if defined(VR)

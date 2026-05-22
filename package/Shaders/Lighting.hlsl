@@ -2881,7 +2881,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
 	float vertexAO = 1;
 #		else
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	float vertexAO = Color::ColorToLinear(max(max(vertexColor.r, vertexColor.g), vertexColor.b).xxx).x;
 #		endif
 #		if defined(TRUE_PBR)
 	vertexAO = lerp(1, vertexAO, SharedData::truePBRSettings.VertexAOStrength);
@@ -2897,7 +2897,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
 	float vertexAO = 1;
 #		else
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	float vertexAO = Color::ColorToLinear(max(max(vertexColor.r, vertexColor.g), vertexColor.b).xxx).x;
 #		endif
 #	endif  // defined (HAIR)
 

@@ -141,7 +141,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	SampleSSGI(dispatchID.xy, normalWS, ssgiAo, ssgiIl);
 
 	float vertexAO = Masks2Texture[dispatchID.xy].x;
-	ssgiAo = saturate(ssgiAo / max(vertexAO, 0.001));
+	ssgiAo = saturate(ssgiAo / max(vertexAO, EPSILON_DIVISION));
 
 	float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
 	float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
