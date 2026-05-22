@@ -16,6 +16,7 @@
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
 #include "Features/VRStereoOptimizations.h"
+#include "Features/Skylighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WeatherEditor.h"
 #include "Menu.h"
@@ -58,6 +59,7 @@ void State::Draw()
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
 	auto& volumetricShadows = globals::features::volumetricShadows;
+	auto& skylighting = globals::features::skylighting;
 
 	if (shaderCache->IsEnabled()) {
 		// Process deferred cell transitions (interior detection)
@@ -103,6 +105,8 @@ void State::Draw()
 				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
 					if (volumetricShadows.loaded)
 						volumetricShadows.CopyShadowLightData();
+					if (skylighting.loaded)
+						skylighting.CaptureShadowCascadeSRV();
 				}
 			}
 		}

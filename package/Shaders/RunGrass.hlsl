@@ -602,17 +602,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
 
-#			if defined(VOLUMETRIC_SHADOWS)
+#			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
 	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
 		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, eyeIndex, vsmDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, eyeIndex, vsmDetailedShadow);
 	}
 #			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow *= shadowColor.x;
 
-#			if !defined(VOLUMETRIC_SHADOWS)
+#			if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING)
 	dirSoftShadow = dirDetailedShadow;
 #			endif
 
@@ -841,17 +841,17 @@ PS_OUTPUT main(PS_INPUT input)
 	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
 
-#			if defined(VOLUMETRIC_SHADOWS)
+#			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
 	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
 		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, eyeIndex, vsmDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, eyeIndex, vsmDetailedShadow);
 	}
 #			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow = shadowColor.x;
 
-#			if !defined(VOLUMETRIC_SHADOWS)
+#			if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING)
 	dirSoftShadow = dirDetailedShadow;
 #			endif
 

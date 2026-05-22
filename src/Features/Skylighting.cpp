@@ -1,5 +1,6 @@
 #include "Skylighting.h"
 
+#include "Deferred.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -30,6 +31,11 @@ void Skylighting::ResetSkylighting()
 	auto context = globals::d3d::context;
 	UINT clr[1] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
+	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), clr);
+
+	float clrf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), clrf);
+
 	queuedResetSkylighting = false;
 }
 
@@ -111,6 +117,18 @@ void Skylighting::SetupResources()
 		texAccumFramesArray = new Texture3D(texDesc, "Skylighting::AccumFramesArray");
 		texAccumFramesArray->CreateSRV(srvDesc);
 		texAccumFramesArray->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32_UINT;
+
+		texShadowBitmask = new Texture3D(texDesc, "Skylighting::ShadowBitmask");
+		texShadowBitmask->CreateSRV(srvDesc);
+		texShadowBitmask->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+
+		texShadowVisibility = new Texture3D(texDesc, "Skylighting::ShadowVisibility");
+		texShadowVisibility->CreateSRV(srvDesc);
+		texShadowVisibility->CreateUAV(uavDesc);
 	}
 
 	{
@@ -218,9 +236,20 @@ void Skylighting::Prepass()
 	auto context = globals::d3d::context;
 
 	{
-		std::array<ID3D11ShaderResourceView*, 1> srvs = { texOcclusion->srv.get() };
-		std::array<ID3D11UnorderedAccessView*, 2> uavs = { texProbeArray->uav.get(), texAccumFramesArray->uav.get() };
-		std::array<ID3D11SamplerState*, 1> samplers = { comparisonSampler.get() };
+		std::array<ID3D11ShaderResourceView*, 3> srvs = {
+			texOcclusion->srv.get(),
+			shadowCascadeSRV,
+			globals::deferred->directionalShadowLights->srv.get()
+		};
+		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
+			texProbeArray->uav.get(),
+			texAccumFramesArray->uav.get(),
+			texShadowBitmask->uav.get(),
+			texShadowVisibility->uav.get()
+		};
+		std::array<ID3D11SamplerState*, 1> samplers = {
+			comparisonSampler.get()
+		};
 
 		// Update probe array
 		{
@@ -250,6 +279,9 @@ void Skylighting::Prepass()
 	{
 		ID3D11ShaderResourceView* srv = texProbeArray->srv.get();
 		context->PSSetShaderResources(50, 1, &srv);
+
+		srv = texShadowVisibility->srv.get();
+		context->PSSetShaderResources(53, 1, &srv);
 	}
 }
 
@@ -618,6 +650,16 @@ void Skylighting::RenderOcclusion()
 			}
 		}
 	}
+}
+
+void Skylighting::CaptureShadowCascadeSRV()
+{
+	auto context = globals::d3d::context;
+	ID3D11ShaderResourceView* srv = nullptr;
+	context->PSGetShaderResources(4, 1, &srv);
+	if (shadowCascadeSRV)
+		shadowCascadeSRV->Release();
+	shadowCascadeSRV = srv;
 }
 
 void Skylighting::Main_Precipitation_RenderOcclusion::thunk()

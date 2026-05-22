@@ -20,6 +20,10 @@
 #	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
+#if defined(SKYLIGHTING)
+#	include "Skylighting/Skylighting.hlsli"
+#endif
+
 struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
@@ -164,20 +168,28 @@ namespace ShadowSampling
 		return scattering;
 	}
 
-	float GetLightingShadow(float3 worldPosition, uint eyeIndex, out float detailedShadow)
+	float GetLightingShadow(float3 worldPosition, float3 normal, uint eyeIndex, out float detailedShadow)
 	{
 		if (!HasDirectionalShadows()) {
 			detailedShadow = 1.0;
 			return 1.0;
 		}
 
-#if defined(VOLUMETRIC_SHADOWS)
-		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, detailedShadow);
-		return shadow;
-#else
+		float shadow = 1.0;
 		detailedShadow = 1.0;
-		return 1.0;
+
+#if defined(SKYLIGHTING) && defined(PSHADER)
+		shadow = min(shadow, Skylighting::SampleShadowVisibility(worldPosition, normal));
 #endif
+
+#if defined(VOLUMETRIC_SHADOWS)
+		float vsmDetailedShadow;
+		shadow = min(shadow, VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, vsmDetailedShadow));
+		detailedShadow = min(detailedShadow, vsmDetailedShadow);
+#endif
+
+		detailedShadow = min(detailedShadow, shadow);
+		return shadow;
 	}
 
 	float3 GetRawAmbientLighting()
