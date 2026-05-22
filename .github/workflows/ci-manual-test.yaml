@@ -1,0 +1,41 @@
+name: "Manual CI Test (branch build)"
+
+# Runs the full build from THIS branch's ref using workflow_dispatch.
+# Unlike pull_request_target (which resolves workflow/action files from BASE),
+# workflow_dispatch resolves everything from the selected ref — so this
+# actually exercises changes to _shared-build.yaml, setup-build-environment,
+# prepare-shaders, and any other action files on the branch.
+#
+# Usage: Actions → "Manual CI Test" → Run workflow → select branch
+on:
+    workflow_dispatch:
+        inputs:
+            run-cpp:
+                description: "Run C++ plugin build"
+                type: boolean
+                default: true
+            run-shader-validation:
+                description: "Run HLSL shader validation"
+                type: boolean
+                default: true
+            run-shader-tests:
+                description: "Run shader unit tests"
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        name: Build and Validate
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ github.ref }}
+            repository: ${{ github.repository }}
+            run-cpp: ${{ inputs.run-cpp }}
+            run-shader-validation: ${{ inputs.run-shader-validation }}
+            run-shader-tests: ${{ inputs.run-shader-tests }}
+            hlsl-should-build: "true"
+            shader-tests-should-build: "true"
+            cache-key-suffix: "-manual-test"
