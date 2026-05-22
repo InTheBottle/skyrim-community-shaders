@@ -3,9 +3,23 @@ Texture2DArray<float> ESRAMShadow : register(t1);
 RWTexture2D<float2> OutputTexture : register(u0);
 SamplerState LinearSampler : register(s0);
 
+cbuffer VSMLinearizeCB : register(b0)
+{
+	float CascadeNear;
+	float CascadeFar;
+	float2 _pad;
+};
+
+float LinearizeDepth(float depth)
+{
+	float linZ = CascadeNear * CascadeFar / (CascadeFar - depth * (CascadeFar - CascadeNear));
+	return (linZ - CascadeNear) / (CascadeFar - CascadeNear);
+}
+
 float2 GetVSMMoments(in float depth)
 {
-	return float2(depth, depth * depth);
+	float d = LinearizeDepth(depth);
+	return float2(d, d * d);
 }
 
 float2 ReduceMoments(float2 a, float2 b, float2 c, float2 d)

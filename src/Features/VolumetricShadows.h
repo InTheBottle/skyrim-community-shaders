@@ -28,6 +28,20 @@ public:
 
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
 
+	struct Settings
+	{
+	};
+	Settings settings;
+
+	struct alignas(16) VSMLinearizeCB
+	{
+		float CascadeNear;
+		float CascadeFar;
+		uint32_t _pad[2];
+	};
+
+	float4 GetCascadeDepthParams();
+
 	// Compute shaders
 	ID3D11ComputeShader* downsampleShadowMip0CS = nullptr;
 	ID3D11ComputeShader* downsampleShadowMip1CS = nullptr;
@@ -53,6 +67,13 @@ public:
 	ID3D11UnorderedAccessView* shadowBlurTempMip0UAV = nullptr;
 	ID3D11UnorderedAccessView* shadowBlurTempMip1UAV = nullptr;
 
+	// Cbuffer for downsample linearization params
+	ID3D11Buffer* linearizeCB = nullptr;
+
+	// Cached cascade near/far values
+	float cascadeNear[2] = { 0.f, 0.f };
+	float cascadeFar[2] = { 1.f, 1.f };
+
 	// Samplers
 	ID3D11SamplerState* linearSampler = nullptr;
 
@@ -72,4 +93,5 @@ public:
 
 private:
 	static void SetSharedShadowMapSRV(ID3D11DeviceContext* a_context, ID3D11ShaderResourceView* a_srv);
+	void ExtractCascadeNearFar();
 };

@@ -16,6 +16,7 @@
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
+#include "Features/VolumetricShadows.h"
 #include "Features/VR.h"
 #include "Features/WeatherEditor.h"
 
@@ -610,6 +611,8 @@ void Deferred::CopyShadowLightData()
 		SetShadowCascadeParameters(sunShadowLight->GetVRRuntimeData(), dd);
 	else
 		SetShadowCascadeParameters(sunShadowLight->GetRuntimeData(), dd);
+
+	dd.CascadeDepthParams = globals::features::volumetricShadows.GetCascadeDepthParams();
 
 	D3D11_MAPPED_SUBRESOURCE mapped{};
 	DX::ThrowIfFailed(context->Map(directionalShadowLights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));

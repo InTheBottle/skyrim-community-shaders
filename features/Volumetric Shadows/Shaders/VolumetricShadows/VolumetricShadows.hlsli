@@ -1,15 +1,18 @@
 #ifndef __VOLUMETRIC_SHADOWS_HLSLI__
 #define __VOLUMETRIC_SHADOWS_HLSLI__
 
-// Variance Shadow Maps (VSM)
-// Chebyshev's inequality on filtered depth moments
-
 namespace VolumetricShadows
 {
 	Texture2D<float2> SharedShadowMap : register(t18);
 
 	static const float VSM_MIN_VARIANCE = 0.00001;
 	static const float VSM_BLEEDING_REDUCTION = 0.2;
+
+	float LinearizeDepth(float depth, float cascadeNear, float cascadeFar)
+	{
+		float linZ = cascadeNear * cascadeFar / (cascadeFar - depth * (cascadeFar - cascadeNear));
+		return (linZ - cascadeNear) / (cascadeFar - cascadeNear);
+	}
 
 	// Chebyshev upper bound on P(X >= t)
 	// moments.x = mean(z), moments.y = mean(z^2)
@@ -35,6 +38,8 @@ namespace VolumetricShadows
 		float rcpSampleCount,
 		float3 startPositionLS,
 		float3 endPositionLS,
+		float cascadeNear,
+		float cascadeFar,
 		out float firstSample)
 	{
 		float shadow = 0.0;
@@ -46,7 +51,8 @@ namespace VolumetricShadows
 			float3 samplePosLS = lerp(endPositionLS, startPositionLS, t);
 
 			float2 moments = SharedShadowMap.SampleLevel(LinearSampler, samplePosLS.xy, 1u - cascadeIndex);
-			float lit = ComputeVSM(moments, samplePosLS.z);
+			float depth = LinearizeDepth(samplePosLS.z, cascadeNear, cascadeFar);
+			float lit = ComputeVSM(moments, depth);
 
 			// Last to set firstSample is start position
 			firstSample = lit;
@@ -88,6 +94,8 @@ namespace VolumetricShadows
 		uint primaryCascade = uint(cascadeSelect);
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
+		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
+
 		// Transform ray to light space for primary cascade
 		float4x4 shadowProj = directionalShadowLightData.ShadowProj[primaryCascade];
 		float3 startLS = mul(shadowProj, float4(startPosition, 1)).xyz;
@@ -95,9 +103,12 @@ namespace VolumetricShadows
 		startLS.xy = saturate(startLS.xy);
 		endLS.xy = saturate(endLS.xy);
 
+		float primaryNear = primaryCascade == 0 ? depthParams.x : depthParams.z;
+		float primaryFar = primaryCascade == 0 ? depthParams.y : depthParams.w;
+
 		// Sample primary cascade
 		float primaryFirstSample;
-		float shadow = SampleVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryFirstSample);
+		float shadow = SampleVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryNear, primaryFar, primaryFirstSample);
 		surfaceShadow = primaryFirstSample;
 
 		// Blend with secondary cascade if needed
@@ -111,8 +122,11 @@ namespace VolumetricShadows
 			startLS.xy = saturate(startLS.xy);
 			endLS.xy = saturate(endLS.xy);
 
+			float secondaryNear = secondaryCascade == 0 ? depthParams.x : depthParams.z;
+			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
+
 			float secondaryFirstSample;
-			float shadowBlend = SampleVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryFirstSample);
+			float shadowBlend = SampleVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryNear, secondaryFar, secondaryFirstSample);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 			surfaceShadow = lerp(surfaceShadow, secondaryFirstSample, cascadeSelect);
 		}
@@ -124,10 +138,11 @@ namespace VolumetricShadows
 	}
 
 	// Sample a single cascade for VSM shadow (2D point sample)
-	float SampleVSMCascade2D(uint cascadeIndex, float3 positionLS)
+	float SampleVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar)
 	{
 		float2 moments = SharedShadowMap.SampleLevel(LinearSampler, positionLS.xy, 1u - cascadeIndex);
-		return ComputeVSM(moments, positionLS.z);
+		float depth = LinearizeDepth(positionLS.z, cascadeNear, cascadeFar);
+		return ComputeVSM(moments, depth);
 	}
 
 	float GetVSMShadow2D(float3 position, uint eyeIndex, out float detailedShadow)
@@ -155,12 +170,17 @@ namespace VolumetricShadows
 		uint primaryCascade = uint(cascadeSelect);
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
+		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
+
 		// Transform position to light space for primary cascade
 		float3 positionLS = mul(directionalShadowLightData.ShadowProj[primaryCascade], float4(positionWS, 1)).xyz;
 		positionLS.xy = saturate(positionLS.xy);
 
+		float primaryNear = primaryCascade == 0 ? depthParams.x : depthParams.z;
+		float primaryFar = primaryCascade == 0 ? depthParams.y : depthParams.w;
+
 		// Sample primary cascade
-		float shadow = SampleVSMCascade2D(primaryCascade, positionLS);
+		float shadow = SampleVSMCascade2D(primaryCascade, positionLS, primaryNear, primaryFar);
 
 		// Blend with secondary cascade if needed
 		[branch] if (needsBlending)
@@ -170,7 +190,10 @@ namespace VolumetricShadows
 			positionLS = mul(directionalShadowLightData.ShadowProj[secondaryCascade], float4(positionWS, 1)).xyz;
 			positionLS.xy = saturate(positionLS.xy);
 
-			float shadowBlend = SampleVSMCascade2D(secondaryCascade, positionLS);
+			float secondaryNear = secondaryCascade == 0 ? depthParams.x : depthParams.z;
+			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
+
+			float shadowBlend = SampleVSMCascade2D(secondaryCascade, positionLS, secondaryNear, secondaryFar);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 
