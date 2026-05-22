@@ -3,10 +3,9 @@
 
 namespace VolumetricShadows
 {
-	Texture2D<float2> SharedShadowMap : register(t18);
+	Texture2D<float4> SharedShadowMap : register(t18);
 
-	static const float VSM_MIN_VARIANCE = 0.00001;
-	static const float VSM_BLEEDING_REDUCTION = 0.2;
+	static const float MSM_MOMENT_BIAS = 0.003;
 
 	float LinearizeDepth(float depth, float cascadeNear, float cascadeFar)
 	{
@@ -14,23 +13,65 @@ namespace VolumetricShadows
 		return (linZ - cascadeNear) / (cascadeFar - cascadeNear);
 	}
 
-	// Chebyshev upper bound on P(X >= t)
-	// moments.x = mean(z), moments.y = mean(z^2)
-	float ComputeVSM(float2 moments, float depth)
+	// Inverse RGBA16 quantization: recover power moments from optimized storage
+	// Reference: Peters, "Moment Shadow Mapping" (I3D 2015)
+	float4 ConvertOptimizedMoments(float4 optimizedMoments)
 	{
-		float variance = max(moments.y - moments.x * moments.x, VSM_MIN_VARIANCE);
-		float d = depth - moments.x;
-		float pMax = variance / (variance + d * d);
-		return (depth <= moments.x) ? 1.0 : pMax;
+		optimizedMoments[0] -= 0.035955884801;
+		return mul(optimizedMoments, float4x4(
+			0.2227744146,  0.1549679261,  0.1451988946,  0.163127443,
+			0.0771972861,  0.1394629426,  0.2120202157,  0.2591432266,
+			0.7926986636,  0.7963415838,  0.7258694464,  0.6539092497,
+			0.0319417555, -0.1722823173, -0.2758014811, -0.3376131734));
 	}
 
-	// Reduces light bleeding by remapping shadow values below a threshold to zero
-	float ReduceBleeding(float shadow, float amount)
+	// Hamburger 4-moment shadow reconstruction
+	// Reference: Peters, "Moment Shadow Mapping" (I3D 2015)
+	float ComputeMSM(float4 optimizedMoments, float depth)
 	{
-		return saturate((shadow - amount) / (1.0 - amount));
+		float4 b = ConvertOptimizedMoments(optimizedMoments);
+
+		// Bias moments to reduce light bleeding
+		b = lerp(b, 0.5, MSM_MOMENT_BIAS);
+
+		float3 z;
+		z[0] = depth;
+
+		// Cholesky factorization of the Hankel matrix
+		float L32D22 = mad(-b[0], b[1], b[2]);
+		float D22 = mad(-b[0], b[0], b[1]);
+		float squaredDepthVariance = mad(-b[1], b[1], b[3]);
+		float D33D22 = dot(float2(squaredDepthVariance, -L32D22), float2(D22, L32D22));
+		float InvD22 = 1.0 / D22;
+		float L32 = L32D22 * InvD22;
+
+		// Solve for the quadratic polynomial whose roots give the 2-point distribution
+		float3 c = float3(1.0, z[0], z[0] * z[0]);
+		c[1] -= b.x;
+		c[2] -= b.y + L32 * c[1];
+		c[1] *= InvD22;
+		c[2] *= D22 / D33D22;
+		c[1] -= L32 * c[2];
+		c[0] -= dot(c.yz, b.xy);
+
+		float p = c[1] / c[2];
+		float q = c[0] / c[2];
+		float D = (p * p * 0.25) - q;
+		float r = sqrt(max(D, 0.0));
+		z[1] = -p * 0.5 - r;
+		z[2] = -p * 0.5 + r;
+
+		// Compute shadow intensity from the 2-point distribution
+		float4 switchVal = (z[2] < z[0]) ? float4(z[1], z[0], 1.0, 1.0) :
+		                  ((z[1] < z[0]) ? float4(z[0], z[1], 0.0, 1.0) :
+		                  float4(0.0, 0.0, 0.0, 0.0));
+		float quotient = (switchVal[0] * z[2] - b[0] * (switchVal[0] + z[2]) + b[1])
+		                 / ((z[2] - switchVal[1]) * (z[0] - z[1]));
+		float shadowIntensity = switchVal[2] + switchVal[3] * quotient;
+		return 1.0 - saturate(shadowIntensity);
 	}
 
-	// Sample a single cascade for VSM shadow
+	// Sample a single cascade for MSM shadow
 	float SampleVSMCascade3D(
 		uint cascadeIndex,
 		float noise,
@@ -50,9 +91,9 @@ namespace VolumetricShadows
 			float t = (float(k) + noise) * rcpSampleCount;
 			float3 samplePosLS = lerp(endPositionLS, startPositionLS, t);
 
-			float2 moments = SharedShadowMap.SampleLevel(LinearSampler, samplePosLS.xy, 1u - cascadeIndex);
+			float4 moments = SharedShadowMap.SampleLevel(LinearSampler, samplePosLS.xy, 1u - cascadeIndex);
 			float depth = LinearizeDepth(samplePosLS.z, cascadeNear, cascadeFar);
-			float lit = ComputeVSM(moments, depth);
+			float lit = ComputeMSM(moments, depth);
 
 			// Last to set firstSample is start position
 			firstSample = lit;
@@ -137,12 +178,12 @@ namespace VolumetricShadows
 		return lerp(1.0, shadow, fadeFactor);
 	}
 
-	// Sample a single cascade for VSM shadow (2D point sample)
+	// Sample a single cascade for MSM shadow (2D point sample)
 	float SampleVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar)
 	{
-		float2 moments = SharedShadowMap.SampleLevel(LinearSampler, positionLS.xy, 1u - cascadeIndex);
+		float4 moments = SharedShadowMap.SampleLevel(LinearSampler, positionLS.xy, 1u - cascadeIndex);
 		float depth = LinearizeDepth(positionLS.z, cascadeNear, cascadeFar);
-		return ComputeVSM(moments, depth);
+		return ComputeMSM(moments, depth);
 	}
 
 	float GetVSMShadow2D(float3 position, uint eyeIndex, out float detailedShadow)
@@ -199,8 +240,8 @@ namespace VolumetricShadows
 
 		// Apply distance fade
 		float fadeFactor = 1.0 - pow(fade * fade, 8);
-		detailedShadow = lerp(1.0, ReduceBleeding(shadow, VSM_BLEEDING_REDUCTION), fadeFactor);
-		return lerp(1.0, shadow, fadeFactor);
+		detailedShadow = lerp(1.0, shadow, fadeFactor);
+		return detailedShadow;
 	}
 }
 

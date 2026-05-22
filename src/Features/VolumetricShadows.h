@@ -17,9 +17,9 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Volumetric Shadows provides downsampled VSM shadow maps for use by effects like particles and decals.\n"
+			"Volumetric Shadows provides downsampled MSM shadow maps for use by effects like particles and decals.\n"
 			"This improves shadow quality on transparent objects with minimal performance impact.",
-			{ "Downsampled VSM shadows",
+			{ "Downsampled MSM shadows",
 				"Gaussian blur filtering",
 				"Multi-cascade support",
 				"Optimized for effects rendering" }
@@ -30,6 +30,7 @@ public:
 
 	struct Settings
 	{
+		float BlurRadius = 100.0f;
 	};
 	Settings settings;
 
@@ -38,6 +39,12 @@ public:
 		float CascadeNear;
 		float CascadeFar;
 		uint32_t _pad[2];
+	};
+
+	struct alignas(16) BlurCB
+	{
+		uint32_t BlurRadius;
+		uint32_t _pad[3];
 	};
 
 	float4 GetCascadeDepthParams();
@@ -67,12 +74,14 @@ public:
 	ID3D11UnorderedAccessView* shadowBlurTempMip0UAV = nullptr;
 	ID3D11UnorderedAccessView* shadowBlurTempMip1UAV = nullptr;
 
-	// Cbuffer for downsample linearization params
+	// Cbuffers
 	ID3D11Buffer* linearizeCB = nullptr;
+	ID3D11Buffer* blurCB = nullptr;
 
-	// Cached cascade near/far values
+	// Cached cascade near/far values and projection scale
 	float cascadeNear[2] = { 0.f, 0.f };
 	float cascadeFar[2] = { 1.f, 1.f };
+	float cascadeScale[2] = { 1.f, 1.f };
 
 	// Samplers
 	ID3D11SamplerState* linearSampler = nullptr;
