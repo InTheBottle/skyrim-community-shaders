@@ -186,12 +186,24 @@ void DynamicCubemaps::PostPostLoad()
 
 RE::BSEventNotifyControl MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
 {
-	// When entering a new cell, reset the capture
-	if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
-		if (!a_event->opening) {
+	// Reset the capture around menus that bracket loading screens or scene
+	// transitions (cell loads, fast travel, character creation, game start).
+	// Reset on both open and close because the surrounding environment can
+	// change either when the menu appears (e.g. MapMenu camera shift) or when
+	// it closes (e.g. LoadingMenu completes a cell transition).
+	static const std::array<std::string_view, 5> kResetMenus = {
+		RE::LoadingMenu::MENU_NAME,
+		RE::MainMenu::MENU_NAME,
+		RE::MapMenu::MENU_NAME,
+		RE::RaceSexMenu::MENU_NAME,
+		RE::TitleSequenceMenu::MENU_NAME,
+	};
+	for (const auto& name : kResetMenus) {
+		if (a_event->menuName == name) {
 			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 			dynamicCubemaps.resetCapture[0] = true;
 			dynamicCubemaps.resetCapture[1] = true;
+			break;
 		}
 	}
 	return RE::BSEventNotifyControl::kContinue;
