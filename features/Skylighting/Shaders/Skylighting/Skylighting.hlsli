@@ -17,6 +17,9 @@ namespace Skylighting
 
 #if defined(PSHADER)
 	Texture3D<float> ShadowVisibilityProbeArray : register(t53);
+#	if defined(SKYLIGHTING_DENOISED_SHADOW)
+	Texture2D<float4> DenoisedShadowTexture : register(t54);
+#	endif
 #endif
 
 	const static sh2 UNIT_SH = float4(sqrt(4.0 * Math::PI), 0, 0, 0);
@@ -201,6 +204,15 @@ namespace Skylighting
 		if (SharedData::InInterior)
 			return 1.0;
 
+#if defined(SKYLIGHTING_DENOISED_SHADOW) && defined(DEFERRED)
+		float4 shadowData = DenoisedShadowTexture[uint2(screenPosition)];
+		float shadow = shadowData.x;
+#	if defined(USE_SIGMA)
+		shadow = shadow * shadow;
+#	endif
+		float fadeOut = GetFadeOutFactor(positionMS);
+		return lerp(1.0, shadow, fadeOut);
+#else
 		positionMS.xyz += normalWS * CELL_SIZE * 0.5;
 
 		if (SharedData::FrameCount) {
@@ -241,6 +253,7 @@ namespace Skylighting
 		float fadeOut = GetFadeOutFactor(positionMS);
 		float shadow = sum / max(wsum, 0.0001);
 		return lerp(1.0, shadow, fadeOut);
+#endif
 	}
 #endif
 }

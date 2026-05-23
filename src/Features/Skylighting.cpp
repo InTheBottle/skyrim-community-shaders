@@ -5,11 +5,18 @@
 #include "State.h"
 #include "Utils/D3D.h"
 
+#include <NRDSettings.h>
+#include <DirectXMath.h>
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility)
+	MinSpecularVisibility,
+	EnableDenoisedShadow,
+	DenoiserMode,
+	SigmaPlaneDistanceSensitivity,
+	SigmaMaxStabilizedFrameNum)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -57,6 +64,41 @@ void Skylighting::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Smaller angles creates more focused top-down shadow.");
 
+	ImGui::Separator();
+
+	{
+		bool prevEnabled = settings.EnableDenoisedShadow;
+		uint prevMode = settings.DenoiserMode;
+
+		ImGui::Checkbox("Enable Denoised Shadow (Deferred)", &settings.EnableDenoisedShadow);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Per-pixel screen-space shadow sampling denoised by NRD. Only affects deferred shading paths.");
+
+		if (settings.EnableDenoisedShadow) {
+			const char* denoiserNames[] = { "REBLUR_OCCLUSION", "SIGMA" };
+			int mode = static_cast<int>(settings.DenoiserMode);
+			if (ImGui::Combo("Denoiser", &mode, denoiserNames, IM_ARRAYSIZE(denoiserNames)))
+				settings.DenoiserMode = static_cast<uint>(mode);
+
+			if (settings.DenoiserMode == 1) {
+				ImGui::SliderFloat("Plane Distance Sensitivity", &settings.SigmaPlaneDistanceSensitivity, 0.0f, 1.0f, "%.3f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("Maximum allowed deviation from the local tangent plane (normalized %%).");
+
+				int maxFrames = static_cast<int>(settings.SigmaMaxStabilizedFrameNum);
+				if (ImGui::SliderInt("Max Stabilized Frames", &maxFrames, 0, 7))
+					settings.SigmaMaxStabilizedFrameNum = static_cast<uint>(maxFrames);
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("Maximum number of linearly accumulated frames. 0 disables the stabilization pass.");
+			}
+		}
+
+		if (prevEnabled != settings.EnableDenoisedShadow || prevMode != settings.DenoiserMode) {
+			auto shaderCache = globals::shaderCache;
+			shaderCache->Clear(RE::BSShader::Type::Lighting);
+			shaderCache->Clear(RE::BSShader::Type::Grass);
+		}
+	}
 }
 
 void Skylighting::SetupResources()
@@ -144,17 +186,88 @@ void Skylighting::SetupResources()
 		Util::SetResourceName(comparisonSampler.get(), "Skylighting::ComparisonSampler");
 	}
 
+	{
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "Skylighting::LinearSampler");
+	}
+
+	// NRD denoised shadow textures
+	{
+		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		D3D11_TEXTURE2D_DESC mainDesc;
+		mainTex.texture->GetDesc(&mainDesc);
+		uint32_t fullW = mainDesc.Width;
+		uint32_t fullH = mainDesc.Height;
+
+		D3D11_TEXTURE2D_DESC texDesc{
+			.Width = fullW,
+			.Height = fullH,
+			.MipLevels = 1,
+			.ArraySize = 1,
+			.SampleDesc = { .Count = 1, .Quality = 0 },
+			.Usage = D3D11_USAGE_DEFAULT,
+			.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+			.CPUAccessFlags = 0,
+			.MiscFlags = 0
+		};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
+		};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 }
+		};
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		texNRDShadowInput = eastl::make_unique<Texture2D>(texDesc, "Skylighting::NRDShadowInput");
+		texNRDShadowInput->CreateSRV(srvDesc);
+		texNRDShadowInput->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texNRDShadowOutput = eastl::make_unique<Texture2D>(texDesc, "Skylighting::NRDShadowOutput");
+		texNRDShadowOutput->CreateSRV(srvDesc);
+		texNRDShadowOutput->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		texNRDViewZ = eastl::make_unique<Texture2D>(texDesc, "Skylighting::NRDViewZ");
+		texNRDViewZ->CreateSRV(srvDesc);
+		texNRDViewZ->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		texNRDNormalRoughness = eastl::make_unique<Texture2D>(texDesc, "Skylighting::NRDNormalRoughness");
+		texNRDNormalRoughness->CreateSRV(srvDesc);
+		texNRDNormalRoughness->CreateUAV(uavDesc);
+
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+		texNRDMV = eastl::make_unique<Texture2D>(texDesc, "Skylighting::NRDMV");
+		texNRDMV->CreateSRV(srvDesc);
+		texNRDMV->CreateUAV(uavDesc);
+	}
+
 	CompileComputeShaders();
 }
 
 void Skylighting::ClearShaderCache()
 {
 	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&probeUpdateCompute
+		&probeUpdateCompute,
+		&prepareNRDGuidesCompute,
+		&sampleShadowCompute
 	};
 
 	for (auto shader : shaderPtrs)
-		shader = nullptr;
+		*shader = nullptr;
+
+	nrdShadow.Shutdown();
+	prevDenoiserMode = UINT_MAX;
 
 	CompileComputeShaders();
 }
@@ -171,6 +284,8 @@ void Skylighting::CompileComputeShaders()
 	std::vector<ShaderCompileInfo>
 		shaderInfos = {
 			{ &probeUpdateCompute, "UpdateProbesCS.hlsl", {} },
+			{ &prepareNRDGuidesCompute, "prepareNRDGuides.cs.hlsl", {} },
+			{ &sampleShadowCompute, "SampleShadowCS.cs.hlsl", settings.DenoiserMode == 1 ? std::vector<std::pair<const char*, const char*>>{ { "USE_SIGMA", nullptr } } : std::vector<std::pair<const char*, const char*>>{} },
 		};
 
 	for (auto& info : shaderInfos) {
@@ -283,6 +398,8 @@ void Skylighting::Prepass()
 		srv = texShadowVisibility->srv.get();
 		context->PSSetShaderResources(53, 1, &srv);
 	}
+
+	DrawDenoisedShadow();
 }
 
 void Skylighting::PostPostLoad()
@@ -649,6 +766,191 @@ void Skylighting::RenderOcclusion()
 				state->EndPerfEvent();
 			}
 		}
+	}
+}
+
+ID3D11ShaderResourceView* Skylighting::GetDenoisedShadowSRV()
+{
+	if (loaded && settings.EnableDenoisedShadow && nrdShadow.IsValid() && texNRDShadowOutput)
+		return texNRDShadowOutput->srv.get();
+	return nullptr;
+}
+
+void Skylighting::DrawDenoisedShadow()
+{
+	if (!settings.EnableDenoisedShadow || !prepareNRDGuidesCompute || !sampleShadowCompute)
+		return;
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+
+	uint32_t fullW = texNRDViewZ->desc.Width;
+	uint32_t fullH = texNRDViewZ->desc.Height;
+
+	// Reinitialize NRD if denoiser mode changed
+	if (prevDenoiserMode != settings.DenoiserMode) {
+		nrdShadow.Shutdown();
+
+		// Recompile shadow sampling shader with correct defines
+		{
+			auto path = std::filesystem::path("Data\\Shaders\\Skylighting") / "SampleShadowCS.cs.hlsl";
+			std::vector<std::pair<const char*, const char*>> defines;
+			if (settings.DenoiserMode == 1)
+				defines.push_back({ "USE_SIGMA", nullptr });
+			if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), defines, "cs_5_0")))
+				sampleShadowCompute.attach(rawPtr);
+		}
+
+		nrd::Denoiser denoiser = (settings.DenoiserMode == 1)
+		                             ? nrd::Denoiser::SIGMA_SHADOW
+		                             : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION;
+		nrdShadow.Init(fullW, fullH, denoiser, 0);
+		prevDenoiserMode = settings.DenoiserMode;
+	}
+
+	if (!nrdShadow.IsValid())
+		return;
+
+	TracyD3D11Zone(globals::state->tracyCtx, "Skylighting - Denoised Shadow");
+
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto normalRoughness = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK];
+
+	// 1. Prepare NRD guide textures
+	{
+		ID3D11ShaderResourceView* srvs[2] = { depth.depthSRV, normalRoughness.SRV };
+		ID3D11UnorderedAccessView* uavs[2] = { texNRDViewZ->uav.get(), texNRDNormalRoughness->uav.get() };
+		context->CSSetShaderResources(0, 2, srvs);
+		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+		context->CSSetShader(prepareNRDGuidesCompute.get(), nullptr, 0);
+		context->Dispatch((fullW + 7) / 8, (fullH + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[2] = {};
+		ID3D11UnorderedAccessView* nullUAVs[2] = {};
+		context->CSSetShaderResources(0, 2, nullSRVs);
+		context->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
+	}
+
+	// 2. Copy motion vectors
+	{
+		auto motion = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+		context->CopyResource(texNRDMV->resource.get(), motion.texture);
+	}
+
+	// 3. Dispatch shadow sampling
+	{
+		ID3D11ShaderResourceView* srvs[4] = {
+			depth.depthSRV,
+			normalRoughness.SRV,
+			shadowCascadeSRV,
+			globals::deferred->directionalShadowLights->srv.get()
+		};
+		ID3D11UnorderedAccessView* uavs[1] = { texNRDShadowInput->uav.get() };
+		ID3D11SamplerState* samplers[2] = { comparisonSampler.get(), linearSampler.get() };
+
+		context->CSSetShaderResources(0, 4, srvs);
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->CSSetSamplers(0, 2, samplers);
+		context->CSSetShader(sampleShadowCompute.get(), nullptr, 0);
+		context->Dispatch((fullW + 7) / 8, (fullH + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[4] = {};
+		ID3D11UnorderedAccessView* nullUAVs[1] = {};
+		ID3D11SamplerState* nullSamplers[2] = {};
+		context->CSSetShaderResources(0, 4, nullSRVs);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+		context->CSSetSamplers(0, 2, nullSamplers);
+	}
+
+	// 4. NRD denoising
+	{
+		// Camera matrices
+		static DirectX::XMMATRIX prevWorldToViewMat = DirectX::XMMatrixIdentity();
+		static DirectX::XMMATRIX prevProjMat = DirectX::XMMatrixIdentity();
+		static float2 prevJitter = { 0, 0 };
+		static uint32_t nrdFrameIndex = 0;
+
+		auto viewMat = globals::game::frameBufferCached.GetCameraView(0).Transpose();
+		auto projMat = globals::game::frameBufferCached.GetCameraProj(0).Transpose();
+
+		auto eyePosNI = Util::GetEyePosition(0);
+		DirectX::XMMATRIX translationMat = DirectX::XMMatrixTranslation(-eyePosNI.x, -eyePosNI.y, -eyePosNI.z);
+		DirectX::XMMATRIX worldToViewMat = DirectX::XMMatrixMultiply(translationMat, viewMat);
+
+		float2 jitter = { 0, 0 };
+
+		nrd::CommonSettings commonSettings{};
+		commonSettings.resourceSize[0] = static_cast<uint16_t>(fullW);
+		commonSettings.resourceSize[1] = static_cast<uint16_t>(fullH);
+		commonSettings.resourceSizePrev[0] = commonSettings.resourceSize[0];
+		commonSettings.resourceSizePrev[1] = commonSettings.resourceSize[1];
+		commonSettings.rectSize[0] = static_cast<uint16_t>(fullW);
+		commonSettings.rectSize[1] = static_cast<uint16_t>(fullH);
+		commonSettings.rectSizePrev[0] = commonSettings.rectSize[0];
+		commonSettings.rectSizePrev[1] = commonSettings.rectSize[1];
+		memcpy(commonSettings.viewToClipMatrix, &projMat, sizeof(float) * 16);
+		memcpy(commonSettings.viewToClipMatrixPrev, &prevProjMat, sizeof(float) * 16);
+		memcpy(commonSettings.worldToViewMatrix, &worldToViewMat, sizeof(float) * 16);
+		memcpy(commonSettings.worldToViewMatrixPrev, &prevWorldToViewMat, sizeof(float) * 16);
+		commonSettings.motionVectorScale[0] = 1.0f;
+		commonSettings.motionVectorScale[1] = 1.0f;
+		commonSettings.motionVectorScale[2] = 0.0f;
+		commonSettings.isMotionVectorInWorldSpace = false;
+		commonSettings.cameraJitter[0] = jitter.x;
+		commonSettings.cameraJitter[1] = jitter.y;
+		commonSettings.cameraJitterPrev[0] = prevJitter.x;
+		commonSettings.cameraJitterPrev[1] = prevJitter.y;
+		commonSettings.frameIndex = nrdFrameIndex++;
+		commonSettings.denoisingRange = 1e6f;
+
+		prevWorldToViewMat = worldToViewMat;
+		prevProjMat = projMat;
+		prevJitter = jitter;
+
+		nrdShadow.SetCommonSettings(commonSettings);
+
+		if (settings.DenoiserMode == 1) {
+			nrd::SigmaSettings sigmaSettings{};
+			auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
+			auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
+			if (dirLight) {
+				const auto& dir = dirLight->GetWorldDirection();
+				sigmaSettings.lightDirection[0] = dir.x;
+				sigmaSettings.lightDirection[1] = dir.y;
+				sigmaSettings.lightDirection[2] = dir.z;
+			}
+			sigmaSettings.planeDistanceSensitivity = settings.SigmaPlaneDistanceSensitivity;
+			sigmaSettings.maxStabilizedFrameNum = settings.SigmaMaxStabilizedFrameNum;
+			nrdShadow.SetDenoiserSettings(&sigmaSettings);
+		} else {
+			nrd::ReblurSettings reblurSettings{};
+			reblurSettings.maxAccumulatedFrameNum = 30;
+			reblurSettings.maxFastAccumulatedFrameNum = 6;
+			nrdShadow.SetDenoiserSettings(&reblurSettings);
+		}
+
+		// Bind named resources
+		nrdShadow.SetNamedSRV(nrd::ResourceType::IN_MV, texNRDMV->srv.get());
+		nrdShadow.SetNamedSRV(nrd::ResourceType::IN_NORMAL_ROUGHNESS, texNRDNormalRoughness->srv.get());
+		nrdShadow.SetNamedSRV(nrd::ResourceType::IN_VIEWZ, texNRDViewZ->srv.get());
+
+		if (settings.DenoiserMode == 1) {
+			nrdShadow.SetNamedSRV(nrd::ResourceType::IN_PENUMBRA, texNRDShadowInput->srv.get());
+			nrdShadow.SetNamedSRV(nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY, texNRDShadowOutput->srv.get());
+			nrdShadow.SetNamedUAV(nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY, texNRDShadowOutput->uav.get());
+		} else {
+			nrdShadow.SetNamedSRV(nrd::ResourceType::IN_DIFF_HITDIST, texNRDShadowInput->srv.get());
+			nrdShadow.SetNamedSRV(nrd::ResourceType::OUT_DIFF_HITDIST, texNRDShadowOutput->srv.get());
+			nrdShadow.SetNamedUAV(nrd::ResourceType::OUT_DIFF_HITDIST, texNRDShadowOutput->uav.get());
+		}
+
+		nrdShadow.Dispatch();
+	}
+
+	// Bind denoised shadow for PS access at t54
+	{
+		ID3D11ShaderResourceView* srv = texNRDShadowOutput->srv.get();
+		context->PSSetShaderResources(54, 1, &srv);
 	}
 }
 

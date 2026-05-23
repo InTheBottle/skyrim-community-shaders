@@ -1,5 +1,7 @@
 #pragma once
 
+#include "NRDReblurIntegration.h"
+
 struct Skylighting : Feature
 {
 private:
@@ -47,6 +49,10 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		bool EnableDenoisedShadow = false;
+		uint DenoiserMode = 0;  // 0 = REBLUR_OCCLUSION, 1 = SIGMA
+		float SigmaPlaneDistanceSensitivity = 0.02f;
+		uint SigmaMaxStabilizedFrameNum = 5;
 	} settings;
 
 	struct SkylightingCB
@@ -69,6 +75,7 @@ public:
 	SkylightingCB GetCommonBufferData(bool a_inWorld);
 
 	winrt::com_ptr<ID3D11SamplerState> comparisonSampler = nullptr;
+	winrt::com_ptr<ID3D11SamplerState> linearSampler = nullptr;
 
 	Texture2D* texOcclusion = nullptr;
 	Texture3D* texProbeArray = nullptr;
@@ -79,6 +86,20 @@ public:
 	ID3D11ShaderResourceView* shadowCascadeSRV = nullptr;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> prepareNRDGuidesCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> sampleShadowCompute = nullptr;
+
+	// NRD denoised shadow
+	eastl::unique_ptr<Texture2D> texNRDShadowInput = nullptr;
+	eastl::unique_ptr<Texture2D> texNRDShadowOutput = nullptr;
+	eastl::unique_ptr<Texture2D> texNRDViewZ = nullptr;
+	eastl::unique_ptr<Texture2D> texNRDNormalRoughness = nullptr;
+	eastl::unique_ptr<Texture2D> texNRDMV = nullptr;
+	NRDReblurIntegration nrdShadow;
+	uint prevDenoiserMode = UINT_MAX;
+
+	void DrawDenoisedShadow();
+	ID3D11ShaderResourceView* GetDenoisedShadowSRV();
 
 	// misc parameters
 	uint probeArrayDims[3] = { 256, 256, 128 };

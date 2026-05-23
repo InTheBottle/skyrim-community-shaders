@@ -10,6 +10,7 @@
 #include "State.h"
 
 #include "Features/DynamicCubemaps.h"
+#include "Features/Skylighting.h"
 
 #include "Plugin.h"
 
@@ -155,6 +156,13 @@ namespace SIE
 				}
 			}
 
+			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) &&
+				globals::features::skylighting.loaded && globals::features::skylighting.settings.EnableDenoisedShadow) {
+				defines[lastIndex++] = { "SKYLIGHTING_DENOISED_SHADOW", nullptr };
+				if (globals::features::skylighting.settings.DenoiserMode == 1)
+					defines[lastIndex++] = { "USE_SIGMA", nullptr };
+			}
+
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
@@ -293,6 +301,12 @@ namespace SIE
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Grass)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
 				}
+			}
+
+			if (globals::features::skylighting.loaded && globals::features::skylighting.settings.EnableDenoisedShadow) {
+				defines[lastIndex++] = { "SKYLIGHTING_DENOISED_SHADOW", nullptr };
+				if (globals::features::skylighting.settings.DenoiserMode == 1)
+					defines[lastIndex++] = { "USE_SIGMA", nullptr };
 			}
 
 			defines[lastIndex] = { nullptr, nullptr };
