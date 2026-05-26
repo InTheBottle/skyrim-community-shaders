@@ -131,6 +131,14 @@ public:
 	ConstantBuffer* strictLightDataCB = nullptr;
 
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
+
+	// Debug-only visualization state. Lives on the instance rather than in
+	// Settings so it can't accidentally persist into a user's config: a
+	// shipped JSON with `EnableLightsVisualisation = true` would force every
+	// load to compile the heavier LLFDEBUG shader permutation. These reset to
+	// off on each session.
+	bool EnableLightsVisualisation = false;
+	uint LightsVisualisationMode = 0;
 	bool previousEnableLightsVisualisation = false;
 	bool currentEnableLightsVisualisation = false;
 
@@ -181,7 +189,7 @@ public:
 	virtual void DrawOverlay() override;
 	virtual bool IsOverlayVisible() const override
 	{
-		return settings.EnableLightsVisualisation || settings.ShowShadowOverlay ||
+		return EnableLightsVisualisation || settings.ShowShadowOverlay ||
 		       ShadowCasterManager::HasSuppressedLights() || ShadowCasterManager::HasAnyOverrides();
 	}
 
@@ -205,9 +213,21 @@ public:
 
 	struct Settings
 	{
-		// Debug (last)
-		bool EnableLightsVisualisation = false;
-		uint LightsVisualisationMode = 0;
+		bool EnableContactShadows = false;
+		// Max raymarch steps at zero depth; linearly ramps to 0 at MaxDistance.
+		uint ContactShadowMaxSteps = 4;
+		// View-space depth at which contact shadows fade fully off.
+		float ContactShadowMaxDistance = 1024.0f;
+		// Per-step march length in view-space units. Larger -> longer shadows, coarser detail.
+		float ContactShadowStride = 2.0f;
+		// Depth-delta multiplier for shadow onset (higher -> darker contact).
+		float ContactShadowThickness = 0.20f;
+		// Depth-delta multiplier for shadow falloff (higher -> shorter shadow).
+		float ContactShadowDepthFade = 0.05f;
+		// Skip contact shadows for CLUSTERED lights whose normalized distance falloff
+		// (1 - (lightDist/radius)^2) at the pixel is below this threshold. Strict
+		// lights always raymarch. 0 = never skip; 1 = always skip.
+		float ContactShadowMinIntensity = 0.25f;
 
 		/// Show the shadow caster overlay (suppression / debug-override table)
 		/// independently of the visualization mode and suppression state.
