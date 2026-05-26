@@ -148,7 +148,6 @@ public:
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	int previousRoomIndex = -1;
-	uint previousShadowBitMask = 0;
 
 	Util::FrameChecker frameChecker;
 
