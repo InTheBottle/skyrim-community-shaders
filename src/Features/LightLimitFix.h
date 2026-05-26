@@ -97,14 +97,20 @@ public:
 
 	struct alignas(16) PerFrame
 	{
-		uint pad0[3];             // aligns ShadowMapSlots to offset 12 (mirrors removed FilterMode/KernelScale/LightSize)
+		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowMinIntensity;
 		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
 		// Cluster config (computed)
 		uint ClusterSize[4];
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad1[2];
+		uint pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 

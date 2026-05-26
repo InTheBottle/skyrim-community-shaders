@@ -75,14 +75,20 @@ namespace SharedData
 
 	struct LightLimitFixSettings
 	{
-		uint3 pad0;           // aligns ShadowMapSlots to offset 12 (mirrors removed FilterMode/KernelScale/LightSize)
+		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowMinIntensity;
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float2 pad1;
+		uint2 pad0;
 	};
 
 	struct WetnessEffectsSettings
