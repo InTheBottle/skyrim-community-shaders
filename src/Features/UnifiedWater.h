@@ -118,6 +118,7 @@ private:
 
 	void SetFlowmapTex() const;
 	bool IsExteriorWorldspaceActive() const;
+	RE::NiPointer<RE::NiNode> GetWaterLODRoot() const;
 	void UpdateWaterLODCull() const;
 	static bool LoadOrderChanged();
 };

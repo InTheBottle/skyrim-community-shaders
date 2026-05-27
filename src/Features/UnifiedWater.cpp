@@ -334,11 +334,20 @@ bool UnifiedWater::IsExteriorWorldspaceActive() const
 	return exteriorWorldspaceActive.load(std::memory_order_acquire) && !IsInteriorCellActive();
 }
 
+RE::NiPointer<RE::NiNode> UnifiedWater::GetWaterLODRoot() const
+{
+	if (!gWaterLOD || !*gWaterLOD)
+		return nullptr;
+
+	return RE::NiPointer<RE::NiNode>(*gWaterLOD);
+}
+
 void UnifiedWater::UpdateWaterLODCull() const
 {
-	// Only hide UW's generated LOD root, preserving child tile cull flags
-	if (gWaterLOD && *gWaterLOD)
-		(*gWaterLOD)->SetAppCulled(!IsExteriorWorldspaceActive());
+	if (IsExteriorWorldspaceActive()) {
+		if (const auto waterLOD = GetWaterLODRoot())
+			waterLOD->SetAppCulled(false);
+	}
 }
 
 void UnifiedWater::TES_SetWorldSpace::thunk(RE::TES* tes, RE::TESWorldSpace* worldSpace, bool isExterior)
@@ -347,18 +356,20 @@ void UnifiedWater::TES_SetWorldSpace::thunk(RE::TES* tes, RE::TESWorldSpace* wor
 
 	auto& singleton = globals::features::unifiedWater;
 	singleton.exteriorWorldspaceActive.store(worldSpace && isExterior, std::memory_order_release);
-	singleton.waterCache->SetCurrentWorldSpace(worldSpace);
+	if (singleton.waterCache)
+		singleton.waterCache->SetCurrentWorldSpace(worldSpace);
 	singleton.UpdateWaterLODCull();
 }
 
 void UnifiedWater::TES_DestroySkyCell::thunk(RE::TES* tes)
 {
-	func(tes);
-
 	auto& singleton = globals::features::unifiedWater;
 	singleton.exteriorWorldspaceActive.store(false, std::memory_order_release);
-	singleton.waterCache->SetCurrentWorldSpace(nullptr);
+	if (singleton.waterCache)
+		singleton.waterCache->SetCurrentWorldSpace(nullptr);
 	singleton.UpdateWaterLODCull();
+
+	func(tes);
 }
 
 void UnifiedWater::BGSTerrainNode_UpdateWaterMeshSubVisibility::thunk(const RE::BGSTerrainNode* node, RE::BSMultiBoundNode* waterParent)
@@ -407,6 +418,12 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 	std::vector<std::pair<RE::BSTriShape*, const WaterCache::Instruction*>> built;
 	bool attaching = false;
 
+	const auto waterLOD = singleton.GetWaterLODRoot();
+	if (!waterSystem || !singleton.waterCache || !waterLOD) {
+		func(block);
+		return;
+	}
+
 	if (block && block->loaded && !block->attached && block->chunk && block->water) {
 		block->chunk->DetachChild2(block->water);
 		block->water->local.translate = block->chunk->local.translate;
@@ -425,6 +442,11 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 		attaching = true;
 
 		const auto node = block->node;
+		if (!node || !node->manager || !node->manager->worldSpace) {
+			func(block);
+			return;
+		}
+
 		const auto lodLevel = node->GetLODLevel();
 		const auto worldSpace = block->node->manager->worldSpace;
 
@@ -442,7 +464,12 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 			RE::NiCloningProcess cloningProcess;
 
 			const auto targetShape = lodLevel > 4 || singleton.settings.UseOptimisedMeshes ? singleton.optimisedWaterMesh : singleton.waterMesh;
+			if (!targetShape)
+				continue;
+
 			RE::BSTriShape* shape = targetShape->CreateClone(cloningProcess)->AsTriShape();
+			if (!shape)
+				continue;
 
 			const auto posX = (instruction.x - node->baseCellX) * 4096.0f + instruction.size * 2048.0f;
 			const auto posY = (instruction.y - node->baseCellY) * 4096.0f + instruction.size * 2048.0f;
@@ -458,7 +485,7 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 
 	func(block);
 
-	if (!attaching || !block->waterAttached)
+	if (!attaching || !block || !block->waterAttached || !block->water || built.empty())
 		return;
 
 	for (auto& [shape, instruction] : built) {
@@ -482,29 +509,40 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 		}
 	}
 
-	(*singleton.gWaterLOD)->AttachChild(block->water, true);
+	waterLOD->AttachChild(block->water, true);
 	singleton.UpdateWaterLODCull();
 	waterSystem->Enable();
 }
 
 void UnifiedWater::BGSTerrainBlock_Detach::thunk(RE::BGSTerrainBlock* block)
 {
-	const auto water = block->water;
+	if (!block) {
+		func(block);
+		return;
+	}
+
+	const auto& singleton = globals::features::unifiedWater;
+	const auto waterLOD = singleton.GetWaterLODRoot();
+	RE::NiPointer<RE::BSMultiBoundNode> water(block->water);
+	const bool hadWaterAttached = block->waterAttached;
 	block->water = nullptr;
 
 	func(block);
 
-	block->water = water;
+	block->water = water.get();
 
-	if (water) {
+	if (water && hadWaterAttached) {
 		auto count = water->GetChildren().size();
 		while (count > 0) {
 			water->DetachChildAt(--count);
 		}
 
-		(*globals::features::unifiedWater.gWaterLOD)->DetachChild(water);
+		if (waterLOD && water->parent == waterLOD.get())
+			waterLOD->DetachChild(water.get());
+
 		block->waterAttached = false;
-		globals::features::unifiedWater.UpdateWaterLODCull();
+		if (waterLOD && singleton.IsExteriorWorldspaceActive())
+			waterLOD->SetAppCulled(false);
 	}
 }
 
