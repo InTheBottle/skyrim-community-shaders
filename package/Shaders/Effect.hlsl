@@ -521,6 +521,10 @@ cbuffer PerGeometry : register(b2)
 
 #	define LinearSampler SampBaseSampler
 
+#	if defined(SKYLIGHTING)
+#		include "Skylighting/Skylighting.hlsli"
+#	endif
+
 #	if defined(IBL)
 #		include "IBL/IBL.hlsli"
 #	endif
@@ -540,6 +544,17 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	if (suppressExternalEmittance) {
 		color = ShadowSampling::GetSceneLightingColor();
 	}
+
+#		if defined(SKYLIGHTING)
+#			if defined(VR)
+	float3 positionMSSkylight = worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+#			else
+	float3 positionMSSkylight = worldPosition;
+#			endif
+
+	sh2 skylightingSH = Skylighting::SampleNoBias(positionMSSkylight);
+	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(positionMSSkylight));
+#		endif
 
 	float3 dirColor;
 	float3 ambientColor;
@@ -570,6 +585,12 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		dirColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
+#		endif
+
+#		if defined(SKYLIGHTING)
+	ambientColor = Color::IrradianceToLinear(ambientColor);
+	ambientColor *= skylightingDiffuse;
+	ambientColor = Color::IrradianceToGamma(ambientColor);
 #		endif
 
 	color = dirColor + ambientColor;

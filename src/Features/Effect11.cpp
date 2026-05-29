@@ -91,8 +91,6 @@ Effect11::PerFrame Effect11::GetCommonBufferData()
 	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 
-	data.SkylightingAmbientMinLevel = (enableEffect && settingManager.GetValue<bool>("EnableSkylighting", "EFFECT")) ? settingManager.GetInterpolatedTimeOfDayValue("AmbientMinLevel", "SKYLIGHTING") : 1.0f;
-
 	data.EnableProceduralSun = enableEffect && settingManager.GetValue<bool>("EnableProceduralSun", "EFFECT");
 
 	{

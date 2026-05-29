@@ -16,12 +16,13 @@
 
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
+#elif defined(SKYLIGHTING)
+#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
-#if defined(SKYLIGHTING)
-#	include "Skylighting/Skylighting.hlsli"
-#endif
-
+// Populated once per frame by Deferred::CopyShadowLightData from BSShadowDirectionalLight.
+// Column-major float4x4 projections so HLSL `mul(proj, float4(pos, 1))` matches the
+// XMMATRIX layout written by XMStoreFloat4x4 on the C++ side.
 struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
@@ -166,24 +167,20 @@ namespace ShadowSampling
 		return scattering;
 	}
 
-	float GetLightingShadow(float3 worldPosition, float3 normal, float2 screenPosition, uint eyeIndex, out float detailedShadow)
+	float GetLightingShadow(float3 worldPosition, uint eyeIndex, out float detailedShadow)
 	{
 		if (!HasDirectionalShadows()) {
 			detailedShadow = 1.0;
 			return 1.0;
 		}
 
-		float shadow = 1.0;
-		detailedShadow = 1.0;
-
 #if defined(VOLUMETRIC_SHADOWS)
-		float vsmDetailedShadow;
-		shadow = min(shadow, VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, vsmDetailedShadow));
-		detailedShadow = min(detailedShadow, vsmDetailedShadow);
-#endif
-
-		detailedShadow = min(detailedShadow, shadow);
+		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, detailedShadow);
 		return shadow;
+#else
+		detailedShadow = 1.0;
+		return 1.0;
+#endif
 	}
 
 	float3 GetRawAmbientLighting()

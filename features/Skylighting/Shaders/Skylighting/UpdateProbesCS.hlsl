@@ -1,20 +1,21 @@
-#include "Common/FrameBuffer.hlsli"
 #include "Common/Math.hlsli"
 #include "Skylighting/Skylighting.hlsli"
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
 
-RWTexture3D<uint> outProbeArray : register(u0);
+RWTexture3D<sh2> outProbeArray : register(u0);
 RWTexture3D<uint> outAccumFramesArray : register(u1);
 
 SamplerComparisonState comparisonSampler : register(s0);
 
 [numthreads(8, 8, 1)] void main(uint3 dtid : SV_DispatchThreadID) {
+	const float fadeInThreshold = 15;
+	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
 	uint3 cellID = uint3(max(int3(dtid) - settings.ArrayOrigin.xyz, 0) % Skylighting::ARRAY_DIM);
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
 	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
-	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);
+	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
 	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
 	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
 
@@ -26,15 +27,20 @@ SamplerComparisonState comparisonSampler : register(s0);
 		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
-		uint dirIndex = settings.OcclusionDirIndex;
-		uint bitmask = isValid ? outProbeArray[dtid] : 0xFFFFFFFF;
-		bitmask &= ~(1u << dirIndex);
-		if (visibility > 0.5)
-			bitmask |= (1u << dirIndex);
-		outProbeArray[dtid] = bitmask;
+		sh2 occlusionSH = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(settings.OcclusionDir.xyz), visibility * 4.0 * Math::PI);  // 4 pi from monte carlo
+		if (isValid) {
+			float lerpFactor = rcp(accumFrames);
+			sh2 prevProbeSH = unitSH;
+			if (accumFrames > 1)
+				prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+			occlusionSH = lerp(prevProbeSH, occlusionSH, lerpFactor);
+		}
+		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
+
+		outProbeArray[dtid] = occlusionSH;
 		outAccumFramesArray[dtid] = accumFrames;
 	} else if (!isValid) {
-		outProbeArray[dtid] = 0xFFFFFFFF;
+		outProbeArray[dtid] = unitSH;
 		outAccumFramesArray[dtid] = 0;
 	}
 }

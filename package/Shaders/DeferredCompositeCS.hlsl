@@ -141,7 +141,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	SampleSSGI(dispatchID.xy, normalWS, ssgiAo, ssgiIl);
 
 	float vertexAO = Masks2Texture[dispatchID.xy].x;
-	ssgiAo = saturate(ssgiAo / max(vertexAO, EPSILON_DIVISION));
+	ssgiAo = saturate(ssgiAo / max(vertexAO, 0.001));
 
 	float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
 	float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
@@ -217,11 +217,8 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 		float3 positionMS = positionWS.xyz;
 #		endif
 
-		Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMS.xyz, R, float2(dispatchID.xy));
-		float f = (1 - roughness) * (sqrt(1 - roughness) + roughness);
-		float3 dominantDir = normalize(lerp(normalWS, R, f));
-		float halfAngle = roughness;
-		float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingData, dominantDir, halfAngle);
+		sh2 skylightingSH = Skylighting::Sample(positionMS.xyz, R);
+		float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, specularLobe);
 #	endif
 
 #	if defined(IBL)

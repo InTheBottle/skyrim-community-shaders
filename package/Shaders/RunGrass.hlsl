@@ -599,22 +599,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
-	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
-
-#			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
-	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
-		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, input.HPosition.xy, eyeIndex, vsmDetailedShadow);
-	}
-#			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow *= shadowColor.x;
-
-#			if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING)
-	dirSoftShadow = dirDetailedShadow;
-#			endif
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (!SharedData::InInterior && dirLightAngle >= 0.0)
@@ -653,9 +641,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #					endif
-	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, positionMSSkylight, normal, vertexAO);
-	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 #				endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
@@ -838,22 +825,10 @@ PS_OUTPUT main(PS_INPUT input)
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
-	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
-
-#			if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
-	if (!SharedData::InInterior && ShadowSampling::HasDirectionalShadows()) {
-		float vsmDetailedShadow;
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, normal, input.HPosition.xy, eyeIndex, vsmDetailedShadow);
-	}
-#			endif
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow = shadowColor.x;
-
-#			if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING)
-	dirSoftShadow = dirDetailedShadow;
-#			endif
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (!SharedData::InInterior)
@@ -924,9 +899,8 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #				endif
-	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, positionMSSkylight, normal, vertexAO);
-	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 #			endif  // SKYLIGHTING
 
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));

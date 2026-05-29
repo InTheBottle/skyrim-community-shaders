@@ -2355,9 +2355,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #		endif
 #		if defined(DEFERRED)
-	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal);
 #		else
-	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
+	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal) : Skylighting::UNIT_SH;
 #		endif
 
 #	endif
@@ -2381,7 +2381,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
 	float minWetnessAngle = saturate(max(minWetnessValue, vertexNormal.z));
 #		if defined(SKYLIGHTING)
-	float wetnessOcclusion = inWorld ? Skylighting::GetSimpleVisibility(skylightingData) : 0.0;
+	float wetnessOcclusion = inWorld ? saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1))) : 0.0;
 #		else
 	float wetnessOcclusion = inWorld;
 #		endif
@@ -2487,9 +2487,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float dirSoftShadow = 1.0;
 	float dirVSMDetailedShadow = 1.0;
 
-#	if defined(VOLUMETRIC_SHADOWS) || defined(SKYLIGHTING)
+#	if defined(VOLUMETRIC_SHADOWS)
 	if (inWorld && !inReflection && ShadowSampling::HasDirectionalShadows())
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, worldNormal, input.Position.xy, eyeIndex, dirVSMDetailedShadow);
+		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, eyeIndex, dirVSMDetailedShadow);
 #	endif
 
 	float dirDetailedShadow = 1.0;
@@ -2497,7 +2497,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if ((Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) && (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir)) {
 		dirDetailedShadow *= shadowColor.x;
 
-#	if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING)
+#	if !defined(VOLUMETRIC_SHADOWS)
 		dirSoftShadow = dirDetailedShadow;
 #	endif
 	} else {
@@ -2874,8 +2874,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		vertexColor = 1;
 #		endif
 #		if defined(SKYLIGHTING)
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, input.WorldPosition.xyz, ambientNormal);
-	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal);
 #		endif
 #	elif defined(SKYLIGHTING)
 	float3 vertexColor = input.Color.xyz;
@@ -2888,8 +2887,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	vertexAO = lerp(1, vertexAO, SharedData::truePBRSettings.VertexAOStrength);
 	vertexColor = 1;
 #		endif
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, input.WorldPosition.xyz, ambientNormal, vertexAO);
-	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal, vertexAO);
 #	else
 #		if defined(TRUE_PBR)
 	float3 vertexColor = 1;
@@ -3060,10 +3058,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	)
 #		if defined(DYNAMIC_CUBEMAPS)
 #			if defined(SKYLIGHTING)
-		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness, skylightingData);
+		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness, skylightingSH);
 #				if defined(WETNESS_EFFECTS)
 	if (waterRoughnessSpecular < 1)
-		color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(wetnessNormal, viewDirection, waterRoughnessSpecular, skylightingData);
+		color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(wetnessNormal, viewDirection, waterRoughnessSpecular, skylightingSH);
 #				endif
 #			else
 		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness);

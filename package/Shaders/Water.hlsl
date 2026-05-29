@@ -1120,12 +1120,12 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 positionMSSkylight = input.WPosition.xyz;
 #				endif
 
-	Skylighting::ProbeData skylightingData = Skylighting::SampleNoBias(positionMSSkylight);
-	float skylightingVis = Skylighting::GetSimpleVisibility(skylightingData);
+	sh2 skylightingSH = Skylighting::SampleNoBias(positionMSSkylight);
+	float skylighting = SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1));
 
-	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingData, float3(0, 0, 1), Skylighting::GetFadeOutFactor(input.WPosition.xyz));
+	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(input.WPosition.xyz));
 
-	wetnessOcclusion = inWorld ? pow(saturate(skylightingVis), 2) : 0;
+	wetnessOcclusion = inWorld ? pow(saturate(skylighting), 2) : 0;
 #			endif
 
 #			if defined(SKYLIGHTING)
@@ -1137,8 +1137,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 normal = waterData.normal;
 
 #			if defined(SKYLIGHTING)
-	float3 R = reflect(viewDirection, normal);
-	float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingData, R, 0.0, Skylighting::GetFadeOutFactor(input.WPosition.xyz));
+	sh2 specularLobe = SphericalHarmonics::FauxSpecularLobe(normal, -viewDirection, 0.0);
+	float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, specularLobe, Skylighting::GetFadeOutFactor(input.WPosition.xyz));
 #			endif
 
 	float fresnel = GetFresnelValue(normal, viewDirection);
@@ -1187,7 +1187,6 @@ PS_OUTPUT main(PS_INPUT input)
 	dirColor *= dirShadow;
 
 #				if defined(SKYLIGHTING)
-	skylightingDiffuse = min(skylightingDiffuse, lerp(dirShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 	ambientColor = Color::IrradianceToLinear(ambientColor);
 	ambientColor *= skylightingDiffuse;
 	ambientColor = Color::IrradianceToGamma(ambientColor);

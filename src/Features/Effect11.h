@@ -96,7 +96,7 @@ public:
 		uint EnableRain;
 		float RainMotionStretch;
 		float RainMotionTransparency;
-		float SkylightingAmbientMinLevel;
+		uint pad0;
 	};
 
 	bool enableEffect = false;

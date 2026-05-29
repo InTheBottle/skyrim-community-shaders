@@ -1,6 +1,5 @@
 #include "Skylighting.h"
 
-#include "Deferred.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -31,10 +30,6 @@ void Skylighting::ResetSkylighting()
 	auto context = globals::d3d::context;
 	UINT clr[1] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
-
-	UINT allOnes[1] = { 0xFFFFFFFF };
-	context->ClearUnorderedAccessViewUint(texProbeArray->uav.get(), allOnes);
-
 	queuedResetSkylighting = false;
 }
 
@@ -85,7 +80,7 @@ void Skylighting::SetupResources()
 			.Height = probeArrayDims[1],
 			.Depth = probeArrayDims[2],
 			.MipLevels = 1,
-			.Format = DXGI_FORMAT_R32_UINT,
+			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
 			.Usage = D3D11_USAGE_DEFAULT,
 			.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
 			.CPUAccessFlags = 0,
@@ -120,11 +115,11 @@ void Skylighting::SetupResources()
 
 	{
 		D3D11_SAMPLER_DESC samplerDesc = {};
-		samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
-		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;  // Use comparison filtering
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;               // Address mode (Clamp for shadow maps)
 		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
 		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;  // Comparison function
 		samplerDesc.MinLOD = 0;
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, comparisonSampler.put()));
@@ -195,15 +190,13 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.OcclusionViewProj = OcclusionTransform,
 		.OcclusionDir = OcclusionDir,
 		.PosOffset = cellOrigin - eyePos,
-		.OcclusionDirIndex = (frameCount / 4) % NUM_DIRECTIONS,
 		.ArrayOrigin = {
 			((int)cellID.x - probeArrayDims[0] / 2) % probeArrayDims[0],
 			((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
 			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
-		.MinSpecularVisibility = settings.MinSpecularVisibility,
-		.MaxZenith = settings.MaxZenith
+		.MinSpecularVisibility = settings.MinSpecularVisibility
 	};
 }
 
@@ -225,32 +218,35 @@ void Skylighting::Prepass()
 	auto context = globals::d3d::context;
 
 	{
-		std::array<ID3D11ShaderResourceView*, 1> srvs = {
-			texOcclusion->srv.get(),
-		};
-		std::array<ID3D11UnorderedAccessView*, 2> uavs = {
-			texProbeArray->uav.get(),
-			texAccumFramesArray->uav.get(),
-		};
+		std::array<ID3D11ShaderResourceView*, 1> srvs = { texOcclusion->srv.get() };
+		std::array<ID3D11UnorderedAccessView*, 2> uavs = { texProbeArray->uav.get(), texAccumFramesArray->uav.get() };
+		std::array<ID3D11SamplerState*, 1> samplers = { comparisonSampler.get() };
 
-		ID3D11SamplerState* sampler = comparisonSampler.get();
-		context->CSSetSamplers(0, 1, &sampler);
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("Skylighting::ProbeUpdate");
-		context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
-		globals::profiler->EndPass();
+		// Update probe array
+		{
+			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
+			globals::profiler->BeginPass("Skylighting::ProbeUpdate");
+			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
+			globals::profiler->EndPass();
+		}
 
-		srvs.fill(nullptr);
-		uavs.fill(nullptr);
-		sampler = nullptr;
-		context->CSSetSamplers(0, 1, &sampler);
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(nullptr, nullptr, 0);
+		// Reset
+		{
+			srvs.fill(nullptr);
+			uavs.fill(nullptr);
+			samplers.fill(nullptr);
+
+			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetShader(nullptr, nullptr, 0);
+		}
 	}
 
+	// Set PS shader resources
 	{
 		ID3D11ShaderResourceView* srv = texProbeArray->srv.get();
 		context->PSSetShaderResources(50, 1, &srv);
@@ -556,9 +552,32 @@ void Skylighting::RenderOcclusion()
 				float originaLastCubeSize = precip->lastCubeSize;
 				precip->lastCubeSize = PrecipitationShaderCubeSize;
 
-				uint dirIndex = (frameCount / 4) % NUM_DIRECTIONS;
-				float3 dir = GetHemisphereDirection(dirIndex, settings.MaxZenith);
-				float3 PrecipitationShaderDirectionF = -dir;
+				float2 vPoint;
+				{
+					constexpr float rcpRandMax = 1.f / RAND_MAX;
+					static int randSeed = std::rand();
+					static uint randFrameCount = 0;
+
+					// r2 sequence
+					vPoint = float2(randSeed * rcpRandMax) + (float)randFrameCount * float2(0.245122333753f, 0.430159709002f);
+					vPoint.x -= static_cast<unsigned long long>(vPoint.x);
+					vPoint.y -= static_cast<unsigned long long>(vPoint.y);
+
+					randFrameCount++;
+					if (randFrameCount == 1000) {
+						randFrameCount = 0;
+						randSeed = std::rand();
+					}
+
+					// disc transformation
+					vPoint.x = sqrt(vPoint.x * sin(settings.MaxZenith));
+					vPoint.y *= 6.28318530718f;
+
+					vPoint = { vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
+				}
+
+				float3 PrecipitationShaderDirectionF = -float3{ vPoint.x, vPoint.y, sqrt(1 - vPoint.LengthSquared()) };
+				PrecipitationShaderDirectionF.Normalize();
 
 				PrecipitationShaderDirection = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z };
 

@@ -135,15 +135,13 @@ namespace SharedData
 		row_major float4x4 OcclusionViewProj;
 		float4 OcclusionDir;
 
-		float3 PosOffset;   // xyz: cell origin in camera model space
-		uint OcclusionDirIndex;
+		float4 PosOffset;   // xyz: cell origin in camera model space
 		uint4 ArrayOrigin;  // xyz: array origin
 		int4 ValidMargin;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		float MaxZenith;
-		uint pad0;
+		uint2 pad0;
 	};
 
 	struct CloudShadowsSettings
@@ -320,7 +318,7 @@ namespace SharedData
 		uint EnableRain;
 		float RainMotionStretch;
 		float RainMotionTransparency;
-		float SkylightingAmbientMinLevel;
+		uint pad0;
 	};
 	struct TerrainBlendingSettings
 	{
