@@ -217,8 +217,11 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 		float3 positionMS = positionWS.xyz;
 #		endif
 
-		sh2 skylightingSH = Skylighting::Sample(positionMS.xyz, R, float2(dispatchID.xy));
-		float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, specularLobe);
+		Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMS.xyz, R, float2(dispatchID.xy));
+		float f = (1 - roughness) * (sqrt(1 - roughness) + roughness);
+		float3 dominantDir = normalize(lerp(normalWS, R, f));
+		float halfAngle = roughness;
+		float skylightingSpecular = Skylighting::EvaluateSpecular(skylightingData, dominantDir, halfAngle);
 #	endif
 
 #	if defined(IBL)

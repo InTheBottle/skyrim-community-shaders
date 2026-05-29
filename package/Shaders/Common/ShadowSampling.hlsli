@@ -16,8 +16,6 @@
 
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
-#elif defined(SKYLIGHTING)
-#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
 #if defined(SKYLIGHTING)
@@ -177,10 +175,6 @@ namespace ShadowSampling
 
 		float shadow = 1.0;
 		detailedShadow = 1.0;
-
-#if defined(SKYLIGHTING) && defined(PSHADER)
-		shadow = min(shadow, Skylighting::SampleShadowVisibility(worldPosition, normal, screenPosition));
-#endif
 
 #if defined(VOLUMETRIC_SHADOWS)
 		float vsmDetailedShadow;

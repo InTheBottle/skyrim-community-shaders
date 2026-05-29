@@ -135,13 +135,15 @@ namespace SharedData
 		row_major float4x4 OcclusionViewProj;
 		float4 OcclusionDir;
 
-		float4 PosOffset;   // xyz: cell origin in camera model space
+		float3 PosOffset;   // xyz: cell origin in camera model space
+		uint OcclusionDirIndex;
 		uint4 ArrayOrigin;  // xyz: array origin
 		int4 ValidMargin;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint2 pad0;
+		float MaxZenith;
+		uint pad0;
 	};
 
 	struct CloudShadowsSettings

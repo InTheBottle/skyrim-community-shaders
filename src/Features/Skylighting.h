@@ -49,20 +49,33 @@ public:
 		float MinSpecularVisibility = 0.1f;
 	} settings;
 
+	static constexpr uint NUM_DIRECTIONS = 32;
+	static constexpr float GOLDEN_ANGLE = 2.39996323f;
+
+	static float3 GetHemisphereDirection(uint index, float maxZenith)
+	{
+		float cosMaxZenith = cosf(maxZenith);
+		float z = cosMaxZenith + (1.0f - cosMaxZenith) * (float(index) + 0.5f) / float(NUM_DIRECTIONS);
+		float r = sqrtf(1.0f - z * z);
+		float phi = index * GOLDEN_ANGLE;
+		return { r * cosf(phi), r * sinf(phi), z };
+	}
+
 	struct SkylightingCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float4 OcclusionDir;
 
 		float3 PosOffset;  // cell origin in camera model space
-		uint _pad0;
-		uint ArrayOrigin[3];  // xyz: array origin, w: max accum frames
+		uint OcclusionDirIndex;
+		uint ArrayOrigin[3];
 		uint _pad1;
 		int ValidMargin[4];
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		float MaxZenith;
+		uint _pad2;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -73,10 +86,6 @@ public:
 	Texture2D* texOcclusion = nullptr;
 	Texture3D* texProbeArray = nullptr;
 	Texture3D* texAccumFramesArray = nullptr;
-	Texture3D* texShadowBitmask = nullptr;
-	Texture3D* texShadowVisibility = nullptr;
-
-	ID3D11ShaderResourceView* shadowCascadeSRV = nullptr;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 
@@ -92,7 +101,6 @@ public:
 	uint frameCount = 0;
 
 	void ResetSkylighting();
-	void CaptureShadowCascadeSRV();
 
 	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
 

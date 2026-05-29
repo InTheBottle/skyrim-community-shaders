@@ -5,25 +5,73 @@
 #include "Common/Random.hlsli"
 #include "Common/Shading.hlsli"
 #include "Common/SharedData.hlsli"
-#include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 
 namespace Skylighting
 {
 #if defined(SKYLIGHTING_PROBE_REGISTER)
-	Texture3D<sh2> SkylightingProbeArray : register(SKYLIGHTING_PROBE_REGISTER);
+	Texture3D<uint> SkylightingProbeArray : register(SKYLIGHTING_PROBE_REGISTER);
 #elif defined(PSHADER)
-	Texture3D<sh2> SkylightingProbeArray : register(t50);
+	Texture3D<uint> SkylightingProbeArray : register(t50);
 #endif
 
-#if defined(PSHADER)
-	Texture3D<float> ShadowVisibilityProbeArray : register(t53);
-#endif
-
-	const static sh2 UNIT_SH = float4(sqrt(4.0 * Math::PI), 0, 0, 0);
+	const static uint NUM_DIRECTIONS = 32;
+	const static float GOLDEN_ANGLE = 2.39996323;
 
 	const static uint3 ARRAY_DIM = uint3(256, 256, 128);
 	const static float3 ARRAY_SIZE = 10000.f * float3(1, 1, 0.5);
 	const static float3 CELL_SIZE = ARRAY_SIZE / ARRAY_DIM;
+
+	float3 GetHemisphereDirection(uint index)
+	{
+		float maxZenith = SharedData::skylightingSettings.MaxZenith;
+		float cosMaxZenith = cos(maxZenith);
+		float z = cosMaxZenith + (1.0 - cosMaxZenith) * (float(index) + 0.5) / float(NUM_DIRECTIONS);
+		float r = sqrt(1.0 - z * z);
+		float phi = index * GOLDEN_ANGLE;
+		return float3(r * cos(phi), r * sin(phi), z);
+	}
+
+	struct ProbeData
+	{
+		uint bitmask0, bitmask1, bitmask2, bitmask3;
+		uint bitmask4, bitmask5, bitmask6, bitmask7;
+		float weight0, weight1, weight2, weight3;
+		float weight4, weight5, weight6, weight7;
+	};
+
+	uint GetBitmask(ProbeData data, uint i)
+	{
+		if (i == 0) return data.bitmask0;
+		if (i == 1) return data.bitmask1;
+		if (i == 2) return data.bitmask2;
+		if (i == 3) return data.bitmask3;
+		if (i == 4) return data.bitmask4;
+		if (i == 5) return data.bitmask5;
+		if (i == 6) return data.bitmask6;
+		return data.bitmask7;
+	}
+
+	float GetWeight(ProbeData data, uint i)
+	{
+		if (i == 0) return data.weight0;
+		if (i == 1) return data.weight1;
+		if (i == 2) return data.weight2;
+		if (i == 3) return data.weight3;
+		if (i == 4) return data.weight4;
+		if (i == 5) return data.weight5;
+		if (i == 6) return data.weight6;
+		return data.weight7;
+	}
+
+	ProbeData MakeDefaultProbeData()
+	{
+		ProbeData data;
+		data.bitmask0 = data.bitmask1 = data.bitmask2 = data.bitmask3 = 0xFFFFFFFF;
+		data.bitmask4 = data.bitmask5 = data.bitmask6 = data.bitmask7 = 0xFFFFFFFF;
+		data.weight0 = data.weight1 = data.weight2 = data.weight3 = 0;
+		data.weight4 = data.weight5 = data.weight6 = data.weight7 = 0;
+		return data;
+	}
 
 	float GetFadeOutFactor(float3 positionMS)
 	{
@@ -43,16 +91,60 @@ namespace Skylighting
 		return lerp(SharedData::skylightingSettings.MinSpecularVisibility, 1.0, visibility);
 	}
 
-	float EvaluateDiffuse(sh2 skylightingSH, float3 normal, float fadeOutFactor = 1.0)
+	float EvaluateBitmask(uint bitmask, float3 normal)
 	{
-		float visibility = SphericalHarmonics::FuncProductIntegral(skylightingSH, SphericalHarmonics::EvaluateCosineLobe(normal)) / Math::PI;
+		float vis = 0;
+		float wsum = 0;
+		[unroll] for (uint d = 0; d < NUM_DIRECTIONS; d++) {
+			float w = max(0, dot(GetHemisphereDirection(d), normal));
+			wsum += w;
+			if (bitmask & (1u << d))
+				vis += w;
+		}
+		return vis / max(wsum, 0.001);
+	}
+
+	float EvaluateBitmaskSpecular(uint bitmask, float3 dominantDir, float halfAngle)
+	{
+		float vis = 0;
+		float wsum = 0;
+		[unroll] for (uint d = 0; d < NUM_DIRECTIONS; d++) {
+			float w = saturate((dot(GetHemisphereDirection(d), dominantDir) - halfAngle) / (1.0 - halfAngle));
+			wsum += w;
+			if (bitmask & (1u << d))
+				vis += w;
+		}
+		return vis / max(wsum, 0.001);
+	}
+
+	float EvaluateDiffuse(ProbeData data, float3 normal, float fadeOutFactor = 1.0)
+	{
+		float visibility = 0;
+		float wsum = 0;
+		[unroll] for (uint p = 0; p < 8; p++) {
+			float w = GetWeight(data, p);
+			if (w > 0) {
+				visibility += EvaluateBitmask(GetBitmask(data, p), normal) * w;
+				wsum += w;
+			}
+		}
+		visibility /= max(wsum, 0.001);
 		visibility = lerp(1.0, saturate(visibility), fadeOutFactor);
 		return MixDiffuse(visibility);
 	}
 
-	float EvaluateSpecular(sh2 skylightingSH, sh2 specularLobe, float fadeOutFactor = 1.0)
+	float EvaluateSpecular(ProbeData data, float3 dominantDir, float halfAngle, float fadeOutFactor = 1.0)
 	{
-		float visibility = SphericalHarmonics::FuncProductIntegral(skylightingSH, specularLobe);
+		float visibility = 0;
+		float wsum = 0;
+		[unroll] for (uint p = 0; p < 8; p++) {
+			float w = GetWeight(data, p);
+			if (w > 0) {
+				visibility += EvaluateBitmaskSpecular(GetBitmask(data, p), dominantDir, halfAngle) * w;
+				wsum += w;
+			}
+		}
+		visibility /= max(wsum, 0.001);
 		visibility = lerp(1.0, saturate(visibility), fadeOutFactor);
 		return MixSpecular(visibility);
 	}
@@ -80,169 +172,126 @@ namespace Skylighting
 #endif
 
 #if defined(PSHADER) || defined(SKYLIGHTING_PROBE_REGISTER)
-	sh2 Sample(float3 positionMS, float3 normalWS, float2 screenPosition)
+	void SetProbe(inout ProbeData data, uint n, uint bitmask, float w)
 	{
-		sh2 scaledUnitSH = UNIT_SH / 1e-10;
+		if (n == 0) { data.bitmask0 = bitmask; data.weight0 = w; }
+		else if (n == 1) { data.bitmask1 = bitmask; data.weight1 = w; }
+		else if (n == 2) { data.bitmask2 = bitmask; data.weight2 = w; }
+		else if (n == 3) { data.bitmask3 = bitmask; data.weight3 = w; }
+		else if (n == 4) { data.bitmask4 = bitmask; data.weight4 = w; }
+		else if (n == 5) { data.bitmask5 = bitmask; data.weight5 = w; }
+		else if (n == 6) { data.bitmask6 = bitmask; data.weight6 = w; }
+		else { data.bitmask7 = bitmask; data.weight7 = w; }
+	}
+
+	ProbeData Sample(float3 positionMS, float3 normalWS, float2 screenPosition)
+	{
+		ProbeData data = MakeDefaultProbeData();
 
 		if (SharedData::InInterior)
-			return scaledUnitSH;
+			return data;
 
-		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
-
-		if (SharedData::FrameCount) {
-			float3 offset = float3(Random::pcg3d(uint3(screenPosition.xy, SharedData::FrameCount))) / 4294967295.0 * 2.0 - 1.0;
-			positionMS.xyz += offset * CELL_SIZE * 0.5;
-		}
+		positionMS.xyz += normalWS * CELL_SIZE * 0.5;
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
-			return scaledUnitSH;
+			return data;
 
 		float3 cellVxCoord = uvw * ARRAY_DIM;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
-		sh2 sum = 0;
-		float wsum = 0;
-		for (int i = 0; i < 2; i++)
-			for (int j = 0; j < 2; j++)
-				for (int k = 0; k < 2; k++) {
-					int3 offset = int3(i, j, k);
-					int3 cellID = cell000 + offset;
+		[unroll] for (int i = 0; i < 2; i++)
+			[unroll] for (int j = 0; j < 2; j++)
+				[unroll] for (int k = 0; k < 2; k++) {
+					uint n = i * 4 + j * 2 + k;
+					int3 cellOffset = int3(i, j, k);
+					int3 cellIdx = cell000 + cellOffset;
 
-					if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+					if (any(cellIdx < 0) || any((uint3)cellIdx >= ARRAY_DIM))
 						continue;
 
-					float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
+					float3 cellCentreMS = cellIdx + 0.5 - ARRAY_DIM / 2;
 					cellCentreMS = cellCentreMS * CELL_SIZE;
 
-					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
-					// basic tangent checks
 					float tangentWeight = dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5;
 
-					float3 trilinearWeights = 1 - abs(offset - trilinearPos);
+					float3 trilinearWeights = 1 - abs(cellOffset - trilinearPos);
 					float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z * tangentWeight;
 
-					uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
-					sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
-
-					sum = SphericalHarmonics::Add(sum, probe);
-					wsum += w;
+					uint3 cellTexID = (cellIdx + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
+					SetProbe(data, n, SkylightingProbeArray[cellTexID], w);
 				}
 
-		return SphericalHarmonics::Scale(sum, rcp(wsum + EPSILON_WEIGHT_SUM));
+		return data;
 	}
 
-	float GetSkylightingDiffuse(sh2 skylightingSH, float3 positionMS, float3 evalNormal, float vertexAO = 1.0)
+	float GetSkylightingDiffuse(ProbeData data, float3 positionMS, float3 evalNormal, float vertexAO = 1.0)
 	{
 		if (SharedData::InInterior)
 			return 1.0;
 
-		float3 biasedNormal = normalize(float3(evalNormal.xy, max(0.0, evalNormal.z)));
 		float fadeOutFactor = GetFadeOutFactor(positionMS);
-		float skylightingDiffuse = EvaluateDiffuse(skylightingSH, biasedNormal, fadeOutFactor);
+		float skylightingDiffuse = EvaluateDiffuse(data, evalNormal, fadeOutFactor);
 
 		return saturate(skylightingDiffuse / max(vertexAO, EPSILON_DIVISION));
 	}
 
-
-
-	sh2 SampleNoBias(float3 positionMS)
+	ProbeData SampleNoBias(float3 positionMS)
 	{
-		sh2 scaledUnitSH = UNIT_SH / 1e-10;
+		ProbeData data = MakeDefaultProbeData();
 
 		if (SharedData::InInterior)
-			return scaledUnitSH;
+			return data;
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
-			return scaledUnitSH;
+			return data;
 
 		float3 cellVxCoord = uvw * ARRAY_DIM;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
-		sh2 sum = 0;
-		float wsum = 0;
 		[unroll] for (int i = 0; i < 2; i++)
 			[unroll] for (int j = 0; j < 2; j++)
 				[unroll] for (int k = 0; k < 2; k++)
 		{
-			int3 offset = int3(i, j, k);
-			int3 cellID = cell000 + offset;
+			uint n = i * 4 + j * 2 + k;
+			int3 cellOffset = int3(i, j, k);
+			int3 cellIdx = cell000 + cellOffset;
 
-			if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+			if (any(cellIdx < 0) || any((uint3)cellIdx >= ARRAY_DIM))
 				continue;
 
-			float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-			cellCentreMS = cellCentreMS * CELL_SIZE;
-
-			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
+			float3 trilinearWeights = 1 - abs(cellOffset - trilinearPos);
 			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-			uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
-			sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
-
-			sum = SphericalHarmonics::Add(sum, probe);
-			wsum += w;
+			uint3 cellTexID = (cellIdx + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
+			SetProbe(data, n, SkylightingProbeArray[cellTexID], w);
 		}
 
-		return SphericalHarmonics::Scale(sum, rcp(wsum + EPSILON_WEIGHT_SUM));
+		return data;
 	}
-#endif
 
-#if defined(PSHADER)
-	float SampleShadowVisibility(float3 positionMS, float3 normalWS, float2 screenPosition)
+	float GetSimpleVisibility(ProbeData data)
 	{
-		if (SharedData::InInterior)
-			return 1.0;
-
-		positionMS.xyz += normalWS * CELL_SIZE * 0.5;
-
-		if (SharedData::FrameCount) {
-			float3 offset = float3(Random::pcg3d(uint3(screenPosition.xy, SharedData::FrameCount))) / 4294967295.0 * 2.0 - 1.0;
-			positionMS.xyz += offset * CELL_SIZE * 0.5;
-		}
-
-		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
-		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
-
-		if (any(uvw < 0) || any(uvw > 1))
-			return 1.0;
-
-		float3 cellVxCoord = uvw * ARRAY_DIM;
-		int3 cell000 = floor(cellVxCoord - 0.5);
-		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
-
-		float sum = 0;
+		float vis = 0;
 		float wsum = 0;
-		[unroll] for (int i = 0; i < 2; i++)
-			[unroll] for (int j = 0; j < 2; j++)
-				[unroll] for (int k = 0; k < 2; k++)
-		{
-			int3 offset = int3(i, j, k);
-			int3 cellID = cell000 + offset;
-
-			if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
-				continue;
-
-			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
-			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
-
-			uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
-			sum += ShadowVisibilityProbeArray[cellTexID] * w;
-			wsum += w;
+		[unroll] for (uint p = 0; p < 8; p++) {
+			float w = GetWeight(data, p);
+			if (w > 0) {
+				vis += (float(countbits(GetBitmask(data, p))) / float(NUM_DIRECTIONS)) * w;
+				wsum += w;
+			}
 		}
-
-		float fadeOut = GetFadeOutFactor(positionMS);
-		float shadow = sum / max(wsum, 0.0001);
-		return lerp(1.0, shadow, fadeOut);
+		return vis / max(wsum, 0.001);
 	}
 #endif
+
 }
 
 #endif

@@ -2355,9 +2355,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #		endif
 #		if defined(DEFERRED)
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
+	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
 #		else
-	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy) : Skylighting::UNIT_SH;
+	Skylighting::ProbeData skylightingData = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
 #		endif
 
 #	endif
@@ -2381,7 +2381,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
 	float minWetnessAngle = saturate(max(minWetnessValue, vertexNormal.z));
 #		if defined(SKYLIGHTING)
-	float wetnessOcclusion = inWorld ? saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1))) : 0.0;
+	float wetnessOcclusion = inWorld ? Skylighting::GetSimpleVisibility(skylightingData) : 0.0;
 #		else
 	float wetnessOcclusion = inWorld;
 #		endif
@@ -2874,7 +2874,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		vertexColor = 1;
 #		endif
 #		if defined(SKYLIGHTING)
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal);
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, input.WorldPosition.xyz, ambientNormal);
 	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #		endif
 #	elif defined(SKYLIGHTING)
@@ -2888,7 +2888,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	vertexAO = lerp(1, vertexAO, SharedData::truePBRSettings.VertexAOStrength);
 	vertexColor = 1;
 #		endif
-	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, input.WorldPosition.xyz, ambientNormal, vertexAO);
+	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingData, input.WorldPosition.xyz, ambientNormal, vertexAO);
 	skylightingDiffuse = min(skylightingDiffuse, lerp(dirSoftShadow, 1.0, SharedData::enbSettings.SkylightingAmbientMinLevel));
 #	else
 #		if defined(TRUE_PBR)
@@ -3060,10 +3060,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	)
 #		if defined(DYNAMIC_CUBEMAPS)
 #			if defined(SKYLIGHTING)
-		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness, skylightingSH);
+		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness, skylightingData);
 #				if defined(WETNESS_EFFECTS)
 	if (waterRoughnessSpecular < 1)
-		color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(wetnessNormal, viewDirection, waterRoughnessSpecular, skylightingSH);
+		color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(wetnessNormal, viewDirection, waterRoughnessSpecular, skylightingData);
 #				endif
 #			else
 		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(worldNormal, viewDirection, material.Roughness);
