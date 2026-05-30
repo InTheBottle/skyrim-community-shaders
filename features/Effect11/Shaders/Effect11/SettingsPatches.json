@@ -101,11 +101,6 @@
 			{ "variable": "Chromatic Aberration.|- Enable Chromatic Aberration", "value": "false" },
 			{ "variable": "Distortion.ChromaticAberration.Enable C.A", "value": "false" },
 
-			{ "variable": "Enable Dither", "value": "false" },
-			{ "variable": "Enable Dithering", "value": "false" },
-			{ "variable": "Dither.|- Enable", "value": "false" },
-			{ "variable": "Dither.|- Enable (screen out)", "value": "false" },
-
 			{ "variable": "| Enable Lens Distortion", "value": "false" },
 
 			{ "variable": "Enable SMAA", "value": "false" },
