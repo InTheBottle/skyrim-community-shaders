@@ -366,11 +366,12 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 	if (sequenceIt == techniques.end())
 		return {};
 
-	const auto& sequence = sequenceIt->second;
+	auto& sequence = sequenceIt->second;
 	if (sequence.empty())
 		return {};
 
-	auto sourceTexture = effect->GetVariableByName("TextureColor")->AsShaderResource();
+	auto* cachedVar = GetCachedVariable("TextureColor");
+	auto sourceTexture = cachedVar ? cachedVar->AsShaderResource() : nullptr;
 
 	uint32_t swapCounter = 0;
 	uint32_t passOffset = 0;
@@ -414,10 +415,7 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 			sourceTexture->AsShaderResource()->SetResource(inputSRV);
 
 		RenderPasses(techniqueInfo.technique.get(), outputRTV, passOffset);
-
-		D3DX11_TECHNIQUE_DESC td;
-		if (SUCCEEDED(techniqueInfo.technique->GetDesc(&td)))
-			passOffset += td.Passes;
+		passOffset += techniqueInfo.passCount;
 	}
 
 	return { true, targetInOutput };
@@ -525,6 +523,7 @@ void Effect::LoadTechniques()
 			TechniqueInfo info;
 			info.technique.copy_from(technique);
 			info.renderTargetName = GetTechniqueAnnotation(technique, "RenderTarget");
+			info.passCount = techDesc.Passes;
 
 			for (int bi = 0; bi < 16; ++bi) {
 				std::string bindVal = GetTechniqueAnnotation(technique, "UIBinding" + std::to_string(bi));
@@ -908,6 +907,7 @@ void Effect::ClearVariableCache()
 {
 	variableCache.clear();
 	commonTexturePointerCache.clear();
+	rtvDimensionCache.clear();
 }
 
 bool Effect::SetShaderResourceVariable(const std::string& variableName, ID3D11ShaderResourceView* resource)
@@ -1006,17 +1006,25 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 	context->OMSetRenderTargets(1, &outputRTV, nullptr);
 
 	uint32_t outputWidth = 0, outputHeight = 0;
-	winrt::com_ptr<ID3D11Resource> outputResource;
-	outputRTV->GetResource(outputResource.put());
-	winrt::com_ptr<ID3D11Texture2D> outputTexture;
-	if (outputResource) {
-		outputResource.try_as(outputTexture);
-		if (outputTexture) {
-			D3D11_TEXTURE2D_DESC outputDesc;
-			outputTexture->GetDesc(&outputDesc);
-			outputWidth = outputDesc.Width;
-			outputHeight = outputDesc.Height;
+
+	auto cacheIt = rtvDimensionCache.find(outputRTV);
+	if (cacheIt != rtvDimensionCache.end()) {
+		outputWidth = cacheIt->second.first;
+		outputHeight = cacheIt->second.second;
+	} else {
+		winrt::com_ptr<ID3D11Resource> outputResource;
+		outputRTV->GetResource(outputResource.put());
+		winrt::com_ptr<ID3D11Texture2D> outputTexture;
+		if (outputResource) {
+			outputResource.try_as(outputTexture);
+			if (outputTexture) {
+				D3D11_TEXTURE2D_DESC outputDesc;
+				outputTexture->GetDesc(&outputDesc);
+				outputWidth = outputDesc.Width;
+				outputHeight = outputDesc.Height;
+			}
 		}
+		rtvDimensionCache[outputRTV] = { outputWidth, outputHeight };
 	}
 
 	if (outputWidth == 0 || outputHeight == 0)
@@ -1024,7 +1032,7 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 
 	float aspect = static_cast<float>(outputWidth) / static_cast<float>(outputHeight);
 	float screenSize[4] = { static_cast<float>(outputWidth), 1.0f / outputWidth, aspect, 1.0f / aspect };
-	SetVectorVariable(effect.get(), "ScreenSize", screenSize, sizeof(screenSize));
+	SetVectorVariable("ScreenSize", screenSize, sizeof(screenSize));
 
 	D3D11_VIEWPORT viewport = {};
 	viewport.Width = static_cast<float>(outputWidth);

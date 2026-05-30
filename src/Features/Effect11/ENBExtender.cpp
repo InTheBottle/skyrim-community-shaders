@@ -1300,28 +1300,35 @@ namespace ENBExtender
 
 	// Technique evaluation
 
-	bool IsTechniqueEnabled(const Effect::TechniqueInfo& info, const Effect& effect)
+	bool IsTechniqueEnabled(Effect::TechniqueInfo& info, const Effect& effect)
 	{
 		for (auto& binding : info.bindings) {
-			bool found = false;
-			bool val = false;
-			for (auto& uiVar : effect.uiVariables) {
-				std::string uname = !uiVar.uniqueName.empty() ? uiVar.uniqueName
-				                    : !uiVar.group.empty()    ? uiVar.group + "." + uiVar.displayName
-				                                              : uiVar.displayName;
-				if (uname == binding.variableName) {
-					found = true;
-					switch (uiVar.type) {
-					case Effect::UIVariableType::Bool: val = uiVar.boolValue; break;
-					case Effect::UIVariableType::Int: val = uiVar.intValue != 0; break;
-					case Effect::UIVariableType::Float: val = uiVar.floatValue != 0.0f; break;
-					default: val = true; break;
+			if (binding.resolvedIndex == -1) {
+				binding.resolvedIndex = -2;
+				for (int i = 0; i < static_cast<int>(effect.uiVariables.size()); ++i) {
+					auto& uiVar = effect.uiVariables[i];
+					const std::string& uname = !uiVar.uniqueName.empty() ? uiVar.uniqueName
+					                           : !uiVar.group.empty()    ? uiVar.group + "." + uiVar.displayName
+					                                                     : uiVar.displayName;
+					if (uname == binding.variableName) {
+						binding.resolvedIndex = i;
+						break;
 					}
-					break;
 				}
 			}
-			if (!found)
+
+			if (binding.resolvedIndex < 0)
 				continue;
+
+			auto& uiVar = effect.uiVariables[binding.resolvedIndex];
+			bool val = false;
+			switch (uiVar.type) {
+			case Effect::UIVariableType::Bool: val = uiVar.boolValue; break;
+			case Effect::UIVariableType::Int: val = uiVar.intValue != 0; break;
+			case Effect::UIVariableType::Float: val = uiVar.floatValue != 0.0f; break;
+			default: val = true; break;
+			}
+
 			bool enabled = binding.inverted ? !val : val;
 			if (!enabled)
 				return false;

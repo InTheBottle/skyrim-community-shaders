@@ -52,7 +52,7 @@ public:
 	void RegisterSettings();
 
 	// Common variable management
-	void UpdateCommonVariablesForEffect(ID3DX11Effect* effect);
+	void UpdateCommonVariablesForEffect(Effect& effect);
 
 public:
 	ENBBloom enbBloom;

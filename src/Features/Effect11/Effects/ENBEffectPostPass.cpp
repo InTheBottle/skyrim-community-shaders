@@ -22,7 +22,6 @@ void ENBEffectPostPass::Execute()
 
 void ENBEffectPostPass::UpdateEffectVariables()
 {
-	auto& textureManager = TextureManager::GetSingleton();
-	auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
+	auto* textureSDRTemp = GetCachedCommonTexture("TextureSDRTemp");
 	SetShaderResourceVariable("TextureOriginal", textureSDRTemp ? textureSDRTemp->srv.get() : nullptr);
 }

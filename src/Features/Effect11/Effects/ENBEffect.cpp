@@ -70,24 +70,33 @@ void ENBEffect::UpdateEffectVariables()
 	auto& textureManager = TextureManager::GetSingleton();
 	auto& settingManager = SettingManager::GetSingleton();
 
+	if (!idsCached) {
+		idBloomAmount = settingManager.GetSettingID("Amount", "BLOOM");
+		idLensAmount = settingManager.GetSettingID("Amount", "LENS");
+		idEnableBloom = settingManager.GetSettingID("EnableBloom", "EFFECT");
+		idEnableLens = settingManager.GetSettingID("EnableLens", "EFFECT");
+		idEnableAdaptation = settingManager.GetSettingID("EnableAdaptation", "EFFECT");
+		idsCached = true;
+	}
+
 	float4 enbParams01{};
 	enbParams01.x = settingManager.GetInterpolatedTimeOfDayValue("Amount", "BLOOM");
 	enbParams01.y = settingManager.GetInterpolatedTimeOfDayValue("Amount", "LENS");
 
 	SetVectorVariable("ENBParams01", &enbParams01, sizeof(enbParams01));
 
-	auto bindTextureIfEnabled = [&](const char* settingKey, const char* shaderVar, const char* textureName) {
+	auto bindTextureIfEnabled = [&](uint32_t settingID, const char* shaderVar, const char* textureName) {
 		ID3D11ShaderResourceView* srv = nullptr;
-		if (settingManager.GetValue<bool>(settingKey, "EFFECT")) {
-			auto* texture = textureManager.GetCommonTexture(textureName);
+		if (settingID != 0xFFFFFFFF && settingManager.GetValue<bool>(settingID)) {
+			auto* texture = GetCachedCommonTexture(textureName);
 			srv = texture ? texture->srv.get() : nullptr;
 		}
 		SetShaderResourceVariable(shaderVar, srv);
 	};
 
-	bindTextureIfEnabled("EnableBloom", "TextureBloom", "TextureBloom");
-	bindTextureIfEnabled("EnableLens", "TextureLens", "TextureLens");
+	bindTextureIfEnabled(idEnableBloom, "TextureBloom", "TextureBloom");
+	bindTextureIfEnabled(idEnableLens, "TextureLens", "TextureLens");
 
 	const char* adaptationTexName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptation" : "TextureAdaptationSwap";
-	bindTextureIfEnabled("EnableAdaptation", "TextureAdaptation", adaptationTexName);
+	bindTextureIfEnabled(idEnableAdaptation, "TextureAdaptation", adaptationTexName);
 }

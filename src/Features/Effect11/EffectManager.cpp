@@ -326,7 +326,7 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 		return;
 
 	a_effect.profiler = globals::profiler;
-	UpdateCommonVariablesForEffect(a_effect.GetEffect());
+	UpdateCommonVariablesForEffect(a_effect);
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
 	a_effect.profiler = nullptr;
@@ -762,51 +762,46 @@ void EffectManager::UpdateCommonData()
 	}
 }
 
-void EffectManager::UpdateCommonVariablesForEffect(ID3DX11Effect* effect)
+void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 {
-	if (!effect)
+	if (!effect.GetEffect())
 		return;
 
 	auto renderer = globals::game::renderer;
 
-	// Set common textures
-	Effect::SetShaderResourceVariable(effect, "TextureDepth",
+	effect.SetShaderResourceVariable("TextureDepth",
 		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 
-	// Set format-specific render targets
 	static const char* const formatTargets[] = {
 		"RenderTargetRGBA32", "RenderTargetRGBA64", "RenderTargetRGBA64F",
 		"RenderTargetR16F", "RenderTargetR32F", "RenderTargetRGB32F"
 	};
 
-	auto& textureManager = TextureManager::GetSingleton();
 	for (const auto& targetName : formatTargets) {
-		auto* texture = textureManager.GetCommonTexture(targetName);
+		auto* texture = effect.GetCachedCommonTexture(targetName);
 		if (texture) {
-			Effect::SetShaderResourceVariable(effect, targetName, texture->srv.get());
+			effect.SetShaderResourceVariable(targetName, texture->srv.get());
 		}
 	}
 
-	// Set fixed-size render targets
 	static const char* const fixedSizeTargets[] = {
 		"RenderTarget1024", "RenderTarget512", "RenderTarget256", "RenderTarget128",
 		"RenderTarget64", "RenderTarget32", "RenderTarget16"
 	};
 
 	for (const auto& targetName : fixedSizeTargets) {
-		auto* texture = textureManager.GetCommonTexture(targetName);
+		auto* texture = effect.GetCachedCommonTexture(targetName);
 		if (texture) {
-			Effect::SetShaderResourceVariable(effect, targetName, texture->srv.get());
+			effect.SetShaderResourceVariable(targetName, texture->srv.get());
 		}
 	}
 
-	// Set vector variables
-	Effect::SetVectorVariable(effect, "Timer", commonData.timer, sizeof(commonData.timer));
-	Effect::SetVectorVariable(effect, "Weather", commonData.weather, sizeof(commonData.weather));
-	Effect::SetVectorVariable(effect, "TimeOfDay1", commonData.timeOfDay1, sizeof(commonData.timeOfDay1));
-	Effect::SetVectorVariable(effect, "TimeOfDay2", commonData.timeOfDay2, sizeof(commonData.timeOfDay2));
-	Effect::SetVectorVariable(effect, "ENightDayFactor", &commonData.eNightDayFactor, sizeof(commonData.eNightDayFactor));
-	Effect::SetVectorVariable(effect, "EInteriorFactor", &commonData.eInteriorFactor, sizeof(commonData.eInteriorFactor));
+	effect.SetVectorVariable("Timer", commonData.timer, sizeof(commonData.timer));
+	effect.SetVectorVariable("Weather", commonData.weather, sizeof(commonData.weather));
+	effect.SetVectorVariable("TimeOfDay1", commonData.timeOfDay1, sizeof(commonData.timeOfDay1));
+	effect.SetVectorVariable("TimeOfDay2", commonData.timeOfDay2, sizeof(commonData.timeOfDay2));
+	effect.SetVectorVariable("ENightDayFactor", &commonData.eNightDayFactor, sizeof(commonData.eNightDayFactor));
+	effect.SetVectorVariable("EInteriorFactor", &commonData.eInteriorFactor, sizeof(commonData.eInteriorFactor));
 }
 
 void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11RenderTargetView* a_dest)

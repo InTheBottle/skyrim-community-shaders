@@ -44,15 +44,24 @@ void ENBAdaptation::UpdateEffectVariables()
 {
 	auto& settingManager = SettingManager::GetSingleton();
 
-	auto forceMinMaxValues = settingManager.GetValue<bool>("ForceMinMaxValues", "ADAPTATION");
+	if (!idsCached) {
+		idForceMinMax = settingManager.GetSettingID("ForceMinMaxValues", "ADAPTATION");
+		idAdaptTime = settingManager.GetSettingID("AdaptationTime", "ADAPTATION");
+		idAdaptMin = settingManager.GetSettingID("AdaptationMin", "ADAPTATION");
+		idAdaptMax = settingManager.GetSettingID("AdaptationMax", "ADAPTATION");
+		idAdaptSens = settingManager.GetSettingID("AdaptationSensitivity", "ADAPTATION");
+		idsCached = true;
+	}
 
-	float adaptationTime = settingManager.GetValue<float>("AdaptationTime", "ADAPTATION");
+	auto forceMinMaxValues = settingManager.GetValue<bool>(idForceMinMax);
+
+	float adaptationTime = settingManager.GetValue<float>(idAdaptTime);
 	float deltaTime = (globals::game::deltaTime) ? (*globals::game::deltaTime) : 0.0f;
 
 	float4 adaptationParameters{};
-	adaptationParameters.x = !forceMinMaxValues ? 0.0f : settingManager.GetValue<float>("AdaptationMin", "ADAPTATION");
-	adaptationParameters.y = !forceMinMaxValues ? 65535.0f : settingManager.GetValue<float>("AdaptationMax", "ADAPTATION");
-	adaptationParameters.z = settingManager.GetValue<float>("AdaptationSensitivity", "ADAPTATION");
+	adaptationParameters.x = !forceMinMaxValues ? 0.0f : settingManager.GetValue<float>(idAdaptMin);
+	adaptationParameters.y = !forceMinMaxValues ? 65535.0f : settingManager.GetValue<float>(idAdaptMax);
+	adaptationParameters.z = settingManager.GetValue<float>(idAdaptSens);
 	adaptationParameters.w = std::clamp((adaptationTime > 0.0f) ? (deltaTime / adaptationTime) : 1.0f, 0.0f, 1.0f);
 
 	SetVectorVariable("AdaptationParameters", &adaptationParameters, sizeof(adaptationParameters));

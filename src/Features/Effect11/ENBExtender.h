@@ -52,7 +52,7 @@ namespace ENBExtender
 	void InsertUIDefines(Effect& effect);
 
 	// Technique evaluation
-	bool IsTechniqueEnabled(const Effect::TechniqueInfo& info, const Effect& effect);
+	bool IsTechniqueEnabled(Effect::TechniqueInfo& info, const Effect& effect);
 
 	// Post-load processing
 	void LoadTechniqueDropdownMetadata(Effect& effect);

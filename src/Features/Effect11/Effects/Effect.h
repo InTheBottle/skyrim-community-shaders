@@ -54,6 +54,7 @@ public:
 	{
 		std::string variableName;
 		bool inverted = false;
+		int resolvedIndex = -1;
 	};
 
 	struct TechniqueInfo
@@ -61,6 +62,7 @@ public:
 		winrt::com_ptr<ID3DX11EffectTechnique> technique;
 		std::string renderTargetName;
 		std::vector<TechniqueBinding> bindings;
+		uint32_t passCount = 0;
 	};
 
 	Profiler* profiler = nullptr;
@@ -234,16 +236,18 @@ public:
 	static std::string GetTechniqueAnnotation(ID3DX11EffectTechnique* technique, const std::string& annotationName);
 	static std::string GetGroupAnnotation(ID3DX11EffectGroup* group, const std::string& annotationName);
 
-protected:
 	ID3DX11EffectVariable* GetCachedVariable(const std::string& name);
 	TextureManager::Texture* GetCachedCommonTexture(const std::string& name);
 	void ClearVariableCache();
+
+protected:
 
 private:
 	bool LoadFXFile();
 
 	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
 	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;
+	std::unordered_map<ID3D11RenderTargetView*, std::pair<uint32_t, uint32_t>> rtvDimensionCache;
 
 	void EnumerateAllVariables();
 
