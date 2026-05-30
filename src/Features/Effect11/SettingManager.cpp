@@ -481,6 +481,9 @@ void SettingManager::SaveWeatherSettings(const std::string& weatherKey, const st
 		return;
 	}
 
+	std::filesystem::path absPath = std::filesystem::absolute(filePath);
+	std::string absPathStr = absPath.string();
+
 	std::vector<std::tuple<std::string, std::string, Setting>> settingsToWrite;
 
 	{
@@ -520,11 +523,11 @@ void SettingManager::SaveWeatherSettings(const std::string& weatherKey, const st
 
 	// Perform IO outside of lock to prevent deadlocks
 	for (const auto& [category, key, setting] : settingsToWrite) {
-		SaveSettingToFile(filePath, category, key, setting);
+		SaveSettingToFile(absPathStr, category, key, setting);
 	}
 
 	// Flush Windows .ini cache to disk
-	WritePrivateProfileStringA(NULL, NULL, NULL, filePath.c_str());
+	WritePrivateProfileStringA(NULL, NULL, NULL, absPathStr.c_str());
 }
 
 void SettingManager::SaveAllWeatherSettings()
@@ -654,6 +657,9 @@ void SettingManager::LoadFromFile(const std::string& filePath)
 
 void SettingManager::SaveToFile(const std::string& filePath)
 {
+	std::filesystem::path absPath = std::filesystem::absolute(filePath);
+	std::string absPathStr = absPath.string();
+
 	std::vector<std::tuple<std::string, std::string, Setting>> settingsToWrite;
 	std::vector<std::tuple<std::string, bool, bool>> weatherSupportFlags;
 
@@ -693,18 +699,18 @@ void SettingManager::SaveToFile(const std::string& filePath)
 
 	// Perform IO outside of lock
 	for (const auto& [category, key, setting] : settingsToWrite) {
-		SaveSettingToFile(filePath, category, key, setting);
+		SaveSettingToFile(absPathStr, category, key, setting);
 	}
 
 	for (const auto& [category, ignoreOut, ignoreIn] : weatherSupportFlags) {
 		WritePrivateProfileStringA(category.c_str(), "IgnoreWeatherSystem",
-			ignoreOut ? "true" : "false", filePath.c_str());
+			ignoreOut ? "true" : "false", absPathStr.c_str());
 		WritePrivateProfileStringA(category.c_str(), "IgnoreWeatherSystemInterior",
-			ignoreIn ? "true" : "false", filePath.c_str());
+			ignoreIn ? "true" : "false", absPathStr.c_str());
 	}
 
 	// Flush cache
-	WritePrivateProfileStringA(NULL, NULL, NULL, filePath.c_str());
+	WritePrivateProfileStringA(NULL, NULL, NULL, absPathStr.c_str());
 }
 
 SettingValue SettingManager::InterpolateValues(const SettingValue& a, const SettingValue& b, float t) const
