@@ -136,7 +136,11 @@
 			{ "variable": "Sharpening", "value": "0" },
 			{ "variable": "---- EENE Blur ----", "value": "false" },
 			{ "variable": "---- EENE Sharpening ----", "value": "false" },
-			{ "variable": "------------ Sharpening ------------", "value": "false" }
+			{ "variable": "------------ Sharpening ------------", "value": "false" },
+
+			{ "variable": "Grain", "value": "false" },
+			{ "variable": "Lens Distortion", "value": "false" },
+			{ "variable": "Vignette", "value": "false" }
 		]
 	}
 ]
