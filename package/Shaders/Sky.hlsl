@@ -291,6 +291,11 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color.w = input.TexCoord2.x * (baseColor.w * input.Color.w);
 #		else
 
+#		if defined(CLOUDS)
+	if (SharedData::enbSettings.EnableSky)
+		baseColor.xyz = pow(abs(baseColor.xyz), SharedData::enbSettings.CloudsCurve);
+#		endif
+
 	psout.Color.w = input.Color.w * baseColor.w;
 	psout.Color.xyz = Color::Sky(input.Color.xyz) * baseColor.xyz + skyScale;
 
@@ -299,10 +304,9 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 cloudColor = psout.Color.xyz;
 		float3 viewDirection = normalize(input.WorldPosition.xyz);
 
-		cloudColor.xyz = pow(abs(cloudColor.xyz), SharedData::enbSettings.CloudsCurve);
 		cloudColor.xyz = lerp(abs(cloudColor.xyz), dot(cloudColor.xyz, 1.0 / 3.0), SharedData::enbSettings.CloudsDesaturation);
 
-		float cloudBaseLuminance = pow(abs(dot(baseColor.xyz, 1.0 / 3.0)), SharedData::enbSettings.CloudsCurve);
+		float cloudBaseLuminance = dot(baseColor.xyz, 1.0 / 3.0);
 
 		float sunShadow = 1.0;
 		float masserShadow = 1.0;
