@@ -1256,6 +1256,53 @@ namespace ENBExtender
 			items.push_back({ ordering, ComputeMinSourceOrder(*child), nullptr, child.get() });
 		}
 
+		// Sort by sourceOrder first to establish declaration order
+		std::stable_sort(items.begin(), items.end(), [](const RenderItem& a, const RenderItem& b) {
+			return a.sourceOrder < b.sourceOrder;
+		});
+
+		// Assign separators the ordering of the group they logically follow.
+		// Look at the separator's own effect to find the preceding variable's group.
+		auto isSep = [](const RenderItem& item) {
+			return item.var && item.var->effect->uiVariables[item.var->index].isSeparator;
+		};
+		for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+			if (!isSep(items[i]))
+				continue;
+
+			auto* sepEffect = items[i].var->effect;
+			int sepIdx = items[i].var->index;
+
+			// Walk backwards in this effect's uiVariables to find what group precedes this separator
+			std::string prevGroup;
+			for (int vi = sepIdx - 1; vi >= 0; --vi) {
+				auto& v = sepEffect->uiVariables[vi];
+				if (!v.isSeparator && !v.group.empty()) {
+					// Get the top-level group
+					size_t dot = v.group.find('.');
+					prevGroup = (dot != std::string::npos) ? v.group.substr(0, dot) : v.group;
+					break;
+				}
+			}
+
+			// Find that group's ordering from items or meta
+			if (!prevGroup.empty()) {
+				bool found = false;
+				for (auto& item : items) {
+					if (item.child && item.child->fullPath == prevGroup) {
+						items[i].ordering = item.ordering;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					auto metaIt = ctx.meta.find(prevGroup);
+					if (metaIt != ctx.meta.end())
+						items[i].ordering = metaIt->second.ordering;
+				}
+			}
+		}
+
 		std::stable_sort(items.begin(), items.end(), [](const RenderItem& a, const RenderItem& b) {
 			if (a.ordering != b.ordering)
 				return a.ordering > b.ordering;
