@@ -131,6 +131,7 @@ public:
 		std::string uiBindingProperty;
 		std::string uiBindingCondition;
 		bool ignorePerfMode = false;
+		bool isWeatherString = false;
 		bool isWeatherOnlyString = false;
 
 		// Weather separation ("ExteriorWeather" or "Weather")

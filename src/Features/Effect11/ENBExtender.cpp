@@ -582,11 +582,10 @@ namespace ENBExtender
 		uiVar.uiBindingProperty = get("UIBindingProperty");
 		uiVar.uiBindingCondition = get("UIBindingCondition");
 		uiVar.ignorePerfMode = IsTruthy(get("UIIgnorePerfMode"));
-		if (IsTruthy(get("UIWeatherString")))
-			logger::info("[ENBExtender] UIWeatherString on '{}' (not yet implemented)", uiVar.name);
+		uiVar.isWeatherString = IsTruthy(get("UIWeatherString"));
 		uiVar.isWeatherOnlyString = IsTruthy(get("UIWeatherOnlyString"));
 		if (uiVar.isWeatherOnlyString)
-			logger::info("[ENBExtender] UIWeatherOnlyString on '{}' — hidden from main UI", uiVar.name);
+			uiVar.isWeatherString = true;
 		if (uiVar.type == Effect::UIVariableType::Float || uiVar.type == Effect::UIVariableType::Float2 ||
 			uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4)
 			uiVar.separation = get("Separation");
@@ -1010,6 +1009,25 @@ namespace ENBExtender
 		return minSO;
 	}
 
+	enum class RenderMode { All, MainOnly, WeatherOnly };
+
+	static bool IsVarWeatherTab(const Effect::UIVariable& uiVar, [[maybe_unused]] Effect* effect)
+	{
+		if (uiVar.isWeatherString || uiVar.isWeatherOnlyString)
+			return true;
+#ifdef ENABLE_ENB_EXTENDER
+		if (auto* ext = dynamic_cast<ExtendedEffect*>(effect)) {
+			if (ext->HasWeatherData()) {
+				std::string iniKey = !uiVar.uniqueName.empty() ? uiVar.uniqueName
+				                     : uiVar.group.empty()    ? uiVar.displayName
+				                                              : uiVar.group + "." + uiVar.displayName;
+				return ext->IsVariableWeatherControlled(iniKey);
+			}
+		}
+#endif
+		return false;
+	}
+
 	struct RenderContext
 	{
 		std::unordered_map<std::string, VarRef>& uniqueNameMap;
@@ -1017,6 +1035,7 @@ namespace ENBExtender
 		std::unordered_set<Effect*>& changedEffects;
 		GroupMetaMap& meta;
 		bool performanceMode = false;
+		RenderMode renderMode = RenderMode::All;
 		int tableCounter = 0;
 
 		bool BeginVarTable()
@@ -1032,21 +1051,6 @@ namespace ENBExtender
 		}
 	};
 
-	static bool IsWeatherControlled([[maybe_unused]] Effect* effect, [[maybe_unused]] const Effect::UIVariable& uiVar)
-	{
-#ifdef ENABLE_ENB_EXTENDER
-		if (auto* ext = dynamic_cast<ExtendedEffect*>(effect)) {
-			if (ext->HasWeatherData()) {
-				std::string iniKey = !uiVar.uniqueName.empty() ? uiVar.uniqueName
-				                     : uiVar.group.empty()    ? uiVar.displayName
-				                                              : uiVar.group + "." + uiVar.displayName;
-				return ext->IsVariableWeatherControlled(iniKey);
-			}
-		}
-#endif
-		return false;
-	}
-
 	static void RenderWidget(const std::string& label, const std::string& id,
 		Effect::UIVariable& uiVar, bool readOnly, Effect* effect,
 		std::unordered_set<Effect*>& changedEffects)
@@ -1055,14 +1059,6 @@ namespace ENBExtender
 		ImGui::TableSetColumnIndex(0);
 		if (readOnly)
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-
-		bool weatherControlled = IsWeatherControlled(effect, uiVar);
-		if (weatherControlled) {
-			ImGui::Text("W");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("This setting varies per weather");
-			ImGui::SameLine();
-		}
 		ImGui::Text("%s", label.c_str());
 
 		ImGui::TableSetColumnIndex(1);
@@ -1138,6 +1134,22 @@ namespace ENBExtender
 			ImGui::PopStyleColor();
 	}
 
+	static bool IsVarVisible(const Effect::UIVariable& uiVar, Effect* effect, RenderMode mode)
+	{
+		if (uiVar.isSeparator || uiVar.displayName.empty() || uiVar.isHidden)
+			return false;
+		if (mode == RenderMode::MainOnly && uiVar.isWeatherOnlyString)
+			return false;
+		if (mode != RenderMode::All) {
+			bool isWeather = IsVarWeatherTab(uiVar, effect);
+			if (mode == RenderMode::MainOnly && isWeather && !uiVar.isWeatherString)
+				return false;
+			if (mode == RenderMode::WeatherOnly && !isWeather)
+				return false;
+		}
+		return true;
+	}
+
 	static void RenderVar(VarRef& ref, bool& inTable, bool& lastWasSeparator, RenderContext& ctx)
 	{
 		auto& uiVar = ref.effect->uiVariables[ref.index];
@@ -1151,7 +1163,7 @@ namespace ENBExtender
 			return;
 		}
 
-		if (uiVar.displayName.empty() || uiVar.isHidden || uiVar.isWeatherOnlyString)
+		if (!IsVarVisible(uiVar, ref.effect, ctx.renderMode))
 			return;
 		if (ctx.performanceMode && !uiVar.ignorePerfMode)
 			return;
@@ -1199,15 +1211,15 @@ namespace ENBExtender
 		}
 	}
 
-	static bool HasVisibleContent(const GroupNode& node)
+	static bool HasVisibleContent(const GroupNode& node, RenderMode mode)
 	{
 		for (auto& ref : node.vars) {
 			auto& uiVar = ref.effect->uiVariables[ref.index];
-			if (!uiVar.isHidden && !uiVar.isSeparator && !uiVar.displayName.empty() && !uiVar.isWeatherOnlyString)
+			if (IsVarVisible(uiVar, ref.effect, mode))
 				return true;
 		}
 		for (auto& child : node.children) {
-			if (HasVisibleContent(*child))
+			if (HasVisibleContent(*child, mode))
 				return true;
 		}
 		return false;
@@ -1237,7 +1249,7 @@ namespace ENBExtender
 		}
 
 		for (auto& child : node.children) {
-			if (!HasVisibleContent(*child))
+			if (!HasVisibleContent(*child, ctx.renderMode))
 				continue;
 			auto metaIt = ctx.meta.find(child->fullPath);
 			int ordering = (metaIt != ctx.meta.end()) ? metaIt->second.ordering : 0;
@@ -1316,11 +1328,30 @@ namespace ENBExtender
 		RenderContext ctx{ uniqueNameMap, fileUniqueNameMap, changedEffects, meta,
 			EffectManager::GetSingleton().performanceMode };
 
+		bool hasWeatherTab = HasVisibleContent(root, RenderMode::WeatherOnly);
+
 		for (auto& [effect, group] : techDropdowns)
 			if (effect->techniqueDropdown.topLevel || group.empty())
 				RenderTechniqueDropdown(effect, changedEffects);
 
-		RenderGroupNode(root, ctx, techDropdowns);
+		if (hasWeatherTab) {
+			if (ImGui::BeginTabBar("##FXTabs")) {
+				if (ImGui::BeginTabItem("Main")) {
+					ctx.renderMode = RenderMode::MainOnly;
+					RenderGroupNode(root, ctx, techDropdowns);
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Weather")) {
+					ctx.renderMode = RenderMode::WeatherOnly;
+					ctx.tableCounter = 0;
+					RenderGroupNode(root, ctx, techDropdowns);
+					ImGui::EndTabItem();
+				}
+				ImGui::EndTabBar();
+			}
+		} else {
+			RenderGroupNode(root, ctx, techDropdowns);
+		}
 
 		if (!changedEffects.empty()) {
 #ifdef ENABLE_ENB_EXTENDER
