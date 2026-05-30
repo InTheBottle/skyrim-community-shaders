@@ -19,6 +19,7 @@ namespace Util
 		{
 			std::string file;
 			std::vector<Patch> patches;
+			std::vector<std::string> hiddenGroups;
 		};
 
 		void Load();

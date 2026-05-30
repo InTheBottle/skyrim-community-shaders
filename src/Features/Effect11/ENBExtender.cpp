@@ -1199,6 +1199,20 @@ namespace ENBExtender
 		}
 	}
 
+	static bool HasVisibleContent(const GroupNode& node)
+	{
+		for (auto& ref : node.vars) {
+			auto& uiVar = ref.effect->uiVariables[ref.index];
+			if (!uiVar.isHidden && !uiVar.isSeparator && !uiVar.displayName.empty() && !uiVar.isWeatherOnlyString)
+				return true;
+		}
+		for (auto& child : node.children) {
+			if (HasVisibleContent(*child))
+				return true;
+		}
+		return false;
+	}
+
 	static void RenderGroupNode(GroupNode& node, RenderContext& ctx,
 		const std::vector<std::pair<Effect*, std::string>>& techDropdowns)
 	{
@@ -1223,6 +1237,8 @@ namespace ENBExtender
 		}
 
 		for (auto& child : node.children) {
+			if (!HasVisibleContent(*child))
+				continue;
 			auto metaIt = ctx.meta.find(child->fullPath);
 			int ordering = (metaIt != ctx.meta.end()) ? metaIt->second.ordering : 0;
 			items.push_back({ ordering, ComputeMinSourceOrder(*child), nullptr, child.get() });

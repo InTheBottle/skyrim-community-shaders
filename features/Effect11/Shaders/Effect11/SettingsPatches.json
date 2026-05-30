@@ -1,6 +1,7 @@
 [
 	{
 		"file": "enbeffectpostpass.fx",
+		"hiddenGroups": ["AA", "KiSharp", "Blur Suite", "KiGrain", "CinBorders", "Vignette"],
 		"patches": [
 			{ "variable": "AA.|- SMAA Enable", "value": "false" },
 			{ "variable": "AA.|- FXAA Enable", "value": "false" },
