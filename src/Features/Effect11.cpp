@@ -672,6 +672,12 @@ void Effect11::DrawVolumetricRays()
 	if (Util::IsInterior())
 		return;
 
+	if (globals::game::sky && globals::game::sky->flags.any(RE::Sky::Flags::kHideSky))
+		return;
+
+	if (globals::state->isMapMenuOpen)
+		return;
+
 	auto& settingManager = SettingManager::GetSingleton();
 	if (!settingManager.GetValue<bool>("EnableVolumetricRays", "EFFECT"))
 		return;

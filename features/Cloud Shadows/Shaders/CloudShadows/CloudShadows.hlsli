@@ -25,11 +25,4 @@ namespace CloudShadows
 		float cloudCubeSample = CloudShadowsTexture.SampleLevel(textureSampler, cloudSampleDir, 0).x;
 		return saturate(1.0 - cloudCubeSample * SharedData::cloudShadowsSettings.Opacity);
 	}
-	
-	float GetTrueCloudShadowMult(float3 worldPosition, SamplerState textureSampler)
-	{
-		float3 cloudSampleDir = GetCloudShadowSampleDir(worldPosition, SharedData::SunDirection.xyz).xyz;
-		float cloudCubeSample = CloudShadowsTexture.SampleLevel(textureSampler, cloudSampleDir, 0).x;
-		return 1.0 - cloudCubeSample;
-	}
 }

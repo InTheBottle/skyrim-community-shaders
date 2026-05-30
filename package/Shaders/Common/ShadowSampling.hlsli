@@ -66,23 +66,6 @@ namespace ShadowSampling
 		return worldShadow;
 	}
 	
-	float GetTrueWorldShadow(float3 positionWS, float3 offset, uint eyeIndex)
-	{
-		if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
-			return 1.0;
-
-		float worldShadow = 1.0;
-#if defined(TERRAIN_SHADOWS)
-		worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
-#endif
-
-#if defined(CLOUD_SHADOWS)
-		worldShadow *= CloudShadows::GetTrueCloudShadowMult(positionWS, LinearSampler);
-#endif
-
-		return worldShadow;
-	}
-
 	float Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 screenPosition, uint eyeIndex, out float surfaceShadow)
 	{
 #if defined(EFFECT)
@@ -134,37 +117,6 @@ namespace ShadowSampling
 #endif
 
 		return worldShadow;
-	}
-
-	float Get3DFilteredShadowVolumetric(float3 positionWS, float3 viewDirection, float2 screenPosition, uint eyeIndex, float extinction)
-	{
-		float totalRayLength = length(positionWS);
-
-		const uint sampleCount = 8;
-		const float rcpSampleCount = 1.0 / float(sampleCount);
-		float stepLength = totalRayLength * rcpSampleCount;
-
-		float noise = Random::InterleavedGradientNoise(screenPosition, SharedData::FrameCount);
-
-		float stepTransmittance = exp(-extinction * stepLength);
-		float stepScatterCoeff = 1.0 - stepTransmittance;
-
-		float3 cameraOffset = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-		float scattering = 0.0;
-		float transmittance = 1.0;
-
-		for (uint i = 0; i < sampleCount; i++) {
-			float t = (float(i) + noise) * rcpSampleCount;
-			float3 sampledPositionWS = positionWS * t;
-
-			float worldShadowSample = GetTrueWorldShadow(sampledPositionWS, cameraOffset, eyeIndex);
-
-			scattering += worldShadowSample * stepScatterCoeff * transmittance;
-			transmittance *= stepTransmittance;
-		}
-
-		return scattering;
 	}
 
 	float GetLightingShadow(float3 worldPosition, uint eyeIndex, out float detailedShadow)
