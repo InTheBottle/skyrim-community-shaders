@@ -197,29 +197,6 @@ void MenuManager::RenderDebugControl()
 	}
 }
 
-std::map<std::string, std::vector<std::string>> MenuManager::GetCategorizedSettings() const
-{
-	std::map<std::string, std::vector<std::string>> categorizedSettings;
-
-	// Global Settings - Master controls and basic adjustments
-	categorizedSettings["Main"] = {
-		"GLOBAL",
-		"EFFECT",
-		"COLORCORRECTION",
-		"WEATHER",
-		"TIMEOFDAY",
-		"ADAPTATION"
-	};
-
-	// Weather-Based Settings - Categories that change with weather/time
-	categorizedSettings["Weather"] = { "BLOOM", "LENS", "ENVIRONMENT", "SKY", "SKYSCATTERING", "PROCEDURALSUN", "VOLUMETRICFOG", "VOLUMETRICRAYS", "IMAGEBASEDLIGHTING", "PARTICLE", "FIRE", "RAIN", "LIGHTSPRITE", "GAMEVOLUMETRICRAYS", "SUNGLARE", "CLOUDSHADOWS" };
-
-	// Debug Information
-	categorizedSettings["Debug"] = {};
-
-	return categorizedSettings;
-}
-
 std::vector<int> MenuManager::GetActiveTimeOfDayIndices() const
 {
 	auto& effectManager = EffectManager::GetSingleton();
@@ -279,7 +256,7 @@ float MenuManager::GetTimeOfDayBlendFactor(int timeIndex) const
 void MenuManager::RenderAllSettings()
 {
 	auto& settingManager = SettingManager::GetSingleton();
-	auto categorizedSettings = GetCategorizedSettings();
+	auto categorizedSettings = SettingManager::GetSingleton().GetCategorizedSettings();
 
 	// Define explicit order for tabs
 	const std::vector<std::string> tabOrder = { "Main", "Weather", "Debug" };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <shared_mutex>
 
@@ -159,6 +160,10 @@ public:
 	void SetCategoryExteriorOnly(const std::string& category, bool exteriorOnly);
 	bool IsCategoryExteriorOnly(const std::string& category) const;
 
+	void SetCategoryTab(const std::string& category, const std::string& tab);
+	std::string GetCategoryTab(const std::string& category) const;
+	std::map<std::string, std::vector<std::string>> GetCategorizedSettings() const;
+
 	// Weather integration
 	void SetWeatherBlendFactors(uint32_t currentWeatherID, uint32_t lastWeatherID, float blendFactor);
 	void LoadWeatherSettings(const std::vector<uint32_t>& weatherIDs, const std::string& filePath);
@@ -189,6 +194,7 @@ private:
 	{
 		std::unordered_map<std::string, uint32_t> settings;  // key -> ID
 		std::vector<std::string> settingOrder;
+		std::string tab = "Main";
 		bool ignoreWeatherSystem = false;
 		bool ignoreWeatherSystemInterior = true;
 		bool lastSavedIgnoreWeatherSystem = false;

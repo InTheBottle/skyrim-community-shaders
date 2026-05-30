@@ -271,6 +271,23 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("Density", "VOLUMETRICRAYS", 1.0f, 0.1f, 100.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "VOLUMETRICRAYS", 0.5f, 0.0f, 10.0f, 0.01f, true);
 
+	settingManager.SetCategoryTab("BLOOM", "Weather");
+	settingManager.SetCategoryTab("LENS", "Weather");
+	settingManager.SetCategoryTab("ENVIRONMENT", "Weather");
+	settingManager.SetCategoryTab("SKY", "Weather");
+	settingManager.SetCategoryTab("SKYSCATTERING", "Weather");
+	settingManager.SetCategoryTab("PROCEDURALSUN", "Weather");
+	settingManager.SetCategoryTab("VOLUMETRICFOG", "Weather");
+	settingManager.SetCategoryTab("VOLUMETRICRAYS", "Weather");
+	settingManager.SetCategoryTab("IMAGEBASEDLIGHTING", "Weather");
+	settingManager.SetCategoryTab("PARTICLE", "Weather");
+	settingManager.SetCategoryTab("FIRE", "Weather");
+	settingManager.SetCategoryTab("RAIN", "Weather");
+	settingManager.SetCategoryTab("LIGHTSPRITE", "Weather");
+	settingManager.SetCategoryTab("GAMEVOLUMETRICRAYS", "Weather");
+	settingManager.SetCategoryTab("SUNGLARE", "Weather");
+	settingManager.SetCategoryTab("CLOUDSHADOWS", "Weather");
+
 	settingManager.SetCategoryExteriorOnly("RAIN", true);
 	settingManager.SetCategoryExteriorOnly("SKYLIGHTING", true);
 	settingManager.SetCategoryExteriorOnly("CLOUDSHADOWS", true);
