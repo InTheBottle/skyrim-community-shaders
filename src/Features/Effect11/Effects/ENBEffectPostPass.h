@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Effect.h"
+#include "ExtendedEffect.h"
 
-class ENBEffectPostPass : public Effect
+class ENBEffectPostPass : public EffectBase
 {
 public:
 	virtual std::string GetName() const override { return "enbeffectpostpass.fx"; }

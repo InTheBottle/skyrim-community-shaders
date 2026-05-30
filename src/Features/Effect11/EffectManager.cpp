@@ -100,11 +100,12 @@ void EffectManager::Apply()
 	enbEffect.Apply();
 	enbEffectPostPass.Apply();
 
-	ENBExtender::ClearWeatherData();
+#ifdef ENABLE_ENB_EXTENDER
 	for (auto* effect : allEffects) {
 		if (effect->IsCompiled())
-			ENBExtender::LoadWeatherData(*effect);
+			effect->LoadWeatherData();
 	}
+#endif
 }
 
 void EffectManager::Load()
@@ -322,7 +323,7 @@ void EffectManager::RegisterSettings()
 	ids.gammaCurve = settingManager.GetSettingID("GammaCurve", "COLORCORRECTION");
 }
 
-void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
+void EffectManager::ExecuteEffect(EffectBase& a_effect, uint32_t enableSettingID)
 {
 	if (!a_effect.IsCompiled())
 		return;
@@ -331,10 +332,12 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 		return;
 
 	a_effect.profiler = globals::profiler;
-	ENBExtender::ApplyWeatherBlending(a_effect, commonData.weather[2],
+#ifdef ENABLE_ENB_EXTENDER
+	a_effect.ApplyWeatherBlending(commonData.weather[2],
 		static_cast<uint32_t>(commonData.weather[0]),
 		static_cast<uint32_t>(commonData.weather[1]));
-	ENBExtender::ApplyTimeOfDayInterpolation(a_effect);
+	a_effect.ApplyTimeOfDayInterpolation();
+#endif
 	UpdateCommonVariablesForEffect(a_effect);
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();

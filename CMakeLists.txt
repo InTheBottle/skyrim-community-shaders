@@ -39,6 +39,7 @@ option(
     ON
 )
 option(TRACY_SUPPORT "Enable support for tracy profiler" OFF)
+option(ENABLE_ENB_EXTENDER "Enable ENBExtender reimplementation (weather blending, time-of-day, technique bindings)" ON)
 option(
     BUILD_SHADER_TESTS
     "Build shader unit tests (runs automatically before packaging)"
@@ -101,6 +102,7 @@ include(FidelityFX-SDK)
 target_compile_definitions(
     ${PROJECT_NAME}
     PRIVATE "$<$<BOOL:${TRACY_SUPPORT}>:TRACY_SUPPORT>"
+    PRIVATE "$<$<BOOL:${ENABLE_ENB_EXTENDER}>:ENABLE_ENB_EXTENDER>"
 )
 
 file(

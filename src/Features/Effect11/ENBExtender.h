@@ -51,18 +51,8 @@ namespace ENBExtender
 	bool CreateUIVariable(Effect::UIVariable& out, ID3DX11EffectVariable* variable, const D3DX11_EFFECT_VARIABLE_DESC& varDesc, const D3DX11_EFFECT_TYPE_DESC& typeDesc, const std::vector<std::string>& groupStack, Effect& effect);
 	void InsertUIDefines(Effect& effect);
 
-	// Technique evaluation
-	bool IsTechniqueEnabled(Effect::TechniqueInfo& info, const Effect& effect);
-
 	// Post-load processing
 	void LoadTechniqueDropdownMetadata(Effect& effect);
-	void ApplyTimeOfDayInterpolation(Effect& effect);
-
-	// Weather blending
-	void LoadWeatherData(Effect& effect);
-	void ApplyWeatherBlending(Effect& effect, float blendFactor, uint32_t currentWeatherID, uint32_t lastWeatherID);
-	void SyncWeatherDataFromUI(Effect& effect, uint32_t weatherID);
-	void ClearWeatherData();
 
 	// UI rendering
 	void RenderUI(std::span<Effect*> effects);

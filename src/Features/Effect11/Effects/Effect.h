@@ -240,7 +240,11 @@ public:
 	TextureManager::Texture* GetCachedCommonTexture(const std::string& name);
 	void ClearVariableCache();
 
+	virtual bool IsTechniqueEnabled(TechniqueInfo&) { return true; }
+
 protected:
+	static bool IsPerComponentVector(const UIVariable& uiVar);
+	std::string GetVariableIniKey(const UIVariable& uiVar);
 
 private:
 	bool LoadFXFile();
@@ -258,9 +262,6 @@ private:
 	void LoadUITechniques();
 	ID3D11RenderTargetView* GetRenderTargetView(const std::string& renderTargetName, ID3D11RenderTargetView* fallback);
 
-	// UI Variable helpers (private)
-	static bool IsPerComponentVector(const UIVariable& uiVar);
-	std::string GetVariableIniKey(const UIVariable& uiVar);
 	void LoadUIVariableValue(UIVariable& uiVar);
 	void LoadVariableFromString(UIVariable& uiVar, const std::string& value);
 };

@@ -6,8 +6,9 @@
 #include <unordered_set>
 
 #include "EffectManager.h"
-#include "PresetManager.h"
-#include "WeatherManager.h"
+#ifdef ENABLE_ENB_EXTENDER
+#	include "Effects/ExtendedEffect.h"
+#endif
 #include "Utils/ShaderPatches.h"
 
 namespace ENBExtender
@@ -1283,10 +1284,15 @@ namespace ENBExtender
 		RenderGroupNode(root, ctx, techDropdowns);
 
 		if (!changedEffects.empty()) {
+#ifdef ENABLE_ENB_EXTENDER
 			auto& cd = EffectManager::GetSingleton().commonData;
 			uint32_t activeWeatherID = static_cast<uint32_t>(cd.weather[2] > 0.5f ? cd.weather[0] : cd.weather[1]);
+#endif
 			for (auto* effect : changedEffects) {
-				SyncWeatherDataFromUI(*effect, activeWeatherID);
+#ifdef ENABLE_ENB_EXTENDER
+				if (auto* ext = dynamic_cast<ExtendedEffect*>(effect))
+					ext->SyncWeatherDataFromUI(activeWeatherID);
+#endif
 				effect->UpdateUIVariables();
 			}
 		}
@@ -1304,44 +1310,6 @@ namespace ENBExtender
 	{
 		Effect* ptr = &effect;
 		RenderUI({ &ptr, 1 });
-	}
-
-	// Technique evaluation
-
-	bool IsTechniqueEnabled(Effect::TechniqueInfo& info, const Effect& effect)
-	{
-		for (auto& binding : info.bindings) {
-			if (binding.resolvedIndex == -1) {
-				binding.resolvedIndex = -2;
-				for (int i = 0; i < static_cast<int>(effect.uiVariables.size()); ++i) {
-					auto& uiVar = effect.uiVariables[i];
-					const std::string& uname = !uiVar.uniqueName.empty() ? uiVar.uniqueName
-					                           : !uiVar.group.empty()    ? uiVar.group + "." + uiVar.displayName
-					                                                     : uiVar.displayName;
-					if (uname == binding.variableName) {
-						binding.resolvedIndex = i;
-						break;
-					}
-				}
-			}
-
-			if (binding.resolvedIndex < 0)
-				continue;
-
-			auto& uiVar = effect.uiVariables[binding.resolvedIndex];
-			bool val = false;
-			switch (uiVar.type) {
-			case Effect::UIVariableType::Bool: val = uiVar.boolValue; break;
-			case Effect::UIVariableType::Int: val = uiVar.intValue != 0; break;
-			case Effect::UIVariableType::Float: val = uiVar.floatValue != 0.0f; break;
-			default: val = true; break;
-			}
-
-			bool enabled = binding.inverted ? !val : val;
-			if (!enabled)
-				return false;
-		}
-		return true;
 	}
 
 	// Post-load processing
@@ -1400,300 +1368,6 @@ namespace ENBExtender
 		auto s = get("UIDropdownOrdering");
 		if (!s.empty())
 			td.ordering = SafeStoi(s, td.ordering);
-	}
-
-	// Time-of-day interpolation
-
-	static float GetPeriodWeight(const std::string& period, const EffectManager::CommonVariableData& cd)
-	{
-		if (period == "Dawn") return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Dawn)];
-		if (period == "Sunrise") return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunrise)];
-		if (period == "Day") return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Day)];
-		if (period == "Sunset") return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunset)];
-		if (period == "Dusk") return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Dusk)];
-		if (period == "Night") return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Night)];
-		if (period == "Interior") return cd.eInteriorFactor;
-		return 0.0f;
-	}
-
-	void ApplyTimeOfDayInterpolation(Effect& effect)
-	{
-		struct PeriodVar { size_t index; float weight; };
-		std::unordered_map<std::string, std::vector<PeriodVar>> baseGroups;
-		auto& cd = EffectManager::GetSingleton().commonData;
-
-		for (size_t i = 0; i < effect.uiVariables.size(); ++i) {
-			auto& uiVar = effect.uiVariables[i];
-			if (uiVar.timePeriod.empty() || uiVar.isSeparator || !uiVar.effectVariable)
-				continue;
-			auto& name = uiVar.name;
-			auto& period = uiVar.timePeriod;
-			if (name.size() <= period.size() || name.compare(name.size() - period.size(), period.size(), period) != 0)
-				continue;
-			baseGroups[name.substr(0, name.size() - period.size())].push_back({ i, GetPeriodWeight(period, cd) });
-		}
-
-		for (auto& [baseName, entries] : baseGroups) {
-			auto baseVarIt = effect.variables.find(baseName);
-			if (baseVarIt == effect.variables.end())
-				continue;
-			auto* baseVar = baseVarIt->second.get();
-			if (!baseVar || !baseVar->IsValid())
-				continue;
-
-			auto& sep = effect.uiVariables[entries[0].index].separation;
-			if (sep == "ExteriorWeather" && cd.eInteriorFactor > 0.0f)
-				continue;
-
-			float totalWeight = 0.0f;
-			for (auto& e : entries)
-				totalWeight += e.weight;
-			if (totalWeight <= 0.0f)
-				continue;
-
-			auto& firstVar = effect.uiVariables[entries[0].index];
-
-			if (firstVar.type == Effect::UIVariableType::Float) {
-				float result = 0.0f;
-				for (auto& e : entries)
-					result += effect.uiVariables[e.index].floatValue * (e.weight / totalWeight);
-				baseVar->AsScalar()->SetFloat(result);
-			} else {
-				int comps = (firstVar.type == Effect::UIVariableType::Float2) ? 2 : (firstVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
-				float result[4] = {};
-				for (auto& e : entries) {
-					float w = e.weight / totalWeight;
-					for (int c = 0; c < comps; ++c)
-						result[c] += effect.uiVariables[e.index].vectorValue[c] * w;
-				}
-				baseVar->AsVector()->SetFloatVector(result);
-			}
-		}
-	}
-
-	// Weather blending
-
-	using WeatherValues = std::unordered_map<std::string, std::string>;
-	static std::unordered_map<std::string, std::unordered_map<uint32_t, WeatherValues>> allWeatherData;
-
-	static std::string GetIniKey(const Effect::UIVariable& uiVar)
-	{
-		if (!uiVar.uniqueName.empty())
-			return uiVar.uniqueName;
-		return uiVar.group.empty() ? uiVar.displayName : uiVar.group + "." + uiVar.displayName;
-	}
-
-	static bool IsPerComp(const Effect::UIVariable& uiVar)
-	{
-		return (uiVar.type == Effect::UIVariableType::Float2 || uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4) &&
-			uiVar.widgetType != Effect::UIWidgetType::Color;
-	}
-
-	void LoadWeatherData(Effect& effect)
-	{
-		std::string effectName = effect.GetName();
-
-		auto& data = allWeatherData[effectName];
-		data.clear();
-
-		std::string section = effectName;
-		std::transform(section.begin(), section.end(), section.begin(), ::toupper);
-
-		auto& weatherManager = WeatherManager::GetSingleton();
-		const auto& weatherEntries = weatherManager.GetWeatherEntries();
-
-		for (const auto& [key, entry] : weatherEntries) {
-			std::filesystem::path filePath = std::filesystem::absolute(PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName);
-			if (!std::filesystem::exists(filePath))
-				continue;
-
-			std::string filePathStr = filePath.string();
-
-			WeatherValues values;
-			for (const auto& uiVar : effect.uiVariables) {
-				if (uiVar.isSeparator || uiVar.isLabel)
-					continue;
-				if (!uiVar.effectVariable && !uiVar.isDefine)
-					continue;
-
-				std::string iniKey = GetIniKey(uiVar);
-				if (iniKey.empty())
-					continue;
-
-				if (IsPerComp(uiVar)) {
-					static const char* suffixes[] = { "X", "Y", "Z", "W" };
-					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
-					for (int c = 0; c < comps; ++c) {
-						std::string compKey = iniKey + suffixes[c];
-						char buffer[256];
-						DWORD result = GetPrivateProfileStringA(section.c_str(), compKey.c_str(), "", buffer, sizeof(buffer), filePathStr.c_str());
-						if (result > 0)
-							values[compKey] = buffer;
-					}
-				} else {
-					char buffer[1024];
-					DWORD result = GetPrivateProfileStringA(section.c_str(), iniKey.c_str(), "", buffer, sizeof(buffer), filePathStr.c_str());
-					if (result > 0)
-						values[iniKey] = buffer;
-				}
-			}
-
-			if (!values.empty()) {
-				for (uint32_t weatherID : entry.weatherIDs)
-					data[weatherID] = values;
-			}
-		}
-
-		if (!data.empty())
-			logger::info("[ENBExtender] Loaded weather data for '{}' ({} weathers)", effectName, data.size());
-	}
-
-	void ApplyWeatherBlending(Effect& effect, float blendFactor, uint32_t currentWeatherID, uint32_t lastWeatherID)
-	{
-		auto dataIt = allWeatherData.find(effect.GetName());
-		if (dataIt == allWeatherData.end() || dataIt->second.empty())
-			return;
-
-		auto& weatherData = dataIt->second;
-		auto currentIt = weatherData.find(currentWeatherID);
-		auto lastIt = weatherData.find(lastWeatherID);
-
-		if (currentIt == weatherData.end() && lastIt == weatherData.end())
-			return;
-
-		for (auto& uiVar : effect.uiVariables) {
-			if (uiVar.isSeparator || uiVar.isLabel)
-				continue;
-			if (!uiVar.effectVariable && !uiVar.isDefine)
-				continue;
-
-			std::string iniKey = GetIniKey(uiVar);
-			if (iniKey.empty())
-				continue;
-
-			switch (uiVar.type) {
-			case Effect::UIVariableType::Float:
-				{
-					auto getVal = [&](const WeatherValues* vals) -> float {
-						if (!vals) return uiVar.floatValue;
-						auto it = vals->find(iniKey);
-						if (it == vals->end()) return uiVar.floatValue;
-						return SafeStof(it->second, uiVar.floatValue);
-					};
-
-					float currentVal = getVal(currentIt != weatherData.end() ? &currentIt->second : nullptr);
-					float lastVal = getVal(lastIt != weatherData.end() ? &lastIt->second : nullptr);
-					float blended = lastVal + blendFactor * (currentVal - lastVal);
-					uiVar.floatValue = blended;
-					if (uiVar.effectVariable)
-						uiVar.effectVariable->AsScalar()->SetFloat(blended);
-					break;
-				}
-			case Effect::UIVariableType::Float2:
-			case Effect::UIVariableType::Float3:
-			case Effect::UIVariableType::Float4:
-				{
-					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
-					bool perComp = IsPerComp(uiVar);
-
-					auto parseVec = [&](const WeatherValues* vals, float* out) {
-						if (!vals) {
-							memcpy(out, uiVar.vectorValue, sizeof(float) * comps);
-							return;
-						}
-						if (perComp) {
-							static const char* suffixes[] = { "X", "Y", "Z", "W" };
-							for (int c = 0; c < comps; ++c) {
-								auto it = vals->find(iniKey + suffixes[c]);
-								out[c] = (it != vals->end()) ? SafeStof(it->second, uiVar.vectorValue[c]) : uiVar.vectorValue[c];
-							}
-						} else {
-							auto it = vals->find(iniKey);
-							if (it != vals->end()) {
-								std::stringstream ss(it->second);
-								std::string item;
-								for (int c = 0; c < comps && std::getline(ss, item, ','); ++c)
-									out[c] = SafeStof(item, uiVar.vectorValue[c]);
-							} else {
-								memcpy(out, uiVar.vectorValue, sizeof(float) * comps);
-							}
-						}
-					};
-
-					float currentVals[4] = {}, lastVals[4] = {};
-					parseVec(currentIt != weatherData.end() ? &currentIt->second : nullptr, currentVals);
-					parseVec(lastIt != weatherData.end() ? &lastIt->second : nullptr, lastVals);
-
-					for (int c = 0; c < comps; ++c)
-						uiVar.vectorValue[c] = lastVals[c] + blendFactor * (currentVals[c] - lastVals[c]);
-
-					if (uiVar.effectVariable)
-						uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
-					break;
-				}
-			default:
-				break;
-			}
-		}
-	}
-
-	void SyncWeatherDataFromUI(Effect& effect, uint32_t weatherID)
-	{
-		auto dataIt = allWeatherData.find(effect.GetName());
-		if (dataIt == allWeatherData.end())
-			return;
-
-		auto weatherIt = dataIt->second.find(weatherID);
-		if (weatherIt == dataIt->second.end())
-			return;
-
-		auto& values = weatherIt->second;
-
-		for (const auto& uiVar : effect.uiVariables) {
-			if (uiVar.isSeparator || uiVar.isLabel)
-				continue;
-			if (!uiVar.effectVariable && !uiVar.isDefine)
-				continue;
-
-			std::string iniKey = GetIniKey(uiVar);
-			if (iniKey.empty() || values.find(iniKey) == values.end())
-				continue;
-
-			switch (uiVar.type) {
-			case Effect::UIVariableType::Float:
-				values[iniKey] = std::to_string(uiVar.floatValue);
-				break;
-			case Effect::UIVariableType::Float2:
-			case Effect::UIVariableType::Float3:
-			case Effect::UIVariableType::Float4:
-				{
-					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
-					if (IsPerComp(uiVar)) {
-						static const char* suffixes[] = { "X", "Y", "Z", "W" };
-						for (int c = 0; c < comps; ++c) {
-							std::string compKey = iniKey + suffixes[c];
-							if (values.find(compKey) != values.end())
-								values[compKey] = std::to_string(uiVar.vectorValue[c]);
-						}
-					} else {
-						std::string val;
-						for (int c = 0; c < comps; ++c) {
-							if (c > 0) val += ", ";
-							val += std::to_string(uiVar.vectorValue[c]);
-						}
-						values[iniKey] = val;
-					}
-					break;
-				}
-			default:
-				break;
-			}
-		}
-	}
-
-	void ClearWeatherData()
-	{
-		allWeatherData.clear();
 	}
 
 	// File preprocessing

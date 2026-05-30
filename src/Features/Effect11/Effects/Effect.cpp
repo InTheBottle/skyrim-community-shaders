@@ -386,7 +386,7 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 		if (!techniqueInfo.technique)
 			continue;
 
-		if (!ENBExtender::IsTechniqueEnabled(techniqueInfo, *this))
+		if (!IsTechniqueEnabled(techniqueInfo))
 			continue;
 
 		if (sequence.size() == 1 || swapCounter == 0) {
