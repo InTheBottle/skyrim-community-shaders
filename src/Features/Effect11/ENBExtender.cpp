@@ -1282,8 +1282,14 @@ namespace ENBExtender
 
 		RenderGroupNode(root, ctx, techDropdowns);
 
-		for (auto* effect : changedEffects)
-			effect->UpdateUIVariables();
+		if (!changedEffects.empty()) {
+			auto& cd = EffectManager::GetSingleton().commonData;
+			uint32_t activeWeatherID = static_cast<uint32_t>(cd.weather[2] > 0.5f ? cd.weather[0] : cd.weather[1]);
+			for (auto* effect : changedEffects) {
+				SyncWeatherDataFromUI(*effect, activeWeatherID);
+				effect->UpdateUIVariables();
+			}
+		}
 
 		for (auto* effect : effects) {
 			if (!effect->GetErrors().empty()) {
@@ -1623,6 +1629,60 @@ namespace ENBExtender
 
 					if (uiVar.effectVariable)
 						uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
+					break;
+				}
+			default:
+				break;
+			}
+		}
+	}
+
+	void SyncWeatherDataFromUI(Effect& effect, uint32_t weatherID)
+	{
+		auto dataIt = allWeatherData.find(effect.GetName());
+		if (dataIt == allWeatherData.end())
+			return;
+
+		auto weatherIt = dataIt->second.find(weatherID);
+		if (weatherIt == dataIt->second.end())
+			return;
+
+		auto& values = weatherIt->second;
+
+		for (const auto& uiVar : effect.uiVariables) {
+			if (uiVar.isSeparator || uiVar.isLabel)
+				continue;
+			if (!uiVar.effectVariable && !uiVar.isDefine)
+				continue;
+
+			std::string iniKey = GetIniKey(uiVar);
+			if (iniKey.empty() || values.find(iniKey) == values.end())
+				continue;
+
+			switch (uiVar.type) {
+			case Effect::UIVariableType::Float:
+				values[iniKey] = std::to_string(uiVar.floatValue);
+				break;
+			case Effect::UIVariableType::Float2:
+			case Effect::UIVariableType::Float3:
+			case Effect::UIVariableType::Float4:
+				{
+					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
+					if (IsPerComp(uiVar)) {
+						static const char* suffixes[] = { "X", "Y", "Z", "W" };
+						for (int c = 0; c < comps; ++c) {
+							std::string compKey = iniKey + suffixes[c];
+							if (values.find(compKey) != values.end())
+								values[compKey] = std::to_string(uiVar.vectorValue[c]);
+						}
+					} else {
+						std::string val;
+						for (int c = 0; c < comps; ++c) {
+							if (c > 0) val += ", ";
+							val += std::to_string(uiVar.vectorValue[c]);
+						}
+						values[iniKey] = val;
+					}
 					break;
 				}
 			default:
