@@ -15,6 +15,9 @@ public:
 	void Unload() override;
 	bool IsTechniqueEnabled(TechniqueInfo& info) override;
 
+	bool HasWeatherData() const { return !weatherData.empty(); }
+	bool IsVariableWeatherControlled(const std::string& iniKey) const;
+
 private:
 	using WeatherValues = std::unordered_map<std::string, std::string>;
 	std::unordered_map<uint32_t, WeatherValues> weatherData;

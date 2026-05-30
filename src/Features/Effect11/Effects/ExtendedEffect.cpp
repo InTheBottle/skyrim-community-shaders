@@ -8,6 +8,15 @@
 #include "../PresetManager.h"
 #include "../WeatherManager.h"
 
+bool ExtendedEffect::IsVariableWeatherControlled(const std::string& iniKey) const
+{
+	for (const auto& [id, values] : weatherData) {
+		if (values.find(iniKey) != values.end())
+			return true;
+	}
+	return false;
+}
+
 void ExtendedEffect::Unload()
 {
 	weatherData.clear();

@@ -1032,6 +1032,21 @@ namespace ENBExtender
 		}
 	};
 
+	static bool IsWeatherControlled([[maybe_unused]] Effect* effect, [[maybe_unused]] const Effect::UIVariable& uiVar)
+	{
+#ifdef ENABLE_ENB_EXTENDER
+		if (auto* ext = dynamic_cast<ExtendedEffect*>(effect)) {
+			if (ext->HasWeatherData()) {
+				std::string iniKey = !uiVar.uniqueName.empty() ? uiVar.uniqueName
+				                     : uiVar.group.empty()    ? uiVar.displayName
+				                                              : uiVar.group + "." + uiVar.displayName;
+				return ext->IsVariableWeatherControlled(iniKey);
+			}
+		}
+#endif
+		return false;
+	}
+
 	static void RenderWidget(const std::string& label, const std::string& id,
 		Effect::UIVariable& uiVar, bool readOnly, Effect* effect,
 		std::unordered_set<Effect*>& changedEffects)
@@ -1040,6 +1055,14 @@ namespace ENBExtender
 		ImGui::TableSetColumnIndex(0);
 		if (readOnly)
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+
+		bool weatherControlled = IsWeatherControlled(effect, uiVar);
+		if (weatherControlled) {
+			ImGui::Text("W");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("This setting varies per weather");
+			ImGui::SameLine();
+		}
 		ImGui::Text("%s", label.c_str());
 
 		ImGui::TableSetColumnIndex(1);
