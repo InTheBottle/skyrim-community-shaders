@@ -849,7 +849,6 @@ void Effect::UpdateUIVariables()
 		}
 	}
 
-	ENBExtender::ApplyTimeOfDayInterpolation(*this);
 }
 
 void Effect::RenderImGui()

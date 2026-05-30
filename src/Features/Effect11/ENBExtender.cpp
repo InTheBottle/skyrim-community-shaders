@@ -6,6 +6,8 @@
 #include <unordered_set>
 
 #include "EffectManager.h"
+#include "PresetManager.h"
+#include "WeatherManager.h"
 #include "Utils/ShaderPatches.h"
 
 namespace ENBExtender
@@ -1461,6 +1463,177 @@ namespace ENBExtender
 				baseVar->AsVector()->SetFloatVector(result);
 			}
 		}
+	}
+
+	// Weather blending
+
+	using WeatherValues = std::unordered_map<std::string, std::string>;
+	static std::unordered_map<std::string, std::unordered_map<uint32_t, WeatherValues>> allWeatherData;
+
+	static std::string GetIniKey(const Effect::UIVariable& uiVar)
+	{
+		if (!uiVar.uniqueName.empty())
+			return uiVar.uniqueName;
+		return uiVar.group.empty() ? uiVar.displayName : uiVar.group + "." + uiVar.displayName;
+	}
+
+	static bool IsPerComp(const Effect::UIVariable& uiVar)
+	{
+		return (uiVar.type == Effect::UIVariableType::Float2 || uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4) &&
+			uiVar.widgetType != Effect::UIWidgetType::Color;
+	}
+
+	void LoadWeatherData(Effect& effect)
+	{
+		std::string effectName = effect.GetName();
+
+		auto& data = allWeatherData[effectName];
+		data.clear();
+
+		std::string section = effectName;
+		std::transform(section.begin(), section.end(), section.begin(), ::toupper);
+
+		auto& weatherManager = WeatherManager::GetSingleton();
+		const auto& weatherEntries = weatherManager.GetWeatherEntries();
+
+		for (const auto& [key, entry] : weatherEntries) {
+			std::filesystem::path filePath = std::filesystem::absolute(PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName);
+			if (!std::filesystem::exists(filePath))
+				continue;
+
+			std::string filePathStr = filePath.string();
+
+			WeatherValues values;
+			for (const auto& uiVar : effect.uiVariables) {
+				if (uiVar.isSeparator || uiVar.isLabel)
+					continue;
+				if (!uiVar.effectVariable && !uiVar.isDefine)
+					continue;
+
+				std::string iniKey = GetIniKey(uiVar);
+				if (iniKey.empty())
+					continue;
+
+				if (IsPerComp(uiVar)) {
+					static const char* suffixes[] = { "X", "Y", "Z", "W" };
+					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
+					for (int c = 0; c < comps; ++c) {
+						std::string compKey = iniKey + suffixes[c];
+						char buffer[256];
+						DWORD result = GetPrivateProfileStringA(section.c_str(), compKey.c_str(), "", buffer, sizeof(buffer), filePathStr.c_str());
+						if (result > 0)
+							values[compKey] = buffer;
+					}
+				} else {
+					char buffer[1024];
+					DWORD result = GetPrivateProfileStringA(section.c_str(), iniKey.c_str(), "", buffer, sizeof(buffer), filePathStr.c_str());
+					if (result > 0)
+						values[iniKey] = buffer;
+				}
+			}
+
+			if (!values.empty()) {
+				for (uint32_t weatherID : entry.weatherIDs)
+					data[weatherID] = values;
+			}
+		}
+
+		if (!data.empty())
+			logger::info("[ENBExtender] Loaded weather data for '{}' ({} weathers)", effectName, data.size());
+	}
+
+	void ApplyWeatherBlending(Effect& effect, float blendFactor, uint32_t currentWeatherID, uint32_t lastWeatherID)
+	{
+		auto dataIt = allWeatherData.find(effect.GetName());
+		if (dataIt == allWeatherData.end() || dataIt->second.empty())
+			return;
+
+		auto& weatherData = dataIt->second;
+		auto currentIt = weatherData.find(currentWeatherID);
+		auto lastIt = weatherData.find(lastWeatherID);
+
+		if (currentIt == weatherData.end() && lastIt == weatherData.end())
+			return;
+
+		for (auto& uiVar : effect.uiVariables) {
+			if (uiVar.isSeparator || uiVar.isLabel)
+				continue;
+			if (!uiVar.effectVariable && !uiVar.isDefine)
+				continue;
+
+			std::string iniKey = GetIniKey(uiVar);
+			if (iniKey.empty())
+				continue;
+
+			switch (uiVar.type) {
+			case Effect::UIVariableType::Float:
+				{
+					auto getVal = [&](const WeatherValues* vals) -> float {
+						if (!vals) return uiVar.floatValue;
+						auto it = vals->find(iniKey);
+						if (it == vals->end()) return uiVar.floatValue;
+						return SafeStof(it->second, uiVar.floatValue);
+					};
+
+					float currentVal = getVal(currentIt != weatherData.end() ? &currentIt->second : nullptr);
+					float lastVal = getVal(lastIt != weatherData.end() ? &lastIt->second : nullptr);
+					float blended = lastVal + blendFactor * (currentVal - lastVal);
+					uiVar.floatValue = blended;
+					if (uiVar.effectVariable)
+						uiVar.effectVariable->AsScalar()->SetFloat(blended);
+					break;
+				}
+			case Effect::UIVariableType::Float2:
+			case Effect::UIVariableType::Float3:
+			case Effect::UIVariableType::Float4:
+				{
+					int comps = (uiVar.type == Effect::UIVariableType::Float2) ? 2 : (uiVar.type == Effect::UIVariableType::Float3) ? 3 : 4;
+					bool perComp = IsPerComp(uiVar);
+
+					auto parseVec = [&](const WeatherValues* vals, float* out) {
+						if (!vals) {
+							memcpy(out, uiVar.vectorValue, sizeof(float) * comps);
+							return;
+						}
+						if (perComp) {
+							static const char* suffixes[] = { "X", "Y", "Z", "W" };
+							for (int c = 0; c < comps; ++c) {
+								auto it = vals->find(iniKey + suffixes[c]);
+								out[c] = (it != vals->end()) ? SafeStof(it->second, uiVar.vectorValue[c]) : uiVar.vectorValue[c];
+							}
+						} else {
+							auto it = vals->find(iniKey);
+							if (it != vals->end()) {
+								std::stringstream ss(it->second);
+								std::string item;
+								for (int c = 0; c < comps && std::getline(ss, item, ','); ++c)
+									out[c] = SafeStof(item, uiVar.vectorValue[c]);
+							} else {
+								memcpy(out, uiVar.vectorValue, sizeof(float) * comps);
+							}
+						}
+					};
+
+					float currentVals[4] = {}, lastVals[4] = {};
+					parseVec(currentIt != weatherData.end() ? &currentIt->second : nullptr, currentVals);
+					parseVec(lastIt != weatherData.end() ? &lastIt->second : nullptr, lastVals);
+
+					for (int c = 0; c < comps; ++c)
+						uiVar.vectorValue[c] = lastVals[c] + blendFactor * (currentVals[c] - lastVals[c]);
+
+					if (uiVar.effectVariable)
+						uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
+					break;
+				}
+			default:
+				break;
+			}
+		}
+	}
+
+	void ClearWeatherData()
+	{
+		allWeatherData.clear();
 	}
 
 	// File preprocessing

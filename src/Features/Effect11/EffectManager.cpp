@@ -100,6 +100,11 @@ void EffectManager::Apply()
 	enbEffect.Apply();
 	enbEffectPostPass.Apply();
 
+	ENBExtender::ClearWeatherData();
+	for (auto* effect : allEffects) {
+		if (effect->IsCompiled())
+			ENBExtender::LoadWeatherData(*effect);
+	}
 }
 
 void EffectManager::Load()
@@ -326,6 +331,10 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 		return;
 
 	a_effect.profiler = globals::profiler;
+	ENBExtender::ApplyWeatherBlending(a_effect, commonData.weather[2],
+		static_cast<uint32_t>(commonData.weather[0]),
+		static_cast<uint32_t>(commonData.weather[1]));
+	ENBExtender::ApplyTimeOfDayInterpolation(a_effect);
 	UpdateCommonVariablesForEffect(a_effect);
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();

@@ -58,6 +58,11 @@ namespace ENBExtender
 	void LoadTechniqueDropdownMetadata(Effect& effect);
 	void ApplyTimeOfDayInterpolation(Effect& effect);
 
+	// Weather blending
+	void LoadWeatherData(Effect& effect);
+	void ApplyWeatherBlending(Effect& effect, float blendFactor, uint32_t currentWeatherID, uint32_t lastWeatherID);
+	void ClearWeatherData();
+
 	// UI rendering
 	void RenderUI(std::span<Effect*> effects);
 	void RenderUI(Effect& effect);
