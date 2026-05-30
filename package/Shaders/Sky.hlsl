@@ -270,9 +270,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if (SharedData::enbSettings.UseProceduralGradientWeights) {
 		float3 viewDirection = normalize(input.WorldPosition.xyz);
 		float gradientPosition = pow(1.0 - saturate(viewDirection.z), SharedData::enbSettings.ProceduralGradientWeightCurve);
-		float3 labA = Color::Correct::BT709ToOKLab(input.SkyBlendColor2.xyz);
-		float3 labB = Color::Correct::BT709ToOKLab(input.SkyBlendColor0.xyz);
-		skyGradientColor = Color::Correct::OkLabToBT709(lerp(labA, labB, gradientPosition));
+		skyGradientColor = lerp(input.SkyBlendColor2.xyz, input.SkyBlendColor0.xyz, gradientPosition);
 	}
 	psout.Color.xyz = Color::Sky(skyGradientColor) + skyScale;
 	psout.Color.xyz *= 1.0 + noiseGrad;
