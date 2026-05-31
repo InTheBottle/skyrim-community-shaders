@@ -279,54 +279,36 @@ void MenuManager::RenderAllSettings()
 					auto activeIndices = GetActiveTimeOfDayIndices();
 
 					if (!activeIndices.empty()) {
-						if (ImGui::BeginTable("WeatherTimeOfDayHeader", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)) {
-							ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed);
-							ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+						float totalWidth = ImGui::GetContentRegionAvail().x;
+						float sliderWidth = (totalWidth - (activeIndices.size() - 1) * 8.0f) / activeIndices.size();
 
-							ImGui::TableNextRow();
-							ImGui::TableSetColumnIndex(0);
-							ImGui::Text("Time Periods");
-							ImGui::TableSetColumnIndex(1);
+						for (size_t idx = 0; idx < activeIndices.size(); ++idx) {
+							int i = activeIndices[idx];
 
-							float totalWidth = ImGui::GetContentRegionAvail().x;
-							float sliderWidth = (totalWidth - (activeIndices.size() - 1) * 8.0f) / activeIndices.size();
-
-							for (size_t idx = 0; idx < activeIndices.size(); ++idx) {
-								int i = activeIndices[idx];
-
-								if (idx > 0) {
-									ImGui::SameLine();
-								}
-
-								// Use a child region to control the exact width and center the text
-								ImGui::BeginChild(("##weatherheader_" + std::to_string(i)).c_str(), ImVec2(sliderWidth, ImGui::GetTextLineHeight()), false, ImGuiWindowFlags_NoScrollbar);
-
-								float labelWidth = ImGui::CalcTextSize(timeOfDayNames[i]).x;
-								float centerOffset = (sliderWidth - labelWidth) * 0.5f;
-								if (centerOffset > 0) {
-									ImGui::SetCursorPosX(centerOffset);
-								}
-
-								// Style the label based on activity
-								float blendFactor = GetTimeOfDayBlendFactor(i);
-								bool isActive = blendFactor > 0.01f;
-
-								if (!isActive) {
-									// Inactive periods: dim the text
-									ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 0.7f));
-								}
-								// Active periods: use default theme color (no style override)
-
-								ImGui::Text("%s", timeOfDayNames[i]);
-
-								if (!isActive) {
-									ImGui::PopStyleColor();
-								}
-
-								ImGui::EndChild();
+							if (idx > 0) {
+								ImGui::SameLine();
 							}
 
-							ImGui::EndTable();
+							ImGui::BeginChild(("##weatherheader_" + std::to_string(i)).c_str(), ImVec2(sliderWidth, ImGui::GetTextLineHeight()), false, ImGuiWindowFlags_NoScrollbar);
+
+							float labelWidth = ImGui::CalcTextSize(timeOfDayNames[i]).x;
+							float centerOffset = (sliderWidth - labelWidth) * 0.5f;
+							if (centerOffset > 0) {
+								ImGui::SetCursorPosX(centerOffset);
+							}
+
+							float blendFactor = GetTimeOfDayBlendFactor(i);
+							bool isActive = blendFactor > 0.01f;
+
+							if (!isActive)
+								ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 0.7f));
+
+							ImGui::Text("%s", timeOfDayNames[i]);
+
+							if (!isActive)
+								ImGui::PopStyleColor();
+
+							ImGui::EndChild();
 						}
 
 						ImGui::Separator();
