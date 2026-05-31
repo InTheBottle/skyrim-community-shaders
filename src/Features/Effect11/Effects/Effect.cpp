@@ -33,7 +33,7 @@ bool Effect::Load()
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
 
 	for (auto& uiVar : uiVariables) {
-		if (uiVar.isSeparator || uiVar.isLabel)
+		if (uiVar.isLabel)
 			continue;
 		if (!uiVar.effectVariable && !uiVar.isDefine)
 			continue;
@@ -92,7 +92,7 @@ void Effect::Save()
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
 
 	for (const auto& uiVar : uiVariables) {
-		if (uiVar.isSeparator || uiVar.isLabel)
+		if (uiVar.isLabel)
 			continue;
 		if (!uiVar.effectVariable && !uiVar.isDefine)
 			continue;
@@ -182,7 +182,6 @@ bool Effect::Apply()
 		return false;
 	}
 
-
 	CreateEffectTextures();
 
 	logger::info("[EFFECT11] Successfully applied effect '{}'", GetName());
@@ -197,6 +196,7 @@ void Effect::Unload()
 	variables.clear();
 	customTextureCache.clear();
 	uiVariables.clear();
+	separators.clear();
 	effectTextureCache.clear();
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
@@ -828,7 +828,7 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 void Effect::UpdateUIVariables()
 {
 	for (auto& uiVar : uiVariables) {
-		if (!uiVar.effectVariable || uiVar.isSeparator)
+		if (!uiVar.effectVariable)
 			continue;
 
 		switch (uiVar.type) {
@@ -853,7 +853,6 @@ void Effect::UpdateUIVariables()
 
 void Effect::RenderImGui()
 {
-	ENBExtender::RenderUI(*this);
 }
 
 void Effect::EnumerateAllVariables()

@@ -39,7 +39,7 @@ public:
 	virtual void CreateEffectTextures() {}
 
 	// UI System
-	void RenderImGui();
+	virtual void RenderImGui();
 	void LoadUIVariables();
 	void UpdateUIVariables();
 
@@ -120,7 +120,6 @@ public:
 		int intMax = 100;
 		int ordering = 0;
 		int sourceOrder = INT_MAX;
-		bool isSeparator = false;
 		bool isLabel = false;
 		bool isReadOnly = false;
 		bool isDefine = false;
@@ -179,6 +178,13 @@ public:
 	std::unordered_map<std::string, std::string> sourceGroupMap;
 	std::unordered_map<std::string, int> sourceOrderMap;
 
+	// Separators stored separately from UI variables (first-class tree nodes)
+	struct SeparatorInfo
+	{
+		std::string group;
+		int sourceOrder = INT_MAX;
+	};
+	std::vector<SeparatorInfo> separators;
 
 	struct UIDefineInfo
 	{

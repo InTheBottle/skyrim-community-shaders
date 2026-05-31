@@ -96,7 +96,7 @@ void ExtendedEffect::ApplyTimeOfDayInterpolation()
 
 	for (size_t i = 0; i < uiVariables.size(); ++i) {
 		auto& uiVar = uiVariables[i];
-		if (uiVar.timePeriod.empty() || uiVar.isSeparator || !uiVar.effectVariable)
+		if (uiVar.timePeriod.empty() || !uiVar.effectVariable)
 			continue;
 		auto& name = uiVar.name;
 		auto& period = uiVar.timePeriod;
@@ -166,7 +166,7 @@ void ExtendedEffect::LoadWeatherData()
 
 		WeatherValues values;
 		for (const auto& uiVar : uiVariables) {
-			if (uiVar.isSeparator || uiVar.isLabel)
+			if (uiVar.isLabel)
 				continue;
 			if (!uiVar.effectVariable && !uiVar.isDefine)
 				continue;
@@ -219,7 +219,7 @@ void ExtendedEffect::ApplyWeatherBlending(float blendFactor, uint32_t currentWea
 	};
 
 	for (auto& uiVar : uiVariables) {
-		if (uiVar.isSeparator || uiVar.isLabel)
+		if (uiVar.isLabel)
 			continue;
 		if (!uiVar.effectVariable && !uiVar.isDefine)
 			continue;
@@ -302,7 +302,7 @@ void ExtendedEffect::SyncWeatherDataFromUI(uint32_t weatherID)
 	auto& values = weatherIt->second;
 
 	for (const auto& uiVar : uiVariables) {
-		if (uiVar.isSeparator || uiVar.isLabel)
+		if (uiVar.isLabel)
 			continue;
 		if (!uiVar.effectVariable && !uiVar.isDefine)
 			continue;
@@ -339,6 +339,432 @@ void ExtendedEffect::SyncWeatherDataFromUI(uint32_t weatherID)
 			}
 		default:
 			break;
+		}
+	}
+}
+
+// Rendering
+
+#include "../ENBExtender.h"
+#include "../UITree.h"
+
+namespace
+{
+	float SafeStofLocal(const std::string& s, float fallback = 0.0f)
+	{
+		return ENBExtender::SafeStof(s, fallback);
+	}
+
+	bool EvaluateCondition(const std::string& condStr, float boundValue)
+	{
+		if (condStr.empty())
+			return boundValue != 0.0f;
+		size_t valueStart = 0;
+		if (condStr.size() >= 2 && !std::isdigit(static_cast<unsigned char>(condStr[1])) && condStr[1] != '-')
+			valueStart = 2;
+		else if (condStr[0] == '<' || condStr[0] == '>')
+			valueStart = 1;
+		else
+			return boundValue != 0.0f;
+		float cmp = SafeStofLocal(condStr.substr(valueStart));
+		char c0 = condStr[0], c1 = (condStr.size() >= 2) ? condStr[1] : '\0';
+		if (c0 == '=' && c1 == '=') return boundValue == cmp;
+		if (c0 == '!' && c1 == '=') return boundValue != cmp;
+		if (c0 == '<' && c1 == '=') return boundValue <= cmp;
+		if (c0 == '>' && c1 == '=') return boundValue >= cmp;
+		if (c0 == '=' && c1 == '<') return boundValue <= cmp;
+		if (c0 == '=' && c1 == '>') return boundValue >= cmp;
+		if (c0 == '<') return boundValue < cmp;
+		if (c0 == '>') return boundValue > cmp;
+		return false;
+	}
+
+	using FileUniqueNameMap = std::unordered_map<std::string, std::unordered_map<std::string, UITree::VarRef>>;
+
+	std::pair<bool, bool> EvaluateBinding(const Effect::UIVariable& var,
+		const std::unordered_map<std::string, UITree::VarRef>& uniqueNameMap,
+		const FileUniqueNameMap& fileUniqueNameMap)
+	{
+		bool visible = true, readOnly = var.isReadOnly;
+		if (var.uiBinding.empty())
+			return { visible, readOnly };
+
+		const UITree::VarRef* boundRef = nullptr;
+		if (!var.uiBindingFile.empty()) {
+			auto fileIt = fileUniqueNameMap.find(var.uiBindingFile);
+			if (fileIt != fileUniqueNameMap.end()) {
+				auto varIt = fileIt->second.find(var.uiBinding);
+				if (varIt != fileIt->second.end())
+					boundRef = &varIt->second;
+			}
+		} else {
+			auto it = uniqueNameMap.find(var.uiBinding);
+			if (it != uniqueNameMap.end())
+				boundRef = &it->second;
+		}
+
+		if (!boundRef)
+			return { visible, readOnly };
+
+		const auto& bv = boundRef->effect->uiVariables[boundRef->index];
+		float val = 0.0f;
+		switch (bv.type) {
+		case Effect::UIVariableType::Float: val = bv.floatValue; break;
+		case Effect::UIVariableType::Int: val = static_cast<float>(bv.intValue); break;
+		case Effect::UIVariableType::Bool: val = bv.boolValue ? 1.0f : 0.0f; break;
+		default: break;
+		}
+		bool cond = EvaluateCondition(var.uiBindingCondition, val);
+
+		std::string prop = var.uiBindingProperty;
+		std::transform(prop.begin(), prop.end(), prop.begin(), ::tolower);
+		if (prop == "hidden") visible = !cond;
+		else if (prop == "visible") visible = cond;
+		else if (prop == "readonly") readOnly = cond;
+		else if (prop == "readwrite") readOnly = !cond;
+
+		return { visible, readOnly };
+	}
+
+	enum class RenderMode
+	{
+		All,
+		MainOnly,
+		WeatherOnly
+	};
+
+	bool IsVarWeatherTab(const Effect::UIVariable& uiVar, Effect* effect)
+	{
+		if (uiVar.isWeatherString || uiVar.isWeatherOnlyString)
+			return true;
+		if (auto* ext = dynamic_cast<ExtendedEffect*>(effect)) {
+			if (ext->HasWeatherData()) {
+				std::string iniKey = !uiVar.uniqueName.empty() ? uiVar.uniqueName
+				                     : uiVar.group.empty()    ? uiVar.displayName
+				                                              : uiVar.group + "." + uiVar.displayName;
+				return ext->IsVariableWeatherControlled(iniKey);
+			}
+		}
+		return false;
+	}
+
+	bool IsVarVisible(const Effect::UIVariable& uiVar, Effect* effect, RenderMode mode)
+	{
+		if (uiVar.displayName.empty() || uiVar.isHidden)
+			return false;
+		if (mode == RenderMode::MainOnly && uiVar.isWeatherOnlyString)
+			return false;
+		if (mode != RenderMode::All) {
+			bool isWeather = IsVarWeatherTab(uiVar, effect);
+			if (mode == RenderMode::MainOnly && isWeather && !uiVar.isWeatherString)
+				return false;
+			if (mode == RenderMode::WeatherOnly && !isWeather)
+				return false;
+		}
+		return true;
+	}
+
+	struct RenderContext
+	{
+		std::unordered_map<std::string, UITree::VarRef>& uniqueNameMap;
+		FileUniqueNameMap& fileUniqueNameMap;
+		std::unordered_set<Effect*>& changedEffects;
+		UITree::MetaMap& meta;
+		bool performanceMode = false;
+		RenderMode renderMode = RenderMode::All;
+		int tableCounter = 0;
+
+		bool BeginVarTable()
+		{
+			std::string tableId = "##ut_" + std::to_string(tableCounter++);
+			if (ImGui::BeginTable(tableId.c_str(), 2, ImGuiTableFlags_SizingFixedFit)) {
+				float w = ImGui::GetContentRegionAvail().x;
+				ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthFixed, w * 0.45f);
+				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, w * 0.55f);
+				return true;
+			}
+			return false;
+		}
+	};
+
+	void RenderWidget(const std::string& label, const std::string& id,
+		Effect::UIVariable& uiVar, bool readOnly, Effect* effect,
+		std::unordered_set<Effect*>& changedEffects)
+	{
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		if (readOnly)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+		ImGui::Text("%s", label.c_str());
+
+		ImGui::TableSetColumnIndex(1);
+		if (readOnly)
+			ImGui::BeginDisabled();
+		bool changed = false;
+		float floatStep = (uiVar.floatMax - uiVar.floatMin) / 100.0f;
+		switch (uiVar.type) {
+		case Effect::UIVariableType::Float:
+			changed = ImGui::InputFloat(id.c_str(), &uiVar.floatValue, floatStep, floatStep * 10.0f, "%.3f");
+			if (changed)
+				uiVar.floatValue = std::clamp(uiVar.floatValue, uiVar.floatMin, uiVar.floatMax);
+			break;
+		case Effect::UIVariableType::Int:
+			if ((uiVar.widgetType == Effect::UIWidgetType::Dropdown || uiVar.widgetType == Effect::UIWidgetType::Quality) && !uiVar.dropdownItems.empty()) {
+				int di = (uiVar.widgetType == Effect::UIWidgetType::Quality) ? uiVar.intValue + 1 : uiVar.intValue;
+				const char* cur = (di >= 0 && di < static_cast<int>(uiVar.dropdownItems.size())) ? uiVar.dropdownItems[di].c_str() : "";
+				if (ImGui::BeginCombo(id.c_str(), cur)) {
+					for (int j = 0; j < static_cast<int>(uiVar.dropdownItems.size()); ++j) {
+						int iv = (uiVar.widgetType == Effect::UIWidgetType::Quality) ? (j - 1) : j;
+						if (ImGui::Selectable(uiVar.dropdownItems[j].c_str(), uiVar.intValue == iv)) {
+							uiVar.intValue = iv;
+							changed = true;
+						}
+					}
+					ImGui::EndCombo();
+				}
+			} else {
+				changed = ImGui::InputInt(id.c_str(), &uiVar.intValue, 1, 10);
+				if (changed)
+					uiVar.intValue = std::clamp(uiVar.intValue, uiVar.intMin, uiVar.intMax);
+			}
+			break;
+		case Effect::UIVariableType::Bool:
+			changed = ImGui::Checkbox(id.c_str(), &uiVar.boolValue);
+			break;
+		case Effect::UIVariableType::Float2:
+			changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 2, &floatStep, nullptr, "%.3f");
+			if (changed)
+				for (int i = 0; i < 2; ++i)
+					uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], uiVar.floatMin, uiVar.floatMax);
+			break;
+		case Effect::UIVariableType::Float3:
+			if (uiVar.widgetType == Effect::UIWidgetType::Color) {
+				changed = ImGui::ColorEdit3(id.c_str(), uiVar.vectorValue);
+			} else {
+				float min3 = (uiVar.widgetType == Effect::UIWidgetType::Vector) ? -1.0f : uiVar.floatMin;
+				float max3 = (uiVar.widgetType == Effect::UIWidgetType::Vector) ? 1.0f : uiVar.floatMax;
+				float step3 = (max3 - min3) / 100.0f;
+				changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 3, &step3, nullptr, "%.3f");
+				if (changed)
+					for (int i = 0; i < 3; ++i)
+						uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], min3, max3);
+			}
+			break;
+		case Effect::UIVariableType::Float4:
+			if (uiVar.widgetType == Effect::UIWidgetType::Color) {
+				changed = ImGui::ColorEdit4(id.c_str(), uiVar.vectorValue);
+			} else {
+				changed = ImGui::InputScalarN(id.c_str(), ImGuiDataType_Float, uiVar.vectorValue, 4, &floatStep, nullptr, "%.3f");
+				if (changed)
+					for (int i = 0; i < 4; ++i)
+						uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], uiVar.floatMin, uiVar.floatMax);
+			}
+			break;
+		}
+		if (changed)
+			changedEffects.insert(effect);
+		if (readOnly)
+			ImGui::EndDisabled();
+
+		if (readOnly)
+			ImGui::PopStyleColor();
+	}
+
+	bool RenderVar(UITree::VarRef& ref, bool& inTable, RenderContext& ctx)
+	{
+		auto& uiVar = ref.effect->uiVariables[ref.index];
+
+		if (!IsVarVisible(uiVar, ref.effect, ctx.renderMode))
+			return false;
+		if (ctx.performanceMode && !uiVar.ignorePerfMode)
+			return false;
+
+		auto [bindVisible, bindReadOnly] = EvaluateBinding(uiVar, ctx.uniqueNameMap, ctx.fileUniqueNameMap);
+		if (!bindVisible)
+			return false;
+
+		if (uiVar.isLabel) {
+			if (inTable) { ImGui::EndTable(); inTable = false; }
+			if (uiVar.isReadOnly)
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+			ImGui::TextWrapped("%s", uiVar.displayName.c_str());
+			if (uiVar.isReadOnly)
+				ImGui::PopStyleColor();
+		} else {
+			if (!inTable) {
+				if (!ctx.BeginVarTable())
+					return false;
+				inTable = true;
+			}
+			RenderWidget(uiVar.displayName, "##uv_" + std::to_string(ref.index) + "_" + ref.effect->GetName(),
+				uiVar, bindReadOnly, ref.effect, ctx.changedEffects);
+		}
+		return true;
+	}
+
+	void RenderTechniqueDropdown(Effect* effect, std::unordered_set<Effect*>& changedEffects)
+	{
+		ImGui::Text("%s", effect->techniqueDropdown.name.c_str());
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(-1);
+		const char* current = effect->uiTechniques[effect->selectedTechniqueIndex].displayName.c_str();
+		if (ImGui::BeginCombo(("##TECHNIQUE_" + effect->GetName()).c_str(), current)) {
+			for (uint32_t i = 0; i < effect->uiTechniques.size(); ++i) {
+				if (ImGui::Selectable(effect->uiTechniques[i].displayName.c_str(), effect->selectedTechniqueIndex == i)) {
+					effect->selectedTechniqueIndex = i;
+					changedEffects.insert(effect);
+				}
+				if (effect->selectedTechniqueIndex == i)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+	}
+
+	bool HasVisibleContent(const UITree::GroupNode& node, RenderMode mode)
+	{
+		for (auto& item : node.items) {
+			if (item.type == UITree::Item::Type::Variable) {
+				auto& uiVar = item.var.effect->uiVariables[item.var.index];
+				if (IsVarVisible(uiVar, item.var.effect, mode))
+					return true;
+			} else if (item.type == UITree::Item::Type::Group && item.group) {
+				if (HasVisibleContent(*item.group, mode))
+					return true;
+			}
+		}
+		return false;
+	}
+
+	void RenderGroupNode(UITree::GroupNode& node, RenderContext& ctx,
+		const std::vector<std::pair<Effect*, std::string>>& techDropdowns)
+	{
+		for (auto& [effect, group] : techDropdowns)
+			if (!group.empty() && group == node.fullPath && !effect->techniqueDropdown.topLevel)
+				RenderTechniqueDropdown(effect, ctx.changedEffects);
+
+		bool inTable = false;
+		bool lastWasSeparator = false;
+
+		for (auto& item : node.items) {
+			switch (item.type) {
+			case UITree::Item::Type::Variable:
+				if (RenderVar(item.var, inTable, ctx))
+					lastWasSeparator = false;
+				break;
+
+			case UITree::Item::Type::Separator:
+				if (!lastWasSeparator) {
+					if (inTable) { ImGui::EndTable(); inTable = false; }
+					ImGui::Separator();
+					lastWasSeparator = true;
+				}
+				break;
+
+			case UITree::Item::Type::Group:
+				if (!item.group || !HasVisibleContent(*item.group, ctx.renderMode))
+					break;
+				if (inTable) { ImGui::EndTable(); inTable = false; }
+				lastWasSeparator = false;
+
+				{
+					std::string displayName = item.group->name;
+					ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_None;
+					auto metaIt = ctx.meta.find(item.group->fullPath);
+					if (metaIt != ctx.meta.end()) {
+						if (!metaIt->second.displayName.empty())
+							displayName = metaIt->second.displayName;
+						if (metaIt->second.defaultOpen)
+							flags = ImGuiTreeNodeFlags_DefaultOpen;
+					}
+					if (ImGui::TreeNodeEx((displayName + "###ugrp_" + item.group->fullPath).c_str(), flags)) {
+						RenderGroupNode(*item.group, ctx, techDropdowns);
+						ImGui::TreePop();
+					}
+				}
+				break;
+			}
+		}
+
+		if (inTable)
+			ImGui::EndTable();
+	}
+}
+
+void ExtendedEffect::RenderImGui()
+{
+	Effect* self = this;
+	RenderMergedUI({ &self, 1 });
+}
+
+void ExtendedEffect::RenderMergedUI(std::span<Effect*> effects)
+{
+	UITree::Tree tree;
+	tree.Build(effects);
+
+	std::vector<std::pair<Effect*, std::string>> techDropdowns;
+	for (auto* effect : effects) {
+		if (!effect->IsCompiled() || effect->uiTechniques.size() <= 1 || !effect->techniqueDropdown.visible)
+			continue;
+		techDropdowns.push_back({ effect, effect->techniqueDropdown.group });
+		if (!effect->techniqueDropdown.group.empty()) {
+			auto [it, inserted] = tree.meta.try_emplace(effect->techniqueDropdown.group);
+			if (inserted) {
+				it->second.displayName = effect->techniqueDropdown.groupName;
+				it->second.defaultOpen = effect->techniqueDropdown.groupOpen;
+				it->second.ordering = effect->techniqueDropdown.ordering;
+				it->second.hasOrdering = true;
+			}
+			UITree::TraverseGroupPath(tree.root, effect->techniqueDropdown.group, tree.meta);
+		}
+	}
+
+	tree.Sort();
+
+	std::unordered_set<Effect*> changedEffects;
+	RenderContext ctx{ tree.uniqueNameMap, tree.fileUniqueNameMap, changedEffects, tree.meta,
+		EffectManager::GetSingleton().performanceMode };
+
+	bool hasWeatherTab = HasVisibleContent(tree.root, RenderMode::WeatherOnly);
+
+	for (auto& [effect, group] : techDropdowns)
+		if (effect->techniqueDropdown.topLevel || group.empty())
+			RenderTechniqueDropdown(effect, changedEffects);
+
+	if (hasWeatherTab) {
+		if (ImGui::BeginTabBar("##FXTabs")) {
+			if (ImGui::BeginTabItem("Main")) {
+				ctx.renderMode = RenderMode::MainOnly;
+				RenderGroupNode(tree.root, ctx, techDropdowns);
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Weather")) {
+				ctx.renderMode = RenderMode::WeatherOnly;
+				ctx.tableCounter = 0;
+				RenderGroupNode(tree.root, ctx, techDropdowns);
+				ImGui::EndTabItem();
+			}
+			ImGui::EndTabBar();
+		}
+	} else {
+		RenderGroupNode(tree.root, ctx, techDropdowns);
+	}
+
+	if (!changedEffects.empty()) {
+		auto& cd = EffectManager::GetSingleton().commonData;
+		uint32_t activeWeatherID = static_cast<uint32_t>(cd.weather[2] > 0.5f ? cd.weather[0] : cd.weather[1]);
+		for (auto* effect : changedEffects) {
+			if (auto* ext = dynamic_cast<ExtendedEffect*>(effect))
+				ext->SyncWeatherDataFromUI(activeWeatherID);
+			effect->UpdateUIVariables();
+		}
+	}
+
+	for (auto* effect : effects) {
+		if (!effect->GetErrors().empty()) {
+			ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s:", effect->GetName().c_str());
+			for (const auto& err : effect->GetErrors())
+				ImGui::TextWrapped("%s", err.c_str());
 		}
 	}
 }

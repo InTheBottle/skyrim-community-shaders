@@ -2,6 +2,8 @@
 
 #include "Effect.h"
 
+#include <span>
+
 #ifdef ENABLE_ENB_EXTENDER
 
 class ExtendedEffect : public Effect
@@ -14,6 +16,10 @@ public:
 
 	void Unload() override;
 	bool IsTechniqueEnabled(TechniqueInfo& info) override;
+
+	// Rendering
+	void RenderImGui() override;
+	static void RenderMergedUI(std::span<Effect*> effects);
 
 	bool HasWeatherData() const { return !weatherData.empty(); }
 	bool IsVariableWeatherControlled(const std::string& iniKey) const;

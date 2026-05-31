@@ -53,8 +53,4 @@ namespace ENBExtender
 
 	// Post-load processing
 	void LoadTechniqueDropdownMetadata(Effect& effect);
-
-	// UI rendering
-	void RenderUI(std::span<Effect*> effects);
-	void RenderUI(Effect& effect);
 }

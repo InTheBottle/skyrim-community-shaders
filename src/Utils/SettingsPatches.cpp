@@ -82,7 +82,7 @@ namespace Util::SettingsPatches
 			for (auto& patch : entry.patches) {
 				bool found = false;
 				for (auto& uiVar : effect.uiVariables) {
-					if (uiVar.isSeparator || uiVar.isLabel)
+					if (uiVar.isLabel)
 						continue;
 
 					if (GetUniqueKey(uiVar) != patch.variable)

@@ -1,7 +1,6 @@
 #include "EffectManager.h"
 
 #include "D3D11StateBackup.h"
-#include "ENBExtender.h"
 #include "Features/Effect11.h"
 #include "State.h"
 
@@ -101,6 +100,7 @@ void EffectManager::Apply()
 	enbEffectPostPass.Apply();
 
 #ifdef ENABLE_ENB_EXTENDER
+	EffectBase* allEffects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
 	for (auto* effect : allEffects) {
 		if (effect->IsCompiled())
 			effect->LoadWeatherData();
