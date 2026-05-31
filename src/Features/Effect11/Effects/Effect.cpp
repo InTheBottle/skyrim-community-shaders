@@ -255,8 +255,11 @@ bool Effect::LoadFXFile()
 	std::transform(iniSection.begin(), iniSection.end(), iniSection.begin(), ::toupper);
 
 	uiDefines.clear();
-	ENBExtender::ConvertExtenderSyntax(sourceCode, enbseriesPath, uiDefines, iniPathStr, iniSection);
 	Util::ShaderPatches::Apply(GetName().c_str(), sourceCode);
+	ENBExtender::ConvertExtenderSyntax(sourceCode, enbseriesPath, uiDefines, iniPathStr, iniSection);
+
+	std::vector<std::string> stringifyMacros;
+	ENBExtender::StripStringifyDefines(sourceCode, stringifyMacros);
 
 	auto filePathStr = filePath.string();
 
@@ -290,10 +293,13 @@ bool Effect::LoadFXFile()
 		return { static_cast<const char*>(blob->GetBufferPointer()), blob->GetBufferSize() };
 	};
 
-	auto tryPreprocessAndCompile = [&](const std::string& source, ID3DInclude* include) -> bool {
+	auto tryPreprocessAndCompile = [&](const std::string& source, ID3DInclude* include,
+		const std::vector<std::string>& extraStringifyMacros = {}) -> bool {
 		auto pp = preprocess(source, include);
 		if (pp.empty())
 			return false;
+		if (!extraStringifyMacros.empty())
+			ENBExtender::ExpandStringifyMacros(pp, extraStringifyMacros);
 		ENBExtender::ParseSourceGroupScopes(pp, *this);
 		ENBExtender::StripLineDirectives(pp);
 		return compile(pp, nullptr);
@@ -303,7 +309,17 @@ bool Effect::LoadFXFile()
 
 	{
 		ENBExtender::PresetInclude ppInclude(enbseriesPath, uiDefines, iniPathStr, iniSection);
-		compiled = tryPreprocessAndCompile(sourceCode, &ppInclude);
+		auto pp = preprocess(sourceCode, &ppInclude);
+		if (!pp.empty()) {
+			auto allMacros = stringifyMacros;
+			auto& inclMacros = ppInclude.GetStringifyMacros();
+			allMacros.insert(allMacros.end(), inclMacros.begin(), inclMacros.end());
+			if (!allMacros.empty())
+				ENBExtender::ExpandStringifyMacros(pp, allMacros);
+			ENBExtender::ParseSourceGroupScopes(pp, *this);
+			ENBExtender::StripLineDirectives(pp);
+			compiled = compile(pp, nullptr);
+		}
 	}
 
 	if (!compiled) {

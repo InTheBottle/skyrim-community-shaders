@@ -18,6 +18,8 @@ namespace ENBExtender
 	// Source preprocessing
 	void ConvertExtenderSyntax(std::string& content, const std::filesystem::path& enbseriesPath, std::vector<Effect::UIDefineInfo>& uiDefines, const std::string& iniPath = "", const std::string& iniSection = "");
 	void ExpandStringificationMacros(std::string& source);
+	void StripStringifyDefines(std::string& source, std::vector<std::string>& macroNames);
+	void ExpandStringifyMacros(std::string& source, const std::vector<std::string>& macroNames);
 
 	// File preprocessing
 	void StripLineDirectives(std::string& source);
@@ -37,12 +39,15 @@ namespace ENBExtender
 		HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID, LPCVOID* ppData, UINT* pBytes) override;
 		HRESULT __stdcall Close(LPCVOID pData) override;
 
+		const std::vector<std::string>& GetStringifyMacros() const { return stringifyMacros; }
+
 	private:
 		std::filesystem::path basePath;
 		std::vector<Effect::UIDefineInfo>& uiDefines;
 		std::string iniPath;
 		std::string iniSection;
 		std::vector<std::filesystem::path> includeDirs;
+		std::vector<std::string> stringifyMacros;
 	};
 
 	// UI variable processing

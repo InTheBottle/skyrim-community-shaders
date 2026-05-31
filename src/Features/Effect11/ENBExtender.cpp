@@ -405,6 +405,13 @@ namespace ENBExtender
 	void ExpandStringificationMacros(std::string& source)
 	{
 		std::vector<std::string> macroNames;
+		StripStringifyDefines(source, macroNames);
+		if (!macroNames.empty())
+			ExpandStringifyMacros(source, macroNames);
+	}
+
+	void StripStringifyDefines(std::string& source, std::vector<std::string>& macroNames)
+	{
 		std::string stripped;
 		stripped.reserve(source.size());
 
@@ -419,15 +426,15 @@ namespace ENBExtender
 			}
 		}
 
-		if (macroNames.empty())
-			return;
+		source = std::move(stripped);
+	}
 
+	void ExpandStringifyMacros(std::string& source, const std::vector<std::string>& macroNames)
+	{
 		for (auto& name : macroNames) {
 			logger::debug("[ENBEXTENDER] Expanding stringification macro: {}", name);
-			stripped = ReplaceStringifyInvocations(stripped, name);
+			source = ReplaceStringifyInvocations(source, name);
 		}
-
-		source = std::move(stripped);
 	}
 
 	// Source-based group scoping (compiled effect reorders variable types, so source text is the ground truth for declaration order)
@@ -1028,8 +1035,8 @@ namespace ENBExtender
 		if (!file.read(content.data(), size))
 			return "";
 
-		ConvertExtenderSyntax(content, basePath, uiDefines, iniPath, iniSection);
 		Util::ShaderPatches::Apply(fullPath.filename().string().c_str(), content);
+		ConvertExtenderSyntax(content, basePath, uiDefines, iniPath, iniSection);
 
 		auto parentDir = fullPath.parent_path();
 		if (std::find(includeDirs.begin(), includeDirs.end(), parentDir) == includeDirs.end())
@@ -1084,8 +1091,9 @@ namespace ENBExtender
 		if (!file.read(content.data(), size))
 			return E_FAIL;
 
-		ConvertExtenderSyntax(content, basePath, uiDefines, iniPath, iniSection);
 		Util::ShaderPatches::Apply(pFileName, content);
+		ConvertExtenderSyntax(content, basePath, uiDefines, iniPath, iniSection);
+		StripStringifyDefines(content, stringifyMacros);
 
 		auto parentDir = fullPath.parent_path();
 		if (std::find(includeDirs.begin(), includeDirs.end(), parentDir) == includeDirs.end())
