@@ -8,6 +8,7 @@
 #include "../ENBExtender.h"
 #include "../PresetManager.h"
 #include "../TextureManager.h"
+#include "Globals.h"
 #include "State.h"
 #include "Utils/SettingsPatches.h"
 #include "Utils/ShaderPatches.h"
@@ -197,6 +198,7 @@ void Effect::Unload()
 	customTextureCache.clear();
 	uiVariables.clear();
 	separators.clear();
+	externBindings.clear();
 	effectTextureCache.clear();
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
@@ -650,8 +652,10 @@ void Effect::LoadUIVariables()
 
 		auto externBinding = GetUIAnnotation(variable, "ExternBinding");
 		if (!externBinding.empty()) {
-			logger::info("[EFFECT11] ExternBinding '{}' requested by variable '{}' in '{}' (not yet implemented)",
-				externBinding, varDesc.Name, GetName());
+			ExternBindingInfo eb;
+			eb.bindingName = externBinding;
+			eb.variable.copy_from(variable);
+			externBindings.push_back(std::move(eb));
 			continue;
 		}
 
@@ -992,6 +996,48 @@ std::string Effect::GetSelectedTechnique() const
 	if (!techniques.empty())
 		return techniques.begin()->first;
 	return "";
+}
+
+void Effect::UpdateExternBindings()
+{
+	if (externBindings.empty())
+		return;
+
+	auto& fb = globals::game::frameBufferCached;
+	auto invView = fb.GetCameraViewInverse();
+	auto wvp = fb.GetCameraViewProj();
+	auto invWvp = fb.GetCameraViewProjInverse();
+
+	for (auto& eb : externBindings) {
+		if (!eb.variable)
+			continue;
+		auto* vec = eb.variable->AsVector();
+		if (!vec || !vec->IsValid())
+			continue;
+
+		if (eb.bindingName == "InvCamRotMatColumn0")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invView.m[0]));
+		else if (eb.bindingName == "InvCamRotMatColumn1")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invView.m[1]));
+		else if (eb.bindingName == "InvCamRotMatColumn2")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invView.m[2]));
+		else if (eb.bindingName == "WVPMatColumn0")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&wvp.m[0]));
+		else if (eb.bindingName == "WVPMatColumn1")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&wvp.m[1]));
+		else if (eb.bindingName == "WVPMatColumn2")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&wvp.m[2]));
+		else if (eb.bindingName == "WVPMatColumn3")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&wvp.m[3]));
+		else if (eb.bindingName == "InvWVPMatColumn0")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invWvp.m[0]));
+		else if (eb.bindingName == "InvWVPMatColumn1")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invWvp.m[1]));
+		else if (eb.bindingName == "InvWVPMatColumn2")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invWvp.m[2]));
+		else if (eb.bindingName == "InvWVPMatColumn3")
+			vec->SetFloatVector(reinterpret_cast<const float*>(&invWvp.m[3]));
+	}
 }
 
 void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV, uint32_t passOffset)

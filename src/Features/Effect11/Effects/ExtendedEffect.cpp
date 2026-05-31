@@ -386,42 +386,48 @@ namespace
 		const FileUniqueNameMap& fileUniqueNameMap)
 	{
 		bool visible = true, readOnly = var.isReadOnly;
-		if (var.uiBinding.empty())
+		if (var.uiBindings.empty())
 			return { visible, readOnly };
 
-		const UITree::VarRef* boundRef = nullptr;
-		if (!var.uiBindingFile.empty()) {
-			auto fileIt = fileUniqueNameMap.find(var.uiBindingFile);
-			if (fileIt != fileUniqueNameMap.end()) {
-				auto varIt = fileIt->second.find(var.uiBinding);
-				if (varIt != fileIt->second.end())
-					boundRef = &varIt->second;
+		for (const auto& binding : var.uiBindings) {
+			const UITree::VarRef* boundRef = nullptr;
+			if (!binding.file.empty()) {
+				auto fileIt = fileUniqueNameMap.find(binding.file);
+				if (fileIt != fileUniqueNameMap.end()) {
+					auto varIt = fileIt->second.find(binding.target);
+					if (varIt != fileIt->second.end())
+						boundRef = &varIt->second;
+				}
+			} else {
+				auto it = uniqueNameMap.find(binding.target);
+				if (it != uniqueNameMap.end())
+					boundRef = &it->second;
 			}
-		} else {
-			auto it = uniqueNameMap.find(var.uiBinding);
-			if (it != uniqueNameMap.end())
-				boundRef = &it->second;
+
+			if (!boundRef)
+				continue;
+
+			const auto& bv = boundRef->effect->uiVariables[boundRef->index];
+			float val = 0.0f;
+			switch (bv.type) {
+			case Effect::UIVariableType::Float: val = bv.floatValue; break;
+			case Effect::UIVariableType::Int: val = static_cast<float>(bv.intValue); break;
+			case Effect::UIVariableType::Bool: val = bv.boolValue ? 1.0f : 0.0f; break;
+			default: break;
+			}
+
+			bool cond = EvaluateCondition(binding.condition, val);
+			if (binding.inverted)
+				cond = !cond;
+
+			std::string prop = binding.property;
+			std::transform(prop.begin(), prop.end(), prop.begin(), ::tolower);
+			if (prop == "hidden") { if (cond) visible = false; }
+			else if (prop == "visible") { if (!cond) visible = false; }
+			else if (prop == "readonly") { if (cond) readOnly = true; }
+			else if (prop == "readwrite") { if (!cond) readOnly = true; }
+			else { if (!cond) visible = false; }
 		}
-
-		if (!boundRef)
-			return { visible, readOnly };
-
-		const auto& bv = boundRef->effect->uiVariables[boundRef->index];
-		float val = 0.0f;
-		switch (bv.type) {
-		case Effect::UIVariableType::Float: val = bv.floatValue; break;
-		case Effect::UIVariableType::Int: val = static_cast<float>(bv.intValue); break;
-		case Effect::UIVariableType::Bool: val = bv.boolValue ? 1.0f : 0.0f; break;
-		default: break;
-		}
-		bool cond = EvaluateCondition(var.uiBindingCondition, val);
-
-		std::string prop = var.uiBindingProperty;
-		std::transform(prop.begin(), prop.end(), prop.begin(), ::tolower);
-		if (prop == "hidden") visible = !cond;
-		else if (prop == "visible") visible = cond;
-		else if (prop == "readonly") readOnly = cond;
-		else if (prop == "readwrite") readOnly = !cond;
 
 		return { visible, readOnly };
 	}
@@ -697,10 +703,10 @@ void ExtendedEffect::RenderImGui()
 	RenderMergedUI({ &self, 1 });
 }
 
-void ExtendedEffect::RenderMergedUI(std::span<Effect*> effects)
+void ExtendedEffect::RenderMergedUI(std::span<Effect*> effects, UITree::FilterMode filter)
 {
 	UITree::Tree tree;
-	tree.Build(effects);
+	tree.Build(effects, filter);
 
 	std::vector<std::pair<Effect*, std::string>> techDropdowns;
 	for (auto* effect : effects) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Effect.h"
+#include "../UITree.h"
 
 #include <span>
 
@@ -19,7 +20,7 @@ public:
 
 	// Rendering
 	void RenderImGui() override;
-	static void RenderMergedUI(std::span<Effect*> effects);
+	static void RenderMergedUI(std::span<Effect*> effects, UITree::FilterMode filter = UITree::FilterMode::All);
 
 	bool HasWeatherData() const { return !weatherData.empty(); }
 	bool IsVariableWeatherControlled(const std::string& iniKey) const;

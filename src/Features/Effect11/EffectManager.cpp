@@ -339,6 +339,7 @@ void EffectManager::ExecuteEffect(EffectBase& a_effect, uint32_t enableSettingID
 	a_effect.ApplyTimeOfDayInterpolation();
 #endif
 	UpdateCommonVariablesForEffect(a_effect);
+	a_effect.UpdateExternBindings();
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
 	a_effect.profiler = nullptr;
@@ -964,21 +965,42 @@ void EffectManager::RenderEffectsList()
 {
 	Effect* allEffects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
 
-	std::vector<Effect*> standaloneEffects;
-	for (auto* effect : allEffects)
-		standaloneEffects.push_back(effect);
+	std::vector<Effect*> compiledEffects;
+	for (auto* effect : allEffects) {
+		if (effect->IsCompiled())
+			compiledEffects.push_back(effect);
+	}
 
-	for (auto* effect : standaloneEffects) {
-		if (!effect->IsFilePresent())
-			continue;
+#ifdef ENABLE_ENB_EXTENDER
+	if (!compiledEffects.empty())
+		ExtendedEffect::RenderMergedUI(compiledEffects, UITree::FilterMode::ExtenderOnly);
 
-		if (effect->IsCompiled()) {
+	for (auto* effect : compiledEffects) {
+		Effect* self = effect;
+		UITree::Tree nativeTree;
+		nativeTree.Build({ &self, 1 }, UITree::FilterMode::NativeOnly);
+		if (!nativeTree.root.items.empty()) {
 			ImGui::Separator();
 			if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-				effect->RenderImGui();
+				ExtendedEffect::RenderMergedUI({ &self, 1 }, UITree::FilterMode::NativeOnly);
 				ImGui::TreePop();
 			}
-		} else if (!effect->GetErrors().empty()) {
+		}
+	}
+#else
+	for (auto* effect : compiledEffects) {
+		ImGui::Separator();
+		if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+			effect->RenderImGui();
+			ImGui::TreePop();
+		}
+	}
+#endif
+
+	for (auto* effect : allEffects) {
+		if (!effect->IsFilePresent())
+			continue;
+		if (!effect->GetErrors().empty()) {
 			ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s:", effect->GetName().c_str());
 			for (const auto& err : effect->GetErrors())
 				ImGui::TextWrapped("%s", err.c_str());

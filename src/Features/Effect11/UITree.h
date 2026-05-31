@@ -11,6 +11,12 @@ class Effect;
 
 namespace UITree
 {
+	enum class FilterMode
+	{
+		All,
+		ExtenderOnly,
+		NativeOnly
+	};
 	struct VarRef
 	{
 		Effect* effect = nullptr;
@@ -62,7 +68,7 @@ namespace UITree
 		std::unordered_map<std::string, VarRef> uniqueNameMap;
 		std::unordered_map<std::string, std::unordered_map<std::string, VarRef>> fileUniqueNameMap;
 
-		void Build(std::span<Effect*> effects);
+		void Build(std::span<Effect*> effects, FilterMode filter = FilterMode::All);
 		void Sort();
 	};
 

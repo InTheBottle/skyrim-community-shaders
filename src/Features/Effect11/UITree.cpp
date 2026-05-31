@@ -55,10 +55,9 @@ namespace UITree
 		return minSO;
 	}
 
-	void Tree::Build(std::span<Effect*> effects)
+	void Tree::Build(std::span<Effect*> effects, FilterMode filter)
 	{
-		std::unordered_map<GroupNode*, std::unordered_set<std::string>> seenDisplayNames;
-		std::unordered_map<GroupNode*, std::unordered_set<int>> seenSepOrders;
+		std::unordered_set<std::string> seenItems;
 
 		constexpr int sourceOrderOffset = 100000;
 		int effectIndex = 0;
@@ -102,10 +101,15 @@ namespace UITree
 				uniqueNameMap[uname] = { effect, i };
 				fileMap[uname] = { effect, i };
 
-				GroupNode* node = !var.group.empty() ? TraverseGroupPath(root, var.group, meta) : &root;
-
-				if (!var.displayName.empty() && !seenDisplayNames[node].insert(var.displayName).second)
+				if (filter == FilterMode::ExtenderOnly && !var.hasExtenderUI)
 					continue;
+				if (filter == FilterMode::NativeOnly && var.hasExtenderUI)
+					continue;
+
+				if (!seenItems.insert(var.name).second)
+					continue;
+
+				GroupNode* node = !var.group.empty() ? TraverseGroupPath(root, var.group, meta) : &root;
 
 				Item item;
 				item.type = Item::Type::Variable;
@@ -116,17 +120,19 @@ namespace UITree
 			}
 
 			for (auto& sep : effect->separators) {
+				if (filter == FilterMode::NativeOnly)
+					continue;
+
+				if (!sep.name.empty() && !seenItems.insert(sep.name).second)
+					continue;
+
 				GroupNode* node = sep.isTopLevel ? &root
 				                 : !sep.group.empty() ? TraverseGroupPath(root, sep.group, meta)
 				                                      : &root;
 
-				int offsetSO = sep.sourceOrder + offset;
-				if (!seenSepOrders[node].insert(offsetSO).second)
-					continue;
-
 				Item item;
 				item.type = Item::Type::Separator;
-				item.sourceOrder = offsetSO;
+				item.sourceOrder = sep.sourceOrder + offset;
 				item.ordering = sep.ordering;
 				item.hasOrdering = sep.hasOrdering;
 				node->items.push_back(std::move(item));

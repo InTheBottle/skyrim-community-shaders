@@ -244,6 +244,7 @@ namespace ENBExtender
 					info.ordering = SafeStoi(orderStr);
 					info.hasExplicitOrdering = true;
 				}
+				info.annotations = annotations;
 				uiDefines.push_back(std::move(info));
 			}
 		}
@@ -558,14 +559,40 @@ namespace ENBExtender
 		uiVar.isHidden = IsTruthy(hiddenStr) || (!visibleStr.empty() && !IsTruthy(visibleStr));
 
 		CollectGroupMeta(uiVar.group, variable, effect);
-		if (IsTruthy(get("UITopLevel")) && explicitGroup.empty())
+		uiVar.isTopLevel = IsTruthy(get("UITopLevel"));
+		if (uiVar.isTopLevel && explicitGroup.empty())
 			uiVar.group.clear();
 
 		uiVar.uniqueName = get("UniqueName");
-		uiVar.uiBinding = get("UIBinding");
-		uiVar.uiBindingFile = get("UIBindingFile");
-		uiVar.uiBindingProperty = get("UIBindingProperty");
-		uiVar.uiBindingCondition = get("UIBindingCondition");
+
+		auto readBindings = [&](const char* prefix, bool inverted) {
+			auto target = get(prefix);
+			if (!target.empty()) {
+				Effect::UIBindingInfo b;
+				b.target = target;
+				b.file = get("UIBindingFile");
+				b.property = get("UIBindingProperty");
+				b.condition = get("UIBindingCondition");
+				b.inverted = inverted;
+				uiVar.uiBindings.push_back(std::move(b));
+			}
+			for (int i = 0; i < 16; ++i) {
+				auto iStr = std::to_string(i);
+				target = get((std::string(prefix) + iStr).c_str());
+				if (target.empty())
+					continue;
+				Effect::UIBindingInfo b;
+				b.target = target;
+				b.file = get(("UIBindingFile" + iStr).c_str());
+				b.property = get(("UIBindingProperty" + iStr).c_str());
+				b.condition = get(("UIBindingCondition" + iStr).c_str());
+				b.inverted = inverted;
+				uiVar.uiBindings.push_back(std::move(b));
+			}
+		};
+		readBindings("UIBinding", false);
+		readBindings("UIInvBinding", true);
+
 		uiVar.ignorePerfMode = IsTruthy(get("UIIgnorePerfMode"));
 		uiVar.isWeatherString = IsTruthy(get("UIWeatherString"));
 		uiVar.isWeatherOnlyString = IsTruthy(get("UIWeatherOnlyString"));
@@ -574,6 +601,11 @@ namespace ENBExtender
 		if (uiVar.type == Effect::UIVariableType::Float || uiVar.type == Effect::UIVariableType::Float2 ||
 			uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4)
 			uiVar.separation = get("Separation");
+
+		uiVar.hasExtenderUI = !uiVar.group.empty() || !orderStr.empty() ||
+			uiVar.isTopLevel || !uiVar.uniqueName.empty() || !uiVar.uiBindings.empty() ||
+			uiVar.ignorePerfMode || uiVar.isWeatherString || !uiVar.separation.empty() ||
+			!visibleStr.empty() || uiVar.isReadOnly;
 	}
 
 	static void ParseTimePeriod(Effect::UIVariable& uiVar)
@@ -687,6 +719,7 @@ namespace ENBExtender
 
 		if (IsTruthy(get("UISeparator"))) {
 			Effect::SeparatorInfo sep;
+			sep.name = varDesc.Name;
 			sep.group = ResolveGroup(varDesc.Name, get("UIGroup"), groupStack, effect);
 			sep.sourceOrder = GetSourceOrder(varDesc.Name, effect);
 			auto orderStr = get("UIOrdering");
@@ -728,6 +761,7 @@ namespace ENBExtender
 			uiVar.group = def.group;
 			uiVar.ordering = def.ordering;
 			uiVar.isDefine = true;
+			uiVar.hasExtenderUI = true;
 
 			auto it = effect.sourceOrderMap.find("__uidef_" + def.defineName);
 			uiVar.sourceOrder = (it != effect.sourceOrderMap.end()) ? it->second : fallbackOrder++;
@@ -761,6 +795,54 @@ namespace ENBExtender
 					gm.ordering = def.ordering;
 					gm.hasOrdering = true;
 				}
+			}
+
+			if (!def.annotations.empty()) {
+				auto ann = [&](const char* name) { return ExtractAnnotation(def.annotations, name); };
+
+				uiVar.isReadOnly = IsTruthy(ann("UIReadOnly"));
+				auto hiddenStr = ann("UIHidden"), visibleStr = ann("UIVisible");
+				uiVar.isHidden = IsTruthy(hiddenStr) || (!visibleStr.empty() && !IsTruthy(visibleStr));
+				uiVar.uniqueName = ann("UniqueName");
+				uiVar.isTopLevel = IsTruthy(ann("UITopLevel"));
+				uiVar.ignorePerfMode = IsTruthy(ann("UIIgnorePerfMode"));
+				uiVar.isWeatherString = IsTruthy(ann("UIWeatherString"));
+				uiVar.isWeatherOnlyString = IsTruthy(ann("UIWeatherOnlyString"));
+				if (uiVar.isWeatherOnlyString)
+					uiVar.isWeatherString = true;
+				if (uiVar.isTopLevel && uiVar.group.empty())
+					uiVar.group.clear();
+				if (uiVar.type == Effect::UIVariableType::Float || uiVar.type == Effect::UIVariableType::Float2 ||
+					uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4)
+					uiVar.separation = ann("Separation");
+
+				auto readDefBindings = [&](const char* prefix, bool inverted) {
+					auto target = ann(prefix);
+					if (!target.empty()) {
+						Effect::UIBindingInfo b;
+						b.target = target;
+						b.file = ann("UIBindingFile");
+						b.property = ann("UIBindingProperty");
+						b.condition = ann("UIBindingCondition");
+						b.inverted = inverted;
+						uiVar.uiBindings.push_back(std::move(b));
+					}
+					for (int i = 0; i < 16; ++i) {
+						auto iStr = std::to_string(i);
+						target = ann((std::string(prefix) + iStr).c_str());
+						if (target.empty())
+							continue;
+						Effect::UIBindingInfo b;
+						b.target = target;
+						b.file = ann(("UIBindingFile" + iStr).c_str());
+						b.property = ann(("UIBindingProperty" + iStr).c_str());
+						b.condition = ann(("UIBindingCondition" + iStr).c_str());
+						b.inverted = inverted;
+						uiVar.uiBindings.push_back(std::move(b));
+					}
+				};
+				readDefBindings("UIBinding", false);
+				readDefBindings("UIInvBinding", true);
 			}
 
 			effect.uiVariables.push_back(uiVar);

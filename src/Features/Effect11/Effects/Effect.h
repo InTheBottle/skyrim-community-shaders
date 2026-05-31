@@ -94,6 +94,15 @@ public:
 		Color
 	};
 
+	struct UIBindingInfo
+	{
+		std::string target;
+		std::string file;
+		std::string property;
+		std::string condition;
+		bool inverted = false;
+	};
+
 	struct UIVariable
 	{
 		UIVariableType type;
@@ -124,11 +133,10 @@ public:
 		bool isReadOnly = false;
 		bool isDefine = false;
 		bool isHidden = false;
+		bool isTopLevel = false;
+		bool hasExtenderUI = false;
 		std::string uniqueName;
-		std::string uiBinding;
-		std::string uiBindingFile;
-		std::string uiBindingProperty;
-		std::string uiBindingCondition;
+		std::vector<UIBindingInfo> uiBindings;
 		bool ignorePerfMode = false;
 		bool isWeatherString = false;
 		bool isWeatherOnlyString = false;
@@ -173,7 +181,6 @@ public:
 	bool filePresent = false;
 	std::vector<std::string> errors;
 
-
 	// Source-parsed group map and declaration order (compiled effect reorders variable types)
 	std::unordered_map<std::string, std::string> sourceGroupMap;
 	std::unordered_map<std::string, int> sourceOrderMap;
@@ -181,6 +188,7 @@ public:
 	// Separators stored separately from UI variables (first-class tree nodes)
 	struct SeparatorInfo
 	{
+		std::string name;
 		std::string group;
 		int sourceOrder = INT_MAX;
 		int ordering = 0;
@@ -188,6 +196,14 @@ public:
 		bool isTopLevel = false;
 	};
 	std::vector<SeparatorInfo> separators;
+
+	// Extern bindings (camera matrices etc. updated per-frame)
+	struct ExternBindingInfo
+	{
+		std::string bindingName;
+		winrt::com_ptr<ID3DX11EffectVariable> variable;
+	};
+	std::vector<ExternBindingInfo> externBindings;
 
 	struct UIDefineInfo
 	{
@@ -198,6 +214,7 @@ public:
 		std::string value;
 		std::string widget;
 		std::string list;
+		std::string annotations;
 		int intMin = 0;
 		int intMax = 100;
 		float floatMin = 0.0f;
@@ -239,6 +256,7 @@ public:
 	// Helper function for safe vector variable access
 	bool SetVectorVariable(const std::string& variableName, const void* data, uint32_t size);
 
+	void UpdateExternBindings();
 	void RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV, uint32_t passOffset = 0);
 
 	// UI annotation helpers (public for ENBExtender access)
