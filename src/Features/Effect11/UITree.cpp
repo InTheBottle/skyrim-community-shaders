@@ -60,9 +60,14 @@ namespace UITree
 		std::unordered_map<GroupNode*, std::unordered_set<std::string>> seenDisplayNames;
 		std::unordered_map<GroupNode*, std::unordered_set<int>> seenSepOrders;
 
+		constexpr int sourceOrderOffset = 100000;
+		int effectIndex = 0;
+
 		for (auto* effect : effects) {
 			if (!effect->IsCompiled())
 				continue;
+
+			int offset = effectIndex++ * sourceOrderOffset;
 
 			for (auto& [path, gm] : effect->groupMeta) {
 				auto [it, inserted] = meta.try_emplace(path, GroupMeta{});
@@ -106,19 +111,24 @@ namespace UITree
 				item.type = Item::Type::Variable;
 				item.var = { effect, i };
 				item.ordering = var.ordering;
-				item.sourceOrder = var.sourceOrder;
+				item.sourceOrder = var.sourceOrder + offset;
 				node->items.push_back(std::move(item));
 			}
 
 			for (auto& sep : effect->separators) {
-				GroupNode* node = !sep.group.empty() ? TraverseGroupPath(root, sep.group, meta) : &root;
+				GroupNode* node = sep.isTopLevel ? &root
+				                 : !sep.group.empty() ? TraverseGroupPath(root, sep.group, meta)
+				                                      : &root;
 
-				if (!seenSepOrders[node].insert(sep.sourceOrder).second)
+				int offsetSO = sep.sourceOrder + offset;
+				if (!seenSepOrders[node].insert(offsetSO).second)
 					continue;
 
 				Item item;
 				item.type = Item::Type::Separator;
-				item.sourceOrder = sep.sourceOrder;
+				item.sourceOrder = offsetSO;
+				item.ordering = sep.ordering;
+				item.hasOrdering = sep.hasOrdering;
 				node->items.push_back(std::move(item));
 			}
 		}
@@ -164,7 +174,7 @@ namespace UITree
 		});
 
 		for (size_t i = 0; i < node.items.size(); ++i) {
-			if (node.items[i].type != Item::Type::Separator)
+			if (node.items[i].type != Item::Type::Separator || node.items[i].hasOrdering)
 				continue;
 			for (int j = static_cast<int>(i) - 1; j >= 0; --j) {
 				if (node.items[j].type != Item::Type::Separator) {

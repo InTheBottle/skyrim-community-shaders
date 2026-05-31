@@ -689,6 +689,12 @@ namespace ENBExtender
 			Effect::SeparatorInfo sep;
 			sep.group = ResolveGroup(varDesc.Name, get("UIGroup"), groupStack, effect);
 			sep.sourceOrder = GetSourceOrder(varDesc.Name, effect);
+			auto orderStr = get("UIOrdering");
+			if (!orderStr.empty()) {
+				sep.ordering = SafeStoi(orderStr);
+				sep.hasOrdering = true;
+			}
+			sep.isTopLevel = IsTruthy(get("UITopLevel"));
 			effect.separators.push_back(sep);
 			return true;
 		}

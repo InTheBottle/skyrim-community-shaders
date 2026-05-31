@@ -183,6 +183,9 @@ public:
 	{
 		std::string group;
 		int sourceOrder = INT_MAX;
+		int ordering = 0;
+		bool hasOrdering = false;
+		bool isTopLevel = false;
 	};
 	std::vector<SeparatorInfo> separators;
 

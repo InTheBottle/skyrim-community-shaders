@@ -41,6 +41,7 @@ namespace UITree
 		Type type = Type::Variable;
 		int ordering = 0;
 		int sourceOrder = INT_MAX;
+		bool hasOrdering = false;
 		VarRef var;
 		std::unique_ptr<GroupNode> group;
 	};
