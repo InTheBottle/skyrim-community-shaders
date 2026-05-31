@@ -310,15 +310,13 @@ namespace SharedData
 		float VolumetricRaysExtinction;
 		float VolumetricRaysSkyColorAmount;
 
-		float FireIntensity;
-		float FireCurve;
 		float AuroraIntensity;
 		float AuroraCurve;
 
 		uint EnableRain;
 		float RainMotionStretch;
 		float RainMotionTransparency;
-		uint pad0;
+		uint pad0[3];
 	};
 	struct TerrainBlendingSettings
 	{

@@ -115,13 +115,11 @@ void MenuManager::RenderDebugControl()
 	auto& weatherManager = WeatherManager::GetSingleton();
 
 	// Current time of day values
-	if (ImGui::BeginTable("TimeOfDayValues", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
+	if (ImGui::BeginTable("TimeOfDayValues", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
 		ImGui::TableSetupColumn("Period", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed);
-		ImGui::TableSetupColumn("Array", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableHeadersRow();
 
-		// Display timeOfDay1 values
 		const char* tod1Names[] = { "Dawn", "Sunrise", "Day", "Sunset" };
 		for (int i = 0; i < 4; ++i) {
 			ImGui::TableNextRow();
@@ -129,11 +127,8 @@ void MenuManager::RenderDebugControl()
 			ImGui::Text("%s", tod1Names[i]);
 			ImGui::TableSetColumnIndex(1);
 			ImGui::Text("%.3f", effectManager.commonData.timeOfDay1[i]);
-			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("timeOfDay1[%d]", i);
 		}
 
-		// Display timeOfDay2 values
 		const char* tod2Names[] = { "Dusk", "Night", "InteriorDay", "InteriorNight" };
 		for (int i = 0; i < 4; ++i) {
 			ImGui::TableNextRow();
@@ -141,8 +136,6 @@ void MenuManager::RenderDebugControl()
 			ImGui::Text("%s", tod2Names[i]);
 			ImGui::TableSetColumnIndex(1);
 			ImGui::Text("%.3f", effectManager.commonData.timeOfDay2[i]);
-			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("timeOfDay2[%d]", i);
 		}
 
 		ImGui::EndTable();
@@ -273,46 +266,6 @@ void MenuManager::RenderAllSettings()
 				if (tabName == "Weather") {
 					RenderWeatherControl();
 					ImGui::Separator();
-
-					// Show TimeOfDay header for Weather tab only
-
-					auto activeIndices = GetActiveTimeOfDayIndices();
-
-					if (!activeIndices.empty()) {
-						float totalWidth = ImGui::GetContentRegionAvail().x;
-						float sliderWidth = (totalWidth - (activeIndices.size() - 1) * 8.0f) / activeIndices.size();
-
-						for (size_t idx = 0; idx < activeIndices.size(); ++idx) {
-							int i = activeIndices[idx];
-
-							if (idx > 0) {
-								ImGui::SameLine();
-							}
-
-							ImGui::BeginChild(("##weatherheader_" + std::to_string(i)).c_str(), ImVec2(sliderWidth, ImGui::GetTextLineHeight()), false, ImGuiWindowFlags_NoScrollbar);
-
-							float labelWidth = ImGui::CalcTextSize(timeOfDayNames[i]).x;
-							float centerOffset = (sliderWidth - labelWidth) * 0.5f;
-							if (centerOffset > 0) {
-								ImGui::SetCursorPosX(centerOffset);
-							}
-
-							float blendFactor = GetTimeOfDayBlendFactor(i);
-							bool isActive = blendFactor > 0.01f;
-
-							if (!isActive)
-								ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 0.7f));
-
-							ImGui::Text("%s", timeOfDayNames[i]);
-
-							if (!isActive)
-								ImGui::PopStyleColor();
-
-							ImGui::EndChild();
-						}
-
-						ImGui::Separator();
-					}
 				}
 
 				if (tabName == "Debug") {

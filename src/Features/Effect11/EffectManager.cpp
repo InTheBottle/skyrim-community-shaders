@@ -256,9 +256,6 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterTimeOfDaySetting("Intensity", "LIGHTSPRITE", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 
-	settingManager.RegisterTimeOfDaySetting("Intensity", "FIRE", 6.0f, 0.0f, 30000.0f, 0.01f, true);
-	settingManager.RegisterTimeOfDaySetting("Curve", "FIRE", 1.0f, 0.1f, 8.0f, 0.01f, true);
-
 	settingManager.RegisterTimeOfDaySetting("AuroraBorealisIntensity", "SKY", 1.0f, 0.0f, 30000.0f, 0.01f, true);
 	settingManager.RegisterTimeOfDaySetting("AuroraBorealisCurve", "SKY", 1.0f, 0.1f, 8.0f, 0.01f, true);
 
@@ -287,7 +284,6 @@ void EffectManager::RegisterSettings()
 	settingManager.SetCategoryTab("VOLUMETRICRAYS", "Weather");
 	settingManager.SetCategoryTab("IMAGEBASEDLIGHTING", "Weather");
 	settingManager.SetCategoryTab("PARTICLE", "Weather");
-	settingManager.SetCategoryTab("FIRE", "Weather");
 	settingManager.SetCategoryTab("RAIN", "Weather");
 	settingManager.SetCategoryTab("LIGHTSPRITE", "Weather");
 	settingManager.SetCategoryTab("GAMEVOLUMETRICRAYS", "Weather");
