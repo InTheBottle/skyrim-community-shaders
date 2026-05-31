@@ -432,42 +432,9 @@ namespace
 		return { visible, readOnly };
 	}
 
-	enum class RenderMode
+	bool IsVarVisible(const Effect::UIVariable& uiVar)
 	{
-		All,
-		MainOnly,
-		WeatherOnly
-	};
-
-	bool IsVarWeatherTab(const Effect::UIVariable& uiVar, Effect* effect)
-	{
-		if (uiVar.isWeatherString || uiVar.isWeatherOnlyString)
-			return true;
-		if (auto* ext = dynamic_cast<ExtendedEffect*>(effect)) {
-			if (ext->HasWeatherData()) {
-				std::string iniKey = !uiVar.uniqueName.empty() ? uiVar.uniqueName
-				                     : uiVar.group.empty()    ? uiVar.displayName
-				                                              : uiVar.group + "." + uiVar.displayName;
-				return ext->IsVariableWeatherControlled(iniKey);
-			}
-		}
-		return false;
-	}
-
-	bool IsVarVisible(const Effect::UIVariable& uiVar, Effect* effect, RenderMode mode)
-	{
-		if (uiVar.displayName.empty() || uiVar.isHidden)
-			return false;
-		if (mode == RenderMode::MainOnly && uiVar.isWeatherOnlyString)
-			return false;
-		if (mode != RenderMode::All) {
-			bool isWeather = IsVarWeatherTab(uiVar, effect);
-			if (mode == RenderMode::MainOnly && isWeather && !uiVar.isWeatherString)
-				return false;
-			if (mode == RenderMode::WeatherOnly && !isWeather)
-				return false;
-		}
-		return true;
+		return !uiVar.displayName.empty() && !uiVar.isHidden;
 	}
 
 	struct RenderContext
@@ -477,7 +444,6 @@ namespace
 		std::unordered_set<Effect*>& changedEffects;
 		UITree::MetaMap& meta;
 		bool performanceMode = false;
-		RenderMode renderMode = RenderMode::All;
 		int tableCounter = 0;
 
 		bool BeginVarTable()
@@ -572,6 +538,11 @@ namespace
 		if (readOnly)
 			ImGui::EndDisabled();
 
+		if (!uiVar.separation.empty() && uiVar.separation != "None") {
+			ImGui::SameLine();
+			ImGui::Text("W");
+		}
+
 		if (readOnly)
 			ImGui::PopStyleColor();
 	}
@@ -580,7 +551,7 @@ namespace
 	{
 		auto& uiVar = ref.effect->uiVariables[ref.index];
 
-		if (!IsVarVisible(uiVar, ref.effect, ctx.renderMode))
+		if (!IsVarVisible(uiVar))
 			return false;
 		if (ctx.performanceMode && !uiVar.ignorePerfMode)
 			return false;
@@ -627,15 +598,15 @@ namespace
 		}
 	}
 
-	bool HasVisibleContent(const UITree::GroupNode& node, RenderMode mode)
+	bool HasVisibleContent(const UITree::GroupNode& node)
 	{
 		for (auto& item : node.items) {
 			if (item.type == UITree::Item::Type::Variable) {
 				auto& uiVar = item.var.effect->uiVariables[item.var.index];
-				if (IsVarVisible(uiVar, item.var.effect, mode))
+				if (IsVarVisible(uiVar))
 					return true;
 			} else if (item.type == UITree::Item::Type::Group && item.group) {
-				if (HasVisibleContent(*item.group, mode))
+				if (HasVisibleContent(*item.group))
 					return true;
 			}
 		}
@@ -668,7 +639,7 @@ namespace
 				break;
 
 			case UITree::Item::Type::Group:
-				if (!item.group || !HasVisibleContent(*item.group, ctx.renderMode))
+				if (!item.group || !HasVisibleContent(*item.group))
 					break;
 				if (inTable) { ImGui::EndTable(); inTable = false; }
 				lastWasSeparator = false;
@@ -731,30 +702,11 @@ void ExtendedEffect::RenderMergedUI(std::span<Effect*> effects, UITree::FilterMo
 	RenderContext ctx{ tree.uniqueNameMap, tree.fileUniqueNameMap, changedEffects, tree.meta,
 		EffectManager::GetSingleton().performanceMode };
 
-	bool hasWeatherTab = HasVisibleContent(tree.root, RenderMode::WeatherOnly);
-
 	for (auto& [effect, group] : techDropdowns)
 		if (effect->techniqueDropdown.topLevel || group.empty())
 			RenderTechniqueDropdown(effect, changedEffects);
 
-	if (hasWeatherTab) {
-		if (ImGui::BeginTabBar("##FXTabs")) {
-			if (ImGui::BeginTabItem("Main")) {
-				ctx.renderMode = RenderMode::MainOnly;
-				RenderGroupNode(tree.root, ctx, techDropdowns);
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Weather")) {
-				ctx.renderMode = RenderMode::WeatherOnly;
-				ctx.tableCounter = 0;
-				RenderGroupNode(tree.root, ctx, techDropdowns);
-				ImGui::EndTabItem();
-			}
-			ImGui::EndTabBar();
-		}
-	} else {
-		RenderGroupNode(tree.root, ctx, techDropdowns);
-	}
+	RenderGroupNode(tree.root, ctx, techDropdowns);
 
 	if (!changedEffects.empty()) {
 		auto& cd = EffectManager::GetSingleton().commonData;
