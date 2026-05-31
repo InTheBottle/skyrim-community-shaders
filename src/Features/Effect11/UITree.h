@@ -14,9 +14,10 @@ namespace UITree
 	enum class FilterMode
 	{
 		All,
-		ExtenderOnly,
-		NativeOnly
+		TopLevelOnly,
+		NonTopLevelOnly
 	};
+
 	struct VarRef
 	{
 		Effect* effect = nullptr;

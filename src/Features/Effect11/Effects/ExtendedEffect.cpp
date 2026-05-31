@@ -702,9 +702,11 @@ void ExtendedEffect::RenderMergedUI(std::span<Effect*> effects, UITree::FilterMo
 	RenderContext ctx{ tree.uniqueNameMap, tree.fileUniqueNameMap, changedEffects, tree.meta,
 		EffectManager::GetSingleton().performanceMode };
 
-	for (auto& [effect, group] : techDropdowns)
-		if (effect->techniqueDropdown.topLevel || group.empty())
-			RenderTechniqueDropdown(effect, changedEffects);
+	if (filter != UITree::FilterMode::TopLevelOnly) {
+		for (auto& [effect, group] : techDropdowns)
+			if (effect->techniqueDropdown.topLevel || group.empty())
+				RenderTechniqueDropdown(effect, changedEffects);
+	}
 
 	RenderGroupNode(tree.root, ctx, techDropdowns);
 

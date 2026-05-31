@@ -101,9 +101,9 @@ namespace UITree
 				uniqueNameMap[uname] = { effect, i };
 				fileMap[uname] = { effect, i };
 
-				if (filter == FilterMode::ExtenderOnly && !var.hasExtenderUI)
+				if (filter == FilterMode::TopLevelOnly && !var.isTopLevel)
 					continue;
-				if (filter == FilterMode::NativeOnly && var.hasExtenderUI)
+				if (filter == FilterMode::NonTopLevelOnly && var.isTopLevel)
 					continue;
 
 				if (!seenItems.insert(var.name).second)
@@ -120,7 +120,9 @@ namespace UITree
 			}
 
 			for (auto& sep : effect->separators) {
-				if (filter == FilterMode::NativeOnly)
+				if (filter == FilterMode::TopLevelOnly && !sep.isTopLevel)
+					continue;
+				if (filter == FilterMode::NonTopLevelOnly && sep.isTopLevel)
 					continue;
 
 				if (!sep.name.empty() && !seenItems.insert(sep.name).second)

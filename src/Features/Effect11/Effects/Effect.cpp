@@ -33,6 +33,37 @@ bool Effect::Load()
 	std::string section = GetName();
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
 
+	// Build a normalized lookup from INI keys to handle whitespace differences
+	// around dots (D3DPreprocess vs ENB's #x produce different spacing).
+	std::unordered_map<std::string, std::string> normalizedIniKeys;
+	{
+		std::vector<char> keysBuf(65536);
+		DWORD keysLen = GetPrivateProfileStringA(section.c_str(), nullptr, "", keysBuf.data(), static_cast<DWORD>(keysBuf.size()), iniPath.string().c_str());
+		const char* p = keysBuf.data();
+		while (p < keysBuf.data() + keysLen && *p) {
+			std::string iniKey(p);
+			std::string normalized;
+			for (size_t ci = 0; ci < iniKey.size(); ++ci) {
+				if (iniKey[ci] == ' ' && ci + 1 < iniKey.size() && iniKey[ci + 1] == '.')
+					continue;
+				if (iniKey[ci] == '.' && ci + 1 < iniKey.size() && iniKey[ci + 1] == ' ') {
+					normalized += '.';
+					++ci;
+					continue;
+				}
+				normalized += iniKey[ci];
+			}
+			normalizedIniKeys[normalized] = iniKey;
+			p += iniKey.size() + 1;
+		}
+	}
+
+	auto findIniKey = [&](const std::string& key) -> const std::string* {
+		auto it = normalizedIniKeys.find(key);
+		return (it != normalizedIniKeys.end()) ? &it->second : nullptr;
+	};
+
+	int loadedCount = 0;
 	for (auto& uiVar : uiVariables) {
 		if (uiVar.isLabel)
 			continue;
@@ -48,8 +79,10 @@ bool Effect::Load()
 			int numComponents = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Float3) ? 3 : 4;
 			for (int i = 0; i < numComponents; ++i) {
 				std::string compKey = iniKey + suffixes[i];
+				auto* realKey = findIniKey(compKey);
+				if (!realKey) realKey = &compKey;
 				std::vector<char> valueBuffer(1024);
-				DWORD result = GetPrivateProfileStringA(section.c_str(), compKey.c_str(), "", valueBuffer.data(), 1024, iniPath.string().c_str());
+				DWORD result = GetPrivateProfileStringA(section.c_str(), realKey->c_str(), "", valueBuffer.data(), 1024, iniPath.string().c_str());
 				if (result > 0) {
 					try {
 						uiVar.vectorValue[i] = std::stof(std::string(valueBuffer.data()));
@@ -59,11 +92,14 @@ bool Effect::Load()
 			if (uiVar.effectVariable)
 				uiVar.effectVariable->AsVector()->SetFloatVector(uiVar.vectorValue);
 		} else {
+			auto* realKey = findIniKey(iniKey);
+			if (!realKey) realKey = &iniKey;
 			std::vector<char> valueBuffer(1024);
-			DWORD result = GetPrivateProfileStringA(section.c_str(), iniKey.c_str(), "", valueBuffer.data(), 1024, iniPath.string().c_str());
+			DWORD result = GetPrivateProfileStringA(section.c_str(), realKey->c_str(), "", valueBuffer.data(), 1024, iniPath.string().c_str());
 			if (result > 0) {
 				std::string value(valueBuffer.data());
 				LoadVariableFromString(uiVar, value);
+				loadedCount++;
 			}
 		}
 	}

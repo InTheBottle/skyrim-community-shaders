@@ -394,8 +394,28 @@ namespace ENBExtender
 			std::string arg = source.substr(afterName + 1, argEnd - afterName - 2);
 			Trim(arg);
 
+			// D3DPreprocess inserts spaces between tokens. Collapse to
+			// match the spacing ENB's #x stringification would produce:
+			//   "| -" → "|-"  (UI name prefix)
+			//   " . " → "."  (group path separator — no spaces)
+			std::string collapsed;
+			collapsed.reserve(arg.size());
+			for (size_t ci = 0; ci < arg.size(); ++ci) {
+				if (ci + 2 < arg.size() && arg[ci] == '|' && arg[ci + 1] == ' ' && arg[ci + 2] == '-') {
+					collapsed += "|-";
+					ci += 2;
+				} else if (arg[ci] == ' ' && ci + 1 < arg.size() && arg[ci + 1] == '.') {
+					continue;
+				} else if (arg[ci] == '.' && ci + 1 < arg.size() && arg[ci + 1] == ' ') {
+					collapsed += '.';
+					++ci;
+				} else {
+					collapsed += arg[ci];
+				}
+			}
+
 			result.append(source, pos, found - pos);
-			result += "\"" + arg + "\"";
+			result += "\"" + collapsed + "\"";
 			pos = argEnd;
 		}
 
@@ -609,10 +629,6 @@ namespace ENBExtender
 			uiVar.type == Effect::UIVariableType::Float3 || uiVar.type == Effect::UIVariableType::Float4)
 			uiVar.separation = get("Separation");
 
-		uiVar.hasExtenderUI = !uiVar.group.empty() || !orderStr.empty() ||
-			uiVar.isTopLevel || !uiVar.uniqueName.empty() || !uiVar.uiBindings.empty() ||
-			uiVar.ignorePerfMode || uiVar.isWeatherString || !uiVar.separation.empty() ||
-			!visibleStr.empty() || uiVar.isReadOnly;
 	}
 
 	static void ParseTimePeriod(Effect::UIVariable& uiVar)
@@ -768,7 +784,6 @@ namespace ENBExtender
 			uiVar.group = def.group;
 			uiVar.ordering = def.ordering;
 			uiVar.isDefine = true;
-			uiVar.hasExtenderUI = true;
 
 			auto it = effect.sourceOrderMap.find("__uidef_" + def.defineName);
 			uiVar.sourceOrder = (it != effect.sourceOrderMap.end()) ? it->second : fallbackOrder++;

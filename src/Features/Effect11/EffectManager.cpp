@@ -962,36 +962,26 @@ void EffectManager::RenderEffectsList()
 	Effect* allEffects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
 
 	std::vector<Effect*> compiledEffects;
-	for (auto* effect : allEffects) {
+	for (auto* effect : allEffects)
 		if (effect->IsCompiled())
 			compiledEffects.push_back(effect);
-	}
 
 #ifdef ENABLE_ENB_EXTENDER
 	if (!compiledEffects.empty())
-		ExtendedEffect::RenderMergedUI(compiledEffects, UITree::FilterMode::ExtenderOnly);
+		ExtendedEffect::RenderMergedUI(compiledEffects, UITree::FilterMode::TopLevelOnly);
+#endif
 
 	for (auto* effect : compiledEffects) {
-		Effect* self = effect;
-		UITree::Tree nativeTree;
-		nativeTree.Build({ &self, 1 }, UITree::FilterMode::NativeOnly);
-		if (!nativeTree.root.items.empty()) {
-			ImGui::Separator();
-			if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-				ExtendedEffect::RenderMergedUI({ &self, 1 }, UITree::FilterMode::NativeOnly);
-				ImGui::TreePop();
-			}
-		}
-	}
-#else
-	for (auto* effect : compiledEffects) {
-		ImGui::Separator();
 		if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+#ifdef ENABLE_ENB_EXTENDER
+			Effect* self = effect;
+			ExtendedEffect::RenderMergedUI({ &self, 1 }, UITree::FilterMode::NonTopLevelOnly);
+#else
 			effect->RenderImGui();
+#endif
 			ImGui::TreePop();
 		}
 	}
-#endif
 
 	for (auto* effect : allEffects) {
 		if (!effect->IsFilePresent())

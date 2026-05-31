@@ -134,7 +134,6 @@ public:
 		bool isDefine = false;
 		bool isHidden = false;
 		bool isTopLevel = false;
-		bool hasExtenderUI = false;
 		std::string uniqueName;
 		std::vector<UIBindingInfo> uiBindings;
 		bool ignorePerfMode = false;
