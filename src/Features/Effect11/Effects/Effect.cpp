@@ -15,8 +15,7 @@
 
 bool Effect::Load()
 {
-	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath();
-	iniPath /= GetName() + ".ini";
+	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath() / (GetName() + ".ini");
 
 	if (!std::filesystem::exists(iniPath)) {
 		logger::info("[EFFECT11] Could not find ini file '{}' for effect '{}', using defaults", iniPath.string(), GetName());
@@ -63,7 +62,6 @@ bool Effect::Load()
 		return (it != normalizedIniKeys.end()) ? &it->second : nullptr;
 	};
 
-	int loadedCount = 0;
 	for (auto& uiVar : uiVariables) {
 		if (uiVar.isLabel)
 			continue;
@@ -99,7 +97,6 @@ bool Effect::Load()
 			if (result > 0) {
 				std::string value(valueBuffer.data());
 				LoadVariableFromString(uiVar, value);
-				loadedCount++;
 			}
 		}
 	}
@@ -122,8 +119,7 @@ bool Effect::Load()
 
 void Effect::Save()
 {
-	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath();
-	iniPath /= GetName() + ".ini";
+	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath() / (GetName() + ".ini");
 
 	std::string section = GetName();
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
@@ -255,8 +251,7 @@ void Effect::Unload()
 
 bool Effect::LoadFXFile()
 {
-	auto filePath = PresetManager::GetSingleton().GetENBSeriesPath();
-	filePath /= GetName();
+	auto filePath = PresetManager::GetSingleton().GetENBSeriesPath() / GetName();
 
 	if (!std::filesystem::exists(filePath)) {
 		filePresent = false;

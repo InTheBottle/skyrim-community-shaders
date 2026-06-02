@@ -158,7 +158,7 @@ void ExtendedEffect::LoadWeatherData()
 	const auto& weatherEntries = weatherManager.GetWeatherEntries();
 
 	for (const auto& [key, entry] : weatherEntries) {
-		std::filesystem::path filePath = std::filesystem::absolute(PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName);
+		std::filesystem::path filePath = PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName;
 		if (!std::filesystem::exists(filePath))
 			continue;
 
@@ -169,6 +169,8 @@ void ExtendedEffect::LoadWeatherData()
 			if (uiVar.isLabel)
 				continue;
 			if (!uiVar.effectVariable && !uiVar.isDefine)
+				continue;
+			if (uiVar.separation.empty() || uiVar.separation == "None")
 				continue;
 
 			std::string iniKey = GetVariableIniKey(uiVar);
@@ -222,6 +224,8 @@ void ExtendedEffect::ApplyWeatherBlending(float blendFactor, uint32_t currentWea
 		if (uiVar.isLabel)
 			continue;
 		if (!uiVar.effectVariable && !uiVar.isDefine)
+			continue;
+		if (uiVar.separation.empty() || uiVar.separation == "None")
 			continue;
 
 		std::string iniKey = GetVariableIniKey(uiVar);
