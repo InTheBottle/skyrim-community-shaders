@@ -3,7 +3,10 @@
         "language": "简体中文",
         "locale": "zh_CN",
         "version": "1.0.0",
-        "authors": "Jiaye"
+        "authors": "Jiaye",
+        "generator": "",
+        "auto_generated": false,
+        "note": ""
     },
     "common.active": "激活",
     "common.inactive": "未激活",
