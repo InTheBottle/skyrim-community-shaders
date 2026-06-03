@@ -88,13 +88,10 @@ public:
 		float VolumetricRaysExtinction;
 		float VolumetricRaysSkyColorAmount;
 
-		float AuroraIntensity;
-		float AuroraCurve;
-
 		uint EnableRain;
 		float RainMotionStretch;
 		float RainMotionTransparency;
-		uint pad0[3];
+		uint pad0;
 	};
 
 	bool enableEffect = false;
