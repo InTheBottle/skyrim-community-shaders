@@ -5,7 +5,7 @@
         "version": "1.0.0",
         "authors": "Jiaye",
         "generator": "",
-        "auto_generated": false,
+        "auto_generated": true,
         "note": ""
     },
     "common.active": "激活",
@@ -2116,5 +2116,15 @@
     "ui.dont_ask_again": "不再提示",
     "ui.search": "搜索...",
     "ui.search_features": "搜索功能...",
-    "menu.features.setting_change_warning_title": "设置更改警告"
+    "menu.features.setting_change_warning_title": "设置更改警告",
+    "menu.profiling.avg": "平均",
+    "menu.profiling.cpu": "CPU",
+    "menu.profiling.gpu": "GPU",
+    "menu.profiling.no_timing_data": "无计时数据",
+    "menu.profiling.no_timing_data_world": "无可用计时数据（请进入游戏世界）",
+    "menu.profiling.p95": "P95",
+    "menu.profiling.p99": "P99",
+    "menu.profiling.pass": "通道",
+    "menu.profiling.percent": "%",
+    "menu.profiling.total": "总计"
 }
