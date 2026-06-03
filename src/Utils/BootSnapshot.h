@@ -27,6 +27,9 @@ namespace Util::Settings
 	class BootSnapshot
 	{
 	public:
+		// Stores a raw pointer to table.data(); the referenced RestartTable MUST outlive this
+		// BootSnapshot. Use a static constexpr table (the intended pattern) or otherwise ensure
+		// the table's lifetime exceeds the snapshot's, or table_ dangles.
 		template <size_t N>
 		explicit constexpr BootSnapshot(const RestartTable<SettingsT, N>& table) noexcept :
 			table_(table.data()), tableSize_(N)

@@ -463,6 +463,8 @@ namespace
 						f->RestoreDefaultSettings();
 					} catch (const std::exception& e) {
 						logger::error("DevBenchBridge: settings(reset) {} threw: {}", f->GetShortName(), e.what());
+					} catch (...) {
+						logger::error("DevBenchBridge: settings(reset) {} threw (unknown)", f->GetShortName());
 					}
 				}
 				try {
