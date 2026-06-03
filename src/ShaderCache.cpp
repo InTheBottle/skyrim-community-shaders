@@ -3365,7 +3365,7 @@ namespace SIE
 					{ "durationMs", completionTimeMs },
 				};
 				const std::string dumped = payload.dump();
-				dvb->EmitEvent("openshaders.shaderRecompiled", dumped.c_str());
+				dvb->EmitEvent("communityshaders.shaderRecompiled", dumped.c_str());
 			}
 #endif
 		}

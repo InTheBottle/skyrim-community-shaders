@@ -108,11 +108,11 @@ void RemoteControl::DrawSettings()
 
 	ImGui::Separator();
 	ImGui::TextUnformatted("Tools exposed through devbench:");
-	ImGui::BulletText("openshaders.feature — list / get / set / reset / toggle features");
-	ImGui::BulletText("openshaders.inspect — engine state and shader-cache status");
-	ImGui::BulletText("openshaders.shadercache — clear / delete the compiled cache");
-	ImGui::BulletText("openshaders.capture — RenderDoc / screenshot capture");
-	ImGui::BulletText("openshaders.settings — save / load / reset the global config");
+	ImGui::BulletText("communityshaders.feature — list / get / set / reset / toggle features");
+	ImGui::BulletText("communityshaders.inspect — engine state and shader-cache status");
+	ImGui::BulletText("communityshaders.shadercache — clear / delete the compiled cache");
+	ImGui::BulletText("communityshaders.capture — RenderDoc / screenshot capture");
+	ImGui::BulletText("communityshaders.settings — save / load / reset the global config");
 	ImGui::TextDisabled(
 		"Note: the console tool is provided by devbench itself, not this plugin.");
 #else

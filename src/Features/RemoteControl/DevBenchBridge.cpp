@@ -5,7 +5,7 @@
 // otherwise this file compiles to an empty Install(). Inert at runtime when no
 // devbench plugin is present (GetDevBenchInterface001() returns null).
 //
-// The openshaders.* tools below expose Open Shaders' graphics-feature, inspect,
+// The communityshaders.* tools below expose Community Shaders' graphics-feature, inspect,
 // capture, shadercache, and settings operations through the single devbench
 // host over both MCP and REST. Each is namespaced to avoid collisions in devbench's
 // shared registry; the action / kind / inputSchema shapes are stable so clients can
@@ -189,7 +189,7 @@ namespace
 			// Threading contract: Feature::loaded is a public flag the render pipeline reads
 			// per-frame via ForEachLoadedFeature without synchronization, hot-toggled by direct
 			// assignment — touch it ONLY on the main thread. The applied value is reported via
-			// the openshaders.feature.changed event (authoritative; the response can't know an
+			// the communityshaders.feature.changed event (authoritative; the response can't know an
 			// implicit flip's result synchronously).
 			const bool hasExplicit = a_args.contains("enabled");
 			const bool explicitVal = a_args.value("enabled", false);
@@ -201,7 +201,7 @@ namespace
 				if (applied && REL::Module::IsVR() && !target->SupportsVR()) {
 					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
-						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
+						dvb->EmitEvent("communityshaders.feature.changed", payload.c_str());
 					}
 					logger::warn("DevBenchBridge: refused to enable VR-unsupported feature '{}' on a VR runtime", shortName);
 					return;
@@ -209,7 +209,7 @@ namespace
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
-					dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
+					dvb->EmitEvent("communityshaders.feature.changed", payload.c_str());
 				}
 			});
 			json r{ { "action", "toggle" }, { "shortName", shortName }, { "queued", true }, { "enqueued_at_frame", frame } };
@@ -334,7 +334,7 @@ namespace
 
 		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem)
 		// — marshal to the main thread. Recompiles are observable via inspect(kind=shadercache)
-		// + the openshaders.shaderRecompiled event. NOTE clear vs deleteDisk: clear only drops
+		// + the communityshaders.shaderRecompiled event. NOTE clear vs deleteDisk: clear only drops
 		// the in-memory maps, so with the disk cache enabled shaders reload from Data/ShaderCache
 		// rather than recompiling — only deleteDisk guarantees a cold recompile.
 		if (action == "clear") {
@@ -378,7 +378,7 @@ namespace
 			return RunOnMainThread([frameCount, frame]() -> json {
 				auto* renderDoc = &globals::features::renderDoc;
 				if (!renderDoc->loaded)
-					return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows RenderDoc.loaded" } };
+					return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "communityshaders.feature(action='list') shows RenderDoc.loaded" } };
 				if (!renderDoc->IsAvailable())
 					return json{ { "error", "RenderDoc API not available — attach RenderDoc or load the in-app DLL" } };
 				if (frameCount == 1)
@@ -502,24 +502,24 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
-		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
+			R"({"description":"All Community Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+		dvb->RegisterTool("communityshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* inspectDesc =
-			R"({"description":"Read non-feature Open Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count,vr}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use openshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
-		dvb->RegisterTool("openshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
+			R"({"description":"Read non-feature Community Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count,vr}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use communityshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
+		dvb->RegisterTool("communityshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via openshaders.inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is openshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
+			R"({"description":"Manage Community Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via communityshaders.inspect kind=shadercache and the communityshaders.shaderRecompiled event. Read-only status is communityshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
+		dvb->RegisterTool("communityshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
-			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. Fire-and-forget — no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot"]},"frames":{"type":"number"}},"required":["kind"]}})";
-		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
+			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check communityshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. Fire-and-forget — no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot"]},"frames":{"type":"number"}},"required":["kind"]}})";
+		dvb->RegisterTool("communityshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =
-			R"({"description":"Save, load, or reset the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+			R"({"description":"Save, load, or reset the GLOBAL Community Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after communityshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
+		dvb->RegisterTool("communityshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
 	}
 }
 
