@@ -6,7 +6,9 @@
 
 #include "Deferred.h"
 #include "FeatureIssues.h"
+#include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
+#include "Features/ExponentialHeightFog.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
@@ -16,7 +18,6 @@
 #include "Features/Upscaling.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
-#include "Features/WeatherEditor.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -53,7 +54,7 @@ void State::Draw()
 	auto& terrainBlending = globals::features::terrainBlending;
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
-	auto& weatherEditor = globals::features::weatherEditor;
+	auto& csEditor = globals::features::csEditor;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
@@ -63,7 +64,7 @@ void State::Draw()
 		// Process deferred cell transitions (interior detection)
 		SceneSettingsManager::GetSingleton()->Update();
 
-		if (weatherEditor.loaded) {
+		if (csEditor.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			WeatherManager::GetSingleton()->UpdateFeatures();
 		}
@@ -103,6 +104,8 @@ void State::Draw()
 				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
 					if (volumetricShadows.loaded)
 						volumetricShadows.CopyShadowLightData();
+					if (globals::features::exponentialHeightFog.loaded)
+						globals::features::exponentialHeightFog.CaptureDirectionalShadowMap();
 				}
 			}
 		}
@@ -456,6 +459,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	general["Enable Disk Cache"] = shaderCache->IsDiskCache();
 	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
+	general["Language"] = I18n::GetSingleton()->GetCurrentLocale();
 
 	settings["General"] = general;
 
@@ -537,6 +541,23 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetSkipUnchangedShaders(general["Skip Unchanged Shaders"]);
 		if (general.contains("Enable Async") && general["Enable Async"].is_boolean())
 			shaderCache->SetAsync(general["Enable Async"]);
+
+		// Load i18n locale preference
+		if (general.contains("Language") && general["Language"].is_string()) {
+			auto locale = general["Language"].get<std::string>();
+			auto* i18n = I18n::GetSingleton();
+			if (locale != i18n->GetCurrentLocale()) {
+				i18n->SetLocale(locale);
+			}
+		} else {
+			// No saved language preference — auto-detect from system locale on first launch
+			auto* i18n = I18n::GetSingleton();
+			auto detected = i18n->DetectSystemLocale();
+			if (detected != "en" && detected != i18n->GetCurrentLocale()) {
+				i18n->SetLocale(detected);
+				logger::info("[I18n] Auto-detected system locale: '{}'", detected);
+			}
+		}
 	}
 
 	if (settings.contains("Replace Original Shaders") && settings["Replace Original Shaders"].is_object()) {
@@ -749,8 +770,8 @@ void State::SetupResources()
 	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
 
 	auto [data, size] = GetFeatureBufferData(false);
+	(void)data;
 	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
-	delete[] data;
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
@@ -1034,8 +1055,6 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		auto [data, size] = GetFeatureBufferData(a_inWorld);
 
 		featureDataCB->Update(data, size);
-
-		delete[] data;
 	}
 
 	auto* srv = Util::GetCurrentSceneDepthSRV(true);
