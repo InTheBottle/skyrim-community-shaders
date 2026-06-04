@@ -397,8 +397,7 @@ PS_OUTPUT main(PS_INPUT input)
 		}
 
 		psout.Color.xyz = cloudColor;
-
-		input.Color.w = saturate(input.Color.w);
+		psout.Color.w = saturate(psout.Color.w);
 	}
 #			endif
 #		endif
