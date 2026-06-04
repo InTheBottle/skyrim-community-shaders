@@ -513,7 +513,7 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 	DirectX::ScratchImage image;
 	HRESULT hr = DirectX::LoadFromDDSFile(filepath.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
 	if (FAILED(hr))
-		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
+		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_NONE, nullptr, image);
 	if (SUCCEEDED(hr))
 		hr = DirectX::CreateShaderResourceView(device, image.GetImages(), image.GetImageCount(), image.GetMetadata(), srv.put());
 
