@@ -81,29 +81,6 @@ void SkySync::DrawSettings()
 	ImGui::SliderFloat("Crescent Intensity", &settings.CrescentMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat("Full Moon Intensity", &settings.FullMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
-	ImGui::Spacing();
-	ImGui::Spacing();
-	if (ImGui::TreeNodeEx(T(TKEY("sun_position_offsets"), "Sun Position Offsets"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::TextWrapped("%s", T(TKEY("sun_position_offsets_desc"), "Moves sun height during sunrise/sunset. Reset weather to see changes."));
-		ImGui::SliderFloat(T(TKEY("sunrise_begin"), "Sunrise Begin (Hours)"), &settings.SunriseBeginOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("sunrise_begin_tooltip"), "Offset for when the sun starts rising."));
-		}
-		ImGui::SliderFloat(T(TKEY("sunrise_end"), "Sunrise End (Hours)"), &settings.SunriseEndOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("sunrise_end_tooltip"), "Offset for when the sun finishes rising."));
-		}
-		ImGui::SliderFloat(T(TKEY("sunset_begin"), "Sunset Begin (Hours)"), &settings.SunsetBeginOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("sunset_begin_tooltip"), "Offset for when the sun starts setting."));
-		}
-		ImGui::SliderFloat(T(TKEY("sunset_end"), "Sunset End (Hours)"), &settings.SunsetEndOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("sunset_end_tooltip"), "Offset for when the sun finishes setting."));
-		}
-
-		ImGui::TreePop();
-	}
 }
 
 void SkySync::LoadSettings(json& o_json)
@@ -482,64 +459,5 @@ inline void SkySync::ShadowFader::ClampDirection(RE::NiPoint3& dir)
 }
 
 
-
-void SkySync::Sky_OnNewClimate::thunk(RE::Sky* sky)
-{
-	if (auto& singleton = globals::features::skySync; singleton.settings.Enabled && sky && sky->currentClimate)
-		singleton.timings.Update(sky->currentClimate);
-	func(sky);
-}
-
-void SkySync::Moon_Update::thunk(RE::Moon* moon, RE::Sky* sky)
-{
-	const auto updateMoonTexture = moon->updateMoonTexture;
-
-	func(moon, sky);
-
-	if (auto& singleton = globals::features::skySync; singleton.settings.Enabled && updateMoonTexture != moon->updateMoonTexture) {
-		const auto moonShaderProperty = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());
-
-		const auto name = moonShaderProperty->GetBaseTexture()->name.c_str();
-		const size_t len = std::strlen(name);
-		std::string lower;
-		lower.reserve(len);
-		for (size_t i = 0; i < len; ++i) {
-			lower.push_back(static_cast<char>(std::tolower(name[i])));
-		}
-
-		static constexpr std::array<std::pair<std::string_view, RE::Moon::Phases::Phase>, 8> Lookup{
-			{ { "full", RE::Moon::Phases::Phase::kFull },
-				{ "three_wan", RE::Moon::Phases::Phase::kWaningGibbous },
-				{ "half_wan", RE::Moon::Phases::Phase::kWaningQuarter },
-				{ "one_wan", RE::Moon::Phases::Phase::kWaningCrescent },
-				{ "new", RE::Moon::Phases::Phase::kNewMoon },
-				{ "one_wax", RE::Moon::Phases::Phase::kWaxingCrescent },
-				{ "half_wax", RE::Moon::Phases::Phase::kWaxingQuarter },
-				{ "three_wax", RE::Moon::Phases::Phase::kWaxingGibbous } }
-		};
-
-		RE::Moon::Phases::Phase phase = RE::Moon::Phases::Phase::kFull;
-		for (auto& [suffix, id] : Lookup) {
-			if (lower.find(suffix) != std::string::npos) {
-				phase = id;
-				break;
-			}
-		}
-
-		float* intensityFactor = moon == sky->masser ? &singleton.masserPhaseIntensityFactor : &singleton.secundaPhaseIntensityFactor;
-		if (phase == RE::Moon::Phases::Phase::kNewMoon) {
-			*intensityFactor = NewMoonIntensityFactor;
-		} else {
-			const float t = (abs(static_cast<float>(phase) - static_cast<float>(RE::Moon::Phases::Phase::kNewMoon)) - 1.0f) / 3.0f;
-			*intensityFactor = std::lerp(CrescentMoonIntensityFactor, FullMoonIntensityFactor, t);
-		}
-	}
-}
-
-inline float SkySync::SmoothStep(const float start, const float end, const float x)
-{
-	const float t = std::clamp((x - start) / (end - start), 0.0f, 1.0f);
-	return t * t * (3.0f - 2.0f * t);
-}
 
 #undef I18N_KEY_PREFIX

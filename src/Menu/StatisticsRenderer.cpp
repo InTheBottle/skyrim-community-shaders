@@ -132,9 +132,9 @@ void StatisticsRenderer::RenderGraph()
 		maxFrameTimeSec = 0.0001f;
 
 	float availWidth = ImGui::GetContentRegionAvail().x;
-	int legendWidth = 260;
-	int graphWidth = std::max(100, static_cast<int>(availWidth) - legendWidth);
-	int graphHeight = 180;
+	float legendWidth = 260.0f;
+	float graphWidth = std::max(100.0f, availWidth - legendWidth);
+	float graphHeight = 180.0f;
 
 	gpuGraph.RenderTimings(graphWidth, legendWidth, graphHeight, 0, maxFrameTimeSec);
 
@@ -365,9 +365,9 @@ void StatisticsRenderer::RenderFeatureTimers(const std::string& featurePrefix)
 			maxFrameTimeSec = 0.00001f;
 
 		float availWidth = ImGui::GetContentRegionAvail().x;
-		int legendWidth = 200;
-		int graphWidth = std::max(100, static_cast<int>(availWidth) - legendWidth);
-		int graphHeight = 100;
+		float legendWidth = 200.0f;
+		float graphWidth = std::max(100.0f, availWidth - legendWidth);
+		float graphHeight = 100.0f;
 
 		state.graph.RenderTimings(graphWidth, legendWidth, graphHeight, 0, maxFrameTimeSec);
 		ImGui::Spacing();

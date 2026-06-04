@@ -94,14 +94,6 @@ namespace ImageBasedLighting
 		return Color::Saturation(GetSkyIBL(rayDir), SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
 	}
 
-	float3 GetSkyIBLColorOccluded(float3 rayDir, float visibility)
-	{
-		if (SharedData::InInterior) {
-			return 0;
-		}
-		return Color::Saturation(GetSkyIBLOccluded(rayDir, visibility), SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
-	}
-
 	// ============================================================================
 	// High-level: compute the full diffuse ambient replacement
 	// ============================================================================

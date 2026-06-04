@@ -1718,6 +1718,7 @@ void Upscaling::Upscale()
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
+	auto* state = globals::state;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
