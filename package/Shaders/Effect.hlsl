@@ -536,29 +536,73 @@ cbuffer PerGeometry : register(b2)
 
 #	include "Common/ShadowSampling.hlsli"
 
+float3 GetEffectAmbientLighting(float skylightingDiffuse)
+{
+	float3 ambientColor = ShadowSampling::GetRawAmbientLighting(ShadowSampling::LightingSampleNormal);
+
+#	if defined(IBL)
+	if (SharedData::iblSettings.EnableIBL) {
+#		if defined(SKYLIGHTING)
+		ambientColor = ImageBasedLighting::GetDiffuseIBLOccluded(ambientColor, ShadowSampling::ImageBasedLightingNormal, skylightingDiffuse);
+#		else
+		ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, ShadowSampling::ImageBasedLightingNormal);
+#		endif
+	}
+#	endif
+
+	return ambientColor;
+}
+
+void ExtractEffectLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
+{
+	float3 ambientColorAmb = GetEffectAmbientLighting(skylightingDiffuse);
+	float3 dirLightColorDir = ShadowSampling::GetDirectionalLighting();
+
+	float inputLuma = Color::RGBToLuminance(inputColor);
+	float ambientLuma = Color::RGBToLuminance(ambientColorAmb);
+	float dirLightLuma = Color::RGBToLuminance(dirLightColorDir);
+
+	float totalLuma = ambientLuma + dirLightLuma;
+
+	if (totalLuma > 0.0 && ambientLuma > 0.0)
+		ambientColorAmb *= inputLuma / totalLuma;
+
+	float3 dirLightColorAmb = max(0.0, inputColor - ambientColorAmb);
+
+	dirColor = dirLightColorAmb;
+	ambientColor = ambientColorAmb;
+}
+
 #	if defined(LIGHTING)
 float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPosition, uint eyeIndex, inout float shadowVariance)
 {
 	float3 color = DLightColor.xyz * Color::EffectLightingMult();
 	bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
 	if (suppressExternalEmittance) {
-		color = ShadowSampling::GetSceneLightingColor();
+		color = GetEffectAmbientLighting(1.0) + ShadowSampling::GetDirectionalLighting();
 	}
 
 #		if defined(SKYLIGHTING)
+	float skylightingDiffuse = 1.0;
+	if (!SharedData::InInterior) {
 #			if defined(VR)
-	float3 positionMSSkylight = worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+		float3 positionMSSkylight = worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
 #			else
-	float3 positionMSSkylight = worldPosition;
+		float3 positionMSSkylight = worldPosition;
 #			endif
 
-	sh2 skylightingSH = Skylighting::SampleNoBias(positionMSSkylight);
-	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(positionMSSkylight));
+		sh2 skylightingSH = Skylighting::SampleNoBias(positionMSSkylight);
+		skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(positionMSSkylight));
+	}
 #		endif
 
 	float3 dirColor;
 	float3 ambientColor;
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+#		if defined(SKYLIGHTING)
+	ExtractEffectLighting(color, dirColor, ambientColor, skylightingDiffuse);
+#		else
+	ExtractEffectLighting(color, dirColor, ambientColor, 1.0);
+#		endif
 
 	if (SharedData::enbSettings.Enable) {
 		dirColor = ShadowSampling::GetDirectionalLighting();
@@ -588,9 +632,14 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #		endif
 
 #		if defined(SKYLIGHTING)
-	ambientColor = Color::IrradianceToLinear(ambientColor);
-	ambientColor *= skylightingDiffuse;
-	ambientColor = Color::IrradianceToGamma(ambientColor);
+#			if defined(IBL)
+	if (!SharedData::iblSettings.EnableIBL)
+#			endif
+	{
+		ambientColor = Color::IrradianceToLinear(ambientColor);
+		ambientColor *= skylightingDiffuse;
+		ambientColor = Color::IrradianceToGamma(ambientColor);
+	}
 #		endif
 
 	color = dirColor + ambientColor;
@@ -614,7 +663,12 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 {
 	float3 dirColor;
 	float3 ambientColor;
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+	float skylightingDiffuse = 1.0;
+#		if defined(SKYLIGHTING)
+	ExtractEffectLighting(color, dirColor, ambientColor, skylightingDiffuse);
+#		else
+	ExtractEffectLighting(color, dirColor, ambientColor, 1.0);
+#		endif
 
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);
@@ -869,16 +923,18 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 vanillaFogColor = fogColor;
 	float expFogFactor = 0;
 	if (SharedData::exponentialHeightFogSettings.enabled) {
-		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor);
+		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		expFogFactor = exponentialHeightFog.w;
 #			if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 		fogColor = exponentialHeightFog.xyz;
 		fogFactor = exponentialHeightFog.w;
 #			else
-		fogColor = lightColor;
+		fogColor = exponentialHeightFog.xyz;
+		fogFactor = exponentialHeightFog.w;
 		alpha *= 1 - exponentialHeightFog.w;
 #			endif
 		if (ExponentialHeightFog::ShouldDisableVanillaFog()) {
+			vanillaFogColor = lightColor;
 			vanillaFogFactor = 0;
 		}
 	}
@@ -901,6 +957,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
+	blendedColor = lerp(blendedColor, fogColor, fogFactor.xxx);
 #			else
 	float3 blendedColor = lerp(lightColor, fogColor, fogFactor.xxx);
 #			endif

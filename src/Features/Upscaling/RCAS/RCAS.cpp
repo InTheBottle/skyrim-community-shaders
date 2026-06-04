@@ -45,6 +45,7 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	}
 
 	globals::profiler->BeginPass("Upscaling::RCAS");
+	state->BeginPerfEvent("RCAS Sharpening");
 
 	uint32_t screenWidth = (uint32_t)globals::state->screenSize.x;
 	uint32_t screenHeight = (uint32_t)globals::state->screenSize.y;
@@ -77,4 +78,5 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	globals::profiler->EndPass();
+	state->EndPerfEvent();
 }

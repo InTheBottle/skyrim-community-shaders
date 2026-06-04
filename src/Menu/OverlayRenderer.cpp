@@ -10,16 +10,17 @@
 #include <imgui_internal.h>
 #include <winrt/base.h>
 
+#include "CSEditor/EditorWindow.h"
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "Features/Effect11/EffectManager.h"
 #include "Features/RenderDoc.h"
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
-#include "WeatherEditor/EditorWindow.h"
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -42,7 +43,7 @@ namespace
 				static_cast<unsigned long long>(failed));
 
 			if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {
-				ImGui::TextColored(themeSettings.StatusPalette.Error, "Features that may have modified shaders detected. Check Feature Issues in the Menu.");
+				ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", T("overlay.modified_features", "Features that may have modified shaders detected. Check Feature Issues in the Menu."));
 			}
 		}
 	}
@@ -325,7 +326,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 				"Press {} to proceed without completing shader compilation. ",
 				keyIdToString(Menu::GetSingleton()->GetSettings().SkipCompilationKey));
 			ImGui::TextUnformatted(skipShadersText.c_str());
-			ImGui::TextUnformatted("WARNING: Uncompiled shaders will have visual errors or cause stuttering when loading.");
+			ImGui::TextUnformatted(T("overlay.uncompiled_warning", "WARNING: Uncompiled shaders will have visual errors or cause stuttering when loading."));
 		}
 		if (failed && !hide)
 			DrawShaderCompilationFailures(failed, themeSettings);
@@ -451,7 +452,7 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 		return;
 	}
 
-	Util::Text::Error("Shader Blocking Active");
+	Util::Text::Error(T("overlay.shader_blocking_active", "Shader Blocking Active"));
 	ImGui::Text("Blocked: %s", shaderCache->blockedKey.c_str());
 
 	// Try to get more details from active shaders

@@ -1,4 +1,7 @@
 #include "SkySync.h"
+#include "../I18n/I18n.h"
+
+#define I18N_KEY_PREFIX "feature.sky_sync."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkySync::Settings,
@@ -16,40 +19,52 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void SkySync::DrawSettings()
 {
-	ImGui::Checkbox("Enabled", &settings.Enabled);
+	const char* sunPathNames[] = {
+		T(TKEY("sun_path_southern"), "Southern Sky"),
+		T(TKEY("sun_path_northern"), "Northern Sky"),
+		T(TKEY("sun_path_vanilla"), "Vanilla"),
+		T(TKEY("sun_path_custom"), "Custom")
+	};
+	const char* moonLightSourceNames[] = {
+		T(TKEY("moon_light_source_brightest"), "Brightest"),
+		T(TKEY("moon_light_source_masser"), "Masser"),
+		T(TKEY("moon_light_source_secunda"), "Secunda")
+	};
+
+	ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Enable or disable Sky Sync features.");
+		ImGui::TextUnformatted(T(TKEY("enabled_tooltip"), "Enable or disable Sky Sync features."));
 	}
 
-	ImGui::Checkbox("Use alternate sun path", &settings.UseAlternateSunPath);
+	ImGui::Checkbox(T(TKEY("use_alternate_sun_path"), "Use alternate sun path"), &settings.UseAlternateSunPath);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Calculate sun position based on time of day and season instead of vanilla movement.");
+		ImGui::TextUnformatted(T(TKEY("use_alternate_sun_path_tooltip"), "Calculate sun position based on time of day and season instead of vanilla movement."));
 	}
 
 	if (settings.UseAlternateSunPath) {
-		if (ImGui::SliderInt("Sun path", &settings.SunPath, 0, static_cast<uint8_t>(SunPath::Count) - 1, SunPathNames[settings.SunPath], ImGuiSliderFlags_AlwaysClamp))
+		if (ImGui::SliderInt(T(TKEY("sun_path"), "Sun path"), &settings.SunPath, 0, static_cast<uint8_t>(SunPath::Count) - 1, sunPathNames[settings.SunPath], ImGuiSliderFlags_AlwaysClamp))
 			SetSunAngle();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Choose the trajectory the sun takes across the sky.");
+			ImGui::TextUnformatted(T(TKEY("sun_path_tooltip"), "Choose the trajectory the sun takes across the sky."));
 		}
 
 		if (settings.SunPath == static_cast<int32_t>(SunPath::Custom)) {
-			if (ImGui::SliderFloat("Custom angle", &settings.CustomAngle, -90.0f, 90.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp))
+			if (ImGui::SliderFloat(T(TKEY("custom_angle"), "Custom angle"), &settings.CustomAngle, -90.0f, 90.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp))
 				SetSunAngle();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Set a custom angle for the sun's trajectory.");
+				ImGui::TextUnformatted(T(TKEY("custom_angle_tooltip"), "Set a custom angle for the sun's trajectory."));
 			}
 		}
 	}
 
-	ImGui::SliderInt("Moon light source", &settings.MoonLightSource, 0, static_cast<uint8_t>(MoonLightSource::Count) - 1, MoonLightSourceNames[settings.MoonLightSource], ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderInt(T(TKEY("moon_light_source"), "Moon light source"), &settings.MoonLightSource, 0, static_cast<uint8_t>(MoonLightSource::Count) - 1, moonLightSourceNames[settings.MoonLightSource], ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Select which moon casts shadows during the night.");
+		ImGui::TextUnformatted(T(TKEY("moon_light_source_tooltip"), "Select which moon casts shadows during the night."));
 	}
 
-	ImGui::SliderFloat("Min Shadow Elevation", &settings.MinShadowElevation, 0.0f, 45.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("min_shadow_elevation"), "Min Shadow Elevation"), &settings.MinShadowElevation, 0.0f, 45.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("The minimum angle sunlight will set to. Caps shadow length. Higher = shorter shadows at sunset/sunrise.");
+		ImGui::Text("%s", T(TKEY("min_shadow_elevation_tooltip"), "The minimum angle sunlight will set to. Caps shadow length. Higher = shorter shadows at sunset/sunrise."));
 	}
 
 	ImGui::SliderFloat("Shadow Transition Duration", &settings.ShadowTransitionDuration, 0.0f, 500.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
@@ -66,48 +81,25 @@ void SkySync::DrawSettings()
 	ImGui::SliderFloat("Crescent Intensity", &settings.CrescentMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat("Full Moon Intensity", &settings.FullMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
-
-	if (ImGui::TreeNodeEx("Debug", ImGuiTreeNodeFlags_None)) {
-		static constexpr const char* CasterNames[] = { "Sun", "Masser", "Secunda", "None" };
-		static constexpr const char* PhaseNames[] = { "Full", "Waning Gibbous", "Waning Quarter", "Waning Crescent", "New", "Waxing Crescent", "Waxing Quarter", "Waxing Gibbous" };
-
-		auto getPhase = [](const RE::Moon* moon) -> const char* {
-			if (!moon || !moon->moonMesh)
-				return "Unknown";
-			if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get())) {
-				if (auto tex = prop->GetBaseTexture())
-					return PhaseNames[static_cast<int>(Util::Moon::GetPhaseFromTexture(tex->name.c_str()))];
-			}
-			return "Unknown";
-		};
-
-		auto drawMoonEntry = [&](const char* label, Caster caster, const char* phase) {
-			auto& color = colors[static_cast<int>(caster)];
-			ImVec4 swatch = { color.x, color.y, color.z, 1.0f };
-			ImGui::ColorButton(label, swatch, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, { ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight() });
-			ImGui::SameLine();
-			ImGui::Text("%s  [%s]  color (%.3f, %.3f, %.3f, %.3f)", label, phase, color.x, color.y, color.z, color.w);
-		};
-
-		const auto sky = globals::game::sky;
-		drawMoonEntry("Masser", Caster::Masser, sky ? getPhase(sky->masser) : "Unknown");
-		drawMoonEntry("Secunda", Caster::Secunda, sky ? getPhase(sky->secunda) : "Unknown");
-
-		ImGui::Text("Dim: %.3f", currentDim);
-
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::Spacing();
-
-		ImGui::Text("Shadow target: %s", CasterNames[static_cast<int>(shadowFader.target)]);
-		ImGui::Text("Shadow dir:    (%.2f, %.2f, %.2f)", shadowFader.currentDir.x, shadowFader.currentDir.y, shadowFader.currentDir.z);
-		if (shadowFader.transitioning) {
-			const float t = settings.ShadowTransitionDuration > 0.0f ? shadowFader.fadeTimer / settings.ShadowTransitionDuration : 1.0f;
-			ImGui::ProgressBar(t, { -1.0f, 0.0f }, "");
-			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::Text("Transitioning %.0f%%", t * 100.0f);
-		} else {
-			ImGui::TextDisabled("No transition");
+	ImGui::Spacing();
+	ImGui::Spacing();
+	if (ImGui::TreeNodeEx(T(TKEY("sun_position_offsets"), "Sun Position Offsets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::TextWrapped("%s", T(TKEY("sun_position_offsets_desc"), "Moves sun height during sunrise/sunset. Reset weather to see changes."));
+		ImGui::SliderFloat(T(TKEY("sunrise_begin"), "Sunrise Begin (Hours)"), &settings.SunriseBeginOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("sunrise_begin_tooltip"), "Offset for when the sun starts rising."));
+		}
+		ImGui::SliderFloat(T(TKEY("sunrise_end"), "Sunrise End (Hours)"), &settings.SunriseEndOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("sunrise_end_tooltip"), "Offset for when the sun finishes rising."));
+		}
+		ImGui::SliderFloat(T(TKEY("sunset_begin"), "Sunset Begin (Hours)"), &settings.SunsetBeginOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("sunset_begin_tooltip"), "Offset for when the sun starts setting."));
+		}
+		ImGui::SliderFloat(T(TKEY("sunset_end"), "Sunset End (Hours)"), &settings.SunsetEndOffset, -5.0f, 5.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("sunset_end_tooltip"), "Offset for when the sun finishes setting."));
 		}
 
 		ImGui::TreePop();
@@ -491,3 +483,63 @@ inline void SkySync::ShadowFader::ClampDirection(RE::NiPoint3& dir)
 
 
 
+void SkySync::Sky_OnNewClimate::thunk(RE::Sky* sky)
+{
+	if (auto& singleton = globals::features::skySync; singleton.settings.Enabled && sky && sky->currentClimate)
+		singleton.timings.Update(sky->currentClimate);
+	func(sky);
+}
+
+void SkySync::Moon_Update::thunk(RE::Moon* moon, RE::Sky* sky)
+{
+	const auto updateMoonTexture = moon->updateMoonTexture;
+
+	func(moon, sky);
+
+	if (auto& singleton = globals::features::skySync; singleton.settings.Enabled && updateMoonTexture != moon->updateMoonTexture) {
+		const auto moonShaderProperty = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());
+
+		const auto name = moonShaderProperty->GetBaseTexture()->name.c_str();
+		const size_t len = std::strlen(name);
+		std::string lower;
+		lower.reserve(len);
+		for (size_t i = 0; i < len; ++i) {
+			lower.push_back(static_cast<char>(std::tolower(name[i])));
+		}
+
+		static constexpr std::array<std::pair<std::string_view, RE::Moon::Phases::Phase>, 8> Lookup{
+			{ { "full", RE::Moon::Phases::Phase::kFull },
+				{ "three_wan", RE::Moon::Phases::Phase::kWaningGibbous },
+				{ "half_wan", RE::Moon::Phases::Phase::kWaningQuarter },
+				{ "one_wan", RE::Moon::Phases::Phase::kWaningCrescent },
+				{ "new", RE::Moon::Phases::Phase::kNewMoon },
+				{ "one_wax", RE::Moon::Phases::Phase::kWaxingCrescent },
+				{ "half_wax", RE::Moon::Phases::Phase::kWaxingQuarter },
+				{ "three_wax", RE::Moon::Phases::Phase::kWaxingGibbous } }
+		};
+
+		RE::Moon::Phases::Phase phase = RE::Moon::Phases::Phase::kFull;
+		for (auto& [suffix, id] : Lookup) {
+			if (lower.find(suffix) != std::string::npos) {
+				phase = id;
+				break;
+			}
+		}
+
+		float* intensityFactor = moon == sky->masser ? &singleton.masserPhaseIntensityFactor : &singleton.secundaPhaseIntensityFactor;
+		if (phase == RE::Moon::Phases::Phase::kNewMoon) {
+			*intensityFactor = NewMoonIntensityFactor;
+		} else {
+			const float t = (abs(static_cast<float>(phase) - static_cast<float>(RE::Moon::Phases::Phase::kNewMoon)) - 1.0f) / 3.0f;
+			*intensityFactor = std::lerp(CrescentMoonIntensityFactor, FullMoonIntensityFactor, t);
+		}
+	}
+}
+
+inline float SkySync::SmoothStep(const float start, const float end, const float x)
+{
+	const float t = std::clamp((x - start) / (end - start), 0.0f, 1.0f);
+	return t * t * (3.0f - 2.0f * t);
+}
+
+#undef I18N_KEY_PREFIX
