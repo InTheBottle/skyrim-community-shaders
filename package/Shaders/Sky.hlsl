@@ -390,9 +390,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 			float3 cloudsScatter = (sunPhase + masserPhase + secundaPhase) * SharedData::enbSettings.CloudsEdgeIntensity;
 
-			if (SharedData::enbSettings.EnableCloudsScattering)
-				cloudsScatter *= 2.0;
-
 			cloudColor += cloudBaseLuminance * cloudsScatter * cloudsEdgeAlpha;
 		}
 
