@@ -60,13 +60,6 @@ YourFeature yourFeature{};
 -   Customize `DrawSettings()` UI controls
 -   Update shader compilation paths in `CompileShaders()`
 
-### VR Support
-
-Set `SupportsVR()` return value:
-
--   `return true;` - Feature works in VR
--   `return false;` - Feature disabled in VR builds
-
 ## Naming Conventions
 
 | Component          | Convention | Example                 |

@@ -116,13 +116,10 @@ float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filte
 ///////////////////////////////////////////////////////////////////////////////
 
 // Inputs are screen XY and viewspace depth, output is viewspace position
-float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth, const uint eyeIndex)
+float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth)
 {
-	const float2 _mul = eyeIndex == 0 ? NDCToViewMul.xy : NDCToViewMul.zw;
-	const float2 _add = eyeIndex == 0 ? NDCToViewAdd.xy : NDCToViewAdd.zw;
-
 	float3 ret;
-	ret.xy = (_mul * screenPos.xy + _add) * viewspaceDepth;
+	ret.xy = (NDCToViewMul.xy * screenPos.xy + NDCToViewAdd.xy) * viewspaceDepth;
 	ret.z = viewspaceDepth;
 	return ret;
 }

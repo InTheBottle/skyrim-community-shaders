@@ -6,7 +6,6 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "VR.h"
 
 #define I18N_KEY_PREFIX "feature.terrain_blending."
 
@@ -44,7 +43,7 @@ namespace
 	// 1) PS slot 17 override: bind TB-selected depth SRV for OBB depth reads; prevents occlusion instability / mesh popping.
 	// 2) PS slot 2 override: bind TB-selected depth SRV for shadowmask reads; prevents unstable/moving ground shadow imprint, and dark overlay style artifacts.
 	// 3) OM depth override: force DepthFunc=ALWAYS only on descriptor 0x1062002; mitigate shadowmask ground artifacts caused by failed depth testing in 0x1062002.
-	// All override paths below are gated by IsEngineHookFeatureGateSatisfied and all are VR-specific at runtime (isVR, gateSatisfied).
+	// All override paths below are gated by IsEngineHookFeatureGateSatisfied.
 	// Developer Mode only: logs one hook snapshot per session ([TB Override]/[TB DepthOverride]) and explicit fallback activate/reset events.
 	// Fallbacks: caller fallback is in ShouldAllowCallerWithFallback(...) (2 and 3 widen after 5 rejects and collapse on first allowlisted hit), SRV-source fallback is in Util::GetCurrentSceneDepthSRV(...).
 	// Pixel descriptors:
@@ -118,8 +117,7 @@ namespace
 
 	bool ShouldUseBlendedDepthSRV()
 	{
-		auto& vr = globals::features::vr;
-		return !globals::game::isVR || !vr.gDepthBufferCulling || !*vr.gDepthBufferCulling;
+		return true;
 	}
 
 	bool IsShadowmaskDepthDescriptorWhitelisted(const uint32_t a_descriptor)
@@ -228,13 +226,9 @@ namespace
 			a_callerRva);
 	}
 
-	bool IsEngineHookFeatureGateSatisfied(const TerrainBlending& a_singleton)
+	bool IsEngineHookFeatureGateSatisfied([[maybe_unused]] const TerrainBlending& a_singleton)
 	{
-		if (!globals::game::isVR || !a_singleton.loaded || !a_singleton.settings.Enabled) {
-			return false;
-		}
-
-		return !ShouldUseBlendedDepthSRV();
+		return false;
 	}
 
 	struct EngineHookPassGateState
@@ -826,7 +820,7 @@ void TerrainBlending::BlendPrepassDepths()
 	auto stateUpdateFlags = globals::game::stateUpdateFlags;
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 	// CopyResource(terrainDepth <- mainDepth) eliminated: main depth is now written
-	// directly into mainDepthCopy (u2) by the CS above, saving a full-stereo D24S8 copy.
+	// directly into mainDepthCopy (u2) by the CS above, saving a full D24S8 copy.
 
 	if (globals::state->frameAnnotations)
 		globals::state->EndPerfEvent();

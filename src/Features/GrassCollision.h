@@ -86,7 +86,6 @@ public:
 
 	virtual void PostPostLoad() override;
 
-	virtual bool SupportsVR() override { return true; };
 
 	struct Hooks
 	{

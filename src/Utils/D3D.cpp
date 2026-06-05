@@ -159,8 +159,6 @@ namespace Util
 			}
 		}
 
-		if (REL::Module::IsVR())
-			macros.push_back({ "VR", "" });
 		if (globals::state->IsDeveloperMode()) {
 			macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
 			macros.push_back({ "D3DCOMPILE_DEBUG", "" });

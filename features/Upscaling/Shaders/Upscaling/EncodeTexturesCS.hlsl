@@ -2,8 +2,8 @@
 
 cbuffer UpscalingData : register(b0)
 {
-	float2 TrueSamplingDim;  // per-eye render dim in VR, full render dim otherwise
-	uint EyeOffsetX;         // X offset into stereo source buffers; 0 for non-VR / left eye
+	float2 TrueSamplingDim;
+	uint EyeOffsetX;
 	uint pad0;
 };
 
@@ -20,11 +20,11 @@ RWTexture2D<float> DepthOutput : register(u3);
 #endif
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
-	// Bounds check in per-eye space; EyeOffsetX=0 makes this identical to the old path for non-VR
+	// Bounds check
 	if (any(dispatchID.xy >= uint2(TrueSamplingDim)))
 		return;
 
-	// All source reads are in full stereo space; outputs are 0-based (per-eye or full-frame)
+	// All source reads use offset; outputs are 0-based
 	uint2 srcCoord = dispatchID.xy + uint2(EyeOffsetX, 0);
 
 	float2 taaMask = TAAMask[srcCoord];
@@ -45,12 +45,11 @@ RWTexture2D<float> DepthOutput : register(u3);
 		{
 			int2 samplePos = int2(dispatchID.xy) + int2(x, y);
 
-			// Bounds check stays in per-eye space — prevents cross-eye contamination in VR
-			// and out-of-bounds reads in non-VR (EyeOffsetX=0 makes these equivalent)
+			// Bounds check
 			if (any(samplePos < 0) || any(samplePos >= int2(TrueSamplingDim)))
 				continue;
 
-			// Source read uses full stereo offset
+			// Source read uses offset
 			int2 srcPos = samplePos + int2(EyeOffsetX, 0);
 			float neighborDepth = DepthMask[srcPos];
 
@@ -74,7 +73,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 
 #if defined(DEPTH_OUTPUT)
 	// Copy depth as R32_FLOAT so FSR DX11 backend receives a typed format.
-	// The raw depth resource is R24G8_TYPELESS in VR which maps to FFX_SURFACE_FORMAT_UNKNOWN.
+	// The raw depth resource is R24G8_TYPELESS which maps to FFX_SURFACE_FORMAT_UNKNOWN.
 	DepthOutput[dispatchID.xy] = DepthMask[srcCoord];
 #endif
 

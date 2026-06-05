@@ -14,61 +14,13 @@ namespace ShaderConstants
 	{
 		static const LightingPS& Get()
 		{
-			static LightingPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
+			static LightingPS instance = GetFlat();
 			return instance;
 		}
 
 		static LightingPS GetFlat()
 		{
 			return LightingPS{};
-		}
-
-		static LightingPS GetVR()
-		{
-			return LightingPS{
-				.AmbientColor = 24,
-				.FogColor = 25,
-				.ColourOutputClamp = 26,
-				.EnvmapData = 27,
-				.ParallaxOccData = 28,
-				.TintColor = 29,
-				.LODTexParams = 30,
-				.SpecularColor = 31,
-				.SparkleParams = 32,
-				.MultiLayerParallaxData = 33,
-				.LightingEffectParams = 34,
-				.IBLParams = 35,
-				.LandscapeTexture1to4IsSnow = 36,
-				.LandscapeTexture5to6IsSnow = 37,
-				.LandscapeTexture1to4IsSpecPower = 38,
-				.LandscapeTexture5to6IsSpecPower = 39,
-				.SnowRimLightParameters = 40,
-				.CharacterLightParams = 41,
-				.PBRFlags = 44,
-				.PBRParams1 = 45,
-				.LandscapeTexture2PBRParams = 46,
-				.LandscapeTexture3PBRParams = 47,
-				.LandscapeTexture4PBRParams = 48,
-				.LandscapeTexture5PBRParams = 49,
-				.LandscapeTexture6PBRParams = 50,
-				.PBRParams2 = 51,
-				.LandscapeTexture1GlintParameters = 52,
-				.LandscapeTexture2GlintParameters = 53,
-				.LandscapeTexture3GlintParameters = 54,
-				.LandscapeTexture4GlintParameters = 55,
-				.LandscapeTexture5GlintParameters = 56,
-				.LandscapeTexture6GlintParameters = 57,
-				.MaterialObjectRGBScale = 58,	// RGB multipliers for material objects
-
-				.ShadowSampleParam = 18,
-				.EndSplitDistances = 19,
-				.StartSplitDistances = 20,
-				.DephBiasParam = 21,
-				.ShadowLightParam = 22,
-				.ShadowMapProj = 23,
-				.InvWorldMat = 42,
-				.PreviousWorldMat = 43,
-			};
 		}
 
 		const int32_t NumLightNumShadowLight = 0;
@@ -138,16 +90,11 @@ namespace ShaderConstants
 	{
 		static const GrassPS& Get()
 		{
-			static GrassPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
+			static GrassPS instance = GetFlat();
 			return instance;
 		}
 
 		static GrassPS GetFlat()
-		{
-			return GrassPS{};
-		}
-
-		static GrassPS GetVR()
 		{
 			return GrassPS{};
 		}
@@ -161,16 +108,11 @@ namespace ShaderConstants
 	{
 		static const EffectPS& Get()
 		{
-			static EffectPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
+			static EffectPS instance = GetFlat();
 			return instance;
 		}
 
 		static EffectPS GetFlat()
-		{
-			return EffectPS{};
-		}
-
-		static EffectPS GetVR()
 		{
 			return EffectPS{};
 		}
@@ -375,17 +317,6 @@ namespace SIE
 
 		inline static bool IsSupportedShader(const RE::BSShader::Type type)
 		{
-			if (!REL::Module::IsVR())
-				return type == RE::BSShader::Type::Lighting ||
-				       type == RE::BSShader::Type::BloodSplatter ||
-				       type == RE::BSShader::Type::DistantTree ||
-				       type == RE::BSShader::Type::Sky ||
-				       type == RE::BSShader::Type::Grass ||
-				       type == RE::BSShader::Type::Particle ||
-				       type == RE::BSShader::Type::Water ||
-				       type == RE::BSShader::Type::Effect ||
-				       type == RE::BSShader::Type::Utility ||
-				       type == RE::BSShader::Type::ImageSpace;
 			return type == RE::BSShader::Type::Lighting ||
 			       type == RE::BSShader::Type::BloodSplatter ||
 			       type == RE::BSShader::Type::DistantTree ||

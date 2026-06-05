@@ -8,7 +8,6 @@ private:
 	static constexpr std::string_view MOD_ID = "180146";
 
 public:
-	virtual bool SupportsVR() override { return true; };
 	virtual inline std::string GetName() override { return "Exponential Height Fog"; }
 	virtual std::string GetDisplayName() override { return T("feature.exponential_height_fog.name", "Exponential Height Fog"); }
 	virtual inline std::string GetShortName() override { return "ExponentialHeightFog"; }

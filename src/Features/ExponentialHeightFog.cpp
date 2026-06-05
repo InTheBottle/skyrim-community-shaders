@@ -440,13 +440,8 @@ void ExponentialHeightFog::Prepass()
 		0.0f
 	};
 
-	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
-	for (uint32_t eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
-		cb.clipToWorld[eyeIndex] = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Invert();
-	}
-	if (eyeCount == 1u) {
-		cb.clipToWorld[1] = cb.clipToWorld[0];
-	}
+	cb.clipToWorld[0] = globals::game::frameBufferCached.GetCameraViewProjUnjittered().Invert();
+	cb.clipToWorld[1] = cb.clipToWorld[0];
 
 	for (uint32_t i = 0; i < std::size(cb.frameJitterOffsets); i++) {
 		const uint32_t temporalFrame = (globals::state->frameCount - i) & 1023u;

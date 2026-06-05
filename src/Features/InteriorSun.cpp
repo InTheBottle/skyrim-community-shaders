@@ -71,7 +71,7 @@ void InteriorSun::PostPostLoad()
 	const std::int32_t displacement = static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(gShadowDistance) - (address + 8));
 	REL::safe_write(address + 4, &displacement, sizeof(displacement));
 
-	rasterStateCullMode = globals::game::isVR ? &globals::game::shadowState->GetVRRuntimeData().rasterStateCullMode : &globals::game::shadowState->GetRuntimeData().rasterStateCullMode;
+	rasterStateCullMode = &globals::game::shadowState->GetRuntimeData().rasterStateCullMode;
 
 	logger::info("[Interior Sun] Installed hooks");
 }

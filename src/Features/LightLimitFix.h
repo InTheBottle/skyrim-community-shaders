@@ -115,7 +115,7 @@ public:
 
 	ConstantBuffer* strictLightDataCB = nullptr;
 
-	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
+	int eyeCount = 1;
 	bool previousEnableLightsVisualisation = settings.EnableLightsVisualisation;
 	bool currentEnableLightsVisualisation = settings.EnableLightsVisualisation;
 
@@ -135,7 +135,7 @@ public:
 	float lightsNear = 1;
 	float lightsFar = 16384;
 
-	RE::NiPoint3 eyePositionCached[2]{};
+	RE::NiPoint3 eyePositionCached[1]{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	int previousRoomIndex = -1;
@@ -231,7 +231,6 @@ public:
 		}
 	};
 
-	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return true; }
 };
 
