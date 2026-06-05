@@ -2074,8 +2074,5 @@
     "ui.copy": "复制",
     "ui.dont_ask_again": "不再提示",
     "ui.search": "搜索...",
-    "ui.search_features": "搜索功能...",
-    "feature.upscaling.native_inputs": "原生输入",
-    "feature.upscaling.upscaling_intermediates": "升频中间结果",
-    "feature.upscaling.view_resize": "视图调整大小"
+    "ui.search_features": "搜索功能..."
 }
