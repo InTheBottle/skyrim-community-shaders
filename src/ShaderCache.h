@@ -14,13 +14,8 @@ namespace ShaderConstants
 	{
 		static const LightingPS& Get()
 		{
-			static LightingPS instance = GetFlat();
+			static LightingPS instance{};
 			return instance;
-		}
-
-		static LightingPS GetFlat()
-		{
-			return LightingPS{};
 		}
 
 		const int32_t NumLightNumShadowLight = 0;
@@ -90,13 +85,8 @@ namespace ShaderConstants
 	{
 		static const GrassPS& Get()
 		{
-			static GrassPS instance = GetFlat();
+			static GrassPS instance{};
 			return instance;
-		}
-
-		static GrassPS GetFlat()
-		{
-			return GrassPS{};
 		}
 
 		const int32_t PBRFlags = 0;
@@ -108,13 +98,8 @@ namespace ShaderConstants
 	{
 		static const EffectPS& Get()
 		{
-			static EffectPS instance = GetFlat();
+			static EffectPS instance{};
 			return instance;
-		}
-
-		static EffectPS GetFlat()
-		{
-			return EffectPS{};
 		}
 
 		const int32_t PropertyColor = 0;
