@@ -440,8 +440,7 @@ void ExponentialHeightFog::Prepass()
 		0.0f
 	};
 
-	cb.clipToWorld[0] = globals::game::frameBufferCached.GetCameraViewProjUnjittered().Invert();
-	cb.clipToWorld[1] = cb.clipToWorld[0];
+	cb.clipToWorld = globals::game::frameBufferCached.GetCameraViewProjUnjittered().Invert();
 
 	for (uint32_t i = 0; i < std::size(cb.frameJitterOffsets); i++) {
 		const uint32_t temporalFrame = (globals::state->frameCount - i) & 1023u;

@@ -69,10 +69,10 @@ cbuffer PerGeometry : register(
 #endif
 					  )
 {
-	row_major float4x4 WorldViewProj[1] : packoffset(c0);
-	row_major float4x4 WorldView[1] : packoffset(c4);
-	row_major float4x4 World[1] : packoffset(c8);
-	row_major float4x4 PreviousWorld[1] : packoffset(c12);
+	row_major float4x4 WorldViewProj : packoffset(c0);
+	row_major float4x4 WorldView : packoffset(c4);
+	row_major float4x4 World : packoffset(c8);
+	row_major float4x4 PreviousWorld : packoffset(c12);
 	float4 FogNearColor : packoffset(c16);
 	float3 WindVector : packoffset(c17);
 	float WindTimer : packoffset(c17.w);
@@ -165,7 +165,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	msPosition.xyz += windDisplacement;
 
-	float4 projSpacePosition = mul(WorldViewProj[0], msPosition);
+	float4 projSpacePosition = mul(WorldViewProj, msPosition);
 	vsout.HPosition = projSpacePosition;
 
 #		if defined(RENDER_DEPTH)
@@ -184,8 +184,8 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TexCoord.xy = input.TexCoord.xy;
 	vsout.TexCoord.z = FogNearColor.w;
 
-	vsout.ViewSpacePosition = mul(WorldView[0], msPosition).xyz;
-	vsout.WorldPosition = mul(World[0], msPosition);
+	vsout.ViewSpacePosition = mul(WorldView, msPosition).xyz;
+	vsout.WorldPosition = mul(World, msPosition);
 
 	float4 previousMsPosition = GetMSPosition(input, world3x3);
 
@@ -195,7 +195,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	previousMsPosition.xyz += previousWindDisplacement;
 
-	vsout.PreviousWorldPosition = mul(PreviousWorld[0], previousMsPosition);
+	vsout.PreviousWorldPosition = mul(PreviousWorld, previousMsPosition);
 
 	// Vertex normal needs to be transformed to world-space for lighting calculations.
 	vsout.VertexNormal.xyz = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
@@ -221,7 +221,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	msPosition.xyz += windDisplacement;
 
-	float4 projSpacePosition = mul(WorldViewProj[0], msPosition);
+	float4 projSpacePosition = mul(WorldViewProj, msPosition);
 	vsout.HPosition = projSpacePosition;
 
 #		if defined(RENDER_DEPTH)
@@ -246,8 +246,8 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.AmbientColor.xyz = input.InstanceData1.www * (AmbientColor.xyz * input.Color.xyz);
 	vsout.AmbientColor.w = ShadowClampValue;
 
-	vsout.ViewSpacePosition = mul(WorldView[0], msPosition).xyz;
-	vsout.WorldPosition = mul(World[0], msPosition);
+	vsout.ViewSpacePosition = mul(WorldView, msPosition).xyz;
+	vsout.WorldPosition = mul(World, msPosition);
 
 	float4 previousMsPosition = GetMSPosition(input);
 
@@ -257,7 +257,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	previousMsPosition.xyz += previousWindDisplacement;
 
-	vsout.PreviousWorldPosition = mul(PreviousWorld[0], previousMsPosition);
+	vsout.PreviousWorldPosition = mul(PreviousWorld, previousMsPosition);
 
 	return vsout;
 }

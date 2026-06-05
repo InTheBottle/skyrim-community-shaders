@@ -238,7 +238,7 @@ namespace WaterBlendHistory
 	{
 		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 		{
-			GET_INSTANCE_MEMBER(renderTargets, globals::game::shadowState)
+			auto& renderTargets = globals::game::shadowState->GetRuntimeData().renderTargets;
 
 			// Clear stale coverage left by discarded non-water pixels
 			const float clearColor[4] = { 0.f, 0.f, 0.f, 0.f };

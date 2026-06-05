@@ -182,9 +182,9 @@ namespace globals
 			cameraFar = (float*)(REL::RelocationID(517032, 403540).address() + 0x44);
 			deltaTime = (float*)REL::RelocationID(523660, 410199).address();
 
-			currentPixelShader = GET_INSTANCE_MEMBER_PTR(currentPixelShader, shadowState);
-			currentVertexShader = GET_INSTANCE_MEMBER_PTR(currentVertexShader, shadowState);
-			stateUpdateFlags = GET_INSTANCE_MEMBER_PTR(stateUpdateFlags, shadowState);
+			currentPixelShader = &(shadowState->GetRuntimeData().currentPixelShader);
+			currentVertexShader = &(shadowState->GetRuntimeData().currentVertexShader);
+			stateUpdateFlags = &(shadowState->GetRuntimeData().stateUpdateFlags);
 
 			ui = RE::UI::GetSingleton();
 			calendar = RE::Calendar::GetSingleton();

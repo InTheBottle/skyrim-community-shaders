@@ -745,7 +745,7 @@ void TerrainBlending::TerrainShaderHacks()
 			auto dsv = terrainDepth.views[0];
 			context->OMSetRenderTargets(0, nullptr, dsv);
 			auto shadowState = globals::game::shadowState;
-			GET_INSTANCE_MEMBER(currentVertexShader, shadowState)
+			auto& currentVertexShader = shadowState->GetRuntimeData().currentVertexShader;
 			context->VSSetShader((ID3D11VertexShader*)currentVertexShader->shader, NULL, NULL);
 		}
 		renderAltTerrain = !renderAltTerrain;
@@ -1019,9 +1019,9 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		if (globals::state->frameAnnotations)
 			globals::state->BeginPerfEvent("Terrain Blending - Render Passes");
 
-		GET_INSTANCE_MEMBER(alphaBlendMode, shadowState)
-		GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
-		GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState)
+		auto& alphaBlendMode = shadowState->GetRuntimeData().alphaBlendMode;
+		auto& alphaBlendWriteMode = shadowState->GetRuntimeData().alphaBlendWriteMode;
+		auto& depthStencilDepthMode = shadowState->GetRuntimeData().depthStencilDepthMode;
 
 		// Reset alpha write and enable alpha blending
 		alphaBlendWriteMode = 1;

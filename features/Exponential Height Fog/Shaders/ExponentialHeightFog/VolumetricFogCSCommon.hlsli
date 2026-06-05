@@ -8,7 +8,7 @@ cbuffer VolumetricFogCB : register(b0)
 	uint4 VolumetricFogGridSizeAndFlags;
 	float4 VolumetricFogInvGridSizeAndNearFade;
 	float4 VolumetricFogGridZParams;
-	row_major float4x4 VolumetricFogClipToWorld[2];
+	row_major float4x4 VolumetricFogClipToWorld;
 	float4 VolumetricFogFrameJitterOffsets[16];
 	float4 VolumetricFogHistoryParameters;
 	float4 VolumetricFogJitterParameters;
@@ -47,7 +47,7 @@ namespace ExponentialHeightFog
 
 		float2 ndc = volumeUV * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
 		float deviceZ = (SharedData::CameraData.x - SharedData::CameraData.w / viewDepth) / SharedData::CameraData.z;
-		float4 worldPosition = mul(VolumetricFogClipToWorld[0], float4(ndc, deviceZ, 1.0f));
+		float4 worldPosition = mul(VolumetricFogClipToWorld, float4(ndc, deviceZ, 1.0f));
 		return worldPosition.xyz / worldPosition.w;
 	}
 }

@@ -123,7 +123,7 @@ struct VS_OUTPUT
 
 cbuffer PerTechnique : register(b0)
 {
-	float4 QPosAdjust[1] : packoffset(c0);
+	float4 QPosAdjust : packoffset(c0);
 };
 
 cbuffer PerMaterial : register(b1)
@@ -138,9 +138,9 @@ cbuffer PerMaterial : register(b1)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float4x4 World[1] : packoffset(c0);
-	row_major float4x4 PreviousWorld[1] : packoffset(c4);
-	row_major float4x4 WorldViewProj[1] : packoffset(c8);
+	row_major float4x4 World : packoffset(c0);
+	row_major float4x4 PreviousWorld : packoffset(c4);
+	row_major float4x4 WorldViewProj : packoffset(c8);
 	float3 ObjectUV : packoffset(c12);
 	float4 CellTexCoordOffset : packoffset(c13);
 };
@@ -152,8 +152,8 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.NormalsScale = NormalsScale;
 
 	float4 inputPosition = float4(input.Position.xyz, 1.0);
-	float4 worldPos = mul(World[0], inputPosition);
-	float4 worldViewPos = mul(WorldViewProj[0], inputPosition);
+	float4 worldPos = mul(World, inputPosition);
+	float4 worldViewPos = mul(WorldViewProj, inputPosition);
 
 	float heightMult = min((1.0 / 10000.0) * max(worldViewPos.z - 70000, 0), 1);
 
@@ -163,7 +163,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 #		if defined(STENCIL)
 	vsout.WorldPosition = worldPos;
-	vsout.PreviousWorldPosition = mul(PreviousWorld[0], inputPosition);
+	vsout.PreviousWorldPosition = mul(PreviousWorld, inputPosition);
 #		else
 
 #			if !defined(UNIFIED_WATER)
@@ -177,7 +177,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 #			if defined(LOD)
 	float4 posAdjust =
-		ObjectUV.x ? 0.0 : (QPosAdjust[0].xyxy + worldPos.xyxy) / NormalsScale.xxyy;
+		ObjectUV.x ? 0.0 : (QPosAdjust.xyxy + worldPos.xyxy) / NormalsScale.xxyy;
 
 	vsout.TexCoord1.xyzw = NormalsScroll0 + posAdjust;
 #			else
@@ -185,7 +185,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.MPosition.xyzw = inputPosition.xyzw;
 #				endif
 
-	float2 posAdjust = worldPos.xy + QPosAdjust[0].xy;
+	float2 posAdjust = worldPos.xy + QPosAdjust.xy;
 
 	float2 scrollAdjust1 = posAdjust / NormalsScale.xx;
 	float2 scrollAdjust2 = posAdjust / NormalsScale.yy;
@@ -322,7 +322,7 @@ Texture2D<float4> RawSSRReflectionTex : register(t11);
 cbuffer PerTechnique : register(b0)
 {
 	float4 VPOSOffset : packoffset(c0);    // inverse main render target width and height in xy, 0 in zw
-	float4 PosAdjust[1] : packoffset(c1);  // inverse framebuffer range in w
+	float4 PosAdjust : packoffset(c1);  // inverse framebuffer range in w
 	float4 CameraDataWater : packoffset(c2);
 	float4 SunDir : packoffset(c3);
 	float4 SunColor : packoffset(c4);
@@ -348,7 +348,7 @@ cbuffer PerMaterial : register(b1)
 
 cbuffer PerGeometry : register(b2)
 {
-	float4x4 TextureProj[1] : packoffset(c0);
+	float4x4 TextureProj : packoffset(c0);
 	float4 ReflectPlane[1] : packoffset(c4);
 	float4 ProjData : packoffset(c5);
 	float4 LightPos[8] : packoffset(c6);
@@ -373,10 +373,10 @@ float GetWaterFogFade()
 {
 #			if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
-		return ExponentialHeightFog::GetVanillaFogFade(PosAdjust[0].w);
+		return ExponentialHeightFog::GetVanillaFogFade(PosAdjust.w);
 	}
 #			endif
-	return PosAdjust[0].w;
+	return PosAdjust.w;
 }
 
 #			if defined(FLOWMAP)
@@ -864,7 +864,7 @@ struct DiffuseOutput
 DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection, inout float4 distanceMul, float refractionsDepthFactor, float fresnel, float3 viewPosition, float depth)
 {
 #			if defined(REFRACTIONS)
-	float4 refractionNormal = mul(transpose(TextureProj[0]), float4((VarAmounts.w * refractionsDepthFactor * normal.xy) + input.MPosition.xy, input.MPosition.z, 1));
+	float4 refractionNormal = mul(transpose(TextureProj), float4((VarAmounts.w * refractionsDepthFactor * normal.xy) + input.MPosition.xy, input.MPosition.z, 1));
 
 	float2 refractionUvRaw = float2(refractionNormal.x, refractionNormal.w - refractionNormal.y) / refractionNormal.ww;
 	float2 screenPosition = FrameBuffer::DynamicResolutionParams1.xy * (FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy);
@@ -1043,7 +1043,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	[unroll] for (int lightIndex = 0; lightIndex < NUM_SPECULAR_LIGHTS; ++lightIndex)
 	{
-		float3 lightVector = LightPos[lightIndex].xyz - (PosAdjust[0].xyz + input.WPosition.xyz);
+		float3 lightVector = LightPos[lightIndex].xyz - (PosAdjust.xyz + input.WPosition.xyz);
 		float3 lightDirection = normalize(normalize(lightVector) - viewDirection);
 		float lightFade = saturate(length(lightVector) / LightPos[lightIndex].w);
 		float lightColorMul = (1 - lightFade * lightFade);

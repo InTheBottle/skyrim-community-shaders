@@ -2,12 +2,6 @@
 
 #pragma once
 
-#define GET_INSTANCE_MEMBER(a_value, a_source) \
-	auto& a_value = a_source->GetRuntimeData().a_value;
-
-#define GET_INSTANCE_MEMBER_PTR(a_value, a_source) \
-	&(a_source->GetRuntimeData().a_value)
-
 namespace Util
 {
 	void StoreTransform3x4NoScale(DirectX::XMFLOAT3X4& Dest, const RE::NiTransform& Source);

@@ -35,8 +35,8 @@ cbuffer PerTechnique : register(b0)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float4x4 WorldViewProj[1];  // 0
-	row_major float4x4 WorldView[1];      // 4
+	row_major float4x4 WorldViewProj;  // 0
+	row_major float4x4 WorldView;      // 4
 #	if defined(ENVCUBE)
 	row_major float4x4 PrecipitationOcclusionWorldViewProj;  // 8, 16
 #	endif
@@ -81,11 +81,11 @@ VS_OUTPUT main(VS_INPUT input)
 	msPosition.xyz = normalizedPosition * fVars2.xxx + (-(fVars2.x * 0.5).xxx + fVars1.xyz);
 	msPosition.w = 1;
 
-	float4 viewPosition = mul(WorldViewProj[0], msPosition);
+	float4 viewPosition = mul(WorldViewProj, msPosition);
 #		if defined(RAIN)
 	float4 adjustedMsPosition = msPosition - float4(Velocity.xyz, 0);
 	float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
-	float4 adjustedViewPosition = mul(WorldViewProj[0], adjustedMsPosition);
+	float4 adjustedViewPosition = mul(WorldViewProj, adjustedMsPosition);
 	float4 finalViewPosition = lerp(adjustedViewPosition, viewPosition, positionBlendParam);
 #		else
 	float4 finalViewPosition = viewPosition;
@@ -140,7 +140,7 @@ VS_OUTPUT main(VS_INPUT input)
 							 input.Position.xyz));
 	msPosition.w = 1;
 
-	float4 viewPosition = mul(WorldViewProj[0], msPosition);
+	float4 viewPosition = mul(WorldViewProj, msPosition);
 	vsout.Position.xy = positionOffset * ScaleAdjust + viewPosition.xy;
 	vsout.Position.zw = viewPosition.zw;
 

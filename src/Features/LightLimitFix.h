@@ -134,7 +134,7 @@ public:
 	float lightsNear = 1;
 	float lightsFar = 16384;
 
-	RE::NiPoint3 eyePositionCached[1]{};
+	RE::NiPoint3 eyePositionCached{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	int previousRoomIndex = -1;

@@ -42,9 +42,9 @@ cbuffer PerTechnique : register(b0)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float4x4 WorldViewProj[1] : packoffset(c0);
-	row_major float4x4 World[1] : packoffset(c4);
-	row_major float4x4 PreviousWorld[1] : packoffset(c8);
+	row_major float4x4 WorldViewProj : packoffset(c0);
+	row_major float4x4 World : packoffset(c4);
+	row_major float4x4 PreviousWorld : packoffset(c8);
 };
 
 VS_OUTPUT main(VS_INPUT input)
@@ -57,14 +57,14 @@ VS_OUTPUT main(VS_INPUT input)
 	adjustedModelPosition.y = dot(input.InstanceData2.yx, scaledModelPosition.xy);
 	adjustedModelPosition.z = scaledModelPosition.z;
 	float4 finalModelPosition = float4(input.InstanceData1.xyz + adjustedModelPosition.xyz, 1.0);
-	float4 viewPosition = mul(WorldViewProj[0], finalModelPosition);
+	float4 viewPosition = mul(WorldViewProj, finalModelPosition);
 
 #	ifdef RENDER_DEPTH
 	vsout.Depth.xy = viewPosition.zw;
 	vsout.Depth.zw = input.InstanceData2.zw;
 #	else
-	vsout.WorldPosition = mul(World[0], finalModelPosition);
-	vsout.PreviousWorldPosition = mul(PreviousWorld[0], finalModelPosition);
+	vsout.WorldPosition = mul(World, finalModelPosition);
+	vsout.PreviousWorldPosition = mul(PreviousWorld, finalModelPosition);
 	vsout.ViewPosition = viewPosition;
 #	endif  // RENDER_DEPTH
 

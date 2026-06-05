@@ -200,7 +200,7 @@ void State::Reset()
 	frameCount++;
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		GET_INSTANCE_MEMBER(BSImagespaceShaderApplyReflections, imageSpaceManager);
+		auto& BSImagespaceShaderApplyReflections = imageSpaceManager->GetRuntimeData().BSImagespaceShaderApplyReflections;
 
 		// Disable reflections being applied to things other than water
 		if (BSImagespaceShaderApplyReflections.get()) {

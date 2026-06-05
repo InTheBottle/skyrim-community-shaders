@@ -47,10 +47,10 @@ struct VS_OUTPUT
 #ifdef VSHADER
 cbuffer PerGeometry : register(b2)
 {
-	row_major float4x4 WorldViewProj[1] : packoffset(c0);
-	row_major float4x4 World[1] : packoffset(c4);
-	row_major float4x4 PreviousWorld[1] : packoffset(c8);
-	float3 EyePosition[1] : packoffset(c12);
+	row_major float4x4 WorldViewProj : packoffset(c0);
+	row_major float4x4 World : packoffset(c4);
+	row_major float4x4 PreviousWorld : packoffset(c8);
+	float3 EyePosition : packoffset(c12);
 	float VParams : packoffset(c12.w);
 	float4 BlendColor[3] : packoffset(c13);
 	float2 TexCoordOff : packoffset(c16);
@@ -73,8 +73,8 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	elif defined(HORIZFADE)
 
-	float worldHeight = mul(World[0], inputPosition).z;
-	float eyeHeightDelta = -EyePosition[0].z + worldHeight;
+	float worldHeight = mul(World, inputPosition).z;
+	float eyeHeightDelta = -EyePosition.z + worldHeight;
 
 	vsout.TexCoord0.xy = input.TexCoord;
 	vsout.TexCoord2.x = saturate((1.0 / 17.0) * eyeHeightDelta);
@@ -113,10 +113,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	endif  // OCCLUSION MOONMASK HORIZFADE
 
-	vsout.Position = mul(WorldViewProj[0], inputPosition).xyww;
-	vsout.WorldPosition = mul(World[0], inputPosition);
-	vsout.FogPosition = vsout.WorldPosition.xyz - EyePosition[0].xyz;
-	vsout.PreviousWorldPosition = mul(PreviousWorld[0], inputPosition);
+	vsout.Position = mul(WorldViewProj, inputPosition).xyww;
+	vsout.WorldPosition = mul(World, inputPosition);
+	vsout.FogPosition = vsout.WorldPosition.xyz - EyePosition.xyz;
+	vsout.PreviousWorldPosition = mul(PreviousWorld, inputPosition);
 
 	return vsout;
 }

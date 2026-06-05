@@ -227,9 +227,9 @@ void Deferred::StartDeferred()
 	globals::state->UpdateSharedData(true, false);
 
 	auto shadowState = globals::game::shadowState;
-	GET_INSTANCE_MEMBER(renderTargets, shadowState)
-	GET_INSTANCE_MEMBER(setRenderTargetMode, shadowState)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+	auto& renderTargets = shadowState->GetRuntimeData().renderTargets;
+	auto& setRenderTargetMode = shadowState->GetRuntimeData().setRenderTargetMode;
+	auto& stateUpdateFlags = shadowState->GetRuntimeData().stateUpdateFlags;
 
 	// Backup original render targets
 	for (uint i = 0; i < 4; i++) {
@@ -387,8 +387,8 @@ void Deferred::EndDeferred()
 		return;
 
 	auto shadowState = globals::game::shadowState;
-	GET_INSTANCE_MEMBER(renderTargets, shadowState)
-	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+	auto& renderTargets = shadowState->GetRuntimeData().renderTargets;
+	auto& stateUpdateFlags = shadowState->GetRuntimeData().stateUpdateFlags;
 
 	// Do not render to our targets past this point
 	for (uint i = 0; i < 4; i++) {

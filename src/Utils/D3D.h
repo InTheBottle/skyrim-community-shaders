@@ -17,16 +17,6 @@ namespace Util
 	void ApplyHighlightTintToTexture(ID3D11Texture2D* texture, bool isHighlighted, const std::array<float, 4>& highlightColor = { 1.0f, 0.5f, 0.0f, 0.3f });
 	HRESULT CreateOverlayTextureAndRTV(ID3D11Device* device, int width, int height, ID3D11Texture2D** outTex, ID3D11RenderTargetView** outRTV);
 
-	inline int GetRenderTargetCount()
-	{
-		return RE::RENDER_TARGETS::kTOTAL;
-	}
-
-	inline int GetDepthStencilCount()
-	{
-		return RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL;
-	}
-
 	HRESULT SaveTextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, const std::filesystem::path& path, ID3D11Texture2D* tex);
 	HRESULT LoadTextureFromFile(ID3D11Device* device, const std::filesystem::path& path, ID3D11Texture2D** outTex, ID3D11ShaderResourceView** outSRV);
 

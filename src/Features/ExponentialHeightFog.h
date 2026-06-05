@@ -83,7 +83,7 @@ private:
 		DirectX::XMUINT4 gridSizeAndFlags = {};
 		float4 invGridSizeAndNearFade = {};
 		float4 gridZParams = {};
-		float4x4 clipToWorld[2] = {};
+		float4x4 clipToWorld = {};
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};
 		float4 jitterParameters = {};  // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused

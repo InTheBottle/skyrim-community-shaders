@@ -87,12 +87,12 @@ struct VS_OUTPUT
 #ifdef VSHADER
 cbuffer VS_PerFrame : register(b12)
 {
-	row_major float4x4 ScreenProj[1] : packoffset(c0);
-	row_major float4x4 ViewProj[1] : packoffset(c8);
+	row_major float4x4 ScreenProj : packoffset(c0);
+	row_major float4x4 ViewProj : packoffset(c8);
 #	if defined(SKINNED)
-	float3 BonesPivot[1] : packoffset(c40);
+	float3 BonesPivot : packoffset(c40);
 #		if defined(MOTIONVECTORS_NORMALS)
-	float3 PreviousBonesPivot[1] : packoffset(c41);
+	float3 PreviousBonesPivot : packoffset(c41);
 #		endif  // MOTIONVECTORS_NORMALS
 #	endif      // SKINNED
 };
@@ -113,11 +113,11 @@ cbuffer PerMaterial : register(b1)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float3x4 World[1] : packoffset(c0);
-	row_major float3x4 PreviousWorld[1] : packoffset(c3);
+	row_major float3x4 World : packoffset(c0);
+	row_major float3x4 PreviousWorld : packoffset(c3);
 	float4 MatProj[3] : packoffset(c6);
-	float4 EyePosition[1] : packoffset(c12);
-	float4 PosAdjust[1] : packoffset(c13);
+	float4 EyePosition : packoffset(c12);
+	float4 PosAdjust : packoffset(c13);
 	float4 TexcoordOffsetMembrane : packoffset(c14);
 }
 
@@ -162,7 +162,7 @@ float GetProjectedU(float3 worldPosition, float4 texCoordOffset)
 
 float GetProjectedV(float3 worldPosition)
 {
-	return (-PosAdjust[0].x + (PosAdjust[0].z + worldPosition.z)) / PosAdjust[0].y;
+	return (-PosAdjust.x + (PosAdjust.z + worldPosition.z)) / PosAdjust.y;
 }
 #	endif
 
@@ -171,31 +171,31 @@ VS_OUTPUT main(VS_INPUT input)
 	VS_OUTPUT vsout;
 	precise float4 inputPosition = float4(input.Position.xyz, 1.0);
 
-	precise row_major float4x4 world4x4 = float4x4(World[0][0], World[0][1], World[0][2], float4(0, 0, 0, 1));
+	precise row_major float4x4 world4x4 = float4x4(World[0], World[1], World[2], float4(0, 0, 0, 1));
 	precise float3x3 world3x3 =
-		transpose(float3x3(transpose(World[0])[0], transpose(World[0])[1], transpose(World[0])[2]));
+		transpose(float3x3(transpose(World)[0], transpose(World)[1], transpose(World)[2]));
 
 #	if defined(SKY_OBJECT)
-	float4x4 viewProj = float4x4(ViewProj[0][0], ViewProj[0][1], ViewProj[0][3], ViewProj[0][3]);
+	float4x4 viewProj = float4x4(ViewProj[0], ViewProj[1], ViewProj[3], ViewProj[3]);
 #	else
-	row_major float4x4 viewProj = ViewProj[0];
+	row_major float4x4 viewProj = ViewProj;
 #	endif
 
 #	if defined(SKINNED)
 	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;
 #		if defined(MOTIONVECTORS_NORMALS)
 	float3x4 previousBoneTransformMatrix =
-		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot[0], input.BoneWeights);
+		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot, input.BoneWeights);
 	precise float4 previousWorldPosition =
 		float4(mul(inputPosition, transpose(previousBoneTransformMatrix)), 1);
 #		endif
 	float3x4 boneTransformMatrix =
-		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[0], input.BoneWeights);
+		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot, input.BoneWeights);
 	precise float4 worldPosition = float4(mul(inputPosition, transpose(boneTransformMatrix)), 1);
 	float4 viewPos = mul(viewProj, worldPosition);
 #	else
-	precise float4 worldPosition = float4(mul(World[0], inputPosition), 1);
-	precise float4 previousWorldPosition = float4(mul(PreviousWorld[0], inputPosition), 1);
+	precise float4 worldPosition = float4(mul(World, inputPosition), 1);
+	precise float4 previousWorldPosition = float4(mul(PreviousWorld, inputPosition), 1);
 	precise row_major float4x4 modelView = mul(viewProj, world4x4);
 	float4 viewPos = mul(modelView, inputPosition);
 #	endif
@@ -297,7 +297,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float3 eyePosition = 0.0.xxx;
 #	if defined(MEMBRANE) && defined(TEXTURE) && !defined(SKINNED)
-	eyePosition = EyePosition[0].xyz;
+	eyePosition = EyePosition.xyz;
 #	endif
 
 	float3 viewPosition = inputPosition.xyz;
@@ -340,7 +340,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		elif defined(FALLOFF) || (defined(SKINNED) && defined(MEMBRANE))
 	float3 screenSpaceNormal = worldNormal;
 #		else
-	float4x4 modelScreen = mul(ScreenProj[0], world4x4);
+	float4x4 modelScreen = mul(ScreenProj, world4x4);
 	float3 screenSpaceNormal = normalize(mul(modelScreen, float4(normal, 0))).xyz;
 #		endif
 

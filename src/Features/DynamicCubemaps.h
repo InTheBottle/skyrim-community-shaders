@@ -134,8 +134,7 @@ public:
 			{ T("feature.dynamic_cubemaps.key_feature_1", "Real-time environment capture for realistic reflections"),
 				T("feature.dynamic_cubemaps.key_feature_2", "Dynamic cube map generation based on camera position"),
 				T("feature.dynamic_cubemaps.key_feature_3", "Enhanced water reflections with environmental details"),
-				T("feature.dynamic_cubemaps.key_feature_4", "Support for standard rendering modes"),
-				T("feature.dynamic_cubemaps.key_feature_5", "Optimized cubemap inference and irradiance calculation") } };
+				T("feature.dynamic_cubemaps.key_feature_4", "Optimized cubemap inference and irradiance calculation") } };
 	};
 
 	virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() override;

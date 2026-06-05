@@ -251,7 +251,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 		if (i < a_pass->numShadowLights) {
 			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-			GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+			auto& maskIndex = shadowLight->GetRuntimeData().maskIndex;
 			light.shadowMaskIndex = maskIndex;
 			light.lightFlags.set(LightFlags::Shadow);
 		}
@@ -265,7 +265,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		if (!bsLight)
 			continue;
 		auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-		GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+		auto& maskIndex = shadowLight->GetRuntimeData().maskIndex;
 		strictLightDataTemp.ShadowBitMask |= (1u << maskIndex);
 	}
 }
@@ -307,7 +307,7 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 	RE::NiPoint3 eyePosition;
 
 	if (a_cached) {
-		eyePosition = eyePositionCached[0];
+		eyePosition = eyePositionCached;
 	} else {
 		eyePosition = globals::game::shadowState->GetRuntimeData().posAdjust.getEye(0);
 	}
@@ -386,7 +386,7 @@ void LightLimitFix::UpdateLights()
 
 	{
 		auto eyePosition = globals::game::frameBufferCached.GetCameraPosAdjust();
-		eyePositionCached[0] = { eyePosition.x, eyePosition.y, eyePosition.z };
+		eyePositionCached = { eyePosition.x, eyePosition.y, eyePosition.z };
 	}
 
 	eastl::vector<LightData> lightsData{};
@@ -441,7 +441,7 @@ void LightLimitFix::UpdateLights()
 
 					if (bsLight->IsShadowLight()) {
 						auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-						GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+						auto& maskIndex = shadowLight->GetRuntimeData().maskIndex;
 						light.shadowMaskIndex = maskIndex;
 						light.lightFlags.set(LightFlags::Shadow);
 					}

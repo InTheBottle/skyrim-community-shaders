@@ -73,7 +73,7 @@ struct VS_OUTPUT
 #ifdef VSHADER
 cbuffer PerTechnique : register(b0)
 {
-	float4 HighDetailRange[1] : packoffset(c0);  // loaded cells center in xy, size in zw
+	float4 HighDetailRange : packoffset(c0);  // loaded cells center in xy, size in zw
 	float2 ParabolaParam : packoffset(c1);       // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
 };
 
@@ -85,8 +85,8 @@ cbuffer PerMaterial : register(b1)
 cbuffer PerGeometry : register(b2)
 {
 	float4 ShadowFadeParam : packoffset(c0);
-	row_major float4x4 World[1] : packoffset(c1);
-	float4 EyePos[1] : packoffset(c5);
+	row_major float4x4 World : packoffset(c1);
+	float4 EyePos : packoffset(c5);
 	float4 WaterParams : packoffset(c6);
 	float4 TreeParams : packoffset(c7);
 };
@@ -105,7 +105,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(RENDER_SHADOWMASKDPB) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB)
 	vsout.PositionCS.z = ShadowFadeParam.z;
 #		else
-	vsout.PositionCS.z = HighDetailRange[0].x;
+	vsout.PositionCS.z = HighDetailRange.x;
 #		endif
 	vsout.PositionCS.w = 1;
 #	elif defined(STENCIL_ABOVE_WATER)
@@ -128,7 +128,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(LOD_LANDSCAPE)
-	positionMS = LodLandscape::AdjustLodLandscapeVertexPositionMS(positionMS, World[0], HighDetailRange[0]);
+	positionMS = LodLandscape::AdjustLodLandscapeVertexPositionMS(positionMS, World, HighDetailRange);
 #		endif
 
 #		if defined(SKINNED)
@@ -139,7 +139,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	positionCS = mul(FrameBuffer::CameraViewProj, positionWS);
 #		else
-	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj, World[0]);
+	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj, World);
 	positionCS = mul(modelViewProj, positionMS);
 #		endif
 
@@ -166,7 +166,7 @@ VS_OUTPUT main(VS_INPUT input)
 	normalMS = normalize(mul(normalMS, transpose(boneRSMatrix)));
 	normalVS = mul(FrameBuffer::CameraView, float4(normalMS, 0)).xyz;
 #			else
-	normalVS = mul(mul(FrameBuffer::CameraView, World[0]), float4(normalMS, 0)).xyz;
+	normalVS = mul(mul(FrameBuffer::CameraView, World), float4(normalMS, 0)).xyz;
 #			endif
 #			if defined(RENDER_NORMAL_CLAMP)
 	normalVS = max(min(normalVS, 0.1), -0.1);
@@ -191,12 +191,12 @@ VS_OUTPUT main(VS_INPUT input)
 	float falloff = 1;
 #				if defined(RENDER_NORMAL_FALLOFF)
 #					if defined(SKINNED)
-	falloff = dot(normalMS, normalize(EyePos[0].xyz - positionWS.xyz));
+	falloff = dot(normalMS, normalize(EyePos.xyz - positionWS.xyz));
 #					else
-	falloff = dot(normalMS, normalize(EyePos[0].xyz - positionMS.xyz));
+	falloff = dot(normalMS, normalize(EyePos.xyz - positionMS.xyz));
 #					endif
 #				endif
-	texCoord.w = EyePos[0].w * falloff;
+	texCoord.w = EyePos.w * falloff;
 #			endif
 
 	vsout.TexCoord0 = texCoord;
@@ -298,9 +298,9 @@ cbuffer PerGeometry : register(b2)
 	float4 ShadowLightParam : packoffset(c3);  // Falloff in x, ShadowDistance squared in z
 	float4x3 FocusShadowMapProj[4] : packoffset(c4);
 #	if defined(RENDER_SHADOWMASK)
-	float4x3 ShadowMapProj[1][3] : packoffset(c16);  // 16, 19, 22
+	float4x3 ShadowMapProj[3] : packoffset(c16);  // 16, 19, 22
 #	elif defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
-	float4x4 ShadowMapProj[1][3] : packoffset(c16);
+	float4x4 ShadowMapProj[3] : packoffset(c16);
 #	endif
 }
 
@@ -453,15 +453,15 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowColor = float4(0, 0, 0, 0);
 
 	if (EndSplitDistances.z >= shadowMapDepth) {
-		float4x3 lightProjectionMatrix = ShadowMapProj[0][0];
+		float4x3 lightProjectionMatrix = ShadowMapProj[0];
 		float shadowMapThreshold = AlphaTestRef.y;
 		float cascadeIndex = 0;
 		if (2.5 < EndSplitDistances.w && EndSplitDistances.y < shadowMapDepth) {
-			lightProjectionMatrix = ShadowMapProj[0][2];
+			lightProjectionMatrix = ShadowMapProj[2];
 			shadowMapThreshold = AlphaTestRef.z;
 			cascadeIndex = 2;
 		} else if (EndSplitDistances.x < shadowMapDepth) {
-			lightProjectionMatrix = ShadowMapProj[0][1];
+			lightProjectionMatrix = ShadowMapProj[1];
 			shadowMapThreshold = AlphaTestRef.z;
 			cascadeIndex = 1;
 		}
@@ -484,7 +484,7 @@ PS_OUTPUT main(PS_INPUT input)
 		if (cascadeIndex < 1 && StartSplitDistances.y < shadowMapDepth) {
 			float cascade1ShadowVisibility = 0;
 
-			float3 cascade1PositionLS = mul(transpose(ShadowMapProj[0][1]), float4(positionMS.xyz, 1)).xyz;
+			float3 cascade1PositionLS = mul(transpose(ShadowMapProj[1]), float4(positionMS.xyz, 1)).xyz;
 
 #			if SHADOWFILTER == 0
 			float cascade1ShadowMapValue = TexShadowMapSampler.Sample(SampShadowMapSampler, float3(cascade1PositionLS.xy, 1)).x;
@@ -520,7 +520,7 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowColor.xyzw = lerp(1.0 * !SharedData::InInterior, shadowVisibility, fadeFactor);
 	}
 #		elif defined(RENDER_SHADOWMASKSPOT)
-	float4 positionLS = mul(transpose(ShadowMapProj[0][0]), float4(positionMS.xyz, 1));
+	float4 positionLS = mul(transpose(ShadowMapProj[0]), float4(positionMS.xyz, 1));
 	positionLS.xyz /= positionLS.w;
 	float2 shadowMapUv = positionLS.xy * 0.5 + 0.5;
 	float shadowBaseVisibility = 0;
@@ -558,7 +558,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKPB)
-	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[0][0]), float4(positionMS.xyz, 1));
+	float4 unadjustedPositionLS = mul(transpose(ShadowMapProj[0]), float4(positionMS.xyz, 1));
 
 	float shadowVisibility = 0;
 
@@ -583,7 +583,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
 #		elif defined(RENDER_SHADOWMASKDPB)
-	float3 positionLS = mul(transpose(ShadowMapProj[0][0]), float4(positionMS.xyz, 1)).xyz;
+	float3 positionLS = mul(transpose(ShadowMapProj[0]), float4(positionMS.xyz, 1)).xyz;
 
 	bool lowerHalf = positionLS.z * 0.5 + 0.5 < 0;
 	float3 normalizedPositionLS = normalize(positionLS);

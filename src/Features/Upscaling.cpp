@@ -878,7 +878,7 @@ void Upscaling::ConfigureTAA()
 	auto upscaleMethod = GetUpscaleMethod();
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
+	auto& BSImagespaceShaderISTemporalAA = imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA;
 
 	// Force enable TAA if needed
 	BSImagespaceShaderISTemporalAA->taaEnabled = upscaleMethod != UpscaleMethod::kNONE;
@@ -1015,7 +1015,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
-	for (int i = 0; i < 5; ++i) {
+	for (int i = 0; i < 4; ++i) {
 		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
 	}
 
@@ -1680,7 +1680,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		upscaling.ApplySharpening();
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
+	auto& BSImagespaceShaderISTemporalAA = imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA;
 
 	BSImagespaceShaderISTemporalAA->taaEnabled = upscaleMethod == UpscaleMethod::kTAA;
 

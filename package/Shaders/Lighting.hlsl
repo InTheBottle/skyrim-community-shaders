@@ -92,7 +92,7 @@ struct VS_OUTPUT
 
 cbuffer PerTechnique : register(b0)
 {
-	float4 HighDetailRange[1] : packoffset(c0);  // loaded cells center in xy, size in zw
+	float4 HighDetailRange : packoffset(c0);  // loaded cells center in xy, size in zw
 	float4 FogParam : packoffset(c1);
 	float4 FogNearColor : packoffset(c2);
 	float4 FogFarColor : packoffset(c3);
@@ -107,24 +107,24 @@ cbuffer PerMaterial : register(b1)
 
 cbuffer PerGeometry : register(b2)
 {
-	row_major float3x4 World[1] : packoffset(c0);
-	row_major float3x4 PreviousWorld[1] : packoffset(c3);
-	float4 EyePosition[1] : packoffset(c6);
+	row_major float3x4 World : packoffset(c0);
+	row_major float3x4 PreviousWorld : packoffset(c3);
+	float4 EyePosition : packoffset(c6);
 	float4 LandBlendParams : packoffset(c7);  // offset in xy, gridPosition in yw
 	float4 TreeParams : packoffset(c8);       // wind magnitude in y, amplitude in z, leaf frequency in w
 	float2 WindTimers : packoffset(c9);
-	row_major float3x4 TextureProj[1] : packoffset(c10);
+	row_major float3x4 TextureProj : packoffset(c10);
 	float IndexScale : packoffset(c13);
 	float4 WorldMapOverlayParameters : packoffset(c14);
 };
 
 cbuffer VS_PerFrame : register(b12)
 {
-	row_major float3x3 ScreenProj[1] : packoffset(c0);
-	row_major float4x4 ViewProj[1] : packoffset(c8);
+	row_major float3x3 ScreenProj : packoffset(c0);
+	row_major float4x4 ViewProj : packoffset(c8);
 #	if defined(SKINNED)
-	float3 BonesPivot[1] : packoffset(c40);
-	float3 PreviousBonesPivot[1] : packoffset(c41);
+	float3 BonesPivot : packoffset(c40);
+	float3 PreviousBonesPivot : packoffset(c41);
 #	endif  // SKINNED
 };
 
@@ -146,7 +146,7 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 inputPosition = float4(input.Position.xyz, 1.0);
 
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
-	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[0], float4(0, 0, 0, 1)), HighDetailRange[0]);
+	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World, float4(0, 0, 0, 1)), HighDetailRange);
 #	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                   \
 
 	precise float4 previousInputPosition = inputPosition;
@@ -163,19 +163,19 @@ VS_OUTPUT main(VS_INPUT input)
 	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;
 
 	float3x4 previousWorldMatrix =
-		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot[0], input.BoneWeights);
+		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot, input.BoneWeights);
 	precise float4 previousWorldPosition =
 		float4(mul(inputPosition, transpose(previousWorldMatrix)), 1);
 
-	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[0], input.BoneWeights);
+	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot, input.BoneWeights);
 	precise float4 worldPosition = float4(mul(inputPosition, transpose(worldMatrix)), 1);
 
-	float4 viewPos = mul(ViewProj[0], worldPosition);
+	float4 viewPos = mul(ViewProj, worldPosition);
 #	else   // !SKINNED
-	precise float4 previousWorldPosition = float4(mul(PreviousWorld[0], inputPosition), 1);
-	precise float4 worldPosition = float4(mul(World[0], inputPosition), 1);
-	precise float4x4 world4x4 = float4x4(World[0][0], World[0][1], World[0][2], float4(0, 0, 0, 1));
-	precise float4x4 modelView = mul(ViewProj[0], world4x4);
+	precise float4 previousWorldPosition = float4(mul(PreviousWorld, inputPosition), 1);
+	precise float4 worldPosition = float4(mul(World, inputPosition), 1);
+	precise float4x4 world4x4 = float4x4(World[0], World[1], World[2], float4(0, 0, 0, 1));
+	precise float4x4 modelView = mul(ViewProj, world4x4);
 	float4 viewPos = mul(modelView, inputPosition);
 #	endif  // SKINNED
 
@@ -189,8 +189,8 @@ VS_OUTPUT main(VS_INPUT input)
 #	if defined(LANDSCAPE)
 	vsout.TexCoord0.zw = (uv * 0.010416667.xx + LandBlendParams.xy) * float2(1, -1) + float2(0, 1);
 #	elif defined(PROJECTED_UV) && !defined(SKINNED)
-	vsout.TexCoord0.z = mul(TextureProj[0][0], inputPosition);
-	vsout.TexCoord0.w = mul(TextureProj[0][1], inputPosition);
+	vsout.TexCoord0.z = mul(TextureProj[0], inputPosition);
+	vsout.TexCoord0.w = mul(TextureProj[1], inputPosition);
 #	endif
 	vsout.TexCoord0.xy = uv;
 
@@ -220,9 +220,9 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TBN1.xyz = worldTbnTr[1];
 	vsout.TBN2.xyz = worldTbnTr[2];
 #		else
-	vsout.TBN0.xyz = mul(tbn, World[0][0].xyz);
-	vsout.TBN1.xyz = mul(tbn, World[0][1].xyz);
-	vsout.TBN2.xyz = mul(tbn, World[0][2].xyz);
+	vsout.TBN0.xyz = mul(tbn, World[0].xyz);
+	vsout.TBN1.xyz = mul(tbn, World[1].xyz);
+	vsout.TBN2.xyz = mul(tbn, World[2].xyz);
 	float3x3 tempTbnTr = transpose(float3x3(vsout.TBN0.xyz, vsout.TBN1.xyz, vsout.TBN2.xyz));
 	tempTbnTr[0] = normalize(tempTbnTr[0]);
 	tempTbnTr[1] = normalize(tempTbnTr[1]);
@@ -249,8 +249,8 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.LandBlendWeights2.w = 1 - saturate(0.000375600968 * (9625.59961 - length(gridOffset)));
 	vsout.LandBlendWeights2.xyz = input.LandBlendWeights2.xyz;
 #	elif defined(PROJECTED_UV) && !defined(SKINNED)
-	float3x3 texProjWorld3x3 = float3x3(World[0][0].xyz, World[0][1].xyz, World[0][2].xyz);
-	vsout.TexProj = mul(texProjWorld3x3, TextureProj[0][2].xyz);
+	float3x3 texProjWorld3x3 = float3x3(World[0].xyz, World[1].xyz, World[2].xyz);
+	vsout.TexProj = mul(texProjWorld3x3, TextureProj[2].xyz);
 #	endif
 
 #	if defined(EYE)
