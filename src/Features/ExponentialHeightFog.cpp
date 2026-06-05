@@ -211,7 +211,8 @@ void ExponentialHeightFog::EnsureVolumetricResources()
 {
 	uint32_t pixelSize = std::clamp(settings.volumetricGridPixelSize, 4u, 64u);
 	const uint32_t gridZ = std::clamp(settings.volumetricGridSizeZ, 16u, 160u);
-	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	float2 screenSz{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+	auto renderSize = Util::ConvertToDynamic(screenSz);
 
 	auto getGridSize = [&renderSize, gridZ](uint32_t a_pixelSize) {
 		return DirectX::XMUINT4{

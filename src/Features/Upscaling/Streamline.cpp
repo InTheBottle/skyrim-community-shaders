@@ -327,11 +327,9 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport)
 	if (!EnsureFrameToken())
 		return false;
 
-	auto state = globals::state;
-
 	sl::Constants slConstants = {};
 
-	slConstants.cameraAspectRatio = state->screenSize.x / state->screenSize.y;
+	slConstants.cameraAspectRatio = (float)globals::game::graphicsState->screenWidth / (float)globals::game::graphicsState->screenHeight;
 
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
 	slConstants.cameraNear = *globals::game::cameraNear;
@@ -419,10 +417,8 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 		break;
 	}
 
-	auto state = globals::state;
-
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = (uint)state->screenSize.y;
+	dlssOptions.outputHeight = (uint)globals::game::graphicsState->screenHeight;
 
 	// Detect HDR from kMAIN format at runtime
 	{
@@ -558,12 +554,10 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp,
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
 {
-	auto state = globals::state;
-
 	auto renderer = globals::game::renderer;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can

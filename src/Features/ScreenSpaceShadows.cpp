@@ -66,7 +66,7 @@ void ScreenSpaceShadows::ClearShaderCache()
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
 {
-	float2 renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	float2 renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 
 	// Scale sample count based on both dimensions relative to 1920x1080 reference
 	float2 referenceRes = { 1920.0f, 1080.0f };
@@ -106,8 +106,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 void ScreenSpaceShadows::DrawShadows()
 {
 	ZoneScopedS(8);
-	auto state = globals::state;
-	TracyD3D11Zone(state->tracyCtx, "Screen Space Shadows");
+	TracyD3D11Zone(globals::state->tracyCtx, "Screen Space Shadows");
 
 	auto context = globals::d3d::context;
 
@@ -128,7 +127,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto lightProjectionF = CalculateLightProjection();
 
-	float2 renderSize = Util::ConvertToDynamic(state->screenSize);
+	float2 renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 	int viewportSize[2] = { (int)renderSize.x, (int)renderSize.y };
 
 	int minRenderBounds[2] = { 0, 0 };

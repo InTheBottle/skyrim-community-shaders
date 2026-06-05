@@ -152,9 +152,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	configParameters.flags = 0;
 	configParameters.allowAsyncWorkloads = true;
 
-	auto state = globals::state;
-
-	auto renderSize = state->screenSize * upscaling.resolutionScale;
+	auto renderSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight } * upscaling.resolutionScale;
 
 	configParameters.generationRect.left = (swapChain.swapChainDesc.Width - swapChain.swapChainDesc.Width) / 2;
 	configParameters.generationRect.top = (swapChain.swapChainDesc.Height - swapChain.swapChainDesc.Height) / 2;
@@ -243,8 +241,6 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 
 void FidelityFX::CreateFSRResources()
 {
-	auto state = globals::state;
-
 	// Prevent multiple allocations
 	if (fsrScratchBuffer) {
 		logger::warn("[FidelityFX] FSR resources already created, skipping allocation");
@@ -270,7 +266,7 @@ void FidelityFX::CreateFSRResources()
 		return;
 	}
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	uint32_t displayWidth = (uint32_t)screenSize.x;
@@ -344,7 +340,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	auto state = globals::state;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	auto& upscaling = globals::features::upscaling;

@@ -276,7 +276,6 @@ public:
 	uint frameCount = 0;
 
 	// Skyrim constants
-	float2 screenSize = {};
 	D3D_FEATURE_LEVEL featureLevel;
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context

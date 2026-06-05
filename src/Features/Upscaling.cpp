@@ -220,7 +220,7 @@ void Upscaling::DrawSettings()
 
 	// Display warning for DLSS resolution limits
 	if (upscaleMethod == UpscaleMethod::kDLSS) {
-		auto screenSize = globals::state->screenSize;
+		float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
 			Util::Text::Warning("Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS.",
 				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
@@ -897,7 +897,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 	// Get full screen size
 	auto state = globals::state;
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 
 	auto screenWidth = static_cast<int>(screenSize.x);
 	auto screenHeight = static_cast<int>(screenSize.y);
@@ -1040,7 +1040,7 @@ void Upscaling::CopySharedD3D12Resources()
 
 	{
 		// Set up viewport for fullscreen rendering
-		auto screenSize = globals::state->screenSize;
+		float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 
 		D3D11_VIEWPORT viewport = {};
 		viewport.TopLeftX = 0.0f;
@@ -1379,7 +1379,7 @@ void Upscaling::Upscale()
 		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+		auto renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 		uint32_t renderWidth = (uint32_t)renderSize.x;
 		uint32_t renderHeight = (uint32_t)renderSize.y;
 
@@ -1474,7 +1474,7 @@ void Upscaling::UpscaleDepth()
 		return;
 	}
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	if (screenSize.x <= 0.0f || screenSize.y <= 0.0f) {
 		return;
 	}

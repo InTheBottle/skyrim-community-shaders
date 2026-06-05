@@ -77,7 +77,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 
 void LightLimitFix::SetupResources()
 {
-	auto screenSize = globals::state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	clusterSize[0] = ((uint)screenSize.x + 63) / 64;
 	clusterSize[1] = ((uint)screenSize.y + 63) / 64;
 	clusterSize[2] = 32;
@@ -486,7 +486,7 @@ void LightLimitFix::UpdateStructure()
 	lightsNear = *globals::game::cameraNear;
 	lightsFar = *globals::game::cameraFar;
 
-	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	auto renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 	clusterSize[0] = ((uint)renderSize.x + 63) / 64;
 	clusterSize[1] = ((uint)renderSize.y + 63) / 64;
 	clusterSize[2] = 32;
