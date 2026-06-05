@@ -542,37 +542,19 @@ void Effect11::OnSkyUpdateColors(RE::Sky* a_sky)
 		OverrideWeather(a_sky);
 }
 
-struct Sky_SetDirectionalAmbientColors
+bool Effect11::HandleTonemapRender()
 {
-	static void thunk(Effect11::DirectionalAmbientColors& DirectionalAmbientColors, RE::NiColor* AmbientSpecularTint, float AmbientSpecularFresnel)
-	{
-		globals::features::effect11.CheckCommonData();
-		if (globals::features::effect11.enableEffect)
-			globals::features::effect11.OverrideAmbientLighting(DirectionalAmbientColors);
-		func(DirectionalAmbientColors, AmbientSpecularTint, AmbientSpecularFresnel);
+	CheckCommonData();
+
+	auto& settingManager = SettingManager::GetSingleton();
+	auto& effectManager = EffectManager::GetSingleton();
+
+	if (enableEffect && !settingManager.GetValue<bool>("UseOriginalPostProcessing", "EFFECT")) {
+		effectManager.ExecuteEffects();
+		return true;
 	}
-
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct Main_HDRTonemapBlendCinematic_Render
-{
-	static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
-	{
-		globals::features::effect11.CheckCommonData();
-
-		auto& settingManager = SettingManager::GetSingleton();
-		auto& effectManager = EffectManager::GetSingleton();
-
-		if (globals::features::effect11.enableEffect && !settingManager.GetValue<bool>("UseOriginalPostProcessing", "EFFECT")) {
-			effectManager.ExecuteEffects();
-		} else {
-			func(a1, a2, a3, a4, a5);
-		}
-	}
-
-	static inline REL::Relocation<decltype(thunk)> func;
-};
+	return false;
+}
 
 void Effect11::ModifySky(RE::BSRenderPass* Pass)
 {
@@ -591,16 +573,6 @@ void Effect11::ModifySky(RE::BSRenderPass* Pass)
 	}
 }
 
-struct BSSkyShader_SetupMaterial
-{
-	static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
-	{
-		globals::features::effect11.ModifySky(Pass);
-		func(This, Pass, RenderFlags);
-	}
-
-	static inline REL::Relocation<decltype(thunk)> func;
-};
 
 void Effect11::ModifyParticle(RE::BSRenderPass* Pass)
 {
@@ -618,16 +590,6 @@ void Effect11::ModifyParticle(RE::BSRenderPass* Pass)
 	context->VSSetConstantBuffers(5, 2, cbs);
 }
 
-struct BSParticleShader_SetupGeometry
-{
-	static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
-	{
-		func(This, Pass, RenderFlags);
-		globals::features::effect11.ModifyParticle(Pass);
-	}
-
-	static inline REL::Relocation<decltype(thunk)> func;
-};
 
 void Effect11::ParticleShaderHacks()
 {
@@ -916,15 +878,4 @@ void Effect11::DrawVolumetricRays()
 
 	stateBackup.Restore(context);
 	stateBackup.Release();
-}
-
-void Effect11::PostPostLoad()
-{
-	stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674).address() + REL::Relocate(0x1EA, 0x178));
-	if (REL::Module::IsSE())
-		stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674).address() + REL::Relocate(0x230, 0x178));
-
-	stl::detour_thunk<Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
-	stl::write_vfunc<0x6, BSSkyShader_SetupMaterial>(RE::VTABLE_BSSkyShader[0]);
-	stl::write_vfunc<0x6, BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 }

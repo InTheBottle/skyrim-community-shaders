@@ -135,5 +135,5 @@ public:
 	void ModifySky(RE::BSRenderPass* Pass);
 	__declspec(noinline) void ModifyParticle(RE::BSRenderPass* Pass);
 	void ParticleShaderHacks();
-	virtual void PostPostLoad() override;
+	bool HandleTonemapRender();
 };
