@@ -17,7 +17,10 @@
 #define I18N_KEY_PREFIX "feature.screenshot."
 
 #include <DirectXTex.h>
+#pragma warning(push)
+#pragma warning(disable: 4244)
 #include <sk_hdr_png.hpp>
+#pragma warning(pop)
 
 #include <format>
 #include <functional>
