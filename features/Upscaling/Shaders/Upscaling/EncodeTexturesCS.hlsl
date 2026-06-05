@@ -3,8 +3,7 @@
 cbuffer UpscalingData : register(b0)
 {
 	float2 TrueSamplingDim;
-	uint EyeOffsetX;
-	uint pad0;
+	float2 pad0;
 };
 
 Texture2D<float2> TAAMask : register(t0);
@@ -24,18 +23,15 @@ RWTexture2D<float> DepthOutput : register(u3);
 	if (any(dispatchID.xy >= uint2(TrueSamplingDim)))
 		return;
 
-	// All source reads use offset; outputs are 0-based
-	uint2 srcCoord = dispatchID.xy + uint2(EyeOffsetX, 0);
-
-	float2 taaMask = TAAMask[srcCoord];
-	float transparencyCompositionMask = NormalsWaterMask[srcCoord].z;
+	float2 taaMask = TAAMask[dispatchID.xy];
+	float transparencyCompositionMask = NormalsWaterMask[dispatchID.xy].z;
 
 #if defined(DLSS)
-	float depth = DepthMask[srcCoord];
+	float depth = DepthMask[dispatchID.xy];
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, SharedData::GetScreenDepth(depth));
 
 	// Find longest motion vector in 5x5 neighborhood
-	float2 motionVector = MotionVectorMask[srcCoord];
+	float2 motionVector = MotionVectorMask[dispatchID.xy];
 	float2 longestMotionVector = motionVector;
 	float maxMotionLengthSq = dot(motionVector, motionVector);
 
@@ -49,13 +45,11 @@ RWTexture2D<float> DepthOutput : register(u3);
 			if (any(samplePos < 0) || any(samplePos >= int2(TrueSamplingDim)))
 				continue;
 
-			// Source read uses offset
-			int2 srcPos = samplePos + int2(EyeOffsetX, 0);
-			float neighborDepth = DepthMask[srcPos];
+			float neighborDepth = DepthMask[samplePos];
 
 			// Take neighbor if it's longer AND closer
 			if (neighborDepth < depth) {
-				float2 neighborMotionVector = MotionVectorMask[srcPos];
+				float2 neighborMotionVector = MotionVectorMask[samplePos];
 
 				// Square motion vector for length
 				float motionLengthSq = dot(neighborMotionVector, neighborMotionVector);
@@ -74,7 +68,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 #if defined(DEPTH_OUTPUT)
 	// Copy depth as R32_FLOAT so FSR DX11 backend receives a typed format.
 	// The raw depth resource is R24G8_TYPELESS which maps to FFX_SURFACE_FORMAT_UNKNOWN.
-	DepthOutput[dispatchID.xy] = DepthMask[srcCoord];
+	DepthOutput[dispatchID.xy] = DepthMask[dispatchID.xy];
 #endif
 
 	float reactiveMask = taaMask.x * 0.1 + taaMask.y;

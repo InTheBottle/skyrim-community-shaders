@@ -79,7 +79,7 @@ The build system automatically handles:
 -   Settings persistence (JSON serialization)
 -   UI menu integration
 -   Feature lifecycle management
--   Cross-platform builds (SE/AE/VR)
+-   Cross-platform builds (SE/AE)
 
 Build with: `./BuildRelease.bat ALL`
 
@@ -89,5 +89,4 @@ Build with: `./BuildRelease.bat ALL`
 -   [ ] Settings save/load correctly
 -   [ ] Shaders compile without errors
 -   [ ] Feature works in-game
--   [ ] VR compatibility (if enabled)
 -   [ ] No build errors

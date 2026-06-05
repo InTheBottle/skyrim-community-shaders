@@ -80,8 +80,7 @@ public:
 	struct UpscalingDataCB
 	{
 		float2 trueSamplingDim;
-		uint eyeOffsetX;
-		uint pad0;
+		float2 pad0;
 	};
 
 	ConstantBuffer* jitterCB = nullptr;

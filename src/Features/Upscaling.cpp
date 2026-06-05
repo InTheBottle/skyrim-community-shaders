@@ -1380,36 +1380,29 @@ void Upscaling::Upscale()
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-		uint32_t numEyes = 1;
-		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes);
-		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
+		uint32_t renderWidth = (uint32_t)renderSize.x;
+		uint32_t renderHeight = (uint32_t)renderSize.y;
 
-		// The shader applies EyeOffsetX to sample the correct half.
 		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 		context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-		for (uint32_t i = 0; i < numEyes; ++i) {
-			uint32_t offsetX = i * eyeRenderWidth;
+		UpscalingDataCB upscalingData;
+		upscalingData.trueSamplingDim = float2((float)renderWidth, (float)renderHeight);
+		upscalingDataCB->Update(upscalingData);
+		auto upscalingBuffer = upscalingDataCB->CB();
+		context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-			UpscalingDataCB upscalingData;
-			upscalingData.trueSamplingDim = float2((float)eyeRenderWidth, (float)eyeRenderHeight);
-			upscalingData.eyeOffsetX = offsetX;
-			upscalingDataCB->Update(upscalingData);
-			auto upscalingBuffer = upscalingDataCB->CB();
-			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
+		// u2 (MotionVectorOutput): DLSS only — 5x5 dilated MVec for ghosting reduction.
+		ID3D11UnorderedAccessView* uavs[4] = {
+			reactiveMaskTexture->uav.get(),
+			transparencyCompositionMaskTexture->uav.get(),
+			(upscaleMethod == UpscaleMethod::kDLSS) ? motionVectorCopyTexture->uav.get() : nullptr,
+			nullptr
+		};
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-			// u2 (MotionVectorOutput): DLSS only — 5x5 dilated MVec for ghosting reduction.
-			ID3D11UnorderedAccessView* uavs[4] = {
-				reactiveMaskTexture->uav.get(),
-				transparencyCompositionMaskTexture->uav.get(),
-				(upscaleMethod == UpscaleMethod::kDLSS) ? motionVectorCopyTexture->uav.get() : nullptr,
-				nullptr
-			};
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->Dispatch((eyeRenderWidth + 7) / 8, (eyeRenderHeight + 7) / 8, 1);
-		}
+		context->Dispatch((renderWidth + 7) / 8, (renderHeight + 7) / 8, 1);
 
 		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);

@@ -115,7 +115,6 @@ public:
 
 	ConstantBuffer* strictLightDataCB = nullptr;
 
-	int eyeCount = 1;
 	bool previousEnableLightsVisualisation = settings.EnableLightsVisualisation;
 	bool currentEnableLightsVisualisation = settings.EnableLightsVisualisation;
 
