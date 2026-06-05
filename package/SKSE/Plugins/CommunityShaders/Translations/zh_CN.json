@@ -1354,7 +1354,6 @@
     "feature.upscaling.method_none": "无",
     "feature.upscaling.method_taa": "TAA",
     "feature.upscaling.name": "超分辨率",
-    "feature.upscaling.native_inputs": "原生输入",
     "feature.upscaling.nvidia_reflex": "NVIDIA Reflex",
     "feature.upscaling.preset_balanced": "平衡",
     "feature.upscaling.preset_dlaa": "DLAA",
@@ -1369,14 +1368,12 @@
     "feature.upscaling.streamline_logging_restart_note": "更改此设置需要重启才能生效。",
     "feature.upscaling.streamline_logging_tooltip": "Streamline日志记录控制NVIDIA Streamline后端日志的详细程度。对于调试DLSS/DLSS-G问题很有用。",
     "feature.upscaling.upscale_preset": "升频预设",
-    "feature.upscaling.upscaling_intermediates": "升频中间结果",
     "feature.upscaling.use_fps_limit": "使用FPS限制",
     "feature.upscaling.use_fps_limit_tooltip_1": "使用Reflex内部FPS上限以获得更稳定的帧时间。",
     "feature.upscaling.use_fps_limit_tooltip_2": "相比无上限渲染可以降低延迟。",
     "feature.upscaling.use_markers_to_optimize": "使用标记优化",
     "feature.upscaling.use_markers_to_optimize_tooltip_1": "使用帧标记以实现更紧密的Reflex计时。",
     "feature.upscaling.use_markers_to_optimize_tooltip_2": "先尝试开启；如果在您的设置上造成卡顿则关闭。",
-    "feature.upscaling.view_resize": "视图调整大小",
     "feature.volumetric_lighting.description": "体积光照通过雾、尘埃和大气粒子创造逼真的光散射效果。\n为室内和室外环境添加戏剧化的上帝射线和大气深度。",
     "feature.volumetric_lighting.enable_exteriors": "在室外启用体积光照",
     "feature.volumetric_lighting.enable_interiors": "在室内启用体积光照",
@@ -2077,5 +2074,8 @@
     "ui.copy": "复制",
     "ui.dont_ask_again": "不再提示",
     "ui.search": "搜索...",
-    "ui.search_features": "搜索功能..."
+    "ui.search_features": "搜索功能...",
+    "feature.upscaling.native_inputs": "原生输入",
+    "feature.upscaling.upscaling_intermediates": "升频中间结果",
+    "feature.upscaling.view_resize": "视图调整大小"
 }
