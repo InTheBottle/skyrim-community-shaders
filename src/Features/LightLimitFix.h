@@ -18,8 +18,7 @@ public:
 			{ T("feature.light_limit_fix.key_feature_1", "Removes 4-light limit"),
 				T("feature.light_limit_fix.key_feature_2", "Unlimited dynamic lights"),
 				T("feature.light_limit_fix.key_feature_3", "Improved lighting quality"),
-				T("feature.light_limit_fix.key_feature_4", "Enhanced visual realism"),
-				T("feature.light_limit_fix.key_feature_5", "Enhanced visual realism") } };
+				T("feature.light_limit_fix.key_feature_4", "Enhanced visual realism") } };
 	};
 
 	bool HasShaderDefine(RE::BSShader::Type) override { return true; };
