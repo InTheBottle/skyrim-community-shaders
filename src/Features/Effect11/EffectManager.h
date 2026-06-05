@@ -40,7 +40,7 @@ public:
 	static EffectManager& GetSingleton();
 
 	// Effect execution
-	void ExecuteEffects();
+	void ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE::BSGraphics::RenderTargetData& a_output);
 
 	// Lifecycle
 	void Initialize();

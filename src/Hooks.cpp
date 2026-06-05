@@ -292,7 +292,10 @@ namespace PostProcessingExtensions
 	{
 		static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
 		{
-			if (globals::features::effect11.loaded && globals::features::effect11.HandleTonemapRender())
+			if (globals::features::effect11.loaded &&
+				globals::features::effect11.HandleTonemapRender(
+					static_cast<RE::RENDER_TARGET>(a3),
+					static_cast<RE::RENDER_TARGET>(a4)))
 				return;
 			func(a1, a2, a3, a4, a5);
 		}
