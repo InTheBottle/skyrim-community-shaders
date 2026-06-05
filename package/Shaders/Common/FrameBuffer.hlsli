@@ -38,10 +38,9 @@ namespace FrameBuffer
 	 *
 	 * @param[in] screenPositionDR UVs already expressed in dynamic-resolution space.
 	 * @param[in] screenPosition Original normalized screen UVs.
-	 * @param[in] stereo Unused, kept for call-site compatibility. Default is 1.
 	 * @return Clamped dynamic-resolution UVs.
 	 */
-	float2 ClampDynamicResolutionAdjustedScreenPosition(float2 screenPositionDR, float2 screenPosition, uint stereo = 1)
+	float2 ClampDynamicResolutionAdjustedScreenPosition(float2 screenPositionDR, float2 screenPosition)
 	{
 		float2 minValue = 0;
 		float2 maxValue = float2(DynamicResolutionParams2.z, DynamicResolutionParams1.y);
@@ -67,13 +66,12 @@ namespace FrameBuffer
 	 * `ClampDynamicResolutionAdjustedScreenPosition(...)` instead.
 	 *
 	 * @param[in] screenPosition Normalized screen UVs in non-DR space.
-	 * @param[in] stereo Unused, kept for call-site compatibility. Default is 1.
 	 * @return Dynamic-resolution-adjusted and clamped UVs.
 	 */
-	float2 GetDynamicResolutionAdjustedScreenPosition(float2 screenPosition, uint stereo = 1)
+	float2 GetDynamicResolutionAdjustedScreenPosition(float2 screenPosition)
 	{
 		float2 screenPositionDR = DynamicResolutionParams1.xy * screenPosition;
-		return ClampDynamicResolutionAdjustedScreenPosition(screenPositionDR, screenPosition, stereo);
+		return ClampDynamicResolutionAdjustedScreenPosition(screenPositionDR, screenPosition);
 	}
 
 	/**
@@ -81,9 +79,9 @@ namespace FrameBuffer
 	 *
 	 * Applies dynamic-resolution adjustment/clamp to XY and preserves Z unchanged.
 	 */
-	float3 GetDynamicResolutionAdjustedScreenPosition(float3 screenPositionDR, uint stereo = 1)
+	float3 GetDynamicResolutionAdjustedScreenPosition(float3 screenPositionDR)
 	{
-		return float3(GetDynamicResolutionAdjustedScreenPosition(screenPositionDR.xy, stereo), screenPositionDR.z);
+		return float3(GetDynamicResolutionAdjustedScreenPosition(screenPositionDR.xy), screenPositionDR.z);
 	}
 
 	/**

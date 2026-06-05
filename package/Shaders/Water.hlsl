@@ -824,7 +824,7 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 	return reflectionColor;
 }
 
-float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
+float GetScreenDepthWater(float2 screenPosition)
 {
 	float depth = DepthTex.Load(float3(screenPosition, 0)).x;
 	return (CameraDataWater.w / (-depth * CameraDataWater.z + CameraDataWater.x));
