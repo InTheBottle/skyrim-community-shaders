@@ -2416,7 +2416,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	endif
 
-	float4 waterData = SharedData::GetWaterData(input.WorldPosition.xyz, 0);
+	float4 waterData = SharedData::GetWaterData(input.WorldPosition.xyz);
 	float waterHeight = waterData.w;
 
 	float waterRoughnessSpecular = 1;
