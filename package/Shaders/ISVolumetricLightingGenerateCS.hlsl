@@ -94,7 +94,7 @@ cbuffer PerTechnique : register(b0)
 	float shadowContribution = noShadow;
 
 #	if defined(TERRAIN_SHADOWS) || defined(CLOUD_SHADOWS)
-	shadowContribution *= sqrt(ShadowSampling::GetWorldShadow(positionWS.xyz, PosAdjust[0], 0));
+	shadowContribution *= sqrt(ShadowSampling::GetWorldShadow(positionWS.xyz, PosAdjust[0]));
 #	endif
 
 	float vl = shadowContribution * densityContribution * phaseContribution;
