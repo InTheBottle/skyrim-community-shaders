@@ -12,8 +12,8 @@ RWTexture2D<float> ConservativeDepthTexture : register(u0);
 	float2 eyeUVMin = saturate(volumeUVMin);
 	float2 eyeUVMax = saturate(volumeUVMax);
 
-	int2 minCoord = SharedData::ConvertUVToSampleCoord(min(eyeUVMin, eyeUVMax), 0).xy;
-	int2 maxCoord = SharedData::ConvertUVToSampleCoord(max(eyeUVMin, eyeUVMax), 0).xy - 1;
+	int2 minCoord = SharedData::ConvertUVToSampleCoord(min(eyeUVMin, eyeUVMax)).xy;
+	int2 maxCoord = SharedData::ConvertUVToSampleCoord(max(eyeUVMin, eyeUVMax)).xy - 1;
 	maxCoord = max(maxCoord, minCoord);
 
 	int2 bufferMax = int2(SharedData::BufferDim.xy) - 1;
