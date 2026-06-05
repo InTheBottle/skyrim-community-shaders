@@ -313,15 +313,11 @@ PS_OUTPUT main(PS_INPUT input)
 
 		float cloudBaseLuminance = dot(baseColor.xyz, 1.0 / 3.0);
 
-		float sunShadow = 1.0;
-		float masserShadow = 1.0;
-		float secundaShadow = 1.0;
+		float sunShadow = 0.0;
+		float masserShadow = 0.0;
+		float secundaShadow = 0.0;
 		
 		if (SharedData::enbSettings.EnableCloudsScattering){
-			sunShadow = 0.0;
-			masserShadow = 0.0;
-			secundaShadow = 0.0;
-
 			float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
 
 			const uint sampleCount = 8;
@@ -384,13 +380,13 @@ PS_OUTPUT main(PS_INPUT input)
 		if (SharedData::enbSettings.CloudsEdgeIntensity > 0.0) {
 			float cloudsEdgeAlpha = 1.0 - baseColor.w;
 
-			float3 sunPhase = pow(abs(saturate(dot(viewDirection, SharedData::SunDirection.xyz))), 10.0) * SharedData::SunColor.xyz * sunShadow;
-			float3 masserPhase = pow(abs(saturate(dot(viewDirection, SharedData::MasserDirection.xyz))), 10.0) * SharedData::MasserColor.xyz * SharedData::enbSettings.CloudsEdgeMoonMultiplier * masserShadow;
-			float3 secundaPhase = pow(abs(saturate(dot(viewDirection, SharedData::SecundaDirection.xyz))), 10.0) * SharedData::SecundaColor.xyz * SharedData::enbSettings.CloudsEdgeMoonMultiplier * secundaShadow;
+			float3 sunPhase = pow(abs(saturate(dot(viewDirection, SharedData::SunDirection.xyz))), 10.0) * SharedData::SunColor.xyz * max(cloudsEdgeAlpha, sunShadow);
+			float3 masserPhase = pow(abs(saturate(dot(viewDirection, SharedData::MasserDirection.xyz))), 10.0) * SharedData::MasserColor.xyz * SharedData::enbSettings.CloudsEdgeMoonMultiplier * max(cloudsEdgeAlpha, masserShadow);
+			float3 secundaPhase = pow(abs(saturate(dot(viewDirection, SharedData::SecundaDirection.xyz))), 10.0) * SharedData::SecundaColor.xyz * SharedData::enbSettings.CloudsEdgeMoonMultiplier * max(cloudsEdgeAlpha, secundaShadow);
 
 			float3 cloudsScatter = (sunPhase + masserPhase + secundaPhase) * SharedData::enbSettings.CloudsEdgeIntensity;
 
-			cloudColor += cloudBaseLuminance * cloudsScatter * cloudsEdgeAlpha;
+			cloudColor += cloudBaseLuminance * cloudsScatter;
 		}
 
 		psout.Color.xyz = cloudColor;
