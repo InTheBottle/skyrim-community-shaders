@@ -2751,7 +2751,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				continue;
 		}
 
-		float3 lightDirection = light.positionWS[0].xyz - input.WorldPosition.xyz;
+		float3 lightDirection = light.positionWS.xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
 
 #			if defined(ISL)

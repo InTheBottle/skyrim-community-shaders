@@ -25,7 +25,7 @@
 
 cbuffer SSGICB : register(b1)
 {
-	float4x4 PrevInvViewMat[2];
+	float4x4 PrevInvViewMat;
 	float4 NDCToViewMul;
 	float4 NDCToViewAdd;
 

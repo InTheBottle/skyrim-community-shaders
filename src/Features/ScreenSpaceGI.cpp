@@ -643,18 +643,18 @@ void ScreenSpaceGI::UpdateSB()
 	float2 dynres = Util::ConvertToDynamic(res);
 	dynres = { floor(dynres.x), floor(dynres.y) };
 
-	static float4x4 prevInvView[2] = {};
+	static float4x4 prevInvView = {};
 
 	SSGICB data;
 	{
 		{
 			auto eye = globals::game::shadowState->GetRuntimeData().cameraData.getEye(0);
 
-			data.PrevInvViewMat[0] = prevInvView[0];
-			data.NDCToViewMul[0] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
-			data.NDCToViewAdd[0] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
+			data.PrevInvViewMat = prevInvView;
+			data.NDCToViewMul = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1), 0.0f, 0.0f };
+			data.NDCToViewAdd = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1), 0.0f, 0.0f };
 
-			prevInvView[0] = eye.viewMat.Invert();
+			prevInvView = eye.viewMat.Invert();
 		}
 
 		data.TexDim = res;

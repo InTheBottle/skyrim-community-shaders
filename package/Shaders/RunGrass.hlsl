@@ -584,7 +584,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + i];
 				LightLimitFix::Light light = LightLimitFix::lights[clusteredLightIndex];
 
-				float3 lightDirection = light.positionWS[0].xyz - input.WorldPosition.xyz;
+				float3 lightDirection = light.positionWS.xyz - input.WorldPosition.xyz;
 				float lightDist = length(lightDirection);
 
 #				if defined(ISL)
@@ -776,7 +776,7 @@ PS_OUTPUT main(PS_INPUT input)
 				uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + i];
 				LightLimitFix::Light light = LightLimitFix::lights[clusteredLightIndex];
 
-				float3 lightDirection = light.positionWS[0].xyz - input.WorldPosition.xyz;
+				float3 lightDirection = light.positionWS.xyz - input.WorldPosition.xyz;
 				float lightDist = length(lightDirection);
 
 #				if defined(ISL)

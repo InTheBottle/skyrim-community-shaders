@@ -708,7 +708,7 @@ PS_OUTPUT main(PS_INPUT input)
 			if (LightLimitFix::IsLightIgnored(light) || light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				continue;
 			}
-			float3 lightDirection = light.positionWS[0].xyz - input.WorldPosition.xyz;
+			float3 lightDirection = light.positionWS.xyz - input.WorldPosition.xyz;
 			float lightDist = length(lightDirection);
 
 #			if defined(ISL)

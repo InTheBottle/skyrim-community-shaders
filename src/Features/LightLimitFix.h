@@ -49,7 +49,7 @@ public:
 		float invRadius;
 		float fadeZone;
 		float sizeBias;
-		PositionOpt positionWS[2];
+		PositionOpt positionWS;
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMaskIndex = 0;
@@ -258,10 +258,10 @@ struct fmt::formatter<LightLimitFix::LightData>
 	auto format(const LightLimitFix::LightData& l, format_context& ctx) const -> format_context::iterator
 	{
 		// ctx.out() is an output iterator to write to.
-		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {} {}}}",
+		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {}}}",
 			reinterpret_cast<uintptr_t>(&l),
 			(Vector3)l.color,
 			l.radius,
-			(Vector3)l.positionWS[0].data, (Vector3)l.positionWS[1].data);
+			(Vector3)l.positionWS.data);
 	}
 };

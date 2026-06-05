@@ -80,9 +80,9 @@ public:
 
 	struct alignas(16) SSGICB
 	{
-		float4x4 PrevInvViewMat[2];
-		float2 NDCToViewMul[2];
-		float2 NDCToViewAdd[2];
+		float4x4 PrevInvViewMat;
+		float4 NDCToViewMul;
+		float4 NDCToViewAdd;
 
 		float2 TexDim;
 		float2 RcpTexDim;  //

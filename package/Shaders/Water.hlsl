@@ -1114,7 +1114,7 @@ PS_OUTPUT main(PS_INPUT input)
 				continue;
 			}
 
-			float3 lightDirection = light.positionWS[0].xyz - input.WPosition.xyz;
+			float3 lightDirection = light.positionWS.xyz - input.WPosition.xyz;
 			float lightDist = length(lightDirection);
 
 #					if defined(ISL)

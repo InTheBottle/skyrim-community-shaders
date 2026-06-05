@@ -313,9 +313,9 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 	}
 
 	auto worldPos = a_initialPosition - eyePosition;
-	a_light.positionWS[0].data.x = worldPos.x;
-	a_light.positionWS[0].data.y = worldPos.y;
-	a_light.positionWS[0].data.z = worldPos.z;
+	a_light.positionWS.data.x = worldPos.x;
+	a_light.positionWS.data.y = worldPos.y;
+	a_light.positionWS.data.z = worldPos.z;
 }
 
 void LightLimitFix::Prepass()

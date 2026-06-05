@@ -47,7 +47,7 @@ void readHistory(
 		return;
 
 	float3 prev_pos = ScreenToViewPosition(screen_pos, prev_depth);
-	prev_pos = ViewToWorldPosition(prev_pos, PrevInvViewMat[0]) + FrameBuffer::CameraPreviousPosAdjust.xyz;
+	prev_pos = ViewToWorldPosition(prev_pos, PrevInvViewMat) + FrameBuffer::CameraPreviousPosAdjust.xyz;
 
 	float3 delta_pos = curr_pos - prev_pos;
 	// float normal_prod = dot(curr_normal, prev_normal);

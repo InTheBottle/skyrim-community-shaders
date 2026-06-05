@@ -280,7 +280,7 @@ float3 AccumulateLocalLightScattering(
 		if (light.lightFlags & LightLimitFix::LightFlags::Disabled)
 			continue;
 
-		float3 toLight = light.positionWS[0].xyz - positionWS;
+		float3 toLight = light.positionWS.xyz - positionWS;
 		float distanceSqr = dot(toLight, toLight);
 		if (distanceSqr < 1e-6f)
 			continue;
