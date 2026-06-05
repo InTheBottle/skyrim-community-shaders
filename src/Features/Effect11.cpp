@@ -552,23 +552,7 @@ bool Effect11::HandleTonemapRender(RE::RENDER_TARGET a_input, RE::RENDER_TARGET 
 	if (enableEffect && !settingManager.GetValue<bool>("UseOriginalPostProcessing", "EFFECT")) {
 		auto renderer = globals::game::renderer;
 		auto& renderTargets = renderer->GetRuntimeData().renderTargets;
-
 		effectManager.ExecuteEffects(renderTargets[a_input], renderTargets[a_output]);
-
-		auto context = globals::d3d::context;
-		auto& outputRT = renderTargets[a_output];
-		context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
-
-		auto shadowState = globals::game::shadowState;
-		auto& stateData = shadowState->GetRuntimeData();
-		stateData.renderTargets[0] = a_output;
-		stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-		for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
-			stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
-			stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-		}
-		stateData.depthStencil = static_cast<uint32_t>(-1);
-
 		return true;
 	}
 	return false;

@@ -82,6 +82,8 @@ public:
 	void Reset();
 	void Setup();
 
+	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
+
 	void Load(ConfigMode a_configMode = ConfigMode::USER, bool a_allowReload = true);
 	void Save(ConfigMode a_configMode = ConfigMode::USER);
 

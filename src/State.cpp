@@ -179,6 +179,29 @@ void State::Debug()
 	}
 }
 
+bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
+{
+	auto& effect11 = globals::features::effect11;
+	if (!effect11.loaded || !effect11.HandleTonemapRender(a_input, a_output))
+		return false;
+
+	auto renderer = globals::game::renderer;
+	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
+	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+
+	auto shadowState = globals::game::shadowState;
+	auto& stateData = shadowState->GetRuntimeData();
+	stateData.renderTargets[0] = a_output;
+	stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+	for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
+		stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
+		stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+	}
+	stateData.depthStencil = static_cast<uint32_t>(-1);
+
+	return true;
+}
+
 void State::Reset()
 {
 	globals::profiler->EndFrame();
