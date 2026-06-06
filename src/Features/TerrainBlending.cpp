@@ -52,27 +52,11 @@ namespace
 	constexpr uint32_t kShadowmaskDepthDescriptor0 = 0x262002u;
 	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
 
-	// Module RVAs from _ReturnAddress() at hooked engine callsites.
-	// Ownership:
-	// - Shared slot2 + depth-override callers: 0x1351AD4, 0xDBDD68
-	// - Depth-override-only caller: 0x1349B7F
-	const uint32_t kCallerRvaSlot2AndDepthOverrideA = static_cast<uint32_t>(REL::Relocate(0u, 0u, 0x1351AD4u));
-	const uint32_t kCallerRvaSlot2AndDepthOverrideB = static_cast<uint32_t>(REL::Relocate(0u, 0u, 0xDBDD68u));
-	const uint32_t kCallerRvaDepthOverrideOnly = static_cast<uint32_t>(REL::Relocate(0u, 0u, 0x1349B7Fu));
-
-	// Slot2 rewrite allowlist (PS slot 2 = shadowmask depth SRV override path).
-	// Includes only callsites validated for shadowmask slot2 rebinding.
-	const std::array<uint32_t, 2> kSlot2CallerAllowlistRvas = {
-		kCallerRvaSlot2AndDepthOverrideA,
-		kCallerRvaSlot2AndDepthOverrideB
-	};
-	// Descriptor-scoped OM depth override allowlist (0x1062002 only).
-	// Contains the two shared callers above plus one depth-override-only caller.
-	const std::array<uint32_t, 3> kDepthOverrideCallerAllowlistRvas = {
-		kCallerRvaSlot2AndDepthOverrideB,
-		kCallerRvaSlot2AndDepthOverrideA,
-		kCallerRvaDepthOverrideOnly
-	};
+	// Allowlists of module RVAs for _ReturnAddress()-based hook dispatch.
+	// Previously contained VR-specific callsite addresses; now empty so the
+	// auto-broad fallback paths handle all dispatch in SE/AE.
+	const std::array<uint32_t, 0> kSlot2CallerAllowlistRvas = {};
+	const std::array<uint32_t, 0> kDepthOverrideCallerAllowlistRvas = {};
 	constexpr bool kEnableAutoBroadSlot2Fallback = true;
 	constexpr uint64_t kSlot2AutoFallbackRejectThreshold = 5;
 	constexpr bool kEnableAutoBroadDepthOverrideFallback = true;

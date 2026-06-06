@@ -98,9 +98,6 @@ namespace globals
 		extern TruePBR truePBR;
 		extern Skin skin;
 
-		namespace llf
-		{
-		}
 	}
 
 	struct FrameBuffer

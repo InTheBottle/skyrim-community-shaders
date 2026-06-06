@@ -648,7 +648,7 @@ void ScreenSpaceGI::UpdateSB()
 	SSGICB data;
 	{
 		{
-			auto eye = globals::game::shadowState->GetRuntimeData().cameraData.getEye(0);
+			auto eye = globals::game::shadowState->GetRuntimeData().cameraData.getEye();
 
 			data.PrevInvViewMat = prevInvView;
 			data.NDCToViewMul = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1), 0.0f, 0.0f };

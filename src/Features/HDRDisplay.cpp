@@ -606,7 +606,7 @@ void HDRDisplay::PostPostLoad()
 	if (!globals::features::upscaling.loaded) {
 		logger::info("[HDR Display] Installing HDR pipeline hooks (Upscaling not loaded)");
 		stl::detour_thunk<HDR_MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
-		stl::write_thunk_call<HDR_Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
+		stl::write_thunk_call<HDR_Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7));
 	}
 }
 

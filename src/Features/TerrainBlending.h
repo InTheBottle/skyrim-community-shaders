@@ -149,7 +149,7 @@ public:
 		static void Install()
 		{
 			// To know when we are rendering z-prepass depth vs shadows depth
-			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395, 0x2EE));
+			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395));
 
 			// To know when shadowmask phase ends (for releasing engine hook overrides)
 			stl::detour_thunk<Main_RenderShadowmasks>(REL::RelocationID(100422, 107140));
