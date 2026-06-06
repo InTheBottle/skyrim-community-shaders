@@ -155,15 +155,11 @@ void ScreenSpaceShadows::DrawShadows()
 	float2 dynamicRes = { viewport->GetRuntimeData().dynamicResolutionWidthRatio, viewport->GetRuntimeData().dynamicResolutionHeightRatio };
 
 	// Shared dispatch logic
-	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, const float* lightProj,
-						   float invTexSizeX, float invTexSizeY) {
-		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		globals::profiler->BeginPass(timerName);
+	auto Dispatch = [&](ID3D11ComputeShader* shader, const float* lightProj,
+						float invTexSizeX, float invTexSizeY) {
+		globals::profiler->BeginPass("ScreenSpaceShadows::RayMarch");
 
-		if (globals::state->frameAnnotations && eyeName) {
-			std::string eventName = std::format("SSS - Ray March ({})", eyeName);
-			globals::state->BeginPerfEvent(eventName);
-		} else if (globals::state->frameAnnotations) {
+		if (globals::state->frameAnnotations) {
 			globals::state->BeginPerfEvent("SSS - Ray March");
 		}
 
@@ -175,7 +171,7 @@ void ScreenSpaceShadows::DrawShadows()
 			auto dispatchData = dispatchList.Dispatch[i];
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "SSS - DispatchEye CB");
+				TracyD3D11Zone(globals::state->tracyCtx, "SSS - Dispatch CB");
 
 				RaymarchCB data{};
 				data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
@@ -200,7 +196,7 @@ void ScreenSpaceShadows::DrawShadows()
 			}
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "SSS - DispatchEye Sweep");
+				TracyD3D11Zone(globals::state->tracyCtx, "SSS - Dispatch Sweep");
 				context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 			}
 		}
@@ -215,7 +211,7 @@ void ScreenSpaceShadows::DrawShadows()
 	float InvTexSizeX = 1.0f / (float)viewportSize[0];
 	float InvTexSizeY = 1.0f / (float)viewportSize[1];
 
-	DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+	Dispatch(GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };
 	context->CSSetShaderResources(0, 1, views);

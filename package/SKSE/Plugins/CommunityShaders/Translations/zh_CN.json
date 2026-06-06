@@ -2072,6 +2072,5 @@
     "ui.copy": "复制",
     "ui.dont_ask_again": "不再提示",
     "ui.search": "搜索...",
-    "ui.search_features": "搜索功能...",
-    "feature.light_limit_fix.key_feature_5": "增强视觉真实感"
+    "ui.search_features": "搜索功能..."
 }

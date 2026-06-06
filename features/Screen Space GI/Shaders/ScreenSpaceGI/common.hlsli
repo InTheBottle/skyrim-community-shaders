@@ -86,8 +86,8 @@ float2 filterInf(float2 v) { return float2(filterInf(v.x), filterInf(v.y)); }
 float3 filterInf(float3 v) { return float3(filterInf(v.x), filterInf(v.y), filterInf(v.z)); }
 float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filterInf(v.z), filterInf(v.w)); }
 
-// screenPos - normalised position in FrameDim, one eye only
-// uv - normalised position in FrameDim, both eye
+// screenPos - normalised position in FrameDim
+// uv - normalised position in FrameDim
 // texCoord - texture coordinate
 
 #ifdef HALF_RES

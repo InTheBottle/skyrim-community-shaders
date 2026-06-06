@@ -105,8 +105,7 @@ void CalculateGI(
 
 	//////////////////////////////////////////////////////////////////
 
-	// Use mono screen-space position for noise indexing so both eyes
-	// sample the same noise for corresponding world positions.
+	// Use screen-space position for noise indexing.
 	uint2 noiseCoord = uint2(normalizedScreenPos * OUT_FRAME_DIM);
 	const float2 localNoise = SpatioTemporalNoise(noiseCoord, FrameIndex);
 	const float noiseSlice = localNoise.x;
@@ -203,10 +202,9 @@ void CalculateGI(
 
 				float SZ = srcWorkingDepth.SampleLevel(samplerPointClamp, sampleUV * frameScale, mipLevel);
 
-				// Reconstruct sample in current eye's viewspace for correct horizon angles.
+				// Reconstruct sample viewspace position for correct horizon angles.
 				float3 samplePos = ScreenToViewPosition(sampleScreenPos, SZ);
-				// For cross-eye samples, reject if the depth differs too much from the
-				// center pixel -- the other eye may see a different surface due to occlusion.
+				// Reject if the depth differs too much from the center pixel.
 				float3 sampleDelta = samplePos - pixCenterPos;
 				float3 sampleHorizonVec = normalize(sampleDelta);
 

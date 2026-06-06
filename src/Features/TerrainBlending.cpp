@@ -53,8 +53,6 @@ namespace
 	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
 
 	// Allowlists of module RVAs for _ReturnAddress()-based hook dispatch.
-	// Previously contained VR-specific callsite addresses; now empty so the
-	// auto-broad fallback paths handle all dispatch in SE/AE.
 	const std::array<uint32_t, 0> kSlot2CallerAllowlistRvas = {};
 	const std::array<uint32_t, 0> kDepthOverrideCallerAllowlistRvas = {};
 	constexpr bool kEnableAutoBroadSlot2Fallback = true;
