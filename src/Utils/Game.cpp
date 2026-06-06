@@ -32,7 +32,7 @@ namespace Util
 	{
 		if (globals::game::shadowState) {
 			if (auto tes = RE::TES::GetSingleton()) {
-				auto position = GetAverageEyePosition();
+				auto position = GetEyePosition();
 				position.x += offsetX;
 				position.y += offsetY;
 				if (auto cell = tes->GetCell(position)) {
@@ -93,7 +93,7 @@ namespace Util
 		return float4(1.0f, 1.0f, 1.0f, -FLT_MAX);
 	}
 
-	RE::NiPoint3 GetAverageEyePosition()
+	RE::NiPoint3 GetEyePosition()
 	{
 		auto shadowState = globals::game::shadowState;
 		return shadowState->GetRuntimeData().posAdjust.getEye();

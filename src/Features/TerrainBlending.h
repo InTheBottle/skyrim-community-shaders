@@ -54,7 +54,7 @@ public:
 	bool renderTerrainDepth = false;
 	bool renderAltTerrain = false;
 
-	RE::NiPoint3 averageEyePosition;
+	RE::NiPoint3 eyePosition;
 
 	struct RenderPass
 	{

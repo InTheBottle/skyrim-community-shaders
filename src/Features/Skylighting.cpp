@@ -174,7 +174,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 
 	static float3 prevCellID = { 0, 0, 0 };
 
-	auto eyePosNI = Util::GetAverageEyePosition();
+	auto eyePosNI = Util::GetEyePosition();
 	auto eyePos = float3{ eyePosNI.x, eyePosNI.y, eyePosNI.z };
 
 	float3 cellSize = {

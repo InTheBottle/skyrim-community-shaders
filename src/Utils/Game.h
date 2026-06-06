@@ -11,7 +11,7 @@ namespace Util
 	bool GetTemporal();
 	float GetVerticalFOVRad();
 
-	RE::NiPoint3 GetAverageEyePosition();
+	RE::NiPoint3 GetEyePosition();
 
 	float2 ConvertToDynamic(float2 a_size, bool a_ignoreLock = false);
 

@@ -855,7 +855,7 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 	globals::game::graphicsState->SetCameraData(RE::Main::WorldRootCamera(), 1);
 
-	singleton.averageEyePosition = Util::GetAverageEyePosition();
+	singleton.eyePosition = Util::GetEyePosition();
 
 	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
 	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV();
@@ -907,7 +907,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
 
 			if (inTerrain && a_pass->geometry) {
-				if ((a_pass->geometry->worldBound.center.GetDistance(singleton.averageEyePosition) - a_pass->geometry->worldBound.radius) > 1024.0f) {
+				if ((a_pass->geometry->worldBound.center.GetDistance(singleton.eyePosition) - a_pass->geometry->worldBound.radius) > 1024.0f) {
 					inTerrain = false;
 				}
 			}
