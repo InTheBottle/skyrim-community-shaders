@@ -309,7 +309,7 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 	if (a_cached) {
 		eyePosition = eyePositionCached;
 	} else {
-		eyePosition = globals::game::shadowState->GetRuntimeData().posAdjust.getEye(0);
+		eyePosition = Util::GetEyePosition();
 	}
 
 	auto worldPos = a_initialPosition - eyePosition;
@@ -382,7 +382,7 @@ void LightLimitFix::UpdateLights()
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
 
-	// Cache data since cameraData can become invalid in first-person
+	// Cache camera position from the FrameBuffer snapshot; shadowState::posAdjust can be stale in first-person
 
 	{
 		auto eyePosition = globals::game::frameBufferCached.GetCameraPosAdjust();
