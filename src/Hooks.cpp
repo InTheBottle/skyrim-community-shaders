@@ -14,6 +14,8 @@
 #include "Features/InteriorSun.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/LightLimitFix.h"
+#include "Features/Skin.h"
+#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
@@ -227,6 +229,28 @@ namespace GrassExtensions
 				}
 			}
 		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+}
+
+namespace WaterBlendHistory
+{
+	struct BSImagespaceShader_Render
+	{
+		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+		{
+			GET_INSTANCE_MEMBER(renderTargets, globals::game::shadowState)
+
+			// Clear stale coverage left by discarded non-water pixels
+			const float clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
+			const auto target = renderTargets[1];
+			globals::d3d::context->ClearRenderTargetView(
+				globals::game::renderer->GetRuntimeData().renderTargets[target].RTV,
+				clearColor);
+
+			func(imageSpaceShader, shape, param);
+		}
+
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 }
@@ -849,6 +873,12 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
+	{
+		func(sky, a_delta);
+		globals::features::skySync.OnSkyUpdateColors(sky);
+	}
+
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -907,6 +937,7 @@ namespace Hooks
 
 		logger::info("Hooking BSImagespaceShader");
 		stl::detour_thunk<CSShadersSupport::BSImagespaceShader_DispatchComputeShader>(REL::RelocationID(100952, 107734));
+		stl::write_vfunc<0x1, WaterBlendHistory::BSImagespaceShader_Render>(RE::VTABLE_BSImagespaceShaderISWaterBlend[3]);
 
 		logger::info("Hooking BSComputeShader");
 		stl::write_vfunc<0x02, CSShadersSupport::BSComputeShader_Dispatch>(RE::VTABLE_BSComputeShader[0]);
@@ -916,6 +947,9 @@ namespace Hooks
 
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
+
+		logger::info("Hooking Sky::UpdateColors");
+		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);

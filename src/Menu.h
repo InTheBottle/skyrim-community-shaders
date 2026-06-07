@@ -140,7 +140,7 @@ public:
 	bool settingOverlayToggleKey = false;
 	bool settingShaderBlockPrevKey = false;      // Debug: capture shader block prev key
 	bool settingShaderBlockNextKey = false;      // Debug: capture shader block next key
-	bool settingWeatherEditorToggleKey = false;  // Weather Editor toggle key
+	bool settingCSEditorToggleKey = false;  // CS Editor toggle key
 	bool settingScreenshotKey = false;           // Screenshot capture key
 
 	// Font caching (made public for ThemeManager and OverlayRenderer access)
@@ -166,6 +166,7 @@ public:
 	// Deferred reload systems (public for SettingsTabRenderer access)
 	bool pendingFontReload = false;
 	bool pendingIconReload = false;
+	bool pendingCursorReload = false;
 
 	// Display size tracking for cross-session resolution change detection
 	float2 lastDisplaySize{};
@@ -203,11 +204,11 @@ public:
 		UIIcon logo;                  // New logo icon
 		UIIcon search;                // Search icon for search bars
 		UIIcon featureSettingRevert;  // Feature revert settings icon
-		UIIcon applyToGame;           // Apply changes to game icon (weather editor)
-		UIIcon pauseTime;             // Pause time icon (weather editor)
-		UIIcon undo;                  // Undo icon (weather editor)
-		UIIcon freeCamera;            // Free camera preview icon (weather editor)
-		UIIcon playMode;              // Play mode preview icon (weather editor)
+		UIIcon applyToGame;           // Apply changes to game icon (CS editor)
+		UIIcon pauseTime;             // Pause time icon (CS editor)
+		UIIcon undo;                  // Undo icon (CS editor)
+		UIIcon freeCamera;            // Free camera preview icon (CS editor)
+		UIIcon playMode;              // Play mode preview icon (CS editor)
 
 		// Social media/external link icons
 		UIIcon discord;
@@ -265,6 +266,21 @@ public:
 		bool CenterHeader = false;          // whether to center the header title and logo
 		float TooltipHoverDelay = 0.5f;     // tooltip hover delay in seconds
 		bool BackgroundBlurEnabled = true;  // enable background blur effect
+		bool UseCustomCursor = false;     // use theme cursor images instead of default ImGui cursors
+		struct CursorImageSettings
+		{
+			std::string File;
+			float HotspotX = 0.0f;
+			float HotspotY = 0.0f;
+		};
+		struct CursorSettings
+		{
+			float Scale = 1.0f;
+			std::string File;  // legacy arrow file (migrated into Types[Arrow] on load)
+			float HotspotX = 0.0f;
+			float HotspotY = 0.0f;
+			std::array<CursorImageSettings, ImGuiMouseCursor_COUNT> Types = {};
+		} Cursor;
 		// Scrollbar opacity settings
 		struct ScrollbarOpacitySettings
 		{
@@ -397,6 +413,9 @@ public:
 	static void PaletteToJson(json& themeJson, const std::array<ImVec4, ImGuiCol_COUNT>& palette);
 	static void PaletteFromJson(const json& themeJson, std::array<ImVec4, ImGuiCol_COUNT>& palette);
 
+	static void CursorToJson(json& cursorJson, const ThemeSettings::CursorSettings& cursorSettings);
+	static void CursorFromJson(const json& cursorJson, ThemeSettings::CursorSettings& cursor);
+
 	struct Settings
 	{
 		std::vector<InputCombo> ToggleKey = { InputCombo::Keyboard(VK_END) };
@@ -405,7 +424,7 @@ public:
 		std::vector<InputCombo> OverlayToggleKey = { InputCombo::Keyboard(VK_F10) };        // Global overlay toggle key for all overlays
 		std::vector<InputCombo> ShaderBlockPrevKey = { InputCombo::Keyboard(VK_PRIOR) };    // Debug: cycle backward through shaders (PageUp)
 		std::vector<InputCombo> ShaderBlockNextKey = { InputCombo::Keyboard(VK_NEXT) };     // Debug: cycle forward through shaders (PageDown)
-		std::vector<InputCombo> WeatherEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };  // Weather Editor toggle key
+		std::vector<InputCombo> CSEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };  // CS Editor toggle key
 		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                    // Screenshot capture key
 		bool EnableShaderBlocking = false;                                                  // Enable shader blocking hotkeys for debugging
 		bool FirstTimeSetupCompleted = false;                                               // Track if first-time setup has been completed
