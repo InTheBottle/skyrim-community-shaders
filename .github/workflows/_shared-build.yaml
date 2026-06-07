@@ -146,7 +146,7 @@ jobs:
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/setup-build-environment
               with:
-                  cache-key-suffix: "validation-Flatrim${{ inputs.cache-key-suffix }}"
+                  cache-key-suffix: "validation${{ inputs.cache-key-suffix }}"
             - name: Prepare shaders
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/prepare-shaders
@@ -193,7 +193,7 @@ jobs:
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
               with:
-                  name: shader-validation-logs-Flatrim
+                  name: shader-validation-logs
                   path: |
                       build/ShaderCache/new_issues.log
                       build/ShaderCache/*.log
