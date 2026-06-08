@@ -94,7 +94,6 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 
-	virtual bool SupportsVR() override { return true; }
 
 	virtual void PostPostLoad() override;
 

@@ -81,6 +81,52 @@ void SkySync::DrawSettings()
 	ImGui::SliderFloat("Crescent Intensity", &settings.CrescentMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat("Full Moon Intensity", &settings.FullMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
+	if (ImGui::TreeNodeEx("Debug", ImGuiTreeNodeFlags_None)) {
+		static constexpr const char* CasterNames[] = { "Sun", "Masser", "Secunda", "None" };
+		static constexpr const char* PhaseNames[] = { "Full", "Waning Gibbous", "Waning Quarter", "Waning Crescent", "New", "Waxing Crescent", "Waxing Quarter", "Waxing Gibbous" };
+
+		auto getPhase = [](const RE::Moon* moon) -> const char* {
+			if (!moon || !moon->moonMesh)
+				return "Unknown";
+			if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get())) {
+				if (auto tex = prop->GetBaseTexture())
+					return PhaseNames[static_cast<int>(Util::Moon::GetPhaseFromTexture(tex->name.c_str()))];
+			}
+			return "Unknown";
+		};
+
+		auto drawMoonEntry = [&](const char* label, Caster caster, const char* phase) {
+			auto& color = colors[static_cast<int>(caster)];
+			ImVec4 swatch = { color.x, color.y, color.z, 1.0f };
+			ImGui::ColorButton(label, swatch, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, { ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight() });
+			ImGui::SameLine();
+			ImGui::Text("%s  [%s]  color (%.3f, %.3f, %.3f, %.3f)", label, phase, color.x, color.y, color.z, color.w);
+		};
+
+		const auto sky = globals::game::sky;
+		drawMoonEntry("Masser", Caster::Masser, sky ? getPhase(sky->masser) : "Unknown");
+		drawMoonEntry("Secunda", Caster::Secunda, sky ? getPhase(sky->secunda) : "Unknown");
+
+		ImGui::Text("Dim: %.3f", currentDim);
+
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+
+		ImGui::Text("Shadow target: %s", CasterNames[static_cast<int>(shadowFader.target)]);
+		ImGui::Text("Shadow dir:    (%.2f, %.2f, %.2f)", shadowFader.currentDir.x, shadowFader.currentDir.y, shadowFader.currentDir.z);
+		if (shadowFader.transitioning) {
+			const float t = settings.ShadowTransitionDuration > 0.0f ? shadowFader.fadeTimer / settings.ShadowTransitionDuration : 1.0f;
+			ImGui::ProgressBar(t, { -1.0f, 0.0f }, "");
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::Text("Transitioning %.0f%%", t * 100.0f);
+		} else {
+			ImGui::TextDisabled("No transition");
+		}
+
+		ImGui::TreePop();
+	}
+
 }
 
 void SkySync::LoadSettings(json& o_json)
@@ -158,14 +204,18 @@ void SkySync::Sky_Update::thunk(RE::Sky* sky)
 
 void SkySync::Update(const RE::Sky* sky)
 {
-	if (!settings.Enabled)
+	if (!settings.Enabled) {
+		currentDim = 1.0f;
 		return;
+	}
 
 	const auto sun = sky->sun;
 	const auto climate = sky->currentClimate;
 	const auto player = RE::PlayerCharacter::GetSingleton();
-	if (!sun || !climate || !player)
+	if (!sun || !climate || !player) {
+		currentDim = 1.0f;
 		return;
+	}
 
 	const auto cell = player->GetParentCell();
 
@@ -179,6 +229,7 @@ void SkySync::Update(const RE::Sky* sky)
 
 	// Exterior worldspaces always run; interior cells require the sunlight-shadows flag.
 	if (cell && cell->IsInteriorCell() && !cell->cellFlags.all(static_cast<RE::TESObjectCELL::Flag>(CellFlagExt::kSunlightShadows))) {
+		currentDim = 1.0f;
 		return;
 	}
 
@@ -295,9 +346,6 @@ void SkySync::ProcessMoon(const RE::Sky* sky, const Caster type, RE::NiPoint3 di
 	float4 color = Util::Moon::GetBlendColor(moon, baseColor, settings.NewMoonIntensity, settings.CrescentMoonIntensity, settings.FullMoonIntensity);
 	colors[idx] = color;
 
-	if (currentDim > 0.0f)
-		return;
-
 	const auto src = static_cast<MoonLightSource>(settings.MoonLightSource);
 	const bool isValidSource = src == MoonLightSource::Brightest || (src == MoonLightSource::Masser && type == Caster::Masser) || (src == MoonLightSource::Secunda && type == Caster::Secunda);
 	if (!isValidSource)
@@ -370,11 +418,26 @@ void SkySync::ShadowFader::Reset()
 
 void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration)
 {
+	auto isValidDir = [](const RE::NiPoint3& d) { return d.x != 0.0f || d.y != 0.0f || d.z != 0.0f; };
+
 	Caster best;
 
 	if (globals::features::skySync.currentDim <= 0.0f) {
-		best = Caster::Masser;
-		if (intensities[static_cast<int>(Caster::Secunda)] > intensities[static_cast<int>(Caster::Masser)])
+		bool masserValid = isValidDir(dirs[static_cast<int>(Caster::Masser)]);
+		bool secundaValid = isValidDir(dirs[static_cast<int>(Caster::Secunda)]);
+
+		if (!masserValid && !secundaValid) {
+			// No valid night caster — default to directly above (shadows point down)
+			currentDir = { 0.0f, 0.0f, 1.0f };
+			SetLighting(sky, currentDir);
+			return;
+		}
+
+		if (!masserValid)
+			best = Caster::Secunda;
+		else if (!secundaValid || intensities[static_cast<int>(Caster::Secunda)] <= intensities[static_cast<int>(Caster::Masser)])
+			best = Caster::Masser;
+		else
 			best = Caster::Secunda;
 	} else {
 		best = Caster::Sun;

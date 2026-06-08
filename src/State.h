@@ -131,7 +131,7 @@ public:
      */
 	bool IsDeveloperMode();
 
-	void ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_targetIndex, RE::BSGraphics::RenderTargetProperties* a_properties);
+	void ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_targetIndex, RE::BSGraphics::RenderTargetProperties& a_properties);
 
 	void SetupResources();
 
@@ -259,7 +259,7 @@ public:
 		uint InMapMenu;
 		uint HideSky;
 		float MipBias;
-		float WaterSystemHeight;  // TES::GetWaterHeight at eye-0 in camera-relative Z; -NI_INFINITY when no water body found (VR only)
+		float WaterSystemHeight;  // TES::GetWaterHeight in camera-relative Z; -NI_INFINITY when no water body found
 		float3 pad0;
 		float4 AmbientSHR;
 		float4 AmbientSHG;
@@ -278,7 +278,6 @@ public:
 	uint frameCount = 0;
 
 	// Skyrim constants
-	float2 screenSize = {};
 	D3D_FEATURE_LEVEL featureLevel;
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context

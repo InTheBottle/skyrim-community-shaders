@@ -27,7 +27,7 @@ void SubsurfaceScattering::DrawSettings()
 	if (ImGui::TreeNodeEx(T(TKEY("settings"), "Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("enable_character_lighting"), "Enable Character Lighting"), (bool*)&settings.EnableCharacterLighting);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_character_lighting_tooltip"), "Vanilla feature, not recommended."));
+			ImGui::Text("%s", T(TKEY("enable_character_lighting_tooltip"), "Vanilla feature."));
 		}
 		if (settings.EnableCharacterLighting) {
 			ImGui::SliderFloat(T(TKEY("strength"), "Strength"), &settings.CharacterLightingStrength, 0, 5, "%.2f");
@@ -39,20 +39,20 @@ void SubsurfaceScattering::DrawSettings()
 
 		if (settings.SSMode == 0) {
 			ImGui::Spacing();
-			ImGui::Text("Albedo Handling");
-			ImGui::RadioButton("Pre-scatter", &settings.ScatterMode, kPreScatter);
+			ImGui::Text("%s", T(TKEY("albedo_handling"), "Albedo Handling"));
+			ImGui::RadioButton(T(TKEY("pre_scatter"), "Pre-scatter"), &settings.ScatterMode, kPreScatter);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Blur the lit color directly. Fastest, but blurs albedo texture detail along with lighting.");
+				ImGui::Text("%s", T(TKEY("pre_scatter_tooltip"), "Blur the lit color directly. Fastest, but blurs albedo texture detail along with lighting."));
 			}
 			ImGui::SameLine();
-			ImGui::RadioButton("Post-scatter", &settings.ScatterMode, kPostScatter);
+			ImGui::RadioButton(T(TKEY("post_scatter"), "Post-scatter"), &settings.ScatterMode, kPostScatter);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Divide out albedo, blur the irradiance, multiply albedo back. Preserves texture detail.");
+				ImGui::Text("%s", T(TKEY("post_scatter_tooltip"), "Divide out albedo, blur the irradiance, multiply albedo back. Preserves texture detail."));
 			}
 			ImGui::SameLine();
-			ImGui::RadioButton("Pre and Post", &settings.ScatterMode, kPreAndPostScatter);
+			ImGui::RadioButton(T(TKEY("pre_and_post_scatter"), "Pre and Post"), &settings.ScatterMode, kPreAndPostScatter);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Split albedo across the blur using sqrt(albedo) on each side. A physically motivated middle ground.");
+				ImGui::Text("%s", T(TKEY("pre_and_post_scatter_tooltip"), "Split albedo across the blur using sqrt(albedo) on each side. A physically motivated middle ground."));
 			}
 		}
 
@@ -231,7 +231,7 @@ void SubsurfaceScattering::DrawSSS()
 	auto dispatchCount = Util::GetScreenDispatchCount();
 
 	{
-		auto cameraData = Util::GetCameraData(0);
+		auto cameraData = globals::game::shadowState->GetRuntimeData().cameraData.getEye();
 
 		blurCBData.SSSS_FOVY = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
 
@@ -345,8 +345,6 @@ void SubsurfaceScattering::DrawSSS()
 				globals::profiler->BeginPass("SubsurfaceScattering::Burley");
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 				globals::profiler->EndPass();
-
-				context->CopyResource(main.texture, blurHorizontalTemp->resource.get());
 			}
 		}
 	}
@@ -426,6 +424,7 @@ void SubsurfaceScattering::RestoreDefaultSettings()
 void SubsurfaceScattering::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.ScatterMode = std::clamp(settings.ScatterMode, (int)kPreScatter, (int)kPreAndPostScatter);
 }
 
 void SubsurfaceScattering::SaveSettings(json& o_json)

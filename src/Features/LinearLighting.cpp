@@ -129,8 +129,7 @@ void LinearLighting::Prepass()
 	if (!imageSpaceManager)
 		return;
 
-	GET_INSTANCE_MEMBER(data, imageSpaceManager);
-	dirLightMult = data.baseData.hdr.sunlightScale;
+	dirLightMult = imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale;
 }
 
 struct LinearLighting::Hooks

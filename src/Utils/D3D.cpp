@@ -31,7 +31,7 @@ namespace Util
 	{
 		if (a_rtv) {
 			if (auto r = globals::game::renderer) {
-				for (int i = 0; i < GetRenderTargetCount(); i++) {
+				for (int i = 0; i < RE::RENDER_TARGETS::kTOTAL; i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
 					if (a_rtv == rt.RTV) {
 						return rt.SRV;
@@ -46,7 +46,7 @@ namespace Util
 	{
 		if (a_srv) {
 			if (auto r = globals::game::renderer) {
-				for (int i = 0; i < GetRenderTargetCount(); i++) {
+				for (int i = 0; i < RE::RENDER_TARGETS::kTOTAL; i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
 					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
 						return rt.RTV;
@@ -63,7 +63,7 @@ namespace Util
 
 		if (a_srv) {
 			if (auto r = globals::game::renderer) {
-				for (int i = 0; i < GetRenderTargetCount(); i++) {
+				for (int i = 0; i < RE::RENDER_TARGETS::kTOTAL; i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
 					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
@@ -79,7 +79,7 @@ namespace Util
 		using RENDER_TARGET = RE::RENDER_TARGETS::RENDER_TARGET;
 		if (a_rtv) {
 			if (auto r = globals::game::renderer) {
-				for (int i = 0; i < GetRenderTargetCount(); i++) {
+				for (int i = 0; i < RE::RENDER_TARGETS::kTOTAL; i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
 					if (a_rtv == rt.RTV) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
@@ -163,8 +163,6 @@ namespace Util
 			}
 		}
 
-		if (REL::Module::IsVR())
-			macros.push_back({ "VR", "" });
 		if (globals::state->IsDeveloperMode()) {
 			macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
 			macros.push_back({ "D3DCOMPILE_DEBUG", "" });

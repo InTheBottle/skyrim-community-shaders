@@ -50,7 +50,8 @@ public:
 	virtual void RestoreDefaultSettings() override;
 
 	virtual bool IsCore() const override { return true; }
-	virtual bool SupportsVR() override { return true; }
+
+	void OnSkyUpdateColors(RE::Sky* sky);
 
 	void OnSkyUpdateColors(RE::Sky* sky);
 
