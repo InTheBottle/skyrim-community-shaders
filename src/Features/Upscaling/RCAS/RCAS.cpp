@@ -37,8 +37,8 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "RCAS Sharpening");
 
+	auto state = globals::state;
 	auto context = globals::d3d::context;
-	auto* state = globals::state;
 
 	if (!rcasComputeShader) {
 		logger::warn("[RCAS] Compute shader not compiled");

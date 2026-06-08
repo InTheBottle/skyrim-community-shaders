@@ -4,15 +4,14 @@ namespace GrassLighting
 	{
 		float3 H = normalize(V + L);
 		float HdotN = saturate(dot(H, N));
-		if (SharedData::enbSettings.Enable)
-			shininess *= SharedData::enbSettings.ColorPow;	
+
 		float lightColorMultiplier = exp2(shininess * log2(HdotN));
-		return lightColor * lightColorMultiplier;
+		return lightColor * lightColorMultiplier.xxx;
 	}
 
 	float3 TransformNormal(float3 normal)
 	{
-		return normal * 2.0 - 1.0;
+		return normal * 2 + -1.0.xxx;
 	}
 
 	// http://www.thetenthplanet.de/archives/1180
