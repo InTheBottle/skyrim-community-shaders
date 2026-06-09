@@ -38,8 +38,11 @@ public:
 	{
 		float CascadeNear;
 		float CascadeFar;
+		float GlobalNear;
+		float GlobalFar;
 		float ExponentPositive;
 		float ExponentNegative;
+		float _pad[2];
 	};
 
 	struct alignas(16) BlurCB
@@ -49,6 +52,7 @@ public:
 	};
 
 	float4 GetCascadeDepthParams();
+	float4 GetGlobalDepthParams();
 
 	// Compute shaders
 	ID3D11ComputeShader* downsampleShadowMip0CS = nullptr;

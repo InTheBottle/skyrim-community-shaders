@@ -139,6 +139,14 @@ float4 VolumetricShadows::GetCascadeDepthParams()
 	return { cascadeNear[0], cascadeFar[0], cascadeNear[1], cascadeFar[1] };
 }
 
+float4 VolumetricShadows::GetGlobalDepthParams()
+{
+	ExtractCascadeNearFar();
+	float globalNear = std::min(cascadeNear[0], cascadeNear[1]);
+	float globalFar = std::max(cascadeFar[0], cascadeFar[1]);
+	return { globalNear, globalFar, 0.f, 0.f };
+}
+
 void VolumetricShadows::CopyShadowLightData()
 {
 	ZoneScoped;
@@ -268,6 +276,10 @@ void VolumetricShadows::CopyShadowLightData()
 					// Dispatch covers full input: each thread gathers 2x2, 8 threads per group
 					auto dispatchSize = srcDesc.Width / 16;
 
+					// Global near/far: consistent [0,1] mapping across both cascades
+					float globalNear = std::min(cascadeNear[0], cascadeNear[1]);
+					float globalFar = std::max(cascadeFar[0], cascadeFar[1]);
+
 					// Mip 0 (cascade 1) - update cbuffer with cascade 1 near/far + exponents
 					{
 						D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -275,6 +287,8 @@ void VolumetricShadows::CopyShadowLightData()
 						auto* cb = static_cast<EVSMLinearizeCB*>(mapped.pData);
 						cb->CascadeNear = cascadeNear[1];
 						cb->CascadeFar = cascadeFar[1];
+						cb->GlobalNear = globalNear;
+						cb->GlobalFar = globalFar;
 						cb->ExponentPositive = settings.ExponentPositive;
 						cb->ExponentNegative = settings.ExponentNegative;
 						context->Unmap(linearizeCB, 0);
@@ -295,6 +309,8 @@ void VolumetricShadows::CopyShadowLightData()
 						auto* cb = static_cast<EVSMLinearizeCB*>(mapped.pData);
 						cb->CascadeNear = cascadeNear[0];
 						cb->CascadeFar = cascadeFar[0];
+						cb->GlobalNear = globalNear;
+						cb->GlobalFar = globalFar;
 						cb->ExponentPositive = settings.ExponentPositive;
 						cb->ExponentNegative = settings.ExponentNegative;
 						context->Unmap(linearizeCB, 0);

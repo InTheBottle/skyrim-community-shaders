@@ -11,10 +11,13 @@ namespace VolumetricShadows
 	static const float EVSM_VARIANCE_BIAS = 0.001;
 	static const float EVSM_LIGHT_BLEED_REDUCTION = 0.3;
 
-	float LinearizeDepth(float depth, float cascadeNear, float cascadeFar)
+	// Convert orthographic shadow projection depth to globally-normalized [0,1].
+	// positionLS.z from mul(ShadowProj, worldPos) is orthographic [0,1] within the cascade.
+	// We remap through world space to the same global range used during moment generation.
+	float NormalizeDepth(float depth, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
 	{
-		float linZ = cascadeNear * cascadeFar / (cascadeFar - depth * (cascadeFar - cascadeNear));
-		return (linZ - cascadeNear) / (cascadeFar - cascadeNear);
+		float worldZ = cascadeNear + depth * (cascadeFar - cascadeNear);
+		return (worldZ - globalNear) / (globalFar - globalNear);
 	}
 
 	// Chebyshev upper bound: P(x >= t) <= variance / (variance + (t - mean)^2)
@@ -35,9 +38,9 @@ namespace VolumetricShadows
 
 	// Compute EVSM shadow from stored moments
 	// moments = (E[e^cz], E[e^2cz], E[e^-cz], E[e^-2cz])
-	float ComputeEVSM(float4 moments, float depth, float cascadeNear, float cascadeFar)
+	float ComputeEVSM(float4 moments, float depth, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
 	{
-		float d = LinearizeDepth(depth, cascadeNear, cascadeFar);
+		float d = NormalizeDepth(depth, cascadeNear, cascadeFar, globalNear, globalFar);
 		float posWarp = exp(EVSM_EXPONENT_POS * d);
 		float negWarp = exp(-EVSM_EXPONENT_NEG * d);
 
@@ -45,7 +48,6 @@ namespace VolumetricShadows
 		float posShadow = ChebyshevUpperBound(moments.x, moments.y, posWarp);
 
 		// Negative exponent test (back-face light bleed suppression)
-		// For negative warp, smaller values are "deeper", so the comparison inverts
 		float negShadow = ChebyshevUpperBound(moments.z, moments.w, negWarp);
 
 		return min(posShadow, negShadow);
@@ -61,6 +63,8 @@ namespace VolumetricShadows
 		float3 endPositionLS,
 		float cascadeNear,
 		float cascadeFar,
+		float globalNear,
+		float globalFar,
 		out float firstSample)
 	{
 		float shadow = 0.0;
@@ -72,7 +76,7 @@ namespace VolumetricShadows
 			float3 samplePosLS = lerp(endPositionLS, startPositionLS, t);
 
 			float4 moments = SharedShadowMap.SampleLevel(LinearSampler, samplePosLS.xy, 1u - cascadeIndex);
-			float lit = ComputeEVSM(moments, samplePosLS.z, cascadeNear, cascadeFar);
+			float lit = ComputeEVSM(moments, samplePosLS.z, cascadeNear, cascadeFar, globalNear, globalFar);
 
 			// Last to set firstSample is start position
 			firstSample = lit;
@@ -115,6 +119,9 @@ namespace VolumetricShadows
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
+		float4 globalParams = directionalShadowLightData.GlobalDepthParams;
+		float globalNear = globalParams.x;
+		float globalFar = globalParams.y;
 
 		// Transform ray to light space for primary cascade
 		float4x4 shadowProj = directionalShadowLightData.ShadowProj[primaryCascade];
@@ -128,7 +135,7 @@ namespace VolumetricShadows
 
 		// Sample primary cascade
 		float primaryFirstSample;
-		float shadow = SampleEVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryNear, primaryFar, primaryFirstSample);
+		float shadow = SampleEVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryNear, primaryFar, globalNear, globalFar, primaryFirstSample);
 		surfaceShadow = primaryFirstSample;
 
 		// Blend with secondary cascade if needed
@@ -146,7 +153,7 @@ namespace VolumetricShadows
 			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
 
 			float secondaryFirstSample;
-			float shadowBlend = SampleEVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryNear, secondaryFar, secondaryFirstSample);
+			float shadowBlend = SampleEVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryNear, secondaryFar, globalNear, globalFar, secondaryFirstSample);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 			surfaceShadow = lerp(surfaceShadow, secondaryFirstSample, cascadeSelect);
 		}
@@ -158,10 +165,10 @@ namespace VolumetricShadows
 	}
 
 	// Sample a single cascade for EVSM shadow (2D point sample)
-	float SampleEVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar)
+	float SampleEVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
 	{
 		float4 moments = SharedShadowMap.SampleLevel(LinearSampler, positionLS.xy, 1u - cascadeIndex);
-		return ComputeEVSM(moments, positionLS.z, cascadeNear, cascadeFar);
+		return ComputeEVSM(moments, positionLS.z, cascadeNear, cascadeFar, globalNear, globalFar);
 	}
 
 	float GetVSMShadow2D(float3 position, out float detailedShadow)
@@ -190,6 +197,9 @@ namespace VolumetricShadows
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
+		float4 globalParams = directionalShadowLightData.GlobalDepthParams;
+		float globalNear = globalParams.x;
+		float globalFar = globalParams.y;
 
 		// Transform position to light space for primary cascade
 		float3 positionLS = mul(directionalShadowLightData.ShadowProj[primaryCascade], float4(positionWS, 1)).xyz;
@@ -199,7 +209,7 @@ namespace VolumetricShadows
 		float primaryFar = primaryCascade == 0 ? depthParams.y : depthParams.w;
 
 		// Sample primary cascade
-		float shadow = SampleEVSMCascade2D(primaryCascade, positionLS, primaryNear, primaryFar);
+		float shadow = SampleEVSMCascade2D(primaryCascade, positionLS, primaryNear, primaryFar, globalNear, globalFar);
 
 		// Blend with secondary cascade if needed
 		[branch] if (needsBlending)
@@ -212,7 +222,7 @@ namespace VolumetricShadows
 			float secondaryNear = secondaryCascade == 0 ? depthParams.x : depthParams.z;
 			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
 
-			float shadowBlend = SampleEVSMCascade2D(secondaryCascade, positionLS, secondaryNear, secondaryFar);
+			float shadowBlend = SampleEVSMCascade2D(secondaryCascade, positionLS, secondaryNear, secondaryFar, globalNear, globalFar);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 

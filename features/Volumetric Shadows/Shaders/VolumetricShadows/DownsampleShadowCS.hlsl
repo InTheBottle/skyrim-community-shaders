@@ -7,21 +7,26 @@ cbuffer EVSMLinearizeCB : register(b0)
 {
 	float CascadeNear;
 	float CascadeFar;
+	float GlobalNear;
+	float GlobalFar;
 	float ExponentPositive;
 	float ExponentNegative;
 };
 
-float LinearizeDepth(float depth)
+// Convert orthographic shadow map depth [0,1] to globally-normalized linear depth [0,1].
+// Shadow map depth is linear within each cascade: worldZ = near + depth * (far - near).
+// We then remap to a global range shared by both cascades so exponents behave consistently.
+float NormalizeDepth(float depth)
 {
-	float linZ = CascadeNear * CascadeFar / (CascadeFar - depth * (CascadeFar - CascadeNear));
-	return (linZ - CascadeNear) / (CascadeFar - CascadeNear);
+	float worldZ = CascadeNear + depth * (CascadeFar - CascadeNear);
+	return (worldZ - GlobalNear) / (GlobalFar - GlobalNear);
 }
 
-// Warp depth into EVSM moments: (e^(c*z), e^(2c*z), e^(-c*z), e^(-2c*z))
+// Warp depth into EVSM moments: (e^(c*d), e^(2c*d), e^(-c*d), e^(-2c*d))
 // Positive exponent detects front-face occlusion, negative detects back-face (light bleeding).
 float4 WarpDepth(float depth)
 {
-	float d = LinearizeDepth(depth);
+	float d = NormalizeDepth(depth);
 	float posWarp = exp(ExponentPositive * d);
 	float negWarp = exp(-ExponentNegative * d);
 	return float4(posWarp, posWarp * posWarp, negWarp, negWarp * negWarp);
