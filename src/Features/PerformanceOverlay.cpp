@@ -495,7 +495,6 @@ void PerformanceOverlay::DrawFPS()
 	}
 }
 
-
 void PerformanceOverlay::DrawVRAM()
 {
 	auto menu = Menu::GetSingleton();

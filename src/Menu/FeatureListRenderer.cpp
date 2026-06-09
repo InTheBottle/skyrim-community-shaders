@@ -902,7 +902,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 
 void FeatureListRenderer::DrawMenuVisitor::RenderRestoreDefaultsButton(Feature* feat, bool isDisabled, bool isLoaded)
 {
-	if (isDisabled || !isLoaded || feat->GetShortName() == "Effect11") {
+	if (isDisabled || !isLoaded) {
 		return;
 	}
 

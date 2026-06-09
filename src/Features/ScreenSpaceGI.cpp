@@ -339,7 +339,6 @@ void ScreenSpaceGI::DrawSettings()
 
 		ImGui::TreePop();
 	}
-
 }
 
 void ScreenSpaceGI::LoadSettings(json& o_json)

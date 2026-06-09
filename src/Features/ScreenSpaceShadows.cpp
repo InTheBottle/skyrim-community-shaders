@@ -49,7 +49,6 @@ void ScreenSpaceShadows::DrawSettings()
 		ImGui::Spacing();
 		ImGui::TreePop();
 	}
-
 }
 
 void ScreenSpaceShadows::InvalidateRaymarchShaders()
@@ -227,70 +226,6 @@ void ScreenSpaceShadows::DrawShadows()
 
 	buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);
-}
-
-void ScreenSpaceShadows::DrawStereoSync()
-{
-	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
-		return;
-
-	if (!stereoSyncCS) {
-		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
-	}
-	if (!stereoSyncCS)
-		return;
-
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "SSS - Stereo Sync");
-
-	auto context = globals::d3d::context;
-	globals::profiler->BeginPass("ScreenSpaceShadows::StereoSync");
-
-	context->CopyResource(stereoSyncCopyTex->resource.get(), screenSpaceShadowsTexture->resource.get());
-
-	float2 resolution = Util::ConvertToDynamic(globals::state->screenSize);
-
-	StereoSyncCB cbData{};
-	cbData.FrameDim[0] = resolution.x;
-	cbData.FrameDim[1] = resolution.y;
-	cbData.RcpFrameDim[0] = 1.0f / resolution.x;
-	cbData.RcpFrameDim[1] = 1.0f / resolution.y;
-
-	stereoSyncCB->Update(cbData);
-	auto cbPtr = stereoSyncCB->CB();
-
-	// Same 24/32-bit depth path as the raymarch — SrcDepthTexture's HLSL type is
-	// conditional on TERRAIN_BLENDING via the define passed at compile time below.
-	auto* depthSRV = Util::GetCurrentSceneDepthSRV(false);
-	ID3D11ShaderResourceView* srvs[2]{ depthSRV, stereoSyncCopyTex->srv.get() };
-	ID3D11UnorderedAccessView* uavs[1]{ screenSpaceShadowsTexture->uav.get() };
-
-	context->CSSetConstantBuffers(1, 1, &cbPtr);
-	auto* sharedDataBuf = globals::state->sharedDataCB->CB();
-	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
-	context->CSSetShaderResources(0, 2, srvs);
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->CSSetShader(stereoSyncCS, nullptr, 0);
-
-	auto dispatchCount = Util::GetScreenDispatchCount(true);
-	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-
-	srvs[0] = nullptr;
-	srvs[1] = nullptr;
-	uavs[0] = nullptr;
-	cbPtr = nullptr;
-	context->CSSetShaderResources(0, 2, srvs);
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->CSSetConstantBuffers(1, 1, &cbPtr);
-	context->CSSetShader(nullptr, nullptr, 0);
-
-	globals::profiler->EndPass();
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void ScreenSpaceShadows::Prepass()

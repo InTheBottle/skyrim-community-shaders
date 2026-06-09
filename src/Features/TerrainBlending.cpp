@@ -765,6 +765,8 @@ void TerrainBlending::BlendPrepassDepths()
 {
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Blend Prepass Depths");
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("Terrain Blending - Blend Prepass Depths");
 
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);
