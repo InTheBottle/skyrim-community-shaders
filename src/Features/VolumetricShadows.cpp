@@ -127,17 +127,10 @@ void VolumetricShadows::ExtractCascadeNearFar()
 		cascadeScale[cascadeIdx] = std::sqrt(sx * sx + sy * sy + sz * sz);
 	};
 
-	if (globals::game::isVR) {
-		auto& lightData = sunShadowLight->GetVRRuntimeData();
-		const auto count = std::min(lightData.shadowmapDescriptors.size(), 2u);
-		for (uint32_t i = 0; i < count; i++)
-			extractCascade(lightData.shadowmapDescriptors[i].camera[0].get(), lightData.shadowmapDescriptors[i].lightTransform, i);
-	} else {
-		auto& lightData = sunShadowLight->GetRuntimeData();
-		const auto count = std::min(lightData.shadowmapDescriptors.size(), 2u);
-		for (uint32_t i = 0; i < count; i++)
-			extractCascade(lightData.shadowmapDescriptors[i].camera.get(), lightData.shadowmapDescriptors[i].lightTransform, i);
-	}
+	auto& lightData = sunShadowLight->GetRuntimeData();
+	const auto count = std::min(lightData.shadowmapDescriptors.size(), 2u);
+	for (uint32_t i = 0; i < count; i++)
+		extractCascade(lightData.shadowmapDescriptors[i].camera.get(), lightData.shadowmapDescriptors[i].lightTransform, i);
 }
 
 float4 VolumetricShadows::GetCascadeDepthParams()
