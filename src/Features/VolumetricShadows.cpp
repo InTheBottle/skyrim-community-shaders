@@ -8,7 +8,9 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricShadows::Settings,
-	BlurRadius)
+	BlurRadius,
+	ExponentPositive,
+	ExponentNegative)
 
 void VolumetricShadows::SetupResources()
 {
@@ -31,7 +33,7 @@ void VolumetricShadows::SetupResources()
 	// Create linearization cbuffer
 	{
 		D3D11_BUFFER_DESC cbDesc{};
-		cbDesc.ByteWidth = sizeof(VSMLinearizeCB);
+		cbDesc.ByteWidth = sizeof(EVSMLinearizeCB);
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -163,7 +165,7 @@ void VolumetricShadows::CopyShadowLightData()
 		if (shadowView) {
 			constexpr uint32_t SHADOW_COPY_SIZE = 512;
 
-			// Lazily create fixed-size output textures
+			// Lazily create fixed-size output textures (RGBA16F for EVSM exponential moments)
 			if (!shadowCopyTexture) {
 				shadowCopyWidth = SHADOW_COPY_SIZE;
 				shadowCopyHeight = SHADOW_COPY_SIZE;
@@ -173,7 +175,7 @@ void VolumetricShadows::CopyShadowLightData()
 				copyDesc.Height = SHADOW_COPY_SIZE;
 				copyDesc.MipLevels = 2;
 				copyDesc.ArraySize = 1;
-				copyDesc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+				copyDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 				copyDesc.SampleDesc.Count = 1;
 				copyDesc.SampleDesc.Quality = 0;
 				copyDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -273,13 +275,15 @@ void VolumetricShadows::CopyShadowLightData()
 					// Dispatch covers full input: each thread gathers 2x2, 8 threads per group
 					auto dispatchSize = srcDesc.Width / 16;
 
-					// Mip 0 (cascade 1) - update cbuffer with cascade 1 near/far
+					// Mip 0 (cascade 1) - update cbuffer with cascade 1 near/far + exponents
 					{
 						D3D11_MAPPED_SUBRESOURCE mapped{};
 						DX::ThrowIfFailed(context->Map(linearizeCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-						auto* cb = static_cast<VSMLinearizeCB*>(mapped.pData);
+						auto* cb = static_cast<EVSMLinearizeCB*>(mapped.pData);
 						cb->CascadeNear = cascadeNear[1];
 						cb->CascadeFar = cascadeFar[1];
+						cb->ExponentPositive = settings.ExponentPositive;
+						cb->ExponentNegative = settings.ExponentNegative;
 						context->Unmap(linearizeCB, 0);
 						context->CSSetConstantBuffers(0, 1, &linearizeCB);
 					}
@@ -291,13 +295,15 @@ void VolumetricShadows::CopyShadowLightData()
 					context->Dispatch(dispatchSize, dispatchSize, 1);
 					globals::profiler->EndPass();
 
-					// Mip 1 (cascade 0) - update cbuffer with cascade 0 near/far
+					// Mip 1 (cascade 0) - update cbuffer with cascade 0 near/far + exponents
 					{
 						D3D11_MAPPED_SUBRESOURCE mapped{};
 						DX::ThrowIfFailed(context->Map(linearizeCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-						auto* cb = static_cast<VSMLinearizeCB*>(mapped.pData);
+						auto* cb = static_cast<EVSMLinearizeCB*>(mapped.pData);
 						cb->CascadeNear = cascadeNear[0];
 						cb->CascadeFar = cascadeFar[0];
+						cb->ExponentPositive = settings.ExponentPositive;
+						cb->ExponentNegative = settings.ExponentNegative;
 						context->Unmap(linearizeCB, 0);
 					}
 
@@ -446,6 +452,14 @@ void VolumetricShadows::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Blur radius in world units. Both cascades are scaled to match this world-space softness.");
 
+	ImGui::SliderFloat("Positive Exponent", &settings.ExponentPositive, 1.0f, 80.0f, "%.1f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Controls shadow sharpness. Higher = sharper shadows but more numerical instability.");
+
+	ImGui::SliderFloat("Negative Exponent", &settings.ExponentNegative, 1.0f, 40.0f, "%.1f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Controls light bleed suppression. Higher = less light bleed but may cause artifacts.");
+
 	ImGui::SeparatorText("Debug");
 
 	if (ImGui::TreeNode("Info")) {
@@ -477,8 +491,8 @@ void VolumetricShadows::DrawSettings()
 			}
 		};
 
-		DisplayRT("MSM Cascade 0", shadowCopyTexture, shadowCopyMip0SRV);
-		DisplayRT("MSM Cascade 1", shadowCopyTexture, shadowCopyMip1SRV);
+		DisplayRT("EVSM Cascade 0", shadowCopyTexture, shadowCopyMip0SRV);
+		DisplayRT("EVSM Cascade 1", shadowCopyTexture, shadowCopyMip1SRV);
 
 		ImGui::TreePop();
 	}

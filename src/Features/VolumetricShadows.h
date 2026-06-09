@@ -17,8 +17,8 @@ public:
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
-		return { T("feature.volumetric_shadows.description", "Volumetric Shadows provides downsampled MSM shadow maps for use by effects like particles and decals.\nThis improves shadow quality on transparent objects with minimal performance impact."),
-			{ T("feature.volumetric_shadows.key_feature_1", "Downsampled MSM shadows"),
+		return { T("feature.volumetric_shadows.description", "Volumetric Shadows provides downsampled EVSM shadow maps for use by effects like particles and decals.\nThis improves shadow quality on transparent objects with minimal performance impact."),
+			{ T("feature.volumetric_shadows.key_feature_1", "Downsampled EVSM shadows"),
 				T("feature.volumetric_shadows.key_feature_2", "Gaussian blur filtering"),
 				T("feature.volumetric_shadows.key_feature_3", "Multi-cascade support"),
 				T("feature.volumetric_shadows.key_feature_4", "Optimized for effects rendering") } };
@@ -29,14 +29,17 @@ public:
 	struct Settings
 	{
 		float BlurRadius = 100.0f;
+		float ExponentPositive = 40.0f;
+		float ExponentNegative = 5.0f;
 	};
 	Settings settings;
 
-	struct alignas(16) VSMLinearizeCB
+	struct alignas(16) EVSMLinearizeCB
 	{
 		float CascadeNear;
 		float CascadeFar;
-		uint32_t _pad[2];
+		float ExponentPositive;
+		float ExponentNegative;
 	};
 
 	struct alignas(16) BlurCB
