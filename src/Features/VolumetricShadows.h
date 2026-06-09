@@ -17,8 +17,8 @@ public:
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
-		return { T("feature.volumetric_shadows.description", "Volumetric Shadows provides downsampled EVSM shadow maps for use by effects like particles and decals.\nThis improves shadow quality on transparent objects with minimal performance impact."),
-			{ T("feature.volumetric_shadows.key_feature_1", "Downsampled EVSM shadows"),
+		return { T("feature.volumetric_shadows.description", "Volumetric Shadows provides downsampled MSM shadow maps for use by effects like particles and decals.\nThis improves shadow quality on transparent objects with minimal performance impact."),
+			{ T("feature.volumetric_shadows.key_feature_1", "Downsampled MSM shadows"),
 				T("feature.volumetric_shadows.key_feature_2", "Gaussian blur filtering"),
 				T("feature.volumetric_shadows.key_feature_3", "Multi-cascade support"),
 				T("feature.volumetric_shadows.key_feature_4", "Optimized for effects rendering") } };
@@ -29,20 +29,14 @@ public:
 	struct Settings
 	{
 		float BlurRadius = 100.0f;
-		float ExponentPositive = 40.0f;
-		float ExponentNegative = 5.0f;
 	};
 	Settings settings;
 
-	struct alignas(16) EVSMLinearizeCB
+	struct alignas(16) VSMLinearizeCB
 	{
 		float CascadeNear;
 		float CascadeFar;
-		float GlobalNear;
-		float GlobalFar;
-		float ExponentPositive;
-		float ExponentNegative;
-		float _pad[2];
+		uint32_t _pad[2];
 	};
 
 	struct alignas(16) BlurCB
@@ -52,7 +46,6 @@ public:
 	};
 
 	float4 GetCascadeDepthParams();
-	float4 GetGlobalDepthParams();
 
 	// Compute shaders
 	ID3D11ComputeShader* downsampleShadowMip0CS = nullptr;

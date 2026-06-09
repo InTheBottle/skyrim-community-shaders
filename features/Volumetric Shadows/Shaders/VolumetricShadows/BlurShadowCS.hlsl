@@ -1,4 +1,4 @@
-// Separable Gaussian blur for EVSM shadow map moments
+// Separable Gaussian blur for shadow map moments
 // BLUR_HORIZONTAL - horizontal pass
 // BLUR_VERTICAL - vertical pass
 

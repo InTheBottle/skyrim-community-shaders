@@ -28,7 +28,6 @@ public:
 		float2 EndSplitDistances;
 		float2 StartSplitDistances;
 		float4 CascadeDepthParams;
-		float4 GlobalDepthParams;  // x=globalNear, y=globalFar, zw=unused
 	};
 	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowLightData);
 

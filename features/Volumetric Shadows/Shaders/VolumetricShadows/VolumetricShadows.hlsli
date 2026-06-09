@@ -5,56 +5,74 @@ namespace VolumetricShadows
 {
 	Texture2D<float4> SharedShadowMap : register(t18);
 
-	// EVSM exponents — must match values set in C++ (VolumetricShadows.h)
-	static const float EVSM_EXPONENT_POS = 40.0;
-	static const float EVSM_EXPONENT_NEG = 5.0;
-	static const float EVSM_VARIANCE_BIAS = 0.001;
-	static const float EVSM_LIGHT_BLEED_REDUCTION = 0.3;
+	static const float MSM_MOMENT_BIAS = 0.003;
 
-	// Convert orthographic shadow projection depth to globally-normalized [0,1].
-	// positionLS.z from mul(ShadowProj, worldPos) is orthographic [0,1] within the cascade.
-	// We remap through world space to the same global range used during moment generation.
-	float NormalizeDepth(float depth, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
+	float LinearizeDepth(float depth, float cascadeNear, float cascadeFar)
 	{
-		float worldZ = cascadeNear + depth * (cascadeFar - cascadeNear);
-		return (worldZ - globalNear) / (globalFar - globalNear);
+		float linZ = cascadeNear * cascadeFar / (cascadeFar - depth * (cascadeFar - cascadeNear));
+		return (linZ - cascadeNear) / (cascadeFar - cascadeNear);
 	}
 
-	// Chebyshev upper bound: P(x >= t) <= variance / (variance + (t - mean)^2)
-	// Returns visibility [0,1] where 1 = fully lit
-	float ChebyshevUpperBound(float mean, float meanSq, float testValue)
+	// Inverse RGBA16 quantization: recover power moments from optimized storage
+	// Reference: Peters, "Moment Shadow Mapping" (I3D 2015)
+	float4 ConvertOptimizedMoments(float4 optimizedMoments)
 	{
-		float variance = max(meanSq - mean * mean, EVSM_VARIANCE_BIAS);
-
-		float d = testValue - mean;
-		float pMax = variance / (variance + d * d);
-
-		// Reduce light bleeding by remapping [bleedReduction..1] -> [0..1]
-		pMax = saturate((pMax - EVSM_LIGHT_BLEED_REDUCTION) / (1.0 - EVSM_LIGHT_BLEED_REDUCTION));
-
-		// If the test value is behind the mean, it's fully lit
-		return (testValue <= mean) ? 1.0 : pMax;
+		optimizedMoments[0] -= 0.035955884801;
+		return mul(optimizedMoments, float4x4(
+			0.2227744146,  0.1549679261,  0.1451988946,  0.163127443,
+			0.0771972861,  0.1394629426,  0.2120202157,  0.2591432266,
+			0.7926986636,  0.7963415838,  0.7258694464,  0.6539092497,
+			0.0319417555, -0.1722823173, -0.2758014811, -0.3376131734));
 	}
 
-	// Compute EVSM shadow from stored moments
-	// moments = (E[e^cz], E[e^2cz], E[e^-cz], E[e^-2cz])
-	float ComputeEVSM(float4 moments, float depth, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
+	// Hamburger 4-moment shadow reconstruction
+	// Reference: Peters, "Moment Shadow Mapping" (I3D 2015)
+	float ComputeMSM(float4 optimizedMoments, float depth)
 	{
-		float d = NormalizeDepth(depth, cascadeNear, cascadeFar, globalNear, globalFar);
-		float posWarp = exp(EVSM_EXPONENT_POS * d);
-		float negWarp = exp(-EVSM_EXPONENT_NEG * d);
+		float4 b = ConvertOptimizedMoments(optimizedMoments);
 
-		// Positive exponent test (standard front-face shadow)
-		float posShadow = ChebyshevUpperBound(moments.x, moments.y, posWarp);
+		// Bias moments to reduce light bleeding
+		b = lerp(b, 0.5, MSM_MOMENT_BIAS);
 
-		// Negative exponent test (back-face light bleed suppression)
-		float negShadow = ChebyshevUpperBound(moments.z, moments.w, negWarp);
+		float3 z;
+		z[0] = depth;
 
-		return min(posShadow, negShadow);
+		// Cholesky factorization of the Hankel matrix
+		float L32D22 = mad(-b[0], b[1], b[2]);
+		float D22 = mad(-b[0], b[0], b[1]);
+		float squaredDepthVariance = mad(-b[1], b[1], b[3]);
+		float D33D22 = dot(float2(squaredDepthVariance, -L32D22), float2(D22, L32D22));
+		float InvD22 = 1.0 / D22;
+		float L32 = L32D22 * InvD22;
+
+		// Solve for the quadratic polynomial whose roots give the 2-point distribution
+		float3 c = float3(1.0, z[0], z[0] * z[0]);
+		c[1] -= b.x;
+		c[2] -= b.y + L32 * c[1];
+		c[1] *= InvD22;
+		c[2] *= D22 / D33D22;
+		c[1] -= L32 * c[2];
+		c[0] -= dot(c.yz, b.xy);
+
+		float p = c[1] / c[2];
+		float q = c[0] / c[2];
+		float D = (p * p * 0.25) - q;
+		float r = sqrt(max(D, 0.0));
+		z[1] = -p * 0.5 - r;
+		z[2] = -p * 0.5 + r;
+
+		// Compute shadow intensity from the 2-point distribution
+		float4 switchVal = (z[2] < z[0]) ? float4(z[1], z[0], 1.0, 1.0) :
+		                  ((z[1] < z[0]) ? float4(z[0], z[1], 0.0, 1.0) :
+		                  float4(0.0, 0.0, 0.0, 0.0));
+		float quotient = (switchVal[0] * z[2] - b[0] * (switchVal[0] + z[2]) + b[1])
+		                 / ((z[2] - switchVal[1]) * (z[0] - z[1]));
+		float shadowIntensity = switchVal[2] + switchVal[3] * quotient;
+		return 1.0 - saturate(shadowIntensity);
 	}
 
-	// Sample a single cascade for EVSM shadow (3D ray march)
-	float SampleEVSMCascade3D(
+	// Sample a single cascade for MSM shadow
+	float SampleVSMCascade3D(
 		uint cascadeIndex,
 		float noise,
 		uint sampleCount,
@@ -63,8 +81,6 @@ namespace VolumetricShadows
 		float3 endPositionLS,
 		float cascadeNear,
 		float cascadeFar,
-		float globalNear,
-		float globalFar,
 		out float firstSample)
 	{
 		float shadow = 0.0;
@@ -76,7 +92,8 @@ namespace VolumetricShadows
 			float3 samplePosLS = lerp(endPositionLS, startPositionLS, t);
 
 			float4 moments = SharedShadowMap.SampleLevel(LinearSampler, samplePosLS.xy, 1u - cascadeIndex);
-			float lit = ComputeEVSM(moments, samplePosLS.z, cascadeNear, cascadeFar, globalNear, globalFar);
+			float depth = LinearizeDepth(samplePosLS.z, cascadeNear, cascadeFar);
+			float lit = ComputeMSM(moments, depth);
 
 			// Last to set firstSample is start position
 			firstSample = lit;
@@ -119,9 +136,6 @@ namespace VolumetricShadows
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
-		float4 globalParams = directionalShadowLightData.GlobalDepthParams;
-		float globalNear = globalParams.x;
-		float globalFar = globalParams.y;
 
 		// Transform ray to light space for primary cascade
 		float4x4 shadowProj = directionalShadowLightData.ShadowProj[primaryCascade];
@@ -135,7 +149,7 @@ namespace VolumetricShadows
 
 		// Sample primary cascade
 		float primaryFirstSample;
-		float shadow = SampleEVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryNear, primaryFar, globalNear, globalFar, primaryFirstSample);
+		float shadow = SampleVSMCascade3D(primaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, primaryNear, primaryFar, primaryFirstSample);
 		surfaceShadow = primaryFirstSample;
 
 		// Blend with secondary cascade if needed
@@ -153,7 +167,7 @@ namespace VolumetricShadows
 			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
 
 			float secondaryFirstSample;
-			float shadowBlend = SampleEVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryNear, secondaryFar, globalNear, globalFar, secondaryFirstSample);
+			float shadowBlend = SampleVSMCascade3D(secondaryCascade, noise, sampleCount, rcpSampleCount, startLS, endLS, secondaryNear, secondaryFar, secondaryFirstSample);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 			surfaceShadow = lerp(surfaceShadow, secondaryFirstSample, cascadeSelect);
 		}
@@ -164,11 +178,12 @@ namespace VolumetricShadows
 		return lerp(1.0, shadow, fadeFactor);
 	}
 
-	// Sample a single cascade for EVSM shadow (2D point sample)
-	float SampleEVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar, float globalNear, float globalFar)
+	// Sample a single cascade for MSM shadow (2D point sample)
+	float SampleVSMCascade2D(uint cascadeIndex, float3 positionLS, float cascadeNear, float cascadeFar)
 	{
 		float4 moments = SharedShadowMap.SampleLevel(LinearSampler, positionLS.xy, 1u - cascadeIndex);
-		return ComputeEVSM(moments, positionLS.z, cascadeNear, cascadeFar, globalNear, globalFar);
+		float depth = LinearizeDepth(positionLS.z, cascadeNear, cascadeFar);
+		return ComputeMSM(moments, depth);
 	}
 
 	float GetVSMShadow2D(float3 position, out float detailedShadow)
@@ -197,9 +212,6 @@ namespace VolumetricShadows
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		float4 depthParams = directionalShadowLightData.CascadeDepthParams;
-		float4 globalParams = directionalShadowLightData.GlobalDepthParams;
-		float globalNear = globalParams.x;
-		float globalFar = globalParams.y;
 
 		// Transform position to light space for primary cascade
 		float3 positionLS = mul(directionalShadowLightData.ShadowProj[primaryCascade], float4(positionWS, 1)).xyz;
@@ -209,7 +221,7 @@ namespace VolumetricShadows
 		float primaryFar = primaryCascade == 0 ? depthParams.y : depthParams.w;
 
 		// Sample primary cascade
-		float shadow = SampleEVSMCascade2D(primaryCascade, positionLS, primaryNear, primaryFar, globalNear, globalFar);
+		float shadow = SampleVSMCascade2D(primaryCascade, positionLS, primaryNear, primaryFar);
 
 		// Blend with secondary cascade if needed
 		[branch] if (needsBlending)
@@ -222,7 +234,7 @@ namespace VolumetricShadows
 			float secondaryNear = secondaryCascade == 0 ? depthParams.x : depthParams.z;
 			float secondaryFar = secondaryCascade == 0 ? depthParams.y : depthParams.w;
 
-			float shadowBlend = SampleEVSMCascade2D(secondaryCascade, positionLS, secondaryNear, secondaryFar, globalNear, globalFar);
+			float shadowBlend = SampleVSMCascade2D(secondaryCascade, positionLS, secondaryNear, secondaryFar);
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 

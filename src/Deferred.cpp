@@ -560,7 +560,6 @@ void Deferred::CopyShadowLightData()
 	SetShadowCascadeParameters(sunShadowLight->GetRuntimeData(), dd);
 
 	dd.CascadeDepthParams = globals::features::volumetricShadows.GetCascadeDepthParams();
-	dd.GlobalDepthParams = globals::features::volumetricShadows.GetGlobalDepthParams();
 
 	D3D11_MAPPED_SUBRESOURCE mapped{};
 	DX::ThrowIfFailed(context->Map(directionalShadowLights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));

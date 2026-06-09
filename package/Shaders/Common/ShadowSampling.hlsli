@@ -31,7 +31,6 @@ struct DirectionalShadowLightData
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
 	float4 CascadeDepthParams;
-	float4 GlobalDepthParams;
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
