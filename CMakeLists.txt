@@ -30,12 +30,12 @@ option(
 )
 option(
     ZIP_TO_DIST
-    "Zip the base mod and addons to their own 7z file in dist."
+    "Zip the base mod and addons to their own zip file in dist."
     ON
 )
 option(
     AIO_ZIP_TO_DIST
-    "Zip the base mod and addons to a AIO 7z file in dist."
+    "Zip the base mod and addons to a AIO zip file in dist."
     ON
 )
 option(TRACY_SUPPORT "Enable support for tracy profiler" OFF)
@@ -842,7 +842,7 @@ if(NOT DEFINED ENV{CommunityShadersOutputDir})
     )
 endif()
 
-# Zip base CommunityShaders and all addons as their own 7z in dist folder
+# Zip base CommunityShaders and all addons as their own zip in dist folder
 if(ZIP_TO_DIST)
     set(ZIP_DIR "${CMAKE_CURRENT_BINARY_DIR}/zip")
     message("Copying base CommunityShader into ${ZIP_DIR}.")
@@ -883,14 +883,14 @@ if(ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${ZIP_DIR}/Shaders/Tests"
     )
 
-    set(TARGET_ZIP "${PROJECT_NAME}-${UTC_NOW}.7z")
+    set(TARGET_ZIP "${PROJECT_NAME}-${UTC_NOW}.zip")
     message("Zipping ${ZIP_DIR} to ${CMAKE_SOURCE_DIR}/dist/${TARGET_ZIP}")
     add_custom_command(
         TARGET ${PROJECT_NAME}
         POST_BUILD
         COMMAND
             ${CMAKE_COMMAND} -E tar cf ${CMAKE_SOURCE_DIR}/dist/${TARGET_ZIP}
-            --format=7zip -- .
+            --format=zip -- .
         WORKING_DIRECTORY ${ZIP_DIR}
     )
 
@@ -900,14 +900,14 @@ if(ZIP_TO_DIST)
         endif()
         get_filename_component(FEATURE ${FEATURE_PATH} NAME)
         message(
-            "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
+            "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.zip"
         )
         add_custom_command(
             TARGET ${PROJECT_NAME}
             POST_BUILD
             COMMAND
                 ${CMAKE_COMMAND} -E tar cf
-                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z --format=7zip
+                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.zip --format=zip
                 -- .
             WORKING_DIRECTORY ${FEATURE_PATH}
         )
@@ -930,7 +930,7 @@ if(AIO_ZIP_TO_DIST)
     # only rebuilds the archive when its inputs change. The archive filename
     # keeps the UTC timestamp as before, but the command writes a stable
     # stamp file that CMake can track as OUTPUT.
-    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
     set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
 
@@ -939,7 +939,7 @@ if(AIO_ZIP_TO_DIST)
     add_custom_command(
         OUTPUT ${AIO_ZIP_STAMP}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/dist"
-        COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=7zip -- .
+        COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=zip -- .
         COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
         WORKING_DIRECTORY ${AIO_DIR}
         DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
@@ -962,7 +962,7 @@ endif()
 set(DIST_PATH "${CMAKE_SOURCE_DIR}/dist")
 file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 
-set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.7z")
+set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.zip")
 
 # CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll
 file(
@@ -997,7 +997,7 @@ add_custom_command(
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PATH}/Shaders/Tests"
-    COMMAND ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=7zip -- .
+    COMMAND ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=zip -- .
     WORKING_DIRECTORY ${FEATURE_PATH}
     COMMENT "Creating Core zip package"
 )
@@ -1014,12 +1014,12 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     list(APPEND CORE_SOURCES ${FEATURE_SOURCES})
 
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
-    set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.7z")
+    set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.zip")
 
     add_custom_command(
         OUTPUT ${FEATURE_PACKAGE}
         COMMAND
-            ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE} --format=7zip -- .
+            ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE} --format=zip -- .
         WORKING_DIRECTORY "${FEATURE_PATH}"
         DEPENDS ${FEATURE_SOURCES}
         COMMENT "Creating ${FEATURE} zip package"
@@ -1040,7 +1040,7 @@ add_custom_command(
 add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
 # Manual AIO package target
-set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
     DEPENDS ${CORE_SOURCES}
@@ -1048,7 +1048,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
     COMMAND
         ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
-        ${AIO_PACKAGE} --format=7zip -- .
+        ${AIO_PACKAGE} --format=zip -- .
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})

@@ -40,7 +40,11 @@ target_precompile_headers(
 	include/PCH.h
 )
 
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+# LTO defaults ON; presets can override via cache variable to skip the
+# expensive LTCG link pass during development iteration.
+if(NOT DEFINED CACHE{CMAKE_INTERPROCEDURAL_OPTIMIZATION})
+	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
 set(Boost_USE_STATIC_LIBS ON)
@@ -53,18 +57,22 @@ if(WIN32)
 	add_compile_definitions(_WINDOWS)
 endif()
 
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
+if(MSVC)
 	add_compile_definitions(_UNICODE)
 
 	target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:DEBUG>")
 
 	set(SC_DEBUG_OPTS "/fp:strict;/ZI;/Od;/Gy")
-	set(SC_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
+	set(SC_RELEASE_OPTS "/Zi;/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
+
+	# /GL (whole-program optimization) only when LTO is enabled
+	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+		string(APPEND SC_RELEASE_OPTS ";/GL")
+	endif()
 
 	target_compile_options(
 		"${PROJECT_NAME}"
 		PRIVATE
-		/MP
 		/W4
 		/WX
 		/permissive-
@@ -90,16 +98,31 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
 		/wd4200 # nonstandard extension used : zero-sized array in struct/union
 	)
 
+	# /MP (multi-process compilation) only for MSBuild; Ninja handles parallelism itself
+	if(CMAKE_GENERATOR MATCHES "Visual Studio")
+		target_compile_options("${PROJECT_NAME}" PRIVATE /MP)
+	endif()
+
 	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:${SC_DEBUG_OPTS}>")
 	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
 
-	target_link_options(
-		${PROJECT_NAME}
-		PRIVATE
-		/WX
-		"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
-		"$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
-	)
+	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+		target_link_options(
+			${PROJECT_NAME}
+			PRIVATE
+			/WX
+			"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
+			"$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
+		)
+	else()
+		target_link_options(
+			${PROJECT_NAME}
+			PRIVATE
+			/WX
+			"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
+			"$<$<CONFIG:RELEASE>:/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
+		)
+	endif()
 endif()
 
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)

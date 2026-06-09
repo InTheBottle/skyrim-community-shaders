@@ -190,7 +190,7 @@ jobs:
                   name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
-                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
+                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.zip"
                   bodyFile: release-notes.md
                   allowUpdates: true
                   replacesArtifacts: true
@@ -203,7 +203,7 @@ jobs:
                   name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
-                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
+                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.zip"
                   generateReleaseNotes: true
                   allowUpdates: true
                   replacesArtifacts: true

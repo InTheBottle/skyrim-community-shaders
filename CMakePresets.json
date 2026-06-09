@@ -47,9 +47,28 @@
             }
         },
         {
+            "name": "ninja",
+            "hidden": true,
+            "generator": "Ninja",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "/EHsc /W4 /WX $penv{CXXFLAGS}",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
+            }
+        },
+        {
             "name": "skyrim",
             "hidden": true,
             "inherits": ["common", "vcpkg", "win64", "msvc"]
+        },
+        {
+            "name": "skyrim-ninja",
+            "hidden": true,
+            "inherits": ["common", "vcpkg", "ninja"]
         },
         {
             "name": "ALL",
@@ -81,6 +100,21 @@
             "cacheVariables": {
                 "COMMONLIB_PREBUILT_MULTICONFIG": "OFF"
             }
+        },
+        {
+            "name": "ALL-Ninja",
+            "description": "Fast dev build using Ninja generator. No LTO, no packaging overhead.",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "OFF",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF"
+            },
+            "inherits": "skyrim-ninja"
         }
     ],
     "buildPresets": [
@@ -125,6 +159,12 @@
             "configurePreset": "ALL-DEBUG",
             "configuration": "Debug",
             "targets": ["CommunityShaders", "AIO"]
+        },
+        {
+            "name": "Dev-Fast",
+            "description": "Fastest iteration build: Ninja + no LTO + DLL only",
+            "configurePreset": "ALL-Ninja",
+            "targets": ["CommunityShaders"]
         }
     ]
 }
