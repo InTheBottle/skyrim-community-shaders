@@ -239,7 +239,7 @@ namespace Skylighting
 		}
 
 		float fadeOut = GetFadeOutFactor(positionMS);
-		float shadow = sum / max(wsum, 0.0001);
+		float shadow = sum / max(wsum, EPSILON_WEIGHT_SUM);
 		return lerp(1.0, shadow, fadeOut);
 	}
 #endif

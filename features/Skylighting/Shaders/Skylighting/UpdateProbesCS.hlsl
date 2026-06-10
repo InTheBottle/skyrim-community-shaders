@@ -11,7 +11,6 @@ struct DirectionalShadowLightData
 	column_major float4x4 InvShadowProj[2];
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
-	float4 CascadeDepthParams;
 };
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t2);
 
@@ -105,9 +104,7 @@ static const float3 noise3D[32] = {
 				if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
 					float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust[0].xyz;
 
-					float cascadeSelect = saturate((linearDepth - shadowData.StartSplitDistances.y) /
-						(shadowData.EndSplitDistances.x - shadowData.StartSplitDistances.y));
-					uint cascadeIndex = uint(cascadeSelect);
+					uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
 					float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
 

@@ -240,8 +240,8 @@ void Skylighting::Prepass()
 	{
 		std::array<ID3D11ShaderResourceView*, 3> srvs = {
 			texOcclusion->srv.get(),
-			shadowCascadeSRV,
-			globals::deferred->directionalShadowLights->srv.get()
+			shadowCascadeSRV ? shadowCascadeSRV : nullptr,
+			shadowCascadeSRV ? globals::deferred->directionalShadowLights->srv.get() : nullptr
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
