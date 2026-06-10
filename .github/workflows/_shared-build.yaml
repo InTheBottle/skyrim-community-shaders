@@ -35,6 +35,10 @@ on:
                 description: "Optional suffix to invalidate the build cache"
                 type: string
                 default: ""
+            cmake-preset:
+                description: "CMake configure/build preset for the C++ build (ALL = full LTCG shipping flags; PR = mild optimization without LTCG or full debug info)"
+                type: string
+                default: "ALL"
         outputs:
             version:
                 description: "CMake project version extracted from the build"
@@ -56,8 +60,8 @@ jobs:
             matrix:
                 compiler:
                     - name: vs2026
-                      cmake-preset: ALL
-                      build-dir: build/ALL
+                      cmake-preset: ${{ inputs.cmake-preset }}
+                      build-dir: build/${{ inputs.cmake-preset }}
             fail-fast: false
         steps:
             - name: Checkout code
@@ -187,7 +191,8 @@ jobs:
                     echo "fxc.exe not found - shader validation requires fxc.exe. Set --fxc to a valid path or ensure fxc.exe is in PATH." >&2
                     exit 1
                   fi
-                  hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml --max-warnings 0 --suppress-warnings X1519
+                  JOBS=$(nproc 2>/dev/null || echo 4)
+                  hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml --max-warnings 0 --suppress-warnings X1519 --jobs "$JOBS"
 
             - name: Upload shader validation logs
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
@@ -239,8 +244,10 @@ jobs:
 
             - name: Run shader unit tests
               if: steps.check-hlsl.outputs.skip != 'true'
+              shell: bash
               run: |
-                  ctest --test-dir build/ALL -C Release --output-on-failure -R ShaderTests --timeout 300
+                  JOBS=$(nproc 2>/dev/null || echo 4)
+                  ctest --test-dir build/ALL -C Release --output-on-failure -L Shaders --timeout 300 --parallel "$JOBS"
 
             - name: Upload test results on failure
               if: failure() && steps.check-hlsl.outputs.skip != 'true'

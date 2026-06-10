@@ -57,7 +57,8 @@
             "cacheVariables": {
                 "CMAKE_CXX_FLAGS": "/EHsc /W4 /WX $penv{CXXFLAGS}",
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
+                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL",
+                "CMAKE_EXE_LINKER_FLAGS": "/machine:x64"
             }
         },
         {
@@ -77,7 +78,8 @@
                 "ENABLE_SKYRIM_SE": "ON",
                 "ENABLE_SKYRIM_VR": "OFF",
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF",
-                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "VCPKG_APPLOCAL_DEPS": "OFF"
             },
             "inherits": "skyrim"
         },
@@ -102,8 +104,8 @@
             }
         },
         {
-            "name": "ALL-Ninja",
-            "description": "Fast dev build using Ninja generator. No LTO, no packaging overhead.",
+            "name": "Dev-Fast",
+            "description": "Fast dev iteration: Ninja, no LTO, /Od, /Z7, incremental link, full PDB. Never ship these binaries.",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
@@ -111,10 +113,26 @@
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF",
                 "ZIP_TO_DIST": "OFF",
                 "AIO_ZIP_TO_DIST": "OFF",
+                "BUILD_SHADER_TESTS": "OFF",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
-                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF"
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+                "SC_DEVFAST_OPTS": "ON",
+                "CMAKE_CXX_FLAGS_RELEASE": "/Od /Ob1 /DNDEBUG",
+                "CMAKE_SHARED_LINKER_FLAGS_RELEASE": ""
             },
             "inherits": "skyrim-ninja"
+        },
+        {
+            "name": "PR",
+            "description": "CI builds for pull requests: mild optimization (/O2, no LTO), no compile-time debug info (public-symbols PDB only). Roughly halves CI build time vs the LTCG shipping path.",
+            "inherits": "ALL",
+            "cacheVariables": {
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+                "SC_COMPILE_PDB": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -163,8 +181,15 @@
         {
             "name": "Dev-Fast",
             "description": "Fastest iteration build: Ninja + no LTO + DLL only",
-            "configurePreset": "ALL-Ninja",
+            "configurePreset": "Dev-Fast",
             "targets": ["CommunityShaders"]
+        },
+        {
+            "name": "PR",
+            "description": "CI build for pull requests: mildly optimized package without LTCG or full debug info",
+            "configurePreset": "PR",
+            "configuration": "Release",
+            "targets": ["CommunityShaders", "Package-AIO-Manual"]
         }
     ]
 }

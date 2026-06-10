@@ -57,17 +57,52 @@ if(WIN32)
 	add_compile_definitions(_WINDOWS)
 endif()
 
+# Build flavors (Release config), selected by presets:
+#   shipping (ALL/Package): CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON (default)
+#     -> max performance: /O2 /Zi /GL + /LTCG, full self-contained PDB.
+#   PR / CI (PR preset):    IPO=OFF, SC_COMPILE_PDB=OFF, SC_DEVFAST_OPTS=OFF
+#     -> mild optimization: /O2 without LTO, no compile-time debug info; the
+#        linker still writes a small public-symbols PDB so packaging rules and
+#        crash-log function names keep working. Measured ~2x faster than LTCG.
+#   dev local (Dev-Fast):   IPO=OFF, SC_DEVFAST_OPTS=ON
+#     -> fastest iteration: /Od /Z7 + incremental link, full PDB. Measured 2x
+#        faster clean builds than /O2 and ~1.5x faster heavy-TU rebuilds; runs
+#        slower in-game and must NEVER ship.
+option(SC_DEVFAST_OPTS "Use minimal optimization (/Od) and incremental linking for fast dev iteration" OFF)
+option(SC_COMPILE_PDB "Generate compile-time debug info (full PDB). OFF leaves only linker public symbols" ON)
+
 if(MSVC)
-	add_compile_definitions(_UNICODE)
+	# Define both: the Visual Studio generator implies UNICODE via the project
+	# CharacterSet, but single-config generators (Ninja) do not — without it,
+	# Win32 TCHAR APIs (GetModuleHandle etc.) resolve to their ANSI variants.
+	add_compile_definitions(_UNICODE UNICODE)
 
 	target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:DEBUG>")
 
 	set(SC_DEBUG_OPTS "/fp:strict;/ZI;/Od;/Gy")
-	set(SC_RELEASE_OPTS "/Zi;/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
 
-	# /GL (whole-program optimization) only when LTO is enabled
+	# Optimization level: full opt for shipping; minimal opt (/Od) for fast dev
+	# iteration when SC_DEVFAST_OPTS is ON. On the no-LTO dev path the optimizer
+	# time of the single recompiled TU dominates, so /Od is the per-file win.
+	# /Gy (function-level linking) is enabled on the dev path to pair with the
+	# incremental linker below; the shipping path keeps /Gy- as before.
+	if(SC_DEVFAST_OPTS)
+		set(SC_RELEASE_OPTS "/fp:fast;/Gy;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/Od;/Ob1;/fp:except-")
+	else()
+		set(SC_RELEASE_OPTS "/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
+	endif()
+
+	# Debug-info format and whole-program optimization depend on the build path.
+	# Shipping (LTO on): separate PDB (/Zi) + whole-program optimization (/GL).
+	# Dev (LTO off, SC_COMPILE_PDB on): embedded debug info (/Z7) avoids mspdbsrv
+	# PDB-lock contention across parallel compiles and keeps debug data in the
+	# .obj for caching. PR/CI (SC_COMPILE_PDB off): no compile-time debug info at
+	# all — the linker's /DEBUG below still emits a public-symbols-only PDB.
 	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+		string(PREPEND SC_RELEASE_OPTS "/Zi;")
 		string(APPEND SC_RELEASE_OPTS ";/GL")
+	elseif(SC_COMPILE_PDB)
+		string(PREPEND SC_RELEASE_OPTS "/Z7;")
 	endif()
 
 	target_compile_options(
@@ -103,8 +138,8 @@ if(MSVC)
 		target_compile_options("${PROJECT_NAME}" PRIVATE /MP)
 	endif()
 
-	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:${SC_DEBUG_OPTS}>")
-	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
+	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:${SC_DEBUG_OPTS}>")
+	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
 
 	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 		target_link_options(
@@ -114,7 +149,29 @@ if(MSVC)
 			"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
 			"$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
 		)
+	elseif(SC_DEVFAST_OPTS)
+		# Dev (no-LTO) path: true incremental linking. /OPT:REF and /OPT:ICF are
+		# mutually exclusive with /INCREMENTAL (the linker emits LNK4075 and
+		# silently falls back to a full link), so the shipping flags above would
+		# force a full ~18MB DLL link on every 1-file rebuild. /OPT:NOREF
+		# /OPT:NOICF + /INCREMENTAL let the linker patch only changed functions.
+		# /DEBUG:FULL keeps the PDB self-contained and deployable next to the
+		# DLL — crash loggers and debuggers on other machines can resolve
+		# symbols without the local .obj files. (/DEBUG:FASTLINK is no longer
+		# supported by the VS2026 toolchain: LNK4315, fatal under /WX.)
+		target_link_options(
+			${PROJECT_NAME}
+			PRIVATE
+			/WX
+			"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
+			"$<$<CONFIG:RELEASE>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF;/DEBUG:FULL>"
+		)
 	else()
+		# PR / CI path (no LTO, no incremental): compact one-shot link. /OPT:REF
+		# /OPT:ICF keep the DLL shipping-sized; /DEBUG:FULL emits a PDB that is
+		# small here because the objects carry no debug info (SC_COMPILE_PDB
+		# OFF) — public symbols only, enough for function names in crash logs
+		# and required by the $<TARGET_PDB_FILE> packaging rules.
 		target_link_options(
 			${PROJECT_NAME}
 			PRIVATE
@@ -126,6 +183,22 @@ if(MSVC)
 endif()
 
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
+
+# CommonLibSSE-NG forces CMAKE_INTERPROCEDURAL_OPTIMIZATION ON for Release in its
+# own CMakeLists, so its static lib ships /GL (whole-program) objects. Linking a
+# /GL object drags LTCG into EVERY plugin link — even on the no-LTO dev path —
+# and /GL is incompatible with the incremental linker (LNK4075, fatal under /WX).
+# On the dev path (IPO off) force CommonLib's IPO off too so its objects carry no
+# /GL: this is what actually lets the dev link skip LTCG and link incrementally.
+# The shipping path leaves CommonLib's IPO untouched (full /GL + /LTCG).
+if(MSVC AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+	set_target_properties(
+		${CommonLibName}
+		PROPERTIES
+		INTERPROCEDURAL_OPTIMIZATION OFF
+		INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+	)
+endif()
 
 find_package(spdlog CONFIG REQUIRED)
 

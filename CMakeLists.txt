@@ -384,7 +384,11 @@ list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
 # To copy AIO package at a folder do `${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}`
-install(CODE "file(REMOVE_RECURSE \${CMAKE_INSTALL_PREFIX})")
+install(CODE "
+    if(EXISTS \"\${CMAKE_INSTALL_PREFIX}\")
+        file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}\")
+    endif()
+")
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION SKSE/Plugins COMPONENT SKSE)
 install(
     FILES $<TARGET_PDB_FILE:${PROJECT_NAME}>
@@ -964,10 +968,12 @@ file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 
 set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.zip")
 
-# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll
+# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll.
+# No CONFIGURE_DEPENDS: these manual-packaging globs only need to be current at
+# package time, and packaging always runs from a fresh CI configure. Omitting it
+# keeps these globs out of the VS generator's per-build VerifyGlobs walk.
 file(
     GLOB_RECURSE CORE_SOURCES
-    CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/package/*"
 )
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
@@ -979,7 +985,7 @@ set(CORE_FEATURE_PATHS "${CMAKE_SOURCE_DIR}/package/")
 foreach(FEATURE_PATH ${FEATURE_PATHS})
     if(EXISTS "${FEATURE_PATH}/CORE")
         list(APPEND CORE_FEATURE_PATHS "${FEATURE_PATH}/")
-        file(GLOB_RECURSE FEATURE_SOURCES CONFIGURE_DEPENDS "${FEATURE_PATH}/*")
+        file(GLOB_RECURSE FEATURE_SOURCES "${FEATURE_PATH}/*")
         list(APPEND CORE_SOURCES ${FEATURE_SOURCES})
     endif()
 endforeach()
@@ -1010,7 +1016,7 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     endif()
 
     list(APPEND CORE_FEATURE_PATHS "${FEATURE_PATH}/")
-    file(GLOB_RECURSE FEATURE_SOURCES CONFIGURE_DEPENDS "${FEATURE_PATH}/*")
+    file(GLOB_RECURSE FEATURE_SOURCES "${FEATURE_PATH}/*")
     list(APPEND CORE_SOURCES ${FEATURE_SOURCES})
 
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
@@ -1031,26 +1037,51 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 endforeach()
 
 # AIO Folder target
-add_custom_command(
-    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMENT "Installing to AIO folder"
-)
-add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+# When the incremental AIO system (PREPARE_AIO) is active, reuse it instead
+# of running a full cmake --install (which does REMOVE_RECURSE + full copy).
+if(TARGET PREPARE_AIO)
+    add_custom_target(
+        "AIO"
+        DEPENDS
+            ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+            copy_shaders.stamp
+    )
+else()
+    add_custom_command(
+        OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
+        DEPENDS ${CORE_SOURCES}
+        COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+        COMMENT "Installing to AIO folder"
+    )
+    add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+endif()
 
 # Manual AIO package target
 set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
-add_custom_command(
-    OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMAND
-        ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
-        ${AIO_PACKAGE} --format=zip -- .
-    COMMENT "Creating AIO zip package (manual)"
-)
+if(TARGET PREPARE_AIO)
+    add_custom_command(
+        OUTPUT ${AIO_PACKAGE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E tar cfv ${AIO_PACKAGE} --format=zip -- .
+        WORKING_DIRECTORY ${AIO_DIR}
+        DEPENDS
+            ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+            copy_shaders.stamp
+            ${PROJECT_NAME}
+        COMMENT "Creating AIO zip package (from prepared AIO dir)"
+    )
+else()
+    add_custom_command(
+        OUTPUT ${AIO_PACKAGE}
+        DEPENDS ${CORE_SOURCES}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
+        COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+        COMMAND
+            ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
+            ${AIO_PACKAGE} --format=zip -- .
+        COMMENT "Creating AIO zip package (full install)"
+    )
+endif()
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
 
 # #######################################################################################################################

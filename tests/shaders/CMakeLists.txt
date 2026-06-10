@@ -147,19 +147,25 @@ target_compile_definitions(shader_tests PRIVATE USE_PIX)
 # ============================================================================
 # CTest Integration
 # ============================================================================
-# Register with CTest so CI can discover and run tests
+# Register per-file tests so ctest --parallel can run them concurrently.
+# Each HLSL test file becomes a separate CTest entry that uses Catch2's
+# section filter (-c) to run only that module's DYNAMIC_SECTIONs.
 enable_testing()
-add_test(
-    NAME ShaderTests
-    COMMAND shader_tests --reporter compact
-    WORKING_DIRECTORY $<TARGET_FILE_DIR:shader_tests>
-)
 
-# Set test properties for better CI output
-set_tests_properties(ShaderTests PROPERTIES
-    TIMEOUT 300  # 5 minute timeout for all shader tests
-    LABELS "Shaders;UnitTests"
-)
+foreach(TEST_FILE ${HLSL_TEST_FILES})
+    get_filename_component(_test_filename ${TEST_FILE} NAME)
+    string(REGEX REPLACE "^Test" "" _module_name "${_test_filename}")
+    string(REGEX REPLACE "\\.hlsl$" "" _module_name "${_module_name}")
+    add_test(
+        NAME "ShaderTests/${_module_name}"
+        COMMAND shader_tests -c "${_module_name} - " --reporter compact
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:shader_tests>
+    )
+    set_tests_properties("ShaderTests/${_module_name}" PROPERTIES
+        TIMEOUT 120
+        LABELS "Shaders;UnitTests"
+    )
+endforeach()
 
 message(STATUS "Shader tests configured successfully")
 message(STATUS "  Tests will run automatically before packaging and deployment")
