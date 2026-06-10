@@ -182,6 +182,7 @@ namespace HLSLTestDiscovery
 		// file does not exist or contains no tests, discovery returns empty
 		// and the caller's REQUIRE(tests.size() > 0) fails the test loudly
 		// instead of green-lighting an empty run.
+#pragma warning(suppress : 4996)  // C4996 getenv deprecation: read-only query, no TOCTOU concern
 		const char* fileFilter = std::getenv("SHADER_TEST_FILE");
 
 		// Scan all Test*.hlsl files
