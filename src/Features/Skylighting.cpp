@@ -126,7 +126,7 @@ void Skylighting::SetupResources()
 		texShadowBitmask->CreateSRV(srvDesc);
 		texShadowBitmask->CreateUAV(uavDesc);
 
-		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UNORM;
 
 		texShadowVisibility = new Texture3D(texDesc, "Skylighting::ShadowVisibility");
 		texShadowVisibility->CreateSRV(srvDesc);
