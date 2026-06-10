@@ -183,6 +183,10 @@ jobs:
                     }
                   }
 
+            # --shader-dir intentionally stays on build/ALL: this job's
+            # prepare-shaders step always configures/populates the ALL preset
+            # regardless of inputs.cmake-preset (which only selects the
+            # C++ build tier in the cpp-build job above).
             - name: Validate shader compilation
               if: steps.check-hlsl.outputs.skip != 'true'
               shell: bash

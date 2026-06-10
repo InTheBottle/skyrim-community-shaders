@@ -148,8 +148,10 @@ target_compile_definitions(shader_tests PRIVATE USE_PIX)
 # CTest Integration
 # ============================================================================
 # Register per-file tests so ctest --parallel can run them concurrently.
-# Each HLSL test file becomes a separate CTest entry that uses Catch2's
-# section filter (-c) to run only that module's DYNAMIC_SECTIONs.
+# Each HLSL test file becomes a separate CTest entry; SHADER_TEST_FILE limits
+# runtime discovery to that one file. A bad/renamed filename yields zero
+# discovered tests, which fails the in-test REQUIRE(tests.size() > 0) loudly
+# rather than passing an empty run.
 enable_testing()
 
 foreach(TEST_FILE ${HLSL_TEST_FILES})
@@ -158,12 +160,13 @@ foreach(TEST_FILE ${HLSL_TEST_FILES})
     string(REGEX REPLACE "\\.hlsl$" "" _module_name "${_module_name}")
     add_test(
         NAME "ShaderTests/${_module_name}"
-        COMMAND shader_tests -c "${_module_name} - " --reporter compact
+        COMMAND shader_tests --reporter compact
         WORKING_DIRECTORY $<TARGET_FILE_DIR:shader_tests>
     )
     set_tests_properties("ShaderTests/${_module_name}" PROPERTIES
         TIMEOUT 120
         LABELS "Shaders;UnitTests"
+        ENVIRONMENT "SHADER_TEST_FILE=${_test_filename}"
     )
 endforeach()
 

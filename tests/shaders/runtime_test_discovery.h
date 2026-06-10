@@ -4,6 +4,7 @@
 
 #include "test_common.h"
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -176,11 +177,21 @@ namespace HLSLTestDiscovery
 			return allTests;
 		}
 
+		// Optional single-file filter used by the per-file CTest entries so
+		// ctest --parallel can split modules across processes. When the named
+		// file does not exist or contains no tests, discovery returns empty
+		// and the caller's REQUIRE(tests.size() > 0) fails the test loudly
+		// instead of green-lighting an empty run.
+		const char* fileFilter = std::getenv("SHADER_TEST_FILE");
+
 		// Scan all Test*.hlsl files
 		for (const auto& entry : std::filesystem::directory_iterator(shaderTestDir)) {
 			if (entry.is_regular_file()) {
 				std::string filename = entry.path().filename().string();
 				if (filename.find("Test") == 0 && filename.substr(filename.length() - 5) == ".hlsl") {
+					if (fileFilter && filename != fileFilter) {
+						continue;
+					}
 					auto tests = scanHLSLFile(entry.path());
 					allTests.insert(allTests.end(), tests.begin(), tests.end());
 				}

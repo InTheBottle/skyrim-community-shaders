@@ -91,7 +91,8 @@
                 "ENABLE_SKYRIM_SE": "ON",
                 "ENABLE_SKYRIM_VR": "OFF",
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF",
-                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "VCPKG_APPLOCAL_DEPS": "OFF"
             },
             "inherits": "skyrim"
         },
