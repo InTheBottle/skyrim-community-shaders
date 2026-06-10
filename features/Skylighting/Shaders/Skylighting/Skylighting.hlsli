@@ -160,7 +160,10 @@ namespace Skylighting
 		if (SharedData::InInterior)
 			return 1.0;
 
-		float3 biasedNormal = normalize(float3(evalNormal.xy, max(0.0, evalNormal.z)));
+		float3 candidateNormal = float3(evalNormal.xy, max(0.0, evalNormal.z));
+		float3 biasedNormal = dot(candidateNormal, candidateNormal) > 1e-6
+			? normalize(candidateNormal)
+			: float3(0, 0, 1);
 		float fadeOutFactor = GetFadeOutFactor(positionMS);
 		float skylightingDiffuse = EvaluateDiffuse(skylightingSH, biasedNormal, fadeOutFactor);
 
@@ -195,8 +198,6 @@ namespace Skylighting
 
 			if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
 				continue;
-
-			float3 cellCentreMS = (cellID + 0.5 - ARRAY_DIM / 2) * CELL_SIZE;
 
 			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
