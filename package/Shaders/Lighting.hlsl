@@ -2276,15 +2276,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #		if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING))
 	material.rimSoftLightColor = rimSoftLightColor.xyz;
-#			if defined(SKYLIGHTING_SHADOW_VIS)
-	material.rimSoftLightColor *= skylightingShadowVisibility;
-#			endif
 #		endif
 #		if defined(BACK_LIGHTING)
 	material.backLightColor = backLightColor.xyz;
-#			if defined(SKYLIGHTING_SHADOW_VIS)
-	material.backLightColor *= skylightingShadowVisibility;
-#			endif
 #		endif
 #	endif  // TRUE_PBR
 
@@ -2643,6 +2637,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		vertexNormal.xyz = worldNormal.xyz;
 		worldNormal.xyz = hairT;
 	}
+#	endif
+
+#	if defined(SKYLIGHTING_SHADOW_VIS)
+	dirSoftShadow = skylightingShadowVisibility;
 #	endif
 
 	float3 diffuseColor = 0.0.xxx;
