@@ -845,6 +845,9 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	endif
 
 #	if defined(SKYLIGHTING)
+#		if defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING) || defined(BACK_LIGHTING)
+#			define SKYLIGHTING_SHADOW_VIS
+#		endif
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 
@@ -2273,9 +2276,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #		if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING))
 	material.rimSoftLightColor = rimSoftLightColor.xyz;
+#			if defined(SKYLIGHTING_SHADOW_VIS)
+	material.rimSoftLightColor *= skylightingShadowVisibility;
+#			endif
 #		endif
 #		if defined(BACK_LIGHTING)
 	material.backLightColor = backLightColor.xyz;
+#			if defined(SKYLIGHTING_SHADOW_VIS)
+	material.backLightColor *= skylightingShadowVisibility;
+#			endif
 #		endif
 #	endif  // TRUE_PBR
 
@@ -2408,11 +2417,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(SKYLIGHTING)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
+#		if defined(SKYLIGHTING_SHADOW_VIS)
 	float skylightingShadowVisibility = 1.0;
+#		endif
 #		if defined(DEFERRED)
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy, skylightingShadowVisibility);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy
+#			if defined(SKYLIGHTING_SHADOW_VIS)
+		, skylightingShadowVisibility
+#			endif
+	);
 #		else
-	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy, skylightingShadowVisibility) : Skylighting::UNIT_SH;
+	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy
+#			if defined(SKYLIGHTING_SHADOW_VIS)
+		, skylightingShadowVisibility
+#			endif
+	) : Skylighting::UNIT_SH;
 #		endif
 #	endif
 

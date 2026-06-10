@@ -15,7 +15,7 @@ namespace Skylighting
 	Texture3D<sh2> SkylightingProbeArray : register(t50);
 #endif
 
-#if defined(PSHADER)
+#if defined(SKYLIGHTING_SHADOW_VIS)
 	Texture3D<float> ShadowVisibilityProbeArray : register(t53);
 #endif
 
@@ -81,14 +81,14 @@ namespace Skylighting
 
 #if defined(PSHADER) || defined(SKYLIGHTING_PROBE_REGISTER)
 	sh2 Sample(float3 positionMS, float3 normalWS, float2 screenPosition
-#if defined(PSHADER)
+#if defined(SKYLIGHTING_SHADOW_VIS)
 		, out float shadowVisibility
 #endif
 	)
 	{
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
-#if defined(PSHADER)
+#if defined(SKYLIGHTING_SHADOW_VIS)
 		shadowVisibility = 1.0;
 #endif
 
@@ -114,7 +114,7 @@ namespace Skylighting
 
 		sh2 shSum = 0;
 		float shWsum = 0;
-#if defined(PSHADER)
+#if defined(SKYLIGHTING_SHADOW_VIS)
 		float shadowSum = 0;
 		float shadowWsum = 0;
 #endif
@@ -141,14 +141,13 @@ namespace Skylighting
 					shSum = SphericalHarmonics::Add(shSum, SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], shW));
 					shWsum += shW;
 
-#if defined(PSHADER)
-					// Shadow visibility: simple trilinear
+#if defined(SKYLIGHTING_SHADOW_VIS)
 					shadowSum += ShadowVisibilityProbeArray[cellTexID] * triW;
 					shadowWsum += triW;
 #endif
 				}
 
-#if defined(PSHADER)
+#if defined(SKYLIGHTING_SHADOW_VIS)
 		float fadeOut = GetFadeOutFactor(positionMS);
 		shadowVisibility = lerp(1.0, shadowSum / max(shadowWsum, EPSILON_WEIGHT_SUM), fadeOut);
 #endif
