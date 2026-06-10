@@ -2408,12 +2408,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(SKYLIGHTING)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
+	float skylightingShadowVisibility = 1.0;
 #		if defined(DEFERRED)
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy, skylightingShadowVisibility);
 #		else
-	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy) : Skylighting::UNIT_SH;
+	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy, skylightingShadowVisibility) : Skylighting::UNIT_SH;
 #		endif
-
 #	endif
 
 	float4 waterData = SharedData::GetWaterData(input.WorldPosition.xyz);
