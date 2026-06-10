@@ -102,7 +102,7 @@ static const float3 noise3D[32] = {
 				float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
 				if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
-					float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust[0].xyz;
+					float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
 
 					uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
