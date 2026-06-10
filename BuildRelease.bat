@@ -20,6 +20,10 @@ if not defined VSINSTALL (
     exit /b 1
 )
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: failed to initialize VS x64 toolchain environment
+    exit /b 1
+)
 :skipvsenv
 
 rem Parallelize across projects too (MSBuild /m); Ninja is parallel by default.
