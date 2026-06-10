@@ -98,7 +98,7 @@ static const float3 noise3D[32] = {
 				uint bitIndex = (accumFrames - 1) % 32;
 				float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * Skylighting::CELL_SIZE;
 
-				float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS, 0);
+				float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
 				float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
 				if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
