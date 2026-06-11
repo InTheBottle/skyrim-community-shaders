@@ -130,6 +130,7 @@ namespace Skylighting
 					uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
 
 					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
+					// basic tangent checks
 					float tangentWeight = dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5;
 					float shW = triW * tangentWeight;
 					shSum = SphericalHarmonics::Add(shSum, SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], shW));
