@@ -114,7 +114,6 @@
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF",
                 "ZIP_TO_DIST": "OFF",
                 "AIO_ZIP_TO_DIST": "OFF",
-                "BUILD_SHADER_TESTS": "OFF",
                 "VCPKG_APPLOCAL_DEPS": "OFF",
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
                 "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",

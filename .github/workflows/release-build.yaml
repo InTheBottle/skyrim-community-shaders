@@ -45,7 +45,6 @@ jobs:
             repository: ${{ github.repository }}
             run-cpp: ${{ github.event_name != 'workflow_dispatch' || inputs.build-cpp == true }}
             run-shader-validation: ${{ github.event_name != 'workflow_dispatch' || inputs.validate-shaders == true }}
-            run-shader-tests: ${{ github.event_name != 'workflow_dispatch' || inputs.validate-shaders == true }}
             cache-key-suffix: ${{ inputs.cache-key-suffix || '' }}
 
     feature-audit:
