@@ -2,7 +2,6 @@
 #define __SKYLIGHTING_DEPENDENCY_HLSL__
 
 #include "Common/Math.hlsli"
-#include "Common/Random.hlsli"
 #include "Common/Shading.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
@@ -80,7 +79,7 @@ namespace Skylighting
 #endif
 
 #if defined(PSHADER) || defined(SKYLIGHTING_PROBE_REGISTER)
-	sh2 Sample(float3 positionMS, float3 normalWS, float2 screenPosition
+	sh2 Sample(float3 positionMS, float3 normalWS
 #if defined(SKYLIGHTING_SHADOW_VIS)
 		, out float shadowVisibility
 #endif
@@ -95,12 +94,7 @@ namespace Skylighting
 		if (SharedData::InInterior)
 			return scaledUnitSH;
 
-		positionMS.xyz += normalWS * CELL_SIZE * 0.5;
-
-		if (SharedData::FrameCount) {
-			float3 offset = float3(Random::pcg3d(uint3(screenPosition.xy, SharedData::FrameCount))) / 4294967295.0 * 2.0 - 1.0;
-			positionMS.xyz += offset * CELL_SIZE * 0.5;
-		}
+		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
@@ -135,7 +129,7 @@ namespace Skylighting
 
 					uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
 
-					// SH probe: tangent-weighted interpolation
+					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
 					float tangentWeight = dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5;
 					float shW = triW * tangentWeight;
 					shSum = SphericalHarmonics::Add(shSum, SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], shW));

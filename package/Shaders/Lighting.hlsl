@@ -2418,13 +2418,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float skylightingShadowVisibility = 1.0;
 #		endif
 #		if defined(DEFERRED)
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal
 #			if defined(SKYLIGHTING_SHADOW_VIS)
 		, skylightingShadowVisibility
 #			endif
 	);
 #		else
-	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal, input.Position.xy
+	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal
 #			if defined(SKYLIGHTING_SHADOW_VIS)
 		, skylightingShadowVisibility
 #			endif
@@ -2577,9 +2577,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float dirSoftShadow = 1.0;
 	float dirVSMDetailedShadow = 1.0;
 
-#	if defined(VOLUMETRIC_SHADOWS)
+#	if defined(VOLUMETRIC_SHADOWS) && !(defined(DEFERRED) && defined(SKYLIGHTING_SHADOW_VIS))
 	if (inWorld && !inReflection && ShadowSampling::HasDirectionalShadows())
-		dirSoftShadow = ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, dirVSMDetailedShadow);
+#		if !defined(SKYLIGHTING_SHADOW_VIS)
+		dirSoftShadow =
+#		endif
+		ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, dirVSMDetailedShadow);
 #	endif
 
 	float dirDetailedShadow = 1.0;
@@ -2587,12 +2590,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if ((Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) && (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir)) {
 		dirDetailedShadow *= shadowColor.x;
 
-#	if !defined(VOLUMETRIC_SHADOWS)
+#	if !defined(VOLUMETRIC_SHADOWS) && !defined(SKYLIGHTING_SHADOW_VIS)
 		dirSoftShadow = dirDetailedShadow;
 #	endif
-	} else {
+	}
+#	if !defined(DEFERRED)
+	else {
 		dirDetailedShadow = dirVSMDetailedShadow;
 	}
+#	endif
 
 #	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
 	if (!SharedData::InInterior && dirLightAngle >= 0.0)

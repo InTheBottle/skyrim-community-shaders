@@ -88,52 +88,44 @@ static const float3 noise3D[32] = {
 		outProbeArray[dtid] = occlusionSH;
 		outAccumFramesArray[dtid] = accumFrames;
 
-		// Shadow cascade sampling with bitmask accumulation and Gaussian spatial blur
+		// Shadow cascade sampling with bitmask accumulation
 		{
 			float shadowSample = 1.0;
+			DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
-			if (SharedData::HasDirectionalShadows && !SharedData::InInterior) {
-				DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
+			uint bitIndex = (accumFrames - 1) % 32;
+			float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * Skylighting::CELL_SIZE;
 
-				uint bitIndex = (accumFrames - 1) % 32;
-				float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * Skylighting::CELL_SIZE;
+			float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
+			float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
-				float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
-				float linearDepth = SharedData::GetScreenDepth(ndcDepth);
+			if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
+				float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
 
-				if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
-					float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
+				uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
-					uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
+				float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
 
-					float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
-
-					if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1)) {
-						shadowSample = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-					}
-
-					float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
-					float fadeFactor = 1.0 - pow(fade * fade, 8);
-					shadowSample = lerp(1.0, shadowSample, fadeFactor);
+				if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1)) {
+					shadowSample = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 				}
 
-				uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
-				bitmask &= ~(1u << bitIndex);
-				if (shadowSample > 0.5)
-					bitmask |= (1u << bitIndex);
-
-				outShadowBitmask[dtid] = bitmask;
-
-				uint validBits = min(accumFrames, 32u);
-				float shadow = float(countbits(bitmask)) / float(validBits);
-				shadow = lerp(1.0, shadow, min(fadeInThreshold, accumFrames) / fadeInThreshold);
-				outShadowVisibility[dtid] = shadow;
-			} else {
-				if (!isValid) {
-					outShadowBitmask[dtid] = 0;
-					outShadowVisibility[dtid] = 1.0;
-				}
+				float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
+				float fadeFactor = 1.0 - pow(fade * fade, 8);
+				shadowSample = lerp(1.0, shadowSample, fadeFactor);
 			}
+
+			uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
+			bitmask &= ~(1u << bitIndex);
+			if (shadowSample > 0.5)
+				bitmask |= (1u << bitIndex);
+
+			outShadowBitmask[dtid] = bitmask;
+
+			uint validBits = min(accumFrames, 32u);
+			float shadow = float(countbits(bitmask)) / float(validBits);
+			shadow = lerp(1.0, shadow, min(fadeInThreshold, accumFrames) / fadeInThreshold);
+			outShadowVisibility[dtid] = shadow;
 		}
 	} else if (!isValid) {
 		outProbeArray[dtid] = unitSH;

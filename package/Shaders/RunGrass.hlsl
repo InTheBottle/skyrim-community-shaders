@@ -559,7 +559,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #				if defined(SKYLIGHTING)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 #				endif  // SKYLIGHTING
 
@@ -821,7 +821,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			if defined(SKYLIGHTING)
 	float3 positionMSSkylight = input.WorldPosition.xyz;
-	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal, input.HPosition.xy);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 #			endif  // SKYLIGHTING
 
