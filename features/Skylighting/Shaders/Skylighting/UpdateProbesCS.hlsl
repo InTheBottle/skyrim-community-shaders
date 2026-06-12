@@ -107,9 +107,8 @@ static const float3 noise3D[32] = {
 
 				float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
 
-				if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1)) {
+				if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1))
 					shadowSample = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-				}
 
 				float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
 				float fadeFactor = 1.0 - pow(fade * fade, 8);
@@ -118,15 +117,14 @@ static const float3 noise3D[32] = {
 
 			uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
 			bitmask &= ~(1u << bitIndex);
-			if (shadowSample > 0.5)
+			if (shadowSample == 1.0)
 				bitmask |= (1u << bitIndex);
 
 			outShadowBitmask[dtid] = bitmask;
 
 			uint validBits = min(shadowFrames, 32u);
 			float shadow = float(countbits(bitmask)) / float(validBits);
-			shadow = lerp(1.0, shadow, min(fadeInThreshold, shadowFrames) / fadeInThreshold);
-			outShadowVisibility[dtid] = shadow;
+			outShadowVisibility[dtid] = sqrt(shadow);
 		}
 	} else if (!isValid) {
 		outProbeArray[dtid] = unitSH;
