@@ -12,7 +12,11 @@
             "cacheVariables": {
                 "SKSE_SUPPORT_XBYAK": "ON"
             },
-            "binaryDir": "${sourceDir}/build/${presetName}"
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "warnings": {
+                "dev": false,
+                "deprecated": false
+            }
         },
         {
             "name": "vcpkg",
@@ -35,7 +39,7 @@
             "name": "msvc",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "/EHsc /MP /W4 /WX $penv{CXXFLAGS}"
+                "CMAKE_CXX_FLAGS": "/EHsc /MP $penv{CXXFLAGS}"
             },
             "generator": "Visual Studio 18 2026",
             "vendor": {
@@ -55,7 +59,7 @@
                 "strategy": "external"
             },
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "/EHsc /W4 /WX $penv{CXXFLAGS}",
+                "CMAKE_CXX_FLAGS": "/EHsc $penv{CXXFLAGS}",
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL",
                 "CMAKE_EXE_LINKER_FLAGS": "/machine:x64"
@@ -115,7 +119,6 @@
                 "ZIP_TO_DIST": "OFF",
                 "AIO_ZIP_TO_DIST": "OFF",
                 "VCPKG_APPLOCAL_DEPS": "OFF",
-                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
                 "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
                 "SC_DEVFAST_OPTS": "ON",
                 "CMAKE_CXX_FLAGS_RELEASE": "/Od /Ob1 /DNDEBUG",

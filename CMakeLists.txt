@@ -1,6 +1,4 @@
 cmake_minimum_required(VERSION 4.2)
-cmake_policy(SET CMP0116 NEW)
-set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
 project(
     # gersemi: ignore
@@ -144,17 +142,6 @@ target_link_libraries(
         ${DETOURS_LIBRARY}
         windowscodecs
 )
-
-# Some third-party libs (e.g. FFX backend) are built with /GL.
-# In RelWithDebInfo, align linker options to avoid LNK4075/LNK1218 when warnings are treated as errors.
-if(MSVC)
-    target_link_options(
-        ${PROJECT_NAME}
-        PRIVATE
-            "$<$<CONFIG:RelWithDebInfo>:/LTCG>"
-            "$<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>"
-    )
-endif()
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
 if(MSVC_VERSION GREATER_EQUAL 1936 AND MSVC_IDE) # 17.6+
@@ -378,11 +365,7 @@ list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
 # To copy AIO package at a folder do `${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}`
-install(CODE "
-    if(EXISTS \"\${CMAKE_INSTALL_PREFIX}\")
-        file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}\")
-    endif()
-")
+install(CODE "file(REMOVE_RECURSE \${CMAKE_INSTALL_PREFIX})")
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION SKSE/Plugins COMPONENT SKSE)
 install(
     FILES $<TARGET_PDB_FILE:${PROJECT_NAME}>
