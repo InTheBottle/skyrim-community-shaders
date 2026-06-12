@@ -562,6 +562,19 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// Disable scene TAA for the duration of the menu interface render, then restore it.
+	struct MenuManagerDrawInterfaceStart
+	{
+		static void thunk(int64_t a1)
+		{
+			const bool temporal = Util::GetTemporal();
+			Util::SetTemporal(false);
+			func(a1);
+			Util::SetTemporal(temporal);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	struct CreateRenderTarget_Main
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
@@ -653,28 +666,6 @@ namespace Hooks
 		{
 			auto properties = *a_properties;
 			properties.copyable = true;
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct CreateRenderTarget_Water1
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct CreateRenderTarget_Water2
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
 			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -980,9 +971,6 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502));
 		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19));
 
-		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51));
-		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67));
-
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25));
 		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59));
@@ -1010,6 +998,9 @@ namespace Hooks
 		logger::info("Hooking weather extensions");
 		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 		stl::detour_thunk<WeatherExtensions::Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
+
+		logger::info("Hooking MenuManager::DrawInterfaceStart for menu TAA");
+		stl::detour_thunk<MenuManagerDrawInterfaceStart>(REL::RelocationID(79947, 82084));
 
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);
