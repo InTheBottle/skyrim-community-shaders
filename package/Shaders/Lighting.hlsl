@@ -3228,8 +3228,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	color.xyz = 0;
 #	endif
 
-	color.xyz = dirSoftShadow;
-
 #	if defined(LANDSCAPE) && !defined(LOD_LAND_BLEND)
 	psout.Diffuse.w = 0;
 #	else
