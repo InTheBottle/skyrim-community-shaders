@@ -94,40 +94,49 @@ static const float3 noise3D[32] = {
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
-	float shadowSample = 1.0;
-	DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
+	float4 cellCentreCS = mul(FrameBuffer::CameraViewProj, float4(cellCentreMS, 1));
+	float2 screenUV = (cellCentreCS.xy / cellCentreCS.w) * float2(0.5, -0.5) + 0.5;
+	bool onScreen = cellCentreCS.w > 0 && all(screenUV > 0) && all(screenUV < 1);
 
-	uint bitIndex = SharedData::FrameCount % 32;
-	float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
+	if (onScreen) {
+		float shadowSample = 1.0;
+		DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
-	float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
-	float linearDepth = SharedData::GetScreenDepth(ndcDepth);
+		uint bitIndex = SharedData::FrameCount % 32;
+		float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
 
-	if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
-		float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
+		float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
+		float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
-		uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
+		if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
+			float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
 
-		float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
+			uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
-		if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1)) {
+			float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
+
+			positionLS.xy = saturate(positionLS.xy);
+
 			float cascadeShadow = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 			float esramShadow = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 			shadowSample = min(cascadeShadow, esramShadow);
+
+			float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
+			float fadeFactor = 1.0 - pow(fade * fade, 8);
+			shadowSample = lerp(1.0, shadowSample, fadeFactor);
 		}
 
-		float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
-		float fadeFactor = 1.0 - pow(fade * fade, 8);
-		shadowSample = lerp(1.0, shadowSample, fadeFactor);
+		uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
+		bitmask &= ~(1u << bitIndex);
+		if (shadowSample > 0.5)
+			bitmask |= (1u << bitIndex);
+
+		outShadowBitmask[dtid] = bitmask;
+
+		float shadow = float(countbits(bitmask)) / 32.0;
+		outShadowVisibility[dtid] = shadow;
+	} else if (!isValid) {
+		outShadowBitmask[dtid] = 0;
+		outShadowVisibility[dtid] = 1.0;
 	}
-
-	uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
-	bitmask &= ~(1u << bitIndex);
-	if (shadowSample > 0.5)
-		bitmask |= (1u << bitIndex);
-
-	outShadowBitmask[dtid] = bitmask;
-
-	float shadow = float(countbits(bitmask)) / 32.0;
-	outShadowVisibility[dtid] = shadow;
 }
