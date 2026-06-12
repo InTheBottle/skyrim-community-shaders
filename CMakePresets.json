@@ -39,7 +39,8 @@
             "name": "msvc",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "/EHsc /MP $penv{CXXFLAGS}"
+                "CMAKE_CXX_FLAGS": "/EHsc /MP $penv{CXXFLAGS}",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob3 /DNDEBUG"
             },
             "generator": "Visual Studio 18 2026",
             "vendor": {

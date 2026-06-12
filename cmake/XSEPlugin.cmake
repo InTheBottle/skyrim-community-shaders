@@ -77,10 +77,12 @@ if(MSVC)
 
 	# Dev path uses /Od (the recompiled TU's optimizer time dominates the edit
 	# loop) and /Gy to pair with the incremental linker below.
+	# /Ob3 comes from the preset's CMAKE_CXX_FLAGS_RELEASE (single source,
+	# applies to externs too); repeating an /Ob here would emit D9025.
 	if(SC_DEVFAST_OPTS)
 		set(SC_RELEASE_OPTS "/fp:fast;/Gy;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/Od;/Ob1;/fp:except-")
 	else()
-		set(SC_RELEASE_OPTS "/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob3;/Oi;/Ot;/Oy;/fp:except-")
+		set(SC_RELEASE_OPTS "/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Oi;/Ot;/Oy;/fp:except-")
 	endif()
 
 	# Shipping: /Zi + /GL. Dev: /Z7 (no mspdbsrv PDB-lock contention across
