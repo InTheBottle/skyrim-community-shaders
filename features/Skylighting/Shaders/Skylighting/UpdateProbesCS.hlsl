@@ -94,8 +94,7 @@ static const float3 noise3D[32] = {
 			float shadowSample = 1.0;
 			DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
-			uint shadowFrames = max(accumFrames, 1u);
-			uint bitIndex = (shadowFrames - 1) % 32;
+			uint bitIndex = SharedData::FrameCount % 32;
 			float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * Skylighting::CELL_SIZE;
 
 			float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
@@ -121,13 +120,12 @@ static const float3 noise3D[32] = {
 
 			uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
 			bitmask &= ~(1u << bitIndex);
-			if (shadowSample == 1.0)
+			if (shadowSample > 0.5)
 				bitmask |= (1u << bitIndex);
 
 			outShadowBitmask[dtid] = bitmask;
 
-			uint validBits = min(shadowFrames, 32u);
-			float shadow = float(countbits(bitmask)) / float(validBits);
+			float shadow = float(countbits(bitmask)) / 32.0;
 			outShadowVisibility[dtid] = sqrt(shadow);
 		}
 	} else if (!isValid) {
