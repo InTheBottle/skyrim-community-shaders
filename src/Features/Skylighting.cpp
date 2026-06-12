@@ -238,10 +238,14 @@ void Skylighting::Prepass()
 	auto context = globals::d3d::context;
 
 	{
-		std::array<ID3D11ShaderResourceView*, 3> srvs = {
+		auto renderer = globals::game::renderer;
+		auto& esramDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kVOLUMETRIC_LIGHTING_SHADOWMAPS_ESRAM];
+
+		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
 			shadowCascadeSRV ? shadowCascadeSRV : nullptr,
-			shadowCascadeSRV ? globals::deferred->directionalShadowLights->srv.get() : nullptr
+			shadowCascadeSRV ? globals::deferred->directionalShadowLights->srv.get() : nullptr,
+			shadowCascadeSRV ? esramDepthStencil.depthSRV : nullptr
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),

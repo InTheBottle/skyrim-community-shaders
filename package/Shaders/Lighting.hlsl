@@ -1972,7 +1972,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #	endif  // BACK_LIGHTING
 
-#	if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING))
+#	if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING))
 	float4 rimSoftLightColor = TexRimSoftLightWorldMapOverlaySampler.Sample(SampRimSoftLightWorldMapOverlaySampler, uv);
 #	endif  // RIM_LIGHTING || SOFT_LIGHTING
 
@@ -2277,7 +2277,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	material.Glossiness = 0;
 	material.SpecularColor = 0;
 #		endif
-#		if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING) || defined(LOAD_SOFT_LIGHTING))
+#		if (defined(RIM_LIGHTING) || defined(SOFT_LIGHTING))
 	material.rimSoftLightColor = rimSoftLightColor.xyz;
 #		endif
 #		if defined(BACK_LIGHTING)
@@ -2938,6 +2938,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	IndirectContext indirectContext = (IndirectContext)0;
 	IndirectLobeWeights indirectLobeWeights;
 
+#	if defined(MULTI_LAYER_PARALLAX)
+	float layerValue = MultiLayerParallaxData.x * TexLayerSampler.Sample(SampLayerSampler, uv).w;
+	float3 tangentViewDirection = mul(viewDirection, tbn);
+	float3 layerNormal = MultiLayerParallaxData.yyy * (normalColor.xyz * 2.0.xxx + float3(-1, -1, -2)) + float3(0, 0, 1);
+	float layerViewAngle = dot(-tangentViewDirection.xyz, layerNormal.xyz) * 2;
+	float3 layerViewProjection = -layerNormal.xyz * layerViewAngle.xxx - tangentViewDirection.xyz;
+	float2 layerUv = uv * MultiLayerParallaxData.zw + (0.0009765625 * (layerValue / abs(layerViewProjection.z))).xx * layerViewProjection.xy;
+
+	float3 layerColor = TexLayerSampler.Sample(SampLayerSampler, layerUv).xyz;
+
+	float mlpBlendFactor = saturate(viewNormalAngle) * (1.0 - baseColor.w);
+
+	material.BaseColor = lerp(material.BaseColor, layerColor, mlpBlendFactor);
+
+	indirectLobeWeights.diffuse *= 1.0 - mlpBlendFactor;
+#	endif  // MULTI_LAYER_PARALLAX
+
 	float3 ambientNormal = worldNormal.xyz;
 #	if defined(HAIR) && defined(CS_HAIR)
 	if (SharedData::hairSpecularSettings.Enabled) {
@@ -3087,27 +3104,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	color.xyz *= vertexColor;
 
-#	if defined(MULTI_LAYER_PARALLAX)
-	float layerValue = MultiLayerParallaxData.x * TexLayerSampler.Sample(SampLayerSampler, uv).w;
-	float3 tangentViewDirection = mul(viewDirection, tbn);
-	float3 layerNormal = MultiLayerParallaxData.yyy * (normalColor.xyz * 2.0.xxx + float3(-1, -1, -2)) + float3(0, 0, 1);
-	float layerViewAngle = dot(-tangentViewDirection.xyz, layerNormal.xyz) * 2;
-	float3 layerViewProjection = -layerNormal.xyz * layerViewAngle.xxx - tangentViewDirection.xyz;
-	float2 layerUv = uv * MultiLayerParallaxData.zw + (0.0009765625 * (layerValue / abs(layerViewProjection.z))).xx * layerViewProjection.xy;
-
-	float3 layerColor = TexLayerSampler.Sample(SampLayerSampler, layerUv).xyz;
-
-	float mlpBlendFactor = saturate(viewNormalAngle) * (1.0 - baseColor.w);
-
-#		if defined(SKYLIGHTING)
-	color.xyz = lerp(color.xyz, (diffuseColor + directionalAmbientColor * skylightingDiffuse) * vertexColor * layerColor, mlpBlendFactor);
-#		else
-	color.xyz = lerp(color.xyz, (diffuseColor + directionalAmbientColor) * vertexColor * layerColor, mlpBlendFactor);
-#		endif
-
-	indirectLobeWeights.diffuse *= 1.0 - mlpBlendFactor;
-#	endif  // MULTI_LAYER_PARALLAX
-
 #	if defined(SNOW)
 	if (useSnowSpecular)
 		specularColor = 0;
@@ -3231,6 +3227,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	material.Roughness = 0.0;
 	color.xyz = 0;
 #	endif
+
+	color.xyz = dirSoftShadow;
 
 #	if defined(LANDSCAPE) && !defined(LOD_LAND_BLEND)
 	psout.Diffuse.w = 0;

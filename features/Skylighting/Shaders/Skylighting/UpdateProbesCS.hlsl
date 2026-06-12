@@ -4,6 +4,7 @@
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
 Texture2DArray<float4> ShadowCascadeMap : register(t1);
+Texture2DArray<float4> ESRAMShadow : register(t3);
 
 struct DirectionalShadowLightData
 {
@@ -107,8 +108,11 @@ static const float3 noise3D[32] = {
 
 				float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
 
-				if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1))
-					shadowSample = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
+				if (all(positionLS.xy >= 0) && all(positionLS.xy <= 1)) {
+					float cascadeShadow = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
+					float esramShadow = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
+					shadowSample = min(cascadeShadow, esramShadow);
+				}
 
 				float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
 				float fadeFactor = 1.0 - pow(fade * fade, 8);
