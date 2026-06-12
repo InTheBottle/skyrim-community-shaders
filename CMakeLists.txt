@@ -946,9 +946,8 @@ file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.zip")
 
 # CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll.
-# No CONFIGURE_DEPENDS: these manual-packaging globs only need to be current at
-# package time, and packaging always runs from a fresh CI configure. Omitting it
-# keeps these globs out of the VS generator's per-build VerifyGlobs walk.
+# No CONFIGURE_DEPENDS: packaging runs from a fresh CI configure, and omitting
+# it keeps these globs out of the VS generator's per-build VerifyGlobs walk.
 file(
     GLOB_RECURSE CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/package/*"
