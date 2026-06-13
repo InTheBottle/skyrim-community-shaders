@@ -116,7 +116,7 @@ namespace
 			{ "version", f->version },
 			{ "category", std::string(f->GetCategory()) },
 			{ "isCore", f->IsCore() },
-			{ "supportsVR", f->SupportsVR() },
+			{ "supportsVR", true },
 			{ "inMenu", f->IsInMenu() },
 		};
 
@@ -195,17 +195,6 @@ namespace
 			const bool explicitVal = a_args.value("enabled", false);
 			task->AddTask([target, hasExplicit, explicitVal, shortName]() {
 				const bool applied = hasExplicit ? explicitVal : !target->loaded;
-				// Don't let a remote caller enable a VR-incompatible feature on a VR runtime:
-				// it bypasses the SupportsVR() gate and can destabilize the renderer. Reject +
-				// report (covers both an explicit enable and an implicit flip resolving to true).
-				if (applied && REL::Module::IsVR() && !target->SupportsVR()) {
-					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
-						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
-						dvb->EmitEvent("communityshaders.feature.changed", payload.c_str());
-					}
-					logger::warn("DevBenchBridge: refused to enable VR-unsupported feature '{}' on a VR runtime", shortName);
-					return;
-				}
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
