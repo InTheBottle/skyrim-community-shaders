@@ -926,7 +926,7 @@ void Upscaling::EnsureVRIntermediateTextures()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVectorRT = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	auto screenSize = globals::state->screenSize;
+	auto screenSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
@@ -957,7 +957,7 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 
 	auto context = globals::d3d::context;
 
-	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	auto renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
@@ -988,7 +988,7 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 
 	auto context = globals::d3d::context;
 
-	auto screenSize = globals::state->screenSize;
+	auto screenSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 
 	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
 	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
