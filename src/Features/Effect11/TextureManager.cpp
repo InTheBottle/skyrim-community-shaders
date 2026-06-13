@@ -38,9 +38,8 @@ void TextureManager::SwapTextures(const std::string& name1, const std::string& n
 
 void TextureManager::CreateCommonTextures()
 {
-	auto state = globals::state;
-	UINT screenWidth = static_cast<UINT>(state->screenSize.x);
-	UINT screenHeight = static_cast<UINT>(state->screenSize.y);
+	UINT screenWidth = globals::game::graphicsState->screenWidth;
+	UINT screenHeight = globals::game::graphicsState->screenHeight;
 
 	commonTextureCache.insert({ "TextureHDRTemp", CreateTexture(screenWidth, screenHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp") });
 	commonTextureCache.insert({ "TextureHDRTemp2", CreateTexture(screenWidth, screenHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp2") });
