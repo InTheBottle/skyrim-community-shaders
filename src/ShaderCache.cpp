@@ -1,6 +1,5 @@
 #include "ShaderCache.h"
 #include "Globals.h"
-#include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
 
@@ -19,29 +18,6 @@
 
 namespace SIE
 {
-	// Chrono-free snapshot of compile counters for consumers that can't include
-	// ShaderCache.h (see ShaderCompileStatus.h). Thread-safe: atomics + the
-	// shader-map lock inside GetCurrentFailedCount.
-	ShaderCompileStatus GetShaderCompileStatus()
-	{
-		auto* cache = globals::shaderCache;
-		if (!cache)
-			return {};
-		// Read the task counters once and derive `compiling` from the same
-		// snapshot, so callers never observe compiling=false with work still
-		// outstanding. Named-field init avoids depending on member order.
-		const uint64_t completed = cache->GetCompletedTasks();
-		const uint64_t total = cache->GetTotalTasks();
-		ShaderCompileStatus status{};
-		status.valid = true;
-		status.compiling = completed < total;
-		status.completedTasks = completed;
-		status.totalTasks = total;
-		status.failedTasks = cache->GetFailedTasks();
-		status.currentFailedCount = cache->GetCurrentFailedCount();
-		return status;
-	}
-
 	// Custom include handler to track all includes during shader compilation
 	class TrackingIncludeHandler : public ID3DInclude
 	{
