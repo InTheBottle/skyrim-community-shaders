@@ -40,6 +40,13 @@ public:
 
 	float2 jitter = { 0, 0 };
 
+	enum class FrameGenMethod
+	{
+		kNone,
+		kFSR,
+		kDLSSG
+	};
+
 	enum class UpscaleMethod
 	{
 		kNONE,
@@ -121,6 +128,8 @@ public:
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+	FrameGenMethod GetFrameGenMethod() const;
+	bool UsesDLSSGFrameGen() const;
 
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
@@ -159,8 +168,9 @@ public:
 	virtual void ClearShaderCache() override;
 
 	// Static instances instead of singletons
-	static inline Streamline streamline;
-	static inline FidelityFX fidelityFX;  ///< Only for frame generation
+	static inline Streamline streamline;        ///< DX11 instance: DLSS + Reflex + PCL
+	static inline Streamline streamlineDX12;    ///< DX12 instance: DLSS-G frame generation
+	static inline FidelityFX fidelityFX;        ///< AMD FSR frame generation
 	static inline DX12SwapChain dx12SwapChain;
 	static inline RCAS rcas;  ///< Standalone RCAS sharpening for DLSS
 
@@ -217,6 +227,7 @@ public:
 	void SetProxyD3D11Device(ID3D11Device* device);
 	void SetProxyD3D11DeviceContext(ID3D11DeviceContext* context);
 	void CreateProxySwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
+	void CreateProxySwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 	void CreateProxyInterop();
 	IDXGISwapChain* GetProxySwapChain();
 

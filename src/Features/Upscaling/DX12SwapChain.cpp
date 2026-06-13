@@ -97,6 +97,69 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	fidelityFX.SetupFrameGeneration();
 }
 
+void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
+{
+	CreateD3D12Device(adapter);
+
+	IDXGIFactory4* dxgiFactory;
+	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
+
+	DXGI_FORMAT attemptedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
+	DXGI_FORMAT negotiatedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
+	bool fallbackUsed = false;
+
+	D3D12_FEATURE_DATA_FORMAT_SUPPORT formatSupport = { DXGI_FORMAT_R10G10B10A2_UNORM, D3D12_FORMAT_SUPPORT1_RENDER_TARGET, D3D12_FORMAT_SUPPORT2_NONE };
+	if (SUCCEEDED(d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &formatSupport, sizeof(formatSupport)))) {
+		if ((formatSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET) == 0) {
+			logger::warn("[DX12SwapChain] R10G10B10A2_UNORM not supported as render target, falling back to R8G8B8A8_UNORM");
+			negotiatedFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+			fallbackUsed = true;
+		}
+	} else {
+		logger::warn("[DX12SwapChain] CheckFeatureSupport failed for R10G10B10A2_UNORM, falling back to R8G8B8A8_UNORM");
+		negotiatedFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+		fallbackUsed = true;
+	}
+
+	logger::info("[DX12SwapChain] Direct swap chain format negotiation: attempted={}, negotiated={}, fallback={}",
+		static_cast<uint32_t>(attemptedFormat),
+		static_cast<uint32_t>(negotiatedFormat),
+		fallbackUsed ? "true" : "false");
+
+	swapChainDesc = {};
+	swapChainDesc.Width = a_swapChainDesc.BufferDesc.Width;
+	swapChainDesc.Height = a_swapChainDesc.BufferDesc.Height;
+	swapChainDesc.Format = negotiatedFormat;
+	swapChainDesc.SampleDesc.Count = 1;
+	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.BufferCount = 2;
+	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
+	swapChainDesc.Flags = a_swapChainDesc.Flags | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+	winrt::com_ptr<IDXGISwapChain1> swapChain1;
+	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
+		commandQueue.get(),
+		a_swapChainDesc.OutputWindow,
+		&swapChainDesc,
+		nullptr,
+		nullptr,
+		swapChain1.put()));
+
+	DX::ThrowIfFailed(swapChain1->QueryInterface(IID_PPV_ARGS(&swapChain)));
+
+	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
+	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
+
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	bool enableHDR = hdr && hdr->settings.enableHDR;
+	SetColorSpace(enableHDR && !fallbackUsed);
+
+	useDLSSG = true;
+	logger::info("[DX12SwapChain] Created direct swap chain for DLSS-G ({}x{})", swapChainDesc.Width, swapChainDesc.Height);
+}
+
 void DX12SwapChain::CreateInterop()
 {
 	HANDLE sharedFenceHandle;
@@ -189,7 +252,19 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		}
 	}
 
-	upscaling.fidelityFX.Present(upscaling.ShouldUseFrameGenerationThisFrame(), isHDR);
+	if (useDLSSG) {
+		auto& sl = upscaling.streamlineDX12;
+		sl.EnsureFrameToken();
+		sl.CheckFrameConstants(sl.viewport);
+		sl.TagDX12Resources(commandLists[frameIndex].get(),
+			depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
+			motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
+			swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
+			swapChainDesc.Width, swapChainDesc.Height);
+		sl.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+	} else {
+		upscaling.fidelityFX.Present(upscaling.ShouldUseFrameGenerationThisFrame(), isHDR);
+	}
 
 	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
 
