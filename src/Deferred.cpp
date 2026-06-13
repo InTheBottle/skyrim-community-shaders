@@ -17,7 +17,6 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VolumetricShadows.h"
-#include "Features/VR.h"
 #include "Features/CSEditor.h"
 
 #include "Hooks.h"

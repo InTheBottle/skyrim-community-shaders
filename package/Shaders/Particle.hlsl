@@ -289,9 +289,15 @@ if (SharedData::enbSettings.EnableRain) {
 	raindropNormal.y = 1.0 - raindropNormal.y;
 
     // Reconstruct camera-relative worldspace position (camera at origin).
-    float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
+    float2 uv = input.Position.xy * SharedData::BufferDim.zw;
+#	ifdef VR
+    uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
     float4 posCS = float4(2.0 * float2(uv.x, 1.0 - uv.y) - 1.0, input.Position.z, 1.0);
     float4 posWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], posCS);
+#	else
+    float4 posCS = float4(2.0 * float2(uv.x, 1.0 - uv.y) - 1.0, input.Position.z, 1.0);
+    float4 posWS = mul(FrameBuffer::CameraViewProjInverse, posCS);
+#	endif
     posWS.xyz /= posWS.w;
 
     // Build worldspace TBN from screen-space derivatives. The billboard is camera-aligned,
@@ -347,8 +353,6 @@ if (SharedData::enbSettings.EnableRain) {
 	float4 positionWS = float4(2 * float2(uv.x, -uv.y + 1) - 1, input.Position.z, 1);
 	positionWS = mul(FrameBuffer::CameraViewProjInverse, positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
-
-	float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 
 	float unusedDetailedShadow;
 	float3 dirLightColor = SharedData::DirLightColor.xyz * ShadowSampling::GetLightingShadow(positionWS.xyz, unusedDetailedShadow);

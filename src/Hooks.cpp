@@ -919,12 +919,6 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
-	{
-		func(sky, a_delta);
-		globals::features::skySync.OnSkyUpdateColors(sky);
-	}
-
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -991,9 +985,6 @@ namespace Hooks
 
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA));
-
-		logger::info("Hooking Sky::UpdateColors");
-		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 
 		logger::info("Hooking weather extensions");
 		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));

@@ -53,8 +53,6 @@ public:
 
 	void OnSkyUpdateColors(RE::Sky* sky);
 
-	void OnSkyUpdateColors(RE::Sky* sky);
-
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 
