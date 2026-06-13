@@ -395,21 +395,28 @@ void DynamicCubemaps::Inferrence(bool a_reflections)
 	context->CSSetSamplers(0, 1, &sampler);
 }
 
-void DynamicCubemaps::Irradiance(bool a_reflections)
+void DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint32_t a_endLevel, bool a_doSetup)
 {
 	auto context = globals::d3d::context;
 
-	// Copy cubemap to other resources
-	for (uint face = 0; face < 6; face++) {
-		uint srcSubresourceIndex = D3D11CalcSubresource(0, face, MIPLEVELS);
-		context->CopySubresourceRegion(a_reflections ? envReflectionsTexture->resource.get() : envTexture->resource.get(), D3D11CalcSubresource(0, face, MIPLEVELS), 0, 0, 0, envInferredTexture->resource.get(), srcSubresourceIndex, nullptr);
-	}
+	if (a_doSetup) {
+		// Copy the inferred cubemap faces into the env texture used by downstream passes.
+		for (uint face = 0; face < 6; face++) {
+			uint srcSubresourceIndex = D3D11CalcSubresource(0, face, MIPLEVELS);
+			context->CopySubresourceRegion(a_reflections ? envReflectionsTexture->resource.get() : envTexture->resource.get(), D3D11CalcSubresource(0, face, MIPLEVELS), 0, 0, 0, envInferredTexture->resource.get(), srcSubresourceIndex, nullptr);
+		}
 
-	// Compute pre-filtered specular environment map.
-	{
+		// GenerateMips uses the graphics pipeline internally (hardware bilinear blit),
+		// causing a compute->graphics->compute pipeline switch. Keeping it in the same
+		// sub-pass as the level-1 dispatch (the mip it feeds) avoids a GPU stall on the
+		// following frame where the SRV would otherwise appear stale.
 		auto srv = envInferredTexture->srv.get();
 		context->GenerateMips(srv);
+	}
 
+	// Compute pre-filtered specular environment map for the requested mip range.
+	{
+		auto srv = envInferredTexture->srv.get();
 		context->CSSetShaderResources(0, 1, &srv);
 		context->CSSetSamplers(0, 1, &computeSampler);
 		context->CSSetShader(GetComputeShaderSpecularIrradiance(), nullptr, 0);
@@ -419,10 +426,18 @@ void DynamicCubemaps::Irradiance(bool a_reflections)
 
 		float const delta_roughness = 1.0f / std::max(float(MIPLEVELS - 1), 1.0f);
 
+		// Advance size to match a_startLevel.
 		std::uint32_t size = std::max(envTexture->desc.Width, envTexture->desc.Height) / 2;
+		for (uint32_t i = 1; i < a_startLevel; i++)
+			size /= 2;
 
-		globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::IrradianceReflections" : "DynamicCubemaps::Irradiance");
-		for (std::uint32_t level = 1; level < MIPLEVELS; level++, size /= 2) {
+		// Suffix: A = level 1, BA = levels 2..N-1, BB = last level.
+		const char* suffix = (a_startLevel == 1) ? "A" : (a_endLevel == MIPLEVELS) ? "BB" : "BA";
+		const auto passName = a_reflections
+			? std::format("DynamicCubemaps::IrradianceReflections{}", suffix)
+			: std::format("DynamicCubemaps::Irradiance{}", suffix);
+		globals::profiler->BeginPass(passName);
+		for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 			const UINT numGroups = (UINT)std::max(1u, size / 8);
 
 			const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
@@ -532,48 +547,50 @@ void DynamicCubemaps::UpdateCubemap()
 		recompileFlag = false;
 	}
 
+	// IrradianceB (6 dispatches, levels 2-7) averages ~45us total, dominated by per-dispatch
+	// driver overhead (~7.4us/dispatch). Splitting off the last level (1 dispatch, ~7us) and
+	// pairing it with BC6H(~32us) gives three near-equal frames per chain:
+	//   kCaptureInferAndIrradianceA:  C(14) + I(15) + IA(13) = ~42us
+	//   kIrradianceBA:                levels 2-6 (5 dispatches) = ~37us
+	//   kIrradianceBBAndBC6H:         level 7 (1 dispatch, ~7us) + BC6H(~32us) = ~39us
+	static constexpr uint32_t kIrradianceSplit  = 2;             // IA: [1, kIrradianceSplit)
+	static constexpr uint32_t kIrradianceSplitB = MIPLEVELS - 1; // BA: [kIrradianceSplit, kIrradianceSplitB), BB: [kIrradianceSplitB, MIPLEVELS)
+
 	switch (nextTask) {
-	case NextTask::kCapture:
+	case NextTask::kCaptureInferAndIrradianceA:
 		UpdateCubemapCapture(false);
-		nextTask = NextTask::kInferrence;
-		break;
-
-	case NextTask::kInferrence:
-		nextTask = NextTask::kIrradiance;
 		Inferrence(false);
+		Irradiance(false, 1, kIrradianceSplit, /*doSetup=*/true);
+		nextTask = NextTask::kIrradianceBA;
 		break;
 
-	case NextTask::kIrradiance:
-		nextTask = NextTask::kBC6HCompress;
-		Irradiance(false);
+	case NextTask::kIrradianceBA:
+		Irradiance(false, kIrradianceSplit, kIrradianceSplitB, /*doSetup=*/false);
+		nextTask = NextTask::kIrradianceBBAndBC6H;
 		break;
 
-	case NextTask::kBC6HCompress:
-		if (activeReflections)
-			nextTask = NextTask::kCapture2;
-		else
-			nextTask = NextTask::kCapture;
+	case NextTask::kIrradianceBBAndBC6H:
+		Irradiance(false, kIrradianceSplitB, MIPLEVELS, /*doSetup=*/false);
 		CompressToBC6H(false);
+		nextTask = activeReflections ? NextTask::kCaptureInferAndIrradianceA2 : NextTask::kCaptureInferAndIrradianceA;
 		break;
 
-	case NextTask::kCapture2:
+	case NextTask::kCaptureInferAndIrradianceA2:
 		UpdateCubemapCapture(true);
-		nextTask = NextTask::kInferrence2;
-		break;
-
-	case NextTask::kInferrence2:
 		Inferrence(true);
-		nextTask = NextTask::kIrradiance2;
+		Irradiance(true, 1, kIrradianceSplit, /*doSetup=*/true);
+		nextTask = NextTask::kIrradianceBA2;
 		break;
 
-	case NextTask::kIrradiance2:
-		nextTask = NextTask::kBC6HCompress2;
-		Irradiance(true);
+	case NextTask::kIrradianceBA2:
+		Irradiance(true, kIrradianceSplit, kIrradianceSplitB, /*doSetup=*/false);
+		nextTask = NextTask::kIrradianceBBAndBC6H2;
 		break;
 
-	case NextTask::kBC6HCompress2:
-		nextTask = NextTask::kCapture;
+	case NextTask::kIrradianceBBAndBC6H2:
+		Irradiance(true, kIrradianceSplitB, MIPLEVELS, /*doSetup=*/false);
 		CompressToBC6H(true);
+		nextTask = NextTask::kCaptureInferAndIrradianceA;
 		break;
 	}
 }
