@@ -116,7 +116,6 @@ namespace
 			{ "version", f->version },
 			{ "category", std::string(f->GetCategory()) },
 			{ "isCore", f->IsCore() },
-			{ "supportsVR", true },
 			{ "inMenu", f->IsInMenu() },
 		};
 
@@ -281,7 +280,6 @@ namespace
 			return json{
 				{ "plugin", "CommunityShaders" },
 				{ "frame_count", EnqueuedFrame() },
-				{ "vr", REL::Module::IsVR() },
 			};
 		}
 		if (kind == "shadercache") {
@@ -493,11 +491,11 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Community Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+			R"({"description":"All Community Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
 		dvb->RegisterTool("communityshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* inspectDesc =
-			R"({"description":"Read non-feature Community Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count,vr}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use communityshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
+			R"({"description":"Read non-feature Community Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use communityshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
 		dvb->RegisterTool("communityshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
