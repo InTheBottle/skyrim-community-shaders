@@ -17,6 +17,7 @@
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
+#	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
 
@@ -282,6 +283,41 @@ namespace
 				{ "frame_count", EnqueuedFrame() },
 			};
 		}
+		if (kind == "profiler") {
+			const std::string filter = a_args.value("filter", std::string{});
+			return RunOnMainThread([filter]() -> json {
+				auto* profiler = globals::profiler;
+				if (!profiler)
+					return json{ { "error", "profiler unavailable" } };
+				json passes = json::array();
+				for (const auto& r : profiler->GetResults()) {
+					if (!r.valid)
+						continue;
+					if (!filter.empty() && r.name.find(filter) == std::string::npos)
+						continue;
+					json entry{
+						{ "name", r.name },
+						{ "gpuMs", r.gpuTimeMs },
+						{ "gpuAvgMs", r.avgMs },
+						{ "gpuP95Ms", r.p95Ms },
+						{ "gpuP99Ms", r.p99Ms },
+						{ "cpuMs", r.cpuTimeMs },
+						{ "cpuAvgMs", r.cpuAvgMs },
+					};
+					json hist = json::array();
+					for (uint32_t i = 0; i < r.historyCount; ++i)
+						hist.push_back(r.GetHistorySample(i));
+					entry["gpuHistory"] = hist;
+					passes.push_back(entry);
+				}
+				return json{
+					{ "totalGpuMs", profiler->GetTotalTimeMs() },
+					{ "totalCpuMs", profiler->GetCpuTotalTimeMs() },
+					{ "frame_count", EnqueuedFrame() },
+					{ "passes", passes },
+				};
+			});
+		}
 		if (kind == "shadercache") {
 			// Built from thread-safe ShaderCache accessors. Poll completedTasks against a
 			// pre-deploy snapshot to know a hot-reloaded shader finished; a rising
@@ -298,7 +334,7 @@ namespace
 				{ "frame_count", EnqueuedFrame() },
 			};
 		}
-		return json{ { "error", "unknown kind" }, { "kind", kind }, { "supported", json::array({ "state", "shadercache" }) } };
+		return json{ { "error", "unknown kind" }, { "kind", kind }, { "supported", json::array({ "state", "shadercache", "profiler" }) } };
 	}
 
 	void InspectToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -495,7 +531,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("communityshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* inspectDesc =
-			R"({"description":"Read non-feature Community Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use communityshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
+			R"({"description":"Read non-feature Community Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count}. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}. kind=profiler -> {totalGpuMs,totalCpuMs,frame_count,passes:[{name,gpuMs,gpuAvgMs,gpuP95Ms,gpuP99Ms,cpuMs,cpuAvgMs,gpuHistory:[...]}]}; optional filter param to match pass names.","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache","profiler"]},"filter":{"type":"string"}},"required":["kind"]}})";
 		dvb->RegisterTool("communityshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
