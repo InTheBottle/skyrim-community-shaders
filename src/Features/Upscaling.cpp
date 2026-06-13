@@ -952,7 +952,7 @@ void Upscaling::EnsureVRIntermediateTextures()
 
 void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 {
-	if (!globals::game::isVR)
+	if (!REL::Module::IsVR())
 		return;
 
 	auto context = globals::d3d::context;
@@ -983,7 +983,7 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "VR Upscaling - Finalize Per Eye");
 
-	if (!globals::game::isVR)
+	if (!REL::Module::IsVR())
 		return;
 
 	auto context = globals::d3d::context;
@@ -1004,7 +1004,7 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,
 	uint32_t eyeWidth, uint32_t eyeHeight, uint32_t depthOffsetX, uint32_t colorOffsetX)
 {
-	if (!globals::game::isVR)
+	if (!REL::Module::IsVR())
 		return;
 
 	auto context = globals::d3d::context;
@@ -1634,7 +1634,7 @@ void Upscaling::Upscale()
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
-			if (globals::game::isVR && pendingDLSSReset.exchange(false, std::memory_order_relaxed)) {
+			if (REL::Module::IsVR() && pendingDLSSReset.exchange(false, std::memory_order_relaxed)) {
 				logger::debug("[Upscaling] LoadingMenu close detected — rebuilding DLSS feature");
 				streamline.DestroyDLSSResources();
 			}

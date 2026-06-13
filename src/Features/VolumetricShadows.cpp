@@ -125,7 +125,7 @@ void VolumetricShadows::ExtractCascadeNearFar()
 		cascadeScale[cascadeIdx] = std::sqrt(sx * sx + sy * sy + sz * sz);
 	};
 
-	if (globals::game::isVR) {
+	if (REL::Module::IsVR()) {
 		auto& lightData = sunShadowLight->GetVRRuntimeData();
 		const auto count = std::min(lightData.shadowmapDescriptors.size(), 2u);
 		for (uint32_t i = 0; i < count; i++)
