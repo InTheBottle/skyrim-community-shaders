@@ -236,7 +236,7 @@ void Effect11::Prepass()
 		return;
 	}
 
-	GET_INSTANCE_MEMBER(data, imageSpaceManager);
+	auto& data = imageSpaceManager->GetRuntimeData().data;
 
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 	float skyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
@@ -308,7 +308,7 @@ void Effect11::OverrideWeather(RE::Sky* a_sky)
 			return;
 		}
 
-		GET_INSTANCE_MEMBER(data, imageSpaceManager);
+		auto& data = imageSpaceManager->GetRuntimeData().data;
 		float sunlightScale = std::max(data.baseData.hdr.sunlightScale, FLT_MIN);
 		dirLightColorF3 *= sunlightScale;
 

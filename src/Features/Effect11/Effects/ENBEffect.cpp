@@ -40,7 +40,7 @@ void ENBEffect::UpdateEffectVariables()
 		return;
 	}
 
-	GET_INSTANCE_MEMBER(data, imageSpaceManager);
+	auto& data = imageSpaceManager->GetRuntimeData().data;
 	auto& baseData = data.baseData;
 
 	auto& modAmount = data.modAmount;
