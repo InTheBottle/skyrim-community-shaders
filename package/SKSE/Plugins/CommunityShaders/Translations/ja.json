@@ -2,9 +2,7 @@
     "_meta": {
         "language": "日本語",
         "locale": "ja",
-        "auto_generated": true,
-        "generator": "",
-        "note": ""
+        "auto_generated": true
     },
     "cs_editor.add_new_marker": "新しいマーカーを追加する",
     "cs_editor.apply": "適用",

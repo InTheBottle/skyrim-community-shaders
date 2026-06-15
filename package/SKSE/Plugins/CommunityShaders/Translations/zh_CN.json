@@ -4,9 +4,7 @@
         "locale": "zh_CN",
         "version": "1.0.0",
         "authors": "Jiaye",
-        "generator": "",
-        "auto_generated": true,
-        "note": ""
+        "auto_generated": true
     },
     "common.active": "激活",
     "common.inactive": "未激活",
