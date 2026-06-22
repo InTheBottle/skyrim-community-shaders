@@ -60,6 +60,21 @@ if(MODE STREQUAL "AIO")
         file(REMOVE "${_stale}")
     endforeach()
 
+    # Remove empty directories left behind (e.g. from third-party install rules
+    # like tuplet's include/ and share/ that leaked into the AIO folder).
+    # Walk bottom-up so nested empties are removed before their parents.
+    file(GLOB_RECURSE _all_aio_dirs LIST_DIRECTORIES TRUE "${AIO_DIR}/*")
+    list(SORT _all_aio_dirs ORDER DESCENDING)
+    foreach(_dir IN LISTS _all_aio_dirs)
+        if(IS_DIRECTORY "${_dir}" AND NOT "${_dir}" MATCHES "/SKSE/Plugins")
+            file(GLOB _children "${_dir}/*")
+            list(LENGTH _children _n)
+            if(_n EQUAL 0)
+                file(REMOVE_RECURSE "${_dir}")
+            endif()
+        endif()
+    endforeach()
+
 elseif(MODE STREQUAL "SHADERS")
     if(NOT DEFINED FEATURE_SHADER_PATHS)
         set(FEATURE_SHADER_PATHS "")
