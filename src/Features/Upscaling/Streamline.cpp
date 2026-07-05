@@ -12,7 +12,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <dxgi.h>
 #include <filesystem>
+#include <winrt/base.h>
 
 // Streamline SDK headers (header-only in the repo; the plugin DLLs ship separately
 // into the CS folder for NVIDIA users). NV_WINDOWS selects the Win32 surface.
@@ -43,6 +45,10 @@ namespace
 
 		// Core interposer entry points (resolved via GetProcAddress).
 		PFun_slInit* slInit = nullptr;
+		// D3D12 automatic-interposition mode (the D3D11On12 boot; see GetInterposerProc).
+		// True when slInit ran with renderAPI=eD3D12 + eUseManualHooking (the 11on12 path);
+		// the Vulkan-specific plumbing (interposer aliasing, VK probes) is skipped.
+		bool d3d12Mode = false;
 		PFun_slShutdown* slShutdown = nullptr;
 		PFun_slIsFeatureSupported* slIsFeatureSupported = nullptr;
 		PFun_slGetFeatureRequirements* slGetFeatureRequirements = nullptr;
@@ -368,6 +374,42 @@ static bool ProbeDLSSGHardware()
 	return found;
 }
 
+// D3D12-era hardware gate for sl.dlss_g: is the display adapter NVIDIA at all? (Precise
+// DLSS-G support is slIsFeatureSupported's job once the device exists; this only decides
+// whether the plugin is present in the process, mirroring the VK optical-flow probe's role.)
+static bool ProbeNvidiaAdapter()
+{
+	winrt::com_ptr<IDXGIFactory1> factory;
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), factory.put_void())))
+		return false;
+	winrt::com_ptr<IDXGIAdapter1> adapter;
+	if (FAILED(factory->EnumAdapters1(0, adapter.put())))
+		return false;
+	DXGI_ADAPTER_DESC1 desc{};
+	adapter->GetDesc1(&desc);
+	const bool nvidia = desc.VendorId == 0x10DE;
+	logger::info("[Streamline] adapter probe (D3D12): VendorId={:#x} -> {}", desc.VendorId,
+		nvidia ? "NVIDIA (sl.dlss_g eligible)" : "non-NVIDIA (sl.dlss_g omitted)");
+	return nvidia;
+}
+
+bool Streamline::InitializeD3D12()
+{
+	g_sl.d3d12Mode = true;
+	return Initialize();
+}
+
+void* Streamline::GetInterposerProc(const char* a_name)
+{
+	// Automatic D3D12 interposition: the interposer exports drop-in D3D12CreateDevice /
+	// CreateDXGIFactory* proxies. Creation calls resolved through it are handled by SL
+	// end-to-end (device registration, proxied factory/swapchain, present ownership) —
+	// no manual hooking. Null when SL is absent; the caller uses the system entry point.
+	if (!initialized || !g_sl.interposer)
+		return nullptr;
+	return reinterpret_cast<void*>(GetProcAddress(g_sl.interposer, a_name));
+}
+
 bool Streamline::Initialize()
 {
 	if (triedInit)
@@ -436,7 +478,10 @@ bool Streamline::Initialize()
 	// plugin entirely, so DXVK's FSE-DISALLOWED reaches the driver at the first create and the
 	// window stays on the copy present path FSR-FG requires. Both facts are per-window and
 	// locked at boot by the driver, which is why the method cannot be a runtime setting.
-	dlssgHardware = ProbeDLSSGHardware();
+	// D3D12 mode: the VK optical-flow probe is meaningless (and vulkan-1 may be absent by
+	// design). Gate sl.dlss_g on an NVIDIA display adapter; precise DLSS-G support comes
+	// from slIsFeatureSupported after the device is set.
+	dlssgHardware = g_sl.d3d12Mode ? ProbeNvidiaAdapter() : ProbeDLSSGHardware();
 
 	std::vector<sl::Feature> featuresToLoad = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL,
 		sl::kFeatureFSR, sl::kFeatureXeSS };
@@ -449,11 +494,19 @@ bool Streamline::Initialize()
 	}
 
 	sl::Preferences pref{};
-	pref.renderAPI = sl::RenderAPI::eVulkan;
 	// Frame-based tagging is required by slEvaluateFeature / slSetTagForFrame.
 	pref.flags |= sl::PreferenceFlags::eUseFrameBasedResourceTagging;
-	// Full interposition: sl.interposer.dll IS DXVK's vulkan-1.dll, so SL's own
-	// vkCreateInstance/Device/present proxies run. eUseManualHooking must be OFF.
+	if (g_sl.d3d12Mode) {
+		// D3D11On12 boot: automatic interposition — the shim resolves D3D12CreateDevice /
+		// CreateDXGIFactory2 from sl.interposer.dll's own exports (GetInterposerProc), so
+		// the device is known to SL and the factory/swapchain come back proxied with
+		// sl.dlss_g owning present. No manual hooking anywhere.
+		pref.renderAPI = sl::RenderAPI::eD3D12;
+	} else {
+		pref.renderAPI = sl::RenderAPI::eVulkan;
+	}
+	// Vulkan: full interposition — sl.interposer.dll IS DXVK's vulkan-1.dll, so SL's own
+	// vkCreateInstance/Device/present proxies run and eUseManualHooking must be OFF.
 	pref.featuresToLoad = featuresToLoad.data();
 	pref.numFeaturesToLoad = static_cast<uint32_t>(featuresToLoad.size());
 	pref.pathsToPlugins = pluginPaths;

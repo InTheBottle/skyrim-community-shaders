@@ -23,6 +23,18 @@ public:
 	 *  @return true if Streamline initialized. */
 	bool Initialize();
 
+	/** @brief D3D12 path (the D3D11On12 boot): plain LoadLibrary of sl.interposer.dll (no
+	 *  vulkan-1 aliasing) + slInit on the D3D12 render API. Call BEFORE the D3D12 device
+	 *  exists; then create device/factory via GetInterposerProc (automatic interposition).
+	 *  Idempotent; shares all downstream SL plumbing. */
+	bool InitializeD3D12();
+
+	/** @brief Resolves an export from sl.interposer.dll (D3D12 automatic interposition:
+	 *  the shim routes D3D12CreateDevice / CreateDXGIFactory2 through the interposer's
+	 *  drop-in proxies, so device + swapchain are SL-handled with no manual hooking).
+	 *  Null when Streamline is not initialized. */
+	void* GetInterposerProc(const char* a_name);
+
 	/** @brief Probes per-adapter feature support and resolves feature-specific entry points.
 	 *  Must be called after the D3D11/DXVK device exists and DxvkInterop is up. */
 	void SetVulkanDevice();

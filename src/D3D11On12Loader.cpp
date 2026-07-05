@@ -1,5 +1,7 @@
 #include "D3D11On12Loader.h"
 
+#include "Features/Upscaling/Streamline.h"
+
 #include <d3d11on12.h>
 #include <d3d12.h>
 #include <detours/detours.h>
@@ -51,7 +53,20 @@ namespace D3D11On12Loader
 			D3D_FEATURE_LEVEL* o_featureLevel,
 			ID3D11DeviceContext** o_context)
 		{
-			HRESULT hr = D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_11_1, IID_PPV_ARGS(&d3d12Device));
+			// Streamline D3D12, automatic interposition: slInit first, then create the
+			// device and factory THROUGH sl.interposer.dll's drop-in exports — SL registers
+			// the device and returns proxied factory/swapchain (sl.dlss_g owns present).
+			// Every step degrades gracefully: SL absent -> system entry points, the game
+			// still boots, just without DLSS/Reflex/FG.
+			auto* streamline = Streamline::GetSingleton();
+			streamline->InitializeD3D12();
+
+			auto d3d12CreateDevice = reinterpret_cast<PFN_D3D12_CREATE_DEVICE>(
+				streamline->GetInterposerProc("D3D12CreateDevice"));
+			if (!d3d12CreateDevice)
+				d3d12CreateDevice = &D3D12CreateDevice;
+
+			HRESULT hr = d3d12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_11_1, IID_PPV_ARGS(&d3d12Device));
 			if (FAILED(hr)) {
 				logger::critical("[D3D11On12] D3D12CreateDevice failed ({:X})", (uint32_t)hr);
 				return hr;
@@ -64,6 +79,13 @@ namespace D3D11On12Loader
 				return hr;
 			}
 			d3d12Queue->SetName(L"CS::GameQueue");
+
+			// SL 2.12.0's D3D12CreateDevice proxy does not self-register the device (its
+			// plugin init logs "did you forget to call slSetD3DDevice"): register explicitly.
+			if (auto slSetD3DDevice = reinterpret_cast<int (*)(void*)>(streamline->GetInterposerProc("slSetD3DDevice"))) {
+				const int res = slSetD3DDevice(d3d12Device);
+				logger::info("[D3D11On12] slSetD3DDevice: {}", res == 0 ? "ok" : "FAILED");
+			}
 
 			// The system runtime builds the D3D11 device; its driver DDI resolves to the
 			// embedded layer through the LoadLibrary redirect installed in Load().
@@ -81,6 +103,11 @@ namespace D3D11On12Loader
 				// semantics Skyrim's renderer init depends on (GetBuffer/RTV behavior). A
 				// hand-converted flip-model chain on the raw queue broke those expectations
 				// (null-deref in Renderer::Init on the first boot).
+				// SYSTEM factory on purpose: SL's proxied factory faults when CreateSwapChain
+				// receives the 11on12 D3D11 device (sl.dlss_g expects queue-based D3D12
+				// chains - crash in sl.dlss_g->sl.common->d3d11). Create the blt chain
+				// natively (the proven boot shape), then hand the FINISHED swapchain to SL
+				// below via slUpgradeInterface for present ownership.
 				IDXGIFactory4* factory = nullptr;
 				if (FAILED(hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&factory))))
 					return hr;
@@ -96,6 +123,13 @@ namespace D3D11On12Loader
 				if (FAILED(hr)) {
 					logger::critical("[D3D11On12] CreateSwapChain failed ({:X})", (uint32_t)hr);
 					return hr;
+				}
+				// Present ownership: upgrade the finished swapchain so sl.dlss_g's proxy
+				// wraps it (manual-hooking flow; IDXGISwapChain is a documented upgrade
+				// target). Failure leaves the native chain - game still runs, no FG.
+				if (auto slUpgradeInterface = reinterpret_cast<int (*)(void**)>(streamline->GetInterposerProc("slUpgradeInterface"))) {
+					const int res = slUpgradeInterface(reinterpret_cast<void**>(&swapChain));
+					logger::info("[D3D11On12] slUpgradeInterface(swapchain): {}", res == 0 ? "proxied" : "declined");
 				}
 				*o_swapChain = swapChain;
 			}
