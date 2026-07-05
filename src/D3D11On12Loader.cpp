@@ -76,30 +76,28 @@ namespace D3D11On12Loader
 			}
 
 			if (a_swapChainDesc && o_swapChain) {
-				// Native flip-model swapchain on the D3D12 queue (the supported D3D12
-				// arrangement; Streamline's proxy factory slots in here in phase 4).
+				// The game's ORIGINAL swapchain desc, created on the 11on12 D3D11 DEVICE —
+				// DXGI resolves the underlying D3D12 queue itself and provides the blt-model
+				// semantics Skyrim's renderer init depends on (GetBuffer/RTV behavior). A
+				// hand-converted flip-model chain on the raw queue broke those expectations
+				// (null-deref in Renderer::Init on the first boot).
 				IDXGIFactory4* factory = nullptr;
 				if (FAILED(hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&factory))))
 					return hr;
 
-				DXGI_SWAP_CHAIN_DESC1 desc1{};
-				desc1.Width = a_swapChainDesc->BufferDesc.Width;
-				desc1.Height = a_swapChainDesc->BufferDesc.Height;
-				desc1.Format = a_swapChainDesc->BufferDesc.Format;
-				desc1.SampleDesc = { 1, 0 };
-				desc1.BufferUsage = a_swapChainDesc->BufferUsage;
-				desc1.BufferCount = std::max(2u, a_swapChainDesc->BufferCount);
-				desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-
-				IDXGISwapChain1* swapChain1 = nullptr;
-				hr = factory->CreateSwapChainForHwnd(d3d12Queue, a_swapChainDesc->OutputWindow,
-					&desc1, nullptr, nullptr, &swapChain1);
+				DXGI_SWAP_CHAIN_DESC desc = *a_swapChainDesc;
+				IDXGISwapChain* swapChain = nullptr;
+				hr = factory->CreateSwapChain(*o_device, &desc, &swapChain);
+				if (FAILED(hr)) {
+					logger::warn("[D3D11On12] CreateSwapChain(device, original desc) failed ({:X}) - retrying on the queue", (uint32_t)hr);
+					hr = factory->CreateSwapChain(d3d12Queue, &desc, &swapChain);
+				}
 				factory->Release();
 				if (FAILED(hr)) {
-					logger::critical("[D3D11On12] CreateSwapChainForHwnd failed ({:X})", (uint32_t)hr);
+					logger::critical("[D3D11On12] CreateSwapChain failed ({:X})", (uint32_t)hr);
 					return hr;
 				}
-				*o_swapChain = swapChain1;
+				*o_swapChain = swapChain;
 			}
 
 			(void)a_sdkVersion;
