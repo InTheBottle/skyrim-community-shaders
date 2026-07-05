@@ -552,22 +552,31 @@ void Streamline::SetVulkanDevice()
 	if (!initialized || vulkanDeviceSet)
 		return;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
-	if (!dxvk || !dxvk->IsAvailable()) {
-		logger::warn("[Streamline] DXVK interop unavailable — cannot hand Vulkan device to SL");
-		return;
-	}
-
-	// SL already owns instance/device/queues (it created them via its vkCreateInstance/Device proxies
-	// as DXVK's loader under full interposition), so no slSetVulkanInfo handoff is needed.
-	vulkanDeviceSet = true;
-
-	// Per-adapter feature probe. AdapterInfo with vkPhysicalDevice set keys SL off
-	// the actual GPU (LUID ignored). Only eOk means "enable". On AMD this whole
-	// method is unreachable (Initialize() returned false), but the per-feature
-	// check is the authoritative second gate on NVIDIA (old GPUs lack DLSS-G, etc.).
 	sl::AdapterInfo adapter{};
-	adapter.vkPhysicalDevice = dxvk->GetPhysicalDevice();
+	if (g_sl.d3d12Mode) {
+		// D3D12 (11on12) path: the device was registered with slSetD3DDevice at creation.
+		// Probe by adapter LUID (SL's D3D12 backend keys on it).
+		winrt::com_ptr<IDXGIFactory1> dxgiFactory;
+		winrt::com_ptr<IDXGIAdapter1> dxgiAdapter;
+		static DXGI_ADAPTER_DESC1 desc{};
+		if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), dxgiFactory.put_void())) &&
+			SUCCEEDED(dxgiFactory->EnumAdapters1(0, dxgiAdapter.put()))) {
+			dxgiAdapter->GetDesc1(&desc);
+			adapter.deviceLUID = reinterpret_cast<uint8_t*>(&desc.AdapterLuid);
+			adapter.deviceLUIDSizeInBytes = sizeof(LUID);
+		}
+	} else {
+		auto* dxvk = DxvkInterop::GetSingleton();
+		if (!dxvk || !dxvk->IsAvailable()) {
+			logger::warn("[Streamline] DXVK interop unavailable — cannot hand Vulkan device to SL");
+			return;
+		}
+		// SL already owns instance/device/queues (it created them via its vkCreateInstance/Device
+		// proxies as DXVK's loader under full interposition), so no slSetVulkanInfo handoff is needed.
+		// AdapterInfo with vkPhysicalDevice set keys SL off the actual GPU (LUID ignored).
+		adapter.vkPhysicalDevice = dxvk->GetPhysicalDevice();
+	}
+	vulkanDeviceSet = true;
 	const auto supported = [&](sl::Feature f) {
 		const sl::Result r = g_sl.slIsFeatureSupported(f, adapter);
 		if (r != sl::Result::eOk)
@@ -627,20 +636,38 @@ void Streamline::SetVulkanDevice()
 	// play; note for the record that idle unattended FSR sessions once showed late wedges on
 	// flips — kept under observation, see dxvkSetFsePNextChain for the copy-path escape hatch).
 
-	// Identify the GPU generation from the Vulkan physical device for DLSS render-preset selection.
-	// (vkGetPhysicalDeviceProperties carries the real PCI vendor/device IDs even under DXVK, unlike
-	// the DXGI adapter desc which the create hook may not capture.)
-	if (auto getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
-			dxvk->GetInstanceProcAddr()(dxvk->GetInstance(), "vkGetPhysicalDeviceProperties"))) {
-		VkPhysicalDeviceProperties props{};
-		getProps(dxvk->GetPhysicalDevice(), &props);
-		isNvidiaGPU = props.vendorID == 0x10DE;
-		isRTXBelow40Series = isNvidiaGPU &&
-		                     ((props.deviceID >= 0x2200 && props.deviceID <= 0x2600) ||   // RTX 30 (Ampere)
-								(props.deviceID >= 0x1E00 && props.deviceID <= 0x1FFF));   // RTX 20 (Turing w/ RT)
-		logger::info("[Streamline] GPU vendor=0x{:04X} device=0x{:04X} -> DLSS preset group: {}",
-			props.vendorID, props.deviceID,
-			isNvidiaGPU ? (isRTXBelow40Series ? "RTX 20/30 (J)" : "RTX 40+ (M)") : "non-NVIDIA (default)");
+	// Identify the GPU generation for DLSS render-preset selection. D3D12 path: the DXGI
+	// adapter desc is authoritative (native API, no translation). Vulkan path: the physical
+	// device properties carry the real PCI IDs even under DXVK, unlike the DXGI desc the
+	// create hook may not capture.
+	if (g_sl.d3d12Mode) {
+		winrt::com_ptr<IDXGIFactory1> f;
+		winrt::com_ptr<IDXGIAdapter1> a;
+		DXGI_ADAPTER_DESC1 d{};
+		if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), f.put_void())) &&
+			SUCCEEDED(f->EnumAdapters1(0, a.put()))) {
+			a->GetDesc1(&d);
+			isNvidiaGPU = d.VendorId == 0x10DE;
+			isRTXBelow40Series = isNvidiaGPU &&
+			                     ((d.DeviceId >= 0x2200 && d.DeviceId <= 0x2600) ||
+									(d.DeviceId >= 0x1E00 && d.DeviceId <= 0x1FFF));
+			logger::info("[Streamline] GPU vendor=0x{:04X} device=0x{:04X} -> DLSS preset group: {}",
+				d.VendorId, d.DeviceId,
+				isNvidiaGPU ? (isRTXBelow40Series ? "RTX 20/30 (J)" : "RTX 40+ (M)") : "non-NVIDIA (default)");
+		}
+	} else if (auto* dxvk = DxvkInterop::GetSingleton(); dxvk && dxvk->IsAvailable()) {
+		if (auto getProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+				dxvk->GetInstanceProcAddr()(dxvk->GetInstance(), "vkGetPhysicalDeviceProperties"))) {
+			VkPhysicalDeviceProperties props{};
+			getProps(dxvk->GetPhysicalDevice(), &props);
+			isNvidiaGPU = props.vendorID == 0x10DE;
+			isRTXBelow40Series = isNvidiaGPU &&
+			                     ((props.deviceID >= 0x2200 && props.deviceID <= 0x2600) ||   // RTX 30 (Ampere)
+									(props.deviceID >= 0x1E00 && props.deviceID <= 0x1FFF));   // RTX 20 (Turing w/ RT)
+			logger::info("[Streamline] GPU vendor=0x{:04X} device=0x{:04X} -> DLSS preset group: {}",
+				props.vendorID, props.deviceID,
+				isNvidiaGPU ? (isRTXBelow40Series ? "RTX 20/30 (J)" : "RTX 40+ (M)") : "non-NVIDIA (default)");
+		}
 	}
 }
 

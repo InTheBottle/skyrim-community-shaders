@@ -1044,6 +1044,17 @@ void Upscaling::SetupResources()
 		globals::features::hdrDisplay.SetupResources();
 	}
 
+	// D3D11On12 path: Streamline was initialized at device creation (D3D12); resolve the
+	// per-feature support flags now that everything is up. No Vulkan interop anywhere.
+	if (D3D11On12Loader::IsLoaded()) {
+		auto* streamline = Streamline::GetSingleton();
+		if (streamline->IsInitialized()) {
+			streamline->SetVulkanDevice();  // D3D12-aware: probes by adapter LUID in d3d12Mode
+		}
+		ApplyHardwareDefaults();
+		return;
+	}
+
 	// Bridge to DXVK's own Vulkan device for Streamline interposition.
 	// On native D3D11 this is a no-op (IsAvailable() stays false).
 	auto* dxvk = DxvkInterop::GetSingleton();
