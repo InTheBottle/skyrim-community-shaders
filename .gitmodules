@@ -7,3 +7,7 @@
 [submodule "extern/dxvk"]
 	path = extern/dxvk
 	url = https://github.com/doodlum/dxvk.git
+[submodule "extern/D3D11On12"]
+	path = extern/D3D11On12
+	url = https://github.com/doodlum/D3D11On12
+	branch = cs-integration
