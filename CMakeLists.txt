@@ -147,6 +147,16 @@ target_compile_definitions(
     PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS
 )
 
+# Embedded D3D11On12 mapping layer (feat/d3d11on12): the game D3D11 runs on a CS-owned
+# native D3D12 device. Static libs linked into the plugin; the DDI entry is re-exported by
+# src/D3D11On12Loader.cpp. WDK_INCLUDE_ROOT: a WDK Include/<ver> tree matching the installed
+# SDK (extract the Microsoft.Windows.WDK.x64 NuGet on machines without a WDK install).
+option(CS_D3D11ON12 "Embed the D3D11On12 mapping layer (native D3D12 path)" ON)
+if(CS_D3D11ON12)
+    set(WDK_INCLUDE_ROOT "F:/claudetmp/wdk26100/c/Include/10.0.26100.0" CACHE STRING "WDK Include tree for D3D12TranslationLayer")
+    add_subdirectory(extern/D3D11On12 EXCLUDE_FROM_ALL)
+endif()
+
 target_link_libraries(
     ${PROJECT_NAME}
     PRIVATE
@@ -168,6 +178,10 @@ target_link_libraries(
         Vulkan::Vulkan
         Streamline
 )
+if(CS_D3D11ON12)
+    target_link_libraries(${PROJECT_NAME} PRIVATE d3d11on12 d3d12translationlayer_wdk d3d12translationlayer dxbcparser d3d12.lib)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE CS_D3D11ON12_EMBEDDED)
+endif()
 
 # devbench bridge: opt-out via -DDEVBENCH_BRIDGE=OFF. When off, the port isn't required
 # and DevBenchBridge.cpp compiles to an empty Install().

@@ -3,6 +3,7 @@
 #include "ShaderTools/BSShaderHooks.h"
 #include "Utils/ExternalEmittance.h"
 
+#include "D3D11On12Loader.h"
 #include "DxvkLoader.h"
 #include "Feature.h"
 #include "Globals.h"
@@ -1094,6 +1095,17 @@ namespace Hooks
 		// interposition, the FFX/SL frame-gen + upscaling plugins, the DXVK interop device) is built on it,
 		// and there is no meaningful native-D3D11 mode anymore. If the bundled DLLs can't be loaded, fail
 		// loudly rather than limp along on the system d3d11/dxgi (which would silently disable everything).
+		// D3D11On12 bring-up path (CS_D3D11ON12=1): the embedded mapping layer replaces DXVK
+		// entirely — native D3D12 underneath, no Vulkan. DXVK stays the default until parity.
+		if (D3D11On12Loader::IsRequested() && D3D11On12Loader::Load()) {
+			if (!globals::features::upscaling.loaded) {
+				logger::info("Hooking D3D11CreateDeviceAndSwapChain (D3D11On12)");
+				SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+				*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = reinterpret_cast<uintptr_t>(D3D11On12Loader::GetD3D11CreateDeviceAndSwapChain());
+			}
+			return;
+		}
+
 		if (!DxvkLoader::Load()) {
 			stl::report_and_fail(
 				"Community Shaders could not load its bundled DXVK renderer (dxvk_d3d11.dll / dxvk_dxgi.dll) "
