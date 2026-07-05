@@ -485,7 +485,12 @@ bool Streamline::Initialize()
 
 	std::vector<sl::Feature> featuresToLoad = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL,
 		sl::kFeatureFSR, sl::kFeatureXeSS };
-	if (dlssgHardware) {
+	if (dlssgHardware && g_sl.d3d12Mode) {
+		// D3D12 bring-up: sl.dlss_g stays OUT of the boot feature set - its boot-time proxy
+		// work is the prime suspect in a post-device driver crash (nvwgf2umx via D3D12Core).
+		// FG gets the guide-recommended runtime load (slSetFeatureLoaded) when enabled.
+		logger::info("[Streamline] D3D12: sl.dlss_g deferred to runtime load (boot isolation)");
+	} else if (dlssgHardware) {
 		featuresToLoad.push_back(sl::kFeatureDLSS_G);
 		// slInit loads the plugin, so the §18 load-state tracking starts "loaded" here (and
 		// only here — on other hardware the plugin does not exist in this process).

@@ -28,8 +28,18 @@ namespace D3D11On12Loader
 		// layer is linked in and OpenAdapter_D3D11On12 is exported above.
 		HMODULE WINAPI hk_LoadLibraryExW(LPCWSTR a_name, HANDLE a_file, DWORD a_flags)
 		{
-			if (a_name && (_wcsicmp(a_name, L"d3d11on12.dll") == 0 ||
-							  _wcsicmp(a_name, L"C:\\Windows\\System32\\d3d11on12.dll") == 0)) {
+			// Suffix match: the runtime loads its 11on12 driver by full path (observed:
+			// exact-compare never fired and the SYSTEM d3d11on12.dll mapped instead).
+			const auto isTarget = [](LPCWSTR a_s) {
+				if (!a_s)
+					return false;
+				const size_t len = wcslen(a_s);
+				constexpr wchar_t kName[] = L"d3d11on12.dll";
+				constexpr size_t kNameLen = (sizeof(kName) / sizeof(wchar_t)) - 1;
+				return len >= kNameLen && _wcsicmp(a_s + (len - kNameLen), kName) == 0 &&
+			           (len == kNameLen || a_s[len - kNameLen - 1] == L'\\' || a_s[len - kNameLen - 1] == L'/');
+			};
+			if (isTarget(a_name)) {
 				HMODULE self = nullptr;
 				GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
 					reinterpret_cast<LPCWSTR>(&hk_LoadLibraryExW), &self);
@@ -37,6 +47,37 @@ namespace D3D11On12Loader
 				return self;
 			}
 			return realLoadLibraryExW(a_name, a_file, a_flags);
+		}
+
+		// The D3D11 runtime loads its 11on12 driver beneath the Win32 loader API (direct
+		// ntdll!LdrLoadDll, often with a system32-restricted search) - the LoadLibraryExW
+		// detour never sees it. Hook the native loader entry itself.
+		using LdrLoadDll_t = LONG(NTAPI*)(PWSTR, PULONG, PVOID, PVOID*);
+		LdrLoadDll_t realLdrLoadDll = nullptr;
+
+		LONG NTAPI hk_LdrLoadDll(PWSTR a_searchPath, PULONG a_flags, PVOID a_name, PVOID* o_handle)
+		{
+			struct UnicodeString
+			{
+				USHORT length;
+				USHORT maximumLength;
+				PWSTR buffer;
+			};
+			if (auto* us = static_cast<UnicodeString*>(a_name); us && us->buffer && o_handle) {
+				const size_t chars = us->length / sizeof(wchar_t);
+				constexpr wchar_t kName[] = L"d3d11on12.dll";
+				constexpr size_t kNameLen = (sizeof(kName) / sizeof(wchar_t)) - 1;
+				if (chars >= kNameLen && _wcsnicmp(us->buffer + (chars - kNameLen), kName, kNameLen) == 0 &&
+					(chars == kNameLen || us->buffer[chars - kNameLen - 1] == L'\\' || us->buffer[chars - kNameLen - 1] == L'/')) {
+					HMODULE self = nullptr;
+					GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+						reinterpret_cast<LPCWSTR>(&hk_LdrLoadDll), &self);
+					logger::info("[D3D11On12] loader asked for d3d11on12.dll (LdrLoadDll) - serving the embedded layer");
+					*o_handle = self;
+					return 0;  // STATUS_SUCCESS
+				}
+			}
+			return realLdrLoadDll(a_searchPath, a_flags, a_name, o_handle);
 		}
 
 		HRESULT WINAPI CreateDeviceAndSwapChainShim(
@@ -151,9 +192,14 @@ namespace D3D11On12Loader
 		if (loaded)
 			return true;
 
+		realLdrLoadDll = reinterpret_cast<LdrLoadDll_t>(
+			GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll"));
+
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		DetourAttach(&reinterpret_cast<PVOID&>(realLoadLibraryExW), hk_LoadLibraryExW);
+		if (realLdrLoadDll)
+			DetourAttach(&reinterpret_cast<PVOID&>(realLdrLoadDll), hk_LdrLoadDll);
 		if (DetourTransactionCommit() != NO_ERROR) {
 			logger::critical("[D3D11On12] LoadLibrary redirect failed");
 			return false;
