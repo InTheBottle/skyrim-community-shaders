@@ -73,3 +73,29 @@ Skyrim D3D11 calls
   DXVK handled these; the translation layer is Microsoft-maintained but less game-tested).
 - Streamline D3D12 + the existing hudless/present hook ordering — redesign around the SL
   proxy swapchain rather than the dxvk present callback exports.
+
+## Phase 4 design — Streamline D3D12 (drafted after the phase-3 milestone)
+
+Boot order in the shim (`src/D3D11On12Loader.cpp`):
+1. `slInit` (manual-hooking flags, D3D12) **before** device creation; feature set from the
+   hardware probe (D3D12 feature checks/NVAPI replace the Vulkan optical-flow probe).
+2. Create the D3D12 device → `slSetD3DDevice(d3d12Device)`.
+3. Swapchain through Streamline's proxied factory (`slUpgradeInterface` on the DXGI factory
+   before `CreateSwapChain`) so `sl.dlss_g` owns present — the mainline D3D12 pacing path.
+4. `D3D11On12CreateDevice` on top, as today.
+
+Per-frame integration:
+- **Tags**: QI the game device for `ID3D11On12Device2`;
+  `UnwrapUnderlyingResource(depth/MV/hudless, queue)` → `ID3D12Resource` for
+  `slSetTagForFrame`, `ReturnUnderlyingResource` after the evaluate is recorded. Flush the
+  11on12 immediate context before SL evaluates on our own D3D12 command list so translated
+  writes are queue-ordered ahead (same queue).
+- **Evaluates** (DLSS/DLSS-G/FSR/XeSS): CS-owned `ID3D12GraphicsCommandList` submitted to the
+  shared queue; no cross-API interop, no image-view caches, no layout pinning.
+- **Reflex/PCL**: unchanged marker API on D3D12.
+- The whole `DxvkInterop` + present-bound + window-gap machinery does not carry over; DXGI
+  occlusion (`DXGI_STATUS_OCCLUDED`) handles minimize natively.
+
+Streamline fork (`feat/d3d12-backends`): `sl.fsr`/`sl.xess` gain D3D12 device support beside
+Vulkan (FFX + XeSS both ship native D3D12 backends; the plugin work is context creation +
+resource plumbing per API, keeping the existing options/tuning surface).
