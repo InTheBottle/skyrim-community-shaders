@@ -1,6 +1,9 @@
 #include "Streamline.h"
 
+#include "D3D12Interop.h"
 #include "DxvkInterop.h"
+
+#include "../../D3D11On12Loader.h"
 #include "FrameGenController.h"
 
 #include "../Upscaling.h"
@@ -1045,6 +1048,16 @@ static void cs_DestroyViews(DxvkInterop* a_dxvk, VkDevice a_device, const VkImag
 	}
 }
 
+// Backend-aware "interop command ring ready" check: the D3D12 ring on the D3D11On12 path,
+// else DXVK's Vulkan ring. The per-frame Evaluate* guards use this so the D3D12 evaluate
+// branch is reached on 11on12 (where DxvkInterop is never initialized).
+static bool cs_InteropReady()
+{
+	if (D3D11On12Loader::IsLoaded())
+		return D3D12Interop::GetSingleton()->CommandResourcesReady();
+	return DxvkInterop::GetSingleton()->CommandResourcesReady();
+}
+
 // Shared evaluate core: sets the frame constants on a_viewport, wraps depth + MV (+ color when BOTH
 // colorIn and colorOut are given), tags them, evaluates a_feature into a fresh DXVK frame command buffer,
 // submits (waitIdle), and frees the transient views on every path. colorIn/colorOut == null => the
@@ -1058,6 +1071,11 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	auto* dxvk = DxvkInterop::GetSingleton();
 	if (!dxvk)
 		return sl::Result::eErrorNotInitialized;
+
+	// D3D11On12 path: no Vulkan interop. After the shared (backend-agnostic) constants block
+	// the evaluate takes a D3D12 branch — unwrap the game D3D11 textures to ID3D12Resource
+	// and record into a D3D12 command list on the single shared game queue (D3D12Interop).
+	const bool useD3D12 = D3D11On12Loader::IsLoaded();
 
 	// The render frame's explicit-ID token: these constants land on the same frame as the DLSS-G
 	// tags and present marker by construction (all fetch with g_sl.renderFrameId).
@@ -1098,6 +1116,88 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 			return sl::Result::eOk;
 		g_sl.slSetConstants(consts, *token, a_viewport);
 	}
+
+	// ---- D3D11On12 (native D3D12) evaluate branch ----------------------------------------
+	// Unwraps each input to its ID3D12Resource (COMMON state; SL barriers around the evaluate
+	// and restores COMMON), tags identically to the VK path, records into a shared-queue
+	// command list, and hands the resources back after the submit. Views/memory are Vulkan-
+	// only and stay null.
+	if (useD3D12) {
+		auto* i12 = D3D12Interop::GetSingleton();
+		if (!i12->CommandResourcesReady())
+			return sl::Result::eErrorNotInitialized;
+		i12->FlushImmediateContext();
+
+		ID3D11Resource* ret11[5] = {};
+		ID3D12Resource* ret12[5] = {};
+		uint32_t nr = 0;
+		sl::Resource colorInRes{}, colorOutRes{}, depthRes{}, mvecRes{}, hudlessRes{};
+		const auto wrap12 = [&](ID3D11Resource* a_res, sl::Resource& a_out, uint32_t a_w, uint32_t a_h) -> bool {
+			ID3D12Resource* r12 = nullptr;
+			if (!i12->UnwrapResource(a_res, &r12))
+				return false;
+			a_out = sl::Resource{ sl::ResourceType::eTex2d, r12, static_cast<uint32_t>(D3D12_RESOURCE_STATE_COMMON) };
+			a_out.width = a_w;
+			a_out.height = a_h;
+			a_out.nativeFormat = static_cast<uint32_t>(r12->GetDesc().Format);
+			if (nr < 5) {
+				ret11[nr] = a_res;
+				ret12[nr] = r12;
+				++nr;
+			}
+			return true;
+		};
+
+		const bool haveColor = (a_colorIn && a_colorOut);
+		const bool haveHudless = (a_hudlessColor != nullptr);
+		bool ok = wrap12(a_depth, depthRes, a_renderWidth, a_renderHeight) &&
+		          wrap12(a_motionVectors, mvecRes, a_renderWidth, a_renderHeight);
+		if (ok && haveColor)
+			ok = wrap12(a_colorIn, colorInRes, a_renderWidth, a_renderHeight) &&
+			     wrap12(a_colorOut, colorOutRes, a_outputWidth, a_outputHeight);
+		if (ok && haveHudless)
+			ok = wrap12(a_hudlessColor, hudlessRes, a_outputWidth, a_outputHeight);
+		if (!ok) {
+			static uint32_t s_unwrapFailLog = 0;
+			if ((s_unwrapFailLog++ % 120) == 0)
+				logger::warn("[D3D12Interop] UnwrapUnderlyingResource FAILED (unwrapped {} of the inputs before failing)", nr);
+			i12->CancelAndReturn(ret11, ret12, nr);
+			return sl::Result::eErrorMissingInputParameter;
+		}
+
+		mvecRes.width = depthRes.width;
+		mvecRes.height = depthRes.height;
+
+		sl::Extent renderExtent{ 0, 0, a_renderWidth, a_renderHeight };
+		sl::Extent outputExtent{ 0, 0, a_outputWidth, a_outputHeight };
+		sl::ResourceTag d3d12Tags[5];
+		uint32_t d3d12Nt = 0;
+		if (haveColor) {
+			d3d12Tags[d3d12Nt++] = sl::ResourceTag{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent };
+			d3d12Tags[d3d12Nt++] = sl::ResourceTag{ &colorOutRes, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &outputExtent };
+		}
+		d3d12Tags[d3d12Nt++] = sl::ResourceTag{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eOnlyValidNow, &renderExtent };
+		d3d12Tags[d3d12Nt++] = sl::ResourceTag{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eOnlyValidNow, &renderExtent };
+		if (haveHudless)
+			d3d12Tags[d3d12Nt++] = sl::ResourceTag{ &hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eOnlyValidNow, &outputExtent };
+
+		sl::Result evalRes = sl::Result::eErrorNotInitialized;
+		ID3D12GraphicsCommandList* cl = i12->BeginFrameCommandList();
+		if (cl) {
+			g_sl.slSetTagForFrame(*token, a_viewport, d3d12Tags, d3d12Nt, cl);
+			const sl::BaseStructure* inputs[] = { &a_viewport };
+			evalRes = g_sl.slEvaluateFeature(a_feature, *token, inputs, static_cast<uint32_t>(std::size(inputs)), cl);
+			i12->SubmitAndReturn(cl, ret11, ret12, nr, /*waitIdle=*/false);
+		} else {
+			i12->CancelAndReturn(ret11, ret12, nr);
+		}
+		static uint32_t s_d3d12EvalLog = 0;
+		if ((s_d3d12EvalLog++ % 120) == 0)
+			logger::info("[D3D12Interop] evaluate feature={} unwrapped={} cl={} result={}",
+				static_cast<int>(a_feature), nr, cl ? "ok" : "null", static_cast<int>(evalRes));
+		return evalRes;
+	}
+	// ---- Vulkan (DXVK) evaluate path -----------------------------------------------------
 
 	VkDevice vkDevice = dxvk->GetDevice();
 	auto vkCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(
@@ -1196,7 +1296,7 @@ void Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 	auto* dxvk = DxvkInterop::GetSingleton();
 	// DXVK itself is a hard requirement (load-time enforced), so the per-frame SL paths below only gate on
 	// whether the interop command ring is ready yet — a timing check, not a DXVK-availability check.
-	if (!dxvk->CommandResourcesReady())
+	if (!cs_InteropReady())
 		return;
 	// Flush DXVK's pending D3D11 rendering so the interop VkImages are submitted/consistent before SL
 	// records its compute work; SL applies the layout barriers itself from the tagged per-resource state.
@@ -1298,7 +1398,7 @@ void Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		return;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
-	if (!dxvk->CommandResourcesReady())
+	if (!cs_InteropReady())
 		return;
 	dxvk->FlushRenderingCommands();
 
@@ -1363,7 +1463,7 @@ void Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 		return;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
-	if (!dxvk->CommandResourcesReady())
+	if (!cs_InteropReady())
 		return;
 	dxvk->FlushRenderingCommands();
 
@@ -1438,7 +1538,7 @@ void Streamline::EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_
 		return;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
-	if (!dxvk->CommandResourcesReady())
+	if (!cs_InteropReady())
 		return;
 	dxvk->FlushRenderingCommands();
 
@@ -1697,7 +1797,7 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 		return;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
-	if (!dxvk->CommandResourcesReady())
+	if (!cs_InteropReady())
 		return;
 
 	__try {

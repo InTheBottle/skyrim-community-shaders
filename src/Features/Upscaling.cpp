@@ -7,6 +7,7 @@
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
+#include "Upscaling/D3D12Interop.h"
 #include "Upscaling/DxvkInterop.h"
 #include "Upscaling/FrameGenController.h"
 #include "Upscaling/Streamline.h"
@@ -1045,8 +1046,13 @@ void Upscaling::SetupResources()
 	}
 
 	// D3D11On12 path: Streamline was initialized at device creation (D3D12); resolve the
-	// per-feature support flags now that everything is up. No Vulkan interop anywhere.
+	// per-feature support flags now that everything is up. No Vulkan interop anywhere — the
+	// D3D12 evaluate records through D3D12Interop (unwrap game D3D11 textures to
+	// ID3D12Resource) instead of DxvkInterop.
 	if (D3D11On12Loader::IsLoaded()) {
+		auto* i12 = D3D12Interop::GetSingleton();
+		if (i12->Initialize())
+			i12->CreateCommandResources(3);
 		auto* streamline = Streamline::GetSingleton();
 		if (streamline->IsInitialized()) {
 			streamline->SetVulkanDevice();  // D3D12-aware: probes by adapter LUID in d3d12Mode

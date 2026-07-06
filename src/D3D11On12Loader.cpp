@@ -21,63 +21,55 @@ namespace D3D11On12Loader
 		ID3D12Device* d3d12Device = nullptr;
 		ID3D12CommandQueue* d3d12Queue = nullptr;
 
-		decltype(&LoadLibraryExW) realLoadLibraryExW = LoadLibraryExW;
-
-		// The system d3d11.dll runtime resolves its 11on12 driver with
-		// LoadLibraryExW(L"d3d11on12.dll"); hand it CommunityShaders.dll instead — the
-		// layer is linked in and OpenAdapter_D3D11On12 is exported above.
-		HMODULE WINAPI hk_LoadLibraryExW(LPCWSTR a_name, HANDLE a_file, DWORD a_flags)
+		// The D3D11 runtime resolves its 11on12 driver as a DELAY-LOAD import of
+		// d3d11on12.dll!OpenAdapter_D3D11On12 inside d3d11.dll — NOT via LoadLibrary or
+		// LdrLoadDll (which is why the earlier exported-entry detours never fired). Pre-write
+		// our embedded OpenAdapter symbol into d3d11.dll's delay-import IAT slot: the call
+		// site is `call [__imp_OpenAdapter_D3D11On12]`, so a resolved pointer short-circuits
+		// LdrResolveDelayLoadedAPI entirely and the system d3d11on12.dll is never loaded.
+		bool PatchDelayLoadedD3D11On12()
 		{
-			// Suffix match: the runtime loads its 11on12 driver by full path (observed:
-			// exact-compare never fired and the SYSTEM d3d11on12.dll mapped instead).
-			const auto isTarget = [](LPCWSTR a_s) {
-				if (!a_s)
-					return false;
-				const size_t len = wcslen(a_s);
-				constexpr wchar_t kName[] = L"d3d11on12.dll";
-				constexpr size_t kNameLen = (sizeof(kName) / sizeof(wchar_t)) - 1;
-				return len >= kNameLen && _wcsicmp(a_s + (len - kNameLen), kName) == 0 &&
-			           (len == kNameLen || a_s[len - kNameLen - 1] == L'\\' || a_s[len - kNameLen - 1] == L'/');
-			};
-			if (isTarget(a_name)) {
-				HMODULE self = nullptr;
-				GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-					reinterpret_cast<LPCWSTR>(&hk_LoadLibraryExW), &self);
-				logger::info("[D3D11On12] runtime asked for d3d11on12.dll - serving the embedded layer");
-				return self;
-			}
-			return realLoadLibraryExW(a_name, a_file, a_flags);
-		}
+			HMODULE d3d11 = GetModuleHandleW(L"d3d11.dll");
+			if (!d3d11)
+				d3d11 = LoadLibraryW(L"d3d11.dll");  // CS statically imports d3d11, so this just bumps the ref
+			if (!d3d11)
+				return false;
 
-		// The D3D11 runtime loads its 11on12 driver beneath the Win32 loader API (direct
-		// ntdll!LdrLoadDll, often with a system32-restricted search) - the LoadLibraryExW
-		// detour never sees it. Hook the native loader entry itself.
-		using LdrLoadDll_t = LONG(NTAPI*)(PWSTR, PULONG, PVOID, PVOID*);
-		LdrLoadDll_t realLdrLoadDll = nullptr;
+			auto* base = reinterpret_cast<BYTE*>(d3d11);
+			auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+			auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+			const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
+			if (!dir.VirtualAddress || !dir.Size)
+				return false;
 
-		LONG NTAPI hk_LdrLoadDll(PWSTR a_searchPath, PULONG a_flags, PVOID a_name, PVOID* o_handle)
-		{
-			struct UnicodeString
-			{
-				USHORT length;
-				USHORT maximumLength;
-				PWSTR buffer;
-			};
-			if (auto* us = static_cast<UnicodeString*>(a_name); us && us->buffer && o_handle) {
-				const size_t chars = us->length / sizeof(wchar_t);
-				constexpr wchar_t kName[] = L"d3d11on12.dll";
-				constexpr size_t kNameLen = (sizeof(kName) / sizeof(wchar_t)) - 1;
-				if (chars >= kNameLen && _wcsnicmp(us->buffer + (chars - kNameLen), kName, kNameLen) == 0 &&
-					(chars == kNameLen || us->buffer[chars - kNameLen - 1] == L'\\' || us->buffer[chars - kNameLen - 1] == L'/')) {
-					HMODULE self = nullptr;
-					GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-						reinterpret_cast<LPCWSTR>(&hk_LdrLoadDll), &self);
-					logger::info("[D3D11On12] loader asked for d3d11on12.dll (LdrLoadDll) - serving the embedded layer");
-					*o_handle = self;
-					return 0;  // STATUS_SUCCESS
+			for (auto* desc = reinterpret_cast<IMAGE_DELAYLOAD_DESCRIPTOR*>(base + dir.VirtualAddress);
+				 desc->DllNameRVA; ++desc) {
+				if (!desc->Attributes.RvaBased)  // modern Windows delay descriptors are RVA-based
+					continue;
+				const char* dllName = reinterpret_cast<const char*>(base + desc->DllNameRVA);
+				if (_stricmp(dllName, "d3d11on12.dll") != 0)
+					continue;
+
+				auto* iat = reinterpret_cast<void**>(base + desc->ImportAddressTableRVA);
+				auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->ImportNameTableRVA);
+				for (size_t i = 0; names[i].u1.AddressOfData; ++i) {
+					if (names[i].u1.Ordinal & IMAGE_ORDINAL_FLAG)
+						continue;
+					auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names[i].u1.AddressOfData);
+					if (strcmp(ibn->Name, "OpenAdapter_D3D11On12") != 0)
+						continue;
+
+					DWORD oldProt = 0;
+					if (!VirtualProtect(&iat[i], sizeof(void*), PAGE_READWRITE, &oldProt))
+						return false;
+					iat[i] = reinterpret_cast<void*>(&OpenAdapter_D3D11On12);
+					VirtualProtect(&iat[i], sizeof(void*), oldProt, &oldProt);
+					logger::info("[D3D11On12] patched d3d11.dll delay-import slot -> embedded OpenAdapter_D3D11On12");
+					return true;
 				}
 			}
-			return realLdrLoadDll(a_searchPath, a_flags, a_name, o_handle);
+			logger::warn("[D3D11On12] d3d11on12.dll delay-import slot not found in d3d11.dll");
+			return false;
 		}
 
 		HRESULT WINAPI CreateDeviceAndSwapChainShim(
@@ -192,17 +184,18 @@ namespace D3D11On12Loader
 		if (loaded)
 			return true;
 
-		realLdrLoadDll = reinterpret_cast<LdrLoadDll_t>(
-			GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll"));
-
-		DetourTransactionBegin();
-		DetourUpdateThread(GetCurrentThread());
-		DetourAttach(&reinterpret_cast<PVOID&>(realLoadLibraryExW), hk_LoadLibraryExW);
-		if (realLdrLoadDll)
-			DetourAttach(&reinterpret_cast<PVOID&>(realLdrLoadDll), hk_LdrLoadDll);
-		if (DetourTransactionCommit() != NO_ERROR) {
-			logger::critical("[D3D11On12] LoadLibrary redirect failed");
-			return false;
+		// Serve OUR embedded layer by patching d3d11.dll's delay-import slot for
+		// OpenAdapter_D3D11On12 (must run before the shim's first D3D11On12CreateDevice
+		// triggers the delay resolve; Load() runs in InstallEarlyHooks, well before).
+		// Gated on CS_D3D11ON12_EMBED so the D3D12 device/SL/evaluate path — which works
+		// identically on the SYSTEM d3d11on12.dll (its ID3D11On12Device2 also exposes
+		// UnwrapUnderlyingResource) — can be validated on the proven system layer first.
+		char embed[8]{};
+		if (GetEnvironmentVariableA("CS_D3D11ON12_EMBED", embed, sizeof(embed)) && embed[0] == '1') {
+			if (!PatchDelayLoadedD3D11On12())
+				logger::warn("[D3D11On12] delay-import patch failed - the SYSTEM d3d11on12.dll will serve the DDI");
+		} else {
+			logger::info("[D3D11On12] using the SYSTEM d3d11on12.dll (set CS_D3D11ON12_EMBED=1 for the embedded layer)");
 		}
 
 		loaded = true;
