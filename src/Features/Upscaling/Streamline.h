@@ -35,6 +35,11 @@ public:
 	 *  Null when Streamline is not initialized. */
 	void* GetInterposerProc(const char* a_name);
 
+	/** @brief Runtime-load sl.dlss_g on the D3D12 (11on12) path (deferred from boot to avoid
+	 *  the UMD crash). Call from the shim after slSetD3DDevice, before the swapchain create,
+	 *  so SL installs DLSS-G's present hooks on the fresh proxied swapchain. Idempotent. */
+	bool LoadDLSSGForD3D12();
+
 	/** @brief Probes per-adapter feature support and resolves feature-specific entry points.
 	 *  Must be called after the D3D11/DXVK device exists and DxvkInterop is up. */
 	void SetVulkanDevice();

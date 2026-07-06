@@ -120,6 +120,13 @@ namespace D3D11On12Loader
 				logger::info("[D3D11On12] slSetD3DDevice: {}", res == 0 ? "ok" : "FAILED");
 			}
 
+				// Runtime-load DLSS-G now (device stable) so the swapchain create +
+				// slUpgradeInterface below installs its present hooks. env-gated while the
+				// boot-crash risk (deferred from the boot feature set) is bisected.
+				char dlssg[8]{};
+				if (GetEnvironmentVariableA("CS_D3D12_DLSSG", dlssg, sizeof(dlssg)) && dlssg[0] == '1')
+					streamline->LoadDLSSGForD3D12();
+
 			// The system runtime builds the D3D11 device; its driver DDI resolves to the
 			// embedded layer through the LoadLibrary redirect installed in Load().
 			IUnknown* queues[] = { d3d12Queue };

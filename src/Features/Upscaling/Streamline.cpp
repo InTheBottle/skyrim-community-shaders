@@ -413,6 +413,40 @@ void* Streamline::GetInterposerProc(const char* a_name)
 	return reinterpret_cast<void*>(GetProcAddress(g_sl.interposer, a_name));
 }
 
+bool Streamline::LoadDLSSGForD3D12()
+{
+	// Runtime load of sl.dlss_g on the D3D12 (11on12) path. sl.dlss_g is kept OUT of the boot
+	// feature set (its boot-time proxy work crashed the NV UMD); this loads it once the device
+	// is stable, then binds its entry points. Call from the shim AFTER slSetD3DDevice and
+	// BEFORE the swapchain create+slUpgradeInterface, so SL installs DLSS-G's present hooks on
+	// the fresh proxied swapchain. The FG method is session-fixed, so load once and leave it —
+	// no unload machinery. env CS_D3D12_DLSSG gates this while the boot-crash risk is bisected.
+	if (!initialized || !g_sl.d3d12Mode || !dlssgHardware || g_dlssgCurrentlyLoaded)
+		return g_dlssgCurrentlyLoaded;
+	if (!g_sl.slSetFeatureLoaded) {
+		logger::warn("[Streamline] slSetFeatureLoaded unavailable - cannot load DLSS-G on D3D12");
+		return false;
+	}
+	bool ok = false;
+	__try {
+		const sl::Result loadRes = g_sl.slSetFeatureLoaded(sl::kFeatureDLSS_G, true);
+		if (loadRes == sl::Result::eOk) {
+			g_dlssgCurrentlyLoaded = true;
+			g_dlssgDesiredLoaded.store(true, std::memory_order_release);
+			g_sl.slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", reinterpret_cast<void*&>(g_sl.slDLSSGSetOptions));
+			g_sl.slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", reinterpret_cast<void*&>(g_sl.slDLSSGGetState));
+			ok = g_sl.slDLSSGSetOptions != nullptr && g_sl.slDLSSGGetState != nullptr;
+			logger::info("[Streamline] LoadDLSSGForD3D12: slSetFeatureLoaded ok, binds {}", ok ? "ok" : "FAILED");
+		} else {
+			logger::warn("[Streamline] LoadDLSSGForD3D12: slSetFeatureLoaded FAILED (result {})", static_cast<int>(loadRes));
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		g_sl.dispatchFaulted = true;
+		logger::error("[Streamline] LoadDLSSGForD3D12: EXCEPTION during load");
+	}
+	return ok;
+}
+
 bool Streamline::Initialize()
 {
 	if (triedInit)
@@ -488,17 +522,21 @@ bool Streamline::Initialize()
 
 	std::vector<sl::Feature> featuresToLoad = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL,
 		sl::kFeatureFSR, sl::kFeatureXeSS };
-	if (dlssgHardware && g_sl.d3d12Mode) {
-		// D3D12 bring-up: sl.dlss_g stays OUT of the boot feature set - its boot-time proxy
-		// work is the prime suspect in a post-device driver crash (nvwgf2umx via D3D12Core).
-		// FG gets the guide-recommended runtime load (slSetFeatureLoaded) when enabled.
-		logger::info("[Streamline] D3D12: sl.dlss_g deferred to runtime load (boot isolation)");
-	} else if (dlssgHardware) {
+	// DLSS-G frame generation on D3D12 (11on12) is BLOCKED: sl.dlss_g's present-proxy, once it
+	// intercepts the swapchain, makes the d3d11on12 present crash the NVIDIA UMD (nvwgf2umx AV in
+	// D3D12Core during Present — reproduced on the system AND embedded layer, RTX 4080). The
+	// plugin must be in featuresToLoad to load at all (slSetFeatureLoaded only enables an
+	// already-loaded plugin), so there is no "load but never present" state — loading it and
+	// engaging FG crashes. DLSS super-resolution (kFeatureDLSS) is unaffected and works. Env
+	// escape hatch CS_D3D12_DLSSG=1 re-attempts it for future NVIDIA/MS driver fixes.
+	const bool d3d12TryDlssg = [] { char v[8]{}; return GetEnvironmentVariableA("CS_D3D12_DLSSG", v, sizeof(v)) && v[0] == '1'; }();
+	if (dlssgHardware && (!g_sl.d3d12Mode || d3d12TryDlssg)) {
+		// slInit loads the plugin, so the §18 load-state tracking starts "loaded" here.
 		featuresToLoad.push_back(sl::kFeatureDLSS_G);
-		// slInit loads the plugin, so the §18 load-state tracking starts "loaded" here (and
-		// only here — on other hardware the plugin does not exist in this process).
 		g_dlssgDesiredLoaded.store(true, std::memory_order_release);
 		g_dlssgCurrentlyLoaded = true;
+	} else if (dlssgHardware && g_sl.d3d12Mode) {
+		logger::info("[Streamline] D3D12: DLSS-G frame generation disabled (present-proxy crashes the UMD); DLSS super-resolution active");
 	}
 
 	sl::Preferences pref{};
@@ -1813,6 +1851,61 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 		sl::FrameToken* token = RenderFrameToken();
 		if (!token)
 			return;
+
+		// ---- D3D11On12 (native D3D12) DLSS-G tag branch ----------------------------------
+		// Mirror of cs_EvaluateFeatureCore's D3D12 branch: unwrap depth/MV/hudless to
+		// ID3D12Resource and tag them on a shared-queue command list. ALL tags are
+		// eOnlyValidNow on D3D12 — SubmitAndReturn hands each resource back to the 11on12
+		// layer right after the tag submit (gated on the eval fence), so SL must snapshot
+		// into its own copy at tag time rather than read it back at present.
+		if (D3D11On12Loader::IsLoaded()) {
+			auto* i12 = D3D12Interop::GetSingleton();
+			if (!i12->CommandResourcesReady())
+				return;
+			i12->FlushImmediateContext();
+			ID3D11Resource* ret11[3] = {};
+			ID3D12Resource* ret12[3] = {};
+			uint32_t nr = 0;
+			sl::Resource depthResD12{}, mvecResD12{}, hudlessResD12{};
+			const auto wrap12 = [&](ID3D11Resource* a_res, sl::Resource& a_out, uint32_t a_w, uint32_t a_h) -> bool {
+				ID3D12Resource* r12 = nullptr;
+				if (!i12->UnwrapResource(a_res, &r12))
+					return false;
+				a_out = sl::Resource{ sl::ResourceType::eTex2d, r12, static_cast<uint32_t>(D3D12_RESOURCE_STATE_COMMON) };
+				a_out.width = a_w;
+				a_out.height = a_h;
+				a_out.nativeFormat = static_cast<uint32_t>(r12->GetDesc().Format);
+				if (nr < 3) { ret11[nr] = a_res; ret12[nr] = r12; ++nr; }
+				return true;
+			};
+			bool ok = wrap12(a_depth, depthResD12, a_renderWidth, a_renderHeight) &&
+			          wrap12(a_motionVectors, mvecResD12, a_renderWidth, a_renderHeight);
+			if (ok && a_hudlessColor)
+				ok = wrap12(a_hudlessColor, hudlessResD12, a_displayWidth, a_displayHeight);
+			if (!ok) {
+				i12->CancelAndReturn(ret11, ret12, nr);
+				return;
+			}
+			mvecResD12.width = depthResD12.width;
+			mvecResD12.height = depthResD12.height;
+			sl::Extent renderExtentD12{ 0, 0, a_renderWidth, a_renderHeight };
+			sl::Extent displayExtentD12{ 0, 0, a_displayWidth, a_displayHeight };
+			sl::ResourceTag d12Tags[3];
+			uint32_t d12Nt = 0;
+			d12Tags[d12Nt++] = sl::ResourceTag{ &depthResD12, sl::kBufferTypeDepth, sl::ResourceLifecycle::eOnlyValidNow, &renderExtentD12 };
+			d12Tags[d12Nt++] = sl::ResourceTag{ &mvecResD12, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eOnlyValidNow, &renderExtentD12 };
+			if (a_hudlessColor)
+				d12Tags[d12Nt++] = sl::ResourceTag{ &hudlessResD12, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eOnlyValidNow, &displayExtentD12 };
+			ID3D12GraphicsCommandList* cl = i12->BeginFrameCommandList();
+			if (cl) {
+				g_sl.slSetTagForFrame(*token, g_sl.viewport, d12Tags, d12Nt, cl);
+				i12->SubmitAndReturn(cl, ret11, ret12, nr, /*waitIdle=*/false);
+				g_sl.dlssgTaggedThisFrame = true;
+			} else {
+				i12->CancelAndReturn(ret11, ret12, nr);
+			}
+			return;
+		}
 
 		// SL's Vulkan backend needs a VkImageView per tagged resource (the DLSS-SR path proved a
 		// null view faults SL). DLSS-G consumes these at present time after a non-blocking submit,

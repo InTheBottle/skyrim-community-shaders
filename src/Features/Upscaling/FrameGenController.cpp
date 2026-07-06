@@ -5,6 +5,7 @@
 #include "DxvkInterop.h"
 #include "Streamline.h"
 
+#include "../../D3D11On12Loader.h"
 #include "../../Globals.h"
 #include "../../Utils/Game.h"
 
@@ -165,6 +166,24 @@ namespace FrameGen
 		}
 
 		sl->SetDLSSGDesiredLoaded(wantLoaded);
+
+		// D3D12 (11on12): no DXVK swapchain-recreate window and the game owns the swapchain, so
+		// the DXVK teardown-callback that normally applies slSetFeatureLoaded never fires. Load
+		// the feature DIRECTLY and synchronously — no recreate phase to wait on. The FG method
+		// is session-fixed, so this only ever loads (never unloads mid-session).
+		if (D3D11On12Loader::IsLoaded()) {
+			if (wantLoaded && sl->LoadDLSSGForD3D12()) {
+				const auto dims = CurrentDims(false);
+				sl->SetDLSSGMode(false, dims.renderWidth, dims.renderHeight,
+					dims.displayWidth, dims.displayHeight);
+				owner = Method::kDLSSG;
+				logger::info("[FrameGen] DLSS-G loaded directly (D3D12) + registered as present owner");
+			} else if (!wantLoaded && owner == Method::kDLSSG) {
+				owner = Method::kNone;
+			}
+			return;
+		}
+
 		Streamline::RequestDxvkSwapchainRecreate(wantLoaded ? "DLSS-G load" : "DLSS-G unload");
 		phase = wantLoaded ? Phase::kLoadingDLSSG : Phase::kUnloadingDLSSG;
 		if (!wantLoaded && owner == Method::kDLSSG)

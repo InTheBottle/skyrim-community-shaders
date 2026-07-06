@@ -312,7 +312,13 @@ struct IDXGISwapChain_Present
 				// token schemes, marker bridges (flash). This wait closes whatever ordering
 				// SL's internal queues actually need, and it OVERLAPS the post-evaluate CPU
 				// work — measured ~zero added frame time, unlike a stall at the evaluate.
-				sl->WaitDLSSGSubmission();
+				// D3D12 (11on12): NOT needed — a single shared queue serialises the game's
+				// translated work, the unwrap flush, the tag/eval command lists, and present,
+				// so present physically cannot run ahead of the tagged work, and SL's D3D12
+				// pacer owns interpolation timing. (WaitDLSSGSubmission is a DxvkInterop no-op
+				// on 11on12 anyway; the explicit gate documents intent.)
+				if (!D3D11On12Loader::IsLoaded())
+					sl->WaitDLSSGSubmission();
 			}
 		}
 
