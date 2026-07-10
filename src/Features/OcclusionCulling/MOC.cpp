@@ -172,44 +172,6 @@ namespace MOC
 		std::atomic<std::uint64_t> g_waitCount{ 0 };       // waits that actually spun
 		double                     g_lastRasterMs = 0.0;   // builder thread only
 
-		// Per-frame verdict MEMO -- a pure CPU optimization, NOT temporal state.
-		// With the complete-buffer + same-frame-matrices model a verdict is a
-		// deterministic pure function of (object, frame): memoizing it cannot
-		// change any answer, it only stops the engine's LATER cull walks (the
-		// z-prepass, main and shadow passes re-walk the scene mid-frame, on the
-		// render thread, interleaved with draw submission) from paying the test
-		// again. Entries are only written for verdicts computed against a
-		// complete buffer, and only read when the frame matches.
-		struct VerdictMemo
-		{
-			std::uint32_t frame = 0xFFFFFFFFu;
-			bool          visible = true;
-		};
-		constexpr std::size_t kMemoShards = 16;
-		std::mutex                                   g_memoMtx[kMemoShards];
-		std::unordered_map<const void*, VerdictMemo> g_memoMap[kMemoShards];
-
-		template <class TestFn>
-		bool MemoizedVerdict(const void* a_key, std::uint32_t a_frame, TestFn&& a_test)
-		{
-			const std::size_t shard = (reinterpret_cast<std::uintptr_t>(a_key) >> 4) & (kMemoShards - 1);
-			{
-				std::scoped_lock lk(g_memoMtx[shard]);
-				auto& map = g_memoMap[shard];
-				if (map.size() > 8192)
-					map.clear();
-				auto it = map.find(a_key);
-				if (it != map.end() && it->second.frame == a_frame)
-					return it->second.visible;
-			}
-			const bool visible = a_test();
-			{
-				std::scoped_lock lk(g_memoMtx[shard]);
-				g_memoMap[shard][a_key] = VerdictMemo{ a_frame, visible };
-			}
-			return visible;
-		}
-
 		// True once the buffer for @p a_frame is complete; false when no build
 		// was kicked this frame (menus, loads) or the bounded wait expired --
 		// callers then skip culling (conservative).
@@ -1548,6 +1510,7 @@ namespace MOC
 				g_culledAABB.load(), g_testedAABB.load(), g_culledSphere.load(), g_testedSphere.load(),
 				g_treeCulled.load(), g_treeTested.load(),
 				g_waitNs.exchange(0, std::memory_order_relaxed) / 1e6, g_waitCount.exchange(0, std::memory_order_relaxed));
+
 		}
 		g_buildDone.store(frame, std::memory_order_release);
 		return true;
@@ -1712,13 +1675,16 @@ namespace MOC
 		if (!g_init || !EnableOcclusionTesting || !a_object)
 			return true;
 
+		// CHEAP-FIRST gate order: this runs ~8k times per frame (the full main-view
+		// query volume), so plain member reads come before anything virtual and all
+		// RTTI stays at the very end, paid only by survivors.
+		if (a_object->worldBound.radius < OccluderTestMinRadius)
+			return true;
+
 		if (a_object->GetAppCulled())
 			return true;
 
-		// DIAGNOSTIC forced culling: pseudo-randomly (stable per object) cull a share of
-		// everything that would otherwise be kept. Perf probe only; image intentionally
-		// breaks. Placed after the init/master gates but before the real work so the
-		// probe measures pure cull-volume effect.
+		// DIAGNOSTIC forced culling (perf probe only; image intentionally breaks).
 		if (DiagForceCullPercent > 0) {
 			const std::uintptr_t h = reinterpret_cast<std::uintptr_t>(a_object);
 			if (static_cast<std::int32_t>((h >> 4) * 2654435761u % 100u) < DiagForceCullPercent) {
@@ -1727,35 +1693,27 @@ namespace MOC
 			}
 		}
 
-		// Never occlusion-test ACTORS: skinned world bounds lag animation, actors move
-		// against our one-frame-stale occluder list, and they are few (cheap to keep).
-		// Vanilla culling handles them with fresh state; wrongly culling an NPC is the
-		// most visible artifact possible.
-		if (auto* ref = a_object->GetUserData(); ref && ref->As<RE::Actor>())
+		// Never occlusion-test ACTORS: skinned world bounds lag animation, actors
+		// move against our one-frame-stale occluder list, and wrongly culling an
+		// NPC is the most visible artifact possible. formType is a plain member
+		// read -- no As<Actor>() RTTI on the hot path.
+		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
 			return true;
 
-		// Cheap size gate BEFORE any RTTI: skip small objects/subtrees entirely. This is a
-		// plain float compare on a member, not the expensive netimmerse_cast in GetAABBNode.
-		if (a_object->worldBound.radius < OccluderTestMinRadius)
-			return true;
-
-		auto* gfx = RE::BSGraphics::State::GetSingleton();
-		if (!gfx)
-			return true;
-		const std::uint32_t frame = gfx->frameCount;
-		const bool visible = MemoizedVerdict(a_object, frame, [&] {
-			if (!WaitForRasterComplete(frame))
+		{
+			auto* gfx = RE::BSGraphics::State::GetSingleton();
+			if (!gfx || !WaitForRasterComplete(gfx->frameCount))
 				return true;  // buffer not ready this frame -- keep (conservative)
-			auto*      aabb = GetAABBNode(a_object);  // single RTTI lookup (was called twice)
-			const bool vis = aabb ? TestAABB(aabb) : TestSphere(a_object);
-			g_tested.fetch_add(1, std::memory_order_relaxed);
-			(aabb ? g_testedAABB : g_testedSphere).fetch_add(1, std::memory_order_relaxed);
-			if (!vis) {
-				g_culled.fetch_add(1, std::memory_order_relaxed);
-				(aabb ? g_culledAABB : g_culledSphere).fetch_add(1, std::memory_order_relaxed);
-			}
-			return vis;
-		});
+		}
+
+		auto*      aabb = GetAABBNode(a_object);  // the single RTTI lookup, survivors only
+		const bool visible = aabb ? TestAABB(aabb) : TestSphere(a_object);
+		g_tested.fetch_add(1, std::memory_order_relaxed);
+		(aabb ? g_testedAABB : g_testedSphere).fetch_add(1, std::memory_order_relaxed);
+		if (!visible) {
+			g_culled.fetch_add(1, std::memory_order_relaxed);
+			(aabb ? g_culledAABB : g_culledSphere).fetch_add(1, std::memory_order_relaxed);
+		}
 		return visible;
 	}
 
@@ -1769,22 +1727,18 @@ namespace MOC
 		if (!aabb || aabb->size.z <= 1.0f)
 			return true;  // no AABB shape (spheres etc.) or degenerate bounds -> keep
 
-		auto* gfx = RE::BSGraphics::State::GetSingleton();
-		if (!gfx)
-			return true;
-		const std::uint32_t frame = gfx->frameCount;
-		const bool visible = MemoizedVerdict(a_multiBound, frame, [&] {
-			if (!WaitForRasterComplete(frame))
+		{
+			auto* gfx = RE::BSGraphics::State::GetSingleton();
+			if (!gfx || !WaitForRasterComplete(gfx->frameCount))
 				return true;
-			const bool vis = TestAABB(aabb);
-			g_tested.fetch_add(1, std::memory_order_relaxed);
-			g_testedAABB.fetch_add(1, std::memory_order_relaxed);
-			if (!vis) {
-				g_culled.fetch_add(1, std::memory_order_relaxed);
-				g_culledAABB.fetch_add(1, std::memory_order_relaxed);
-			}
-			return vis;
-		});
+		}
+		const bool visible = TestAABB(aabb);
+		g_tested.fetch_add(1, std::memory_order_relaxed);
+		g_testedAABB.fetch_add(1, std::memory_order_relaxed);
+		if (!visible) {
+			g_culled.fetch_add(1, std::memory_order_relaxed);
+			g_culledAABB.fetch_add(1, std::memory_order_relaxed);
+		}
 		return visible;
 	}
 
@@ -1798,18 +1752,15 @@ namespace MOC
 		if (!g_init || !EnableOcclusionTesting || !CullTreeLODGroups || !a_aabb)
 			return true;
 
-		auto* gfx = RE::BSGraphics::State::GetSingleton();
-		if (!gfx)
-			return true;
-		const std::uint32_t frame = gfx->frameCount;
-		return MemoizedVerdict(a_aabb, frame, [&] {
-			if (!WaitForRasterComplete(frame))
+		{
+			auto* gfx = RE::BSGraphics::State::GetSingleton();
+			if (!gfx || !WaitForRasterComplete(gfx->frameCount))
 				return true;
-			const bool vis = TestAABB(a_aabb);
-			g_treeTested.fetch_add(1, std::memory_order_relaxed);
-			if (!vis)
-				g_treeCulled.fetch_add(1, std::memory_order_relaxed);
-			return vis;
-		});
+		}
+		const bool visible = TestAABB(a_aabb);
+		g_treeTested.fetch_add(1, std::memory_order_relaxed);
+		if (!visible)
+			g_treeCulled.fetch_add(1, std::memory_order_relaxed);
+		return visible;
 	}
 }

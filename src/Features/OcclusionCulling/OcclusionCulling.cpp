@@ -373,6 +373,10 @@ void OcclusionCulling::PostPostLoad()
 	stl::detour_thunk<TestBaseVis1_Hook>(REL::RelocationID(74816, 74816));      // BSCullingProcess::TestBaseVisibility1
 	stl::detour_thunk<PTestBaseVis1_Hook>(REL::RelocationID(101605, 101605));   // BSParabolicCullingProcess::TestBaseVisibility1
 	stl::write_vfunc<0x34, MSITS_OnVisible_Hook>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);  // distant-tree LOD group culling
+	// Kick at DrawWorld_PreRender entry, NOT earlier: a Main::Swap-entry kick was
+	// measured WORSE (raster 1.5->2.5ms, waits +25%) -- during render setup the
+	// CPU is busy (renderer begin, UI pre-display), while during BuildSceneLists
+	// the cull threads that wait on the raster YIELD their cores to its workers.
 	stl::detour_thunk<DrawWorldPreRender_Hook>(REL::RelocationID(35560, 35560));  // frame-start raster kick
 	// On success DetourAttach rewrites T::func to the trampoline (!= original address);
 	// equal means the attach silently failed.
