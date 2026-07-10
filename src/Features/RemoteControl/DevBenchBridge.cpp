@@ -343,6 +343,15 @@ namespace
 				{ "plugin", "CommunityShaders" },
 				{ "frame_count", EnqueuedFrame() },
 				{ "draw_submits", globals::state ? globals::state->drawSubmitsLastFrame.load(std::memory_order_relaxed) : 0u },
+				{ "draw_submits_by_type", [] {
+					 static constexpr const char* kTypeNames[] = { "none", "grass", "sky", "water", "bloodsplatter",
+						 "imagespace", "lighting", "effect", "utility", "distanttree", "particle", "total_enum" };
+					 json byType = json::object();
+					 if (globals::state)
+						 for (std::size_t i = 0; i <= RE::BSShader::Type::Total; ++i)
+							 byType[kTypeNames[i]] = globals::state->drawSubmitsByTypeLastFrame[i].load(std::memory_order_relaxed);
+					 return byType;
+				 }() },
 			};
 		}
 		if (kind == "profiler") {

@@ -391,6 +391,10 @@ public:
 	// off-thread readers (devbench inspect).
 	uint32_t drawSubmitsThisFrame = 0;
 	std::atomic<uint32_t> drawSubmitsLastFrame{ 0 };
+	// Same tally split by the active BSShader technique type (index 0 = None =
+	// draws outside any BSShader technique, e.g. post/UI).
+	uint32_t drawSubmitsByTypeThisFrame[RE::BSShader::Type::Total + 1] = {};
+	std::atomic<uint32_t> drawSubmitsByTypeLastFrame[RE::BSShader::Type::Total + 1] = {};
 
 	// Skyrim constants
 	D3D_FEATURE_LEVEL featureLevel;

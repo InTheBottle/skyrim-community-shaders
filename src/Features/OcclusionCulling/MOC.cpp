@@ -1216,12 +1216,19 @@ namespace MOC
 		// builder enqueue the whole frame without stalling while the workers
 		// transform+bin+rasterize in parallel (transform belongs on the workers,
 		// as in the Intel sample -- not on the single builder thread).
-		// At least 4 workers: older persisted settings carry RasterThreads=2 and
-		// silently override the default (CS_MOC_THREADS still wins for A/B runs).
+		// Default = ALL hardware threads up to the pool's 16-bin cap: the raster
+		// must win the frame-start scheduler race against the engine's job threads
+		// or every cull job stalls on its completion. Measured curve at the
+		// village bench: 4 workers -19.6%, 12 workers +5.5%, 16 workers +8.3%
+		// (raster-completion 2.3ms -> 1.16ms). The workers hold work ~1ms per
+		// frame and park after, so saturation cannot starve the engine. Persisted
+		// settings carry stale low counts; CS_MOC_THREADS still wins for A/B.
 		{
 			char tbuf[8] = {};
-			if (!GetEnvironmentVariableA("CS_MOC_THREADS", tbuf, sizeof(tbuf)) || !tbuf[0])
-				threads = std::max(threads, 4u);
+			if (!GetEnvironmentVariableA("CS_MOC_THREADS", tbuf, sizeof(tbuf)) || !tbuf[0]) {
+				const unsigned int hw = std::max(4u, std::thread::hardware_concurrency());
+				threads = std::max(threads, std::min(hw, 16u));
+			}
 		}
 		// Snapshot thread ids before/after pool creation to identify the workers
 		// (CullingThreadpool exposes no handles) and raise them ABOVE_NORMAL: the

@@ -420,8 +420,12 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
 	auto* state = globals::state;
-	if (!isCompute)
+	if (!isCompute) {
 		++state->drawSubmitsThisFrame;
+		const auto* shader = state->currentShader;
+		const std::uint32_t type = shader ? static_cast<std::uint32_t>(shader->shaderType.underlying()) : 0u;
+		++state->drawSubmitsByTypeThisFrame[type <= RE::BSShader::Type::Total ? type : 0u];
+	}
 	state->Draw();
 }
 
