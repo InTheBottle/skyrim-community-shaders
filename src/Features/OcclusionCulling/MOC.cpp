@@ -9,6 +9,7 @@
 
 #include <d3d11.h>
 #include <winrt/base.h>
+#include <tlhelp32.h>
 #include <DirectXTex.h>
 
 #include <algorithm>
@@ -180,6 +181,7 @@ namespace MOC
 		// arrive before raster completion return visible instead of waiting.
 		// Reintroduces per-walk inconsistency (flicker class); never ship on.
 		bool g_noWaitProbe = false;
+		bool g_hotWorkers = false;
 		std::atomic<std::uint64_t> g_waitNs{ 0 };          // total test-side wait
 		std::atomic<std::uint64_t> g_waitCount{ 0 };       // waits that actually spun
 		double                     g_lastRasterMs = 0.0;   // builder thread only
@@ -998,7 +1000,11 @@ namespace MOC
 
 				// Phase 1: rasterize last kick's prepared list. All pool calls live here.
 				const auto rasterT0 = std::chrono::high_resolution_clock::now();
-				g_pool->WakeThreads();
+				static bool s_workersAwake = false;
+				if (!g_hotWorkers || !s_workersAwake) {
+					g_pool->WakeThreads();
+					s_workersAwake = true;
+				}
 				g_pool->ClearBuffer();
 				if (EnableOccluderRendering) {
 					// No triangle budget: the producer is this async builder, so job-queue
@@ -1049,7 +1055,8 @@ namespace MOC
 				// raster timing measured enqueue only. Flush waits for pipeline-empty
 				// with the workers awake, then the park + publish are both safe.
 				g_pool->Flush();
-				g_pool->SuspendThreads();
+				if (!g_hotWorkers)
+					g_pool->SuspendThreads();
 				g_lastRasterMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - rasterT0).count();
 				// Raster complete for this kick's frame: release the waiting tests.
 				g_rasterFrame.store(g_kickFrame.load(std::memory_order_acquire), std::memory_order_release);
@@ -1146,7 +1153,24 @@ namespace MOC
 
 		// Request AVX2 (the shipping build targets /arch:AVX2). MOC caps the request
 		// to the best implementation the CPU actually supports.
-		g_moc = MaskedOcclusionCulling::Create(MaskedOcclusionCulling::AVX2);
+		auto simd = MaskedOcclusionCulling::AVX2;
+		{
+			// CS_MOC_SIMD=sse2|sse41|avx2: probe for AVX<->SSE transition penalties.
+			// SkyrimSE.exe is non-AVX (legacy SSE encodings); our AVX2 raster runs
+			// 256-bit ops, and TestRect executes ON ENGINE CULL THREADS -- dirty
+			// upper-YMM state leaking across the detour would put the engine's SSE
+			// code into the transition-penalty regime. SSE41 removes all 256-bit
+			// state from engine threads (raster itself ~2x slower per pixel).
+			char simdBuf[8] = {};
+			if (GetEnvironmentVariableA("CS_MOC_SIMD", simdBuf, sizeof(simdBuf)) && simdBuf[0]) {
+				if (simdBuf[0] == 's' && simdBuf[3] == '4')
+					simd = MaskedOcclusionCulling::SSE41;
+				else if (simdBuf[0] == 's')
+					simd = MaskedOcclusionCulling::SSE2;
+				logger::info("[MOC] SIMD override: {}", simdBuf);
+			}
+		}
+		g_moc = MaskedOcclusionCulling::Create(simd);
 		if (!g_moc) {
 			logger::warn("[MOC] MaskedOcclusionCulling::Create failed; occlusion culling disabled");
 			return;
@@ -1167,6 +1191,15 @@ namespace MOC
 			g_noWaitProbe = GetEnvironmentVariableA("CS_MOC_NO_WAIT", nwBuf, sizeof(nwBuf)) && nwBuf[0] == '1';
 			if (g_noWaitProbe)
 				logger::warn("[MOC] NO_WAIT probe active: tests never wait (perf probe, image may flicker)");
+		}
+		{
+			// CS_MOC_HOT_WORKERS=1: keep the pool workers awake across kicks
+			// (skip the per-kick Suspend/Wake) -- probes whether worker WAKE
+			// latency is the invariant ~2.3ms raster-completion overhead.
+			char hwBuf[8] = {};
+			g_hotWorkers = GetEnvironmentVariableA("CS_MOC_HOT_WORKERS", hwBuf, sizeof(hwBuf)) && hwBuf[0] == '1';
+			if (g_hotWorkers)
+				logger::info("[MOC] HOT_WORKERS probe: workers stay awake across kicks");
 		}
 		g_moc->SetResolution(MOC_WIDTH, MOC_HEIGHT);
 		g_moc->ClearBuffer();
@@ -1190,7 +1223,54 @@ namespace MOC
 			if (!GetEnvironmentVariableA("CS_MOC_THREADS", tbuf, sizeof(tbuf)) || !tbuf[0])
 				threads = std::max(threads, 4u);
 		}
+		// Snapshot thread ids before/after pool creation to identify the workers
+		// (CullingThreadpool exposes no handles) and raise them ABOVE_NORMAL: the
+		// raster is the frame's critical path in the standard model -- every cull
+		// job waits on its completion -- yet at frame start the CPU is saturated
+		// with engine job threads, so normal-priority workers get time-sliced and
+		// completion latency sat at an invariant ~2.3ms regardless of workload
+		// (falsified levers: resolution, tri count, worker count, job count, SIMD
+		// backend, hot-vs-suspended workers). They only hold work ~1-2ms per frame
+		// and park after, so the elevated priority cannot starve the engine.
+		// CS_MOC_WORKER_PRIO=0 disables for A/B.
+		std::vector<DWORD> preThreads;
+		{
+			HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+			if (snap != INVALID_HANDLE_VALUE) {
+				THREADENTRY32 te{ sizeof(te) };
+				const DWORD pid = GetCurrentProcessId();
+				for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te))
+					if (te.th32OwnerProcessID == pid)
+						preThreads.push_back(te.th32ThreadID);
+				CloseHandle(snap);
+			}
+		}
 		g_pool = new CullingThreadpool(threads, 4, 4, 512);
+		{
+			char prioBuf[8] = {};
+			const bool boost = !(GetEnvironmentVariableA("CS_MOC_WORKER_PRIO", prioBuf, sizeof(prioBuf)) && prioBuf[0] == '0');
+			if (boost) {
+				HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+				if (snap != INVALID_HANDLE_VALUE) {
+					THREADENTRY32 te{ sizeof(te) };
+					const DWORD pid = GetCurrentProcessId();
+					int boosted = 0;
+					for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+						if (te.th32OwnerProcessID != pid)
+							continue;
+						if (std::find(preThreads.begin(), preThreads.end(), te.th32ThreadID) != preThreads.end())
+							continue;
+						if (HANDLE h = OpenThread(THREAD_SET_INFORMATION, FALSE, te.th32ThreadID)) {
+							SetThreadPriority(h, THREAD_PRIORITY_ABOVE_NORMAL);
+							CloseHandle(h);
+							++boosted;
+						}
+					}
+					CloseHandle(snap);
+					logger::info("[MOC] raster workers boosted to ABOVE_NORMAL: {}", boosted);
+				}
+			}
+		}
 		g_pool->SetBuffer(g_moc);
 		g_pool->SetVertexLayout(MaskedOcclusionCulling::VertexLayout(16, 4, 12));
 		g_pool->SuspendThreads();
@@ -1204,6 +1284,7 @@ namespace MOC
 
 		g_builderQuit = false;
 		g_builder = std::thread(BuilderLoop);
+		SetThreadPriority(g_builder.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
 
 		g_init = true;
 		logger::info("[MOC] initialized {}x{} rasterThreads={}", MOC_WIDTH, MOC_HEIGHT, threads);
