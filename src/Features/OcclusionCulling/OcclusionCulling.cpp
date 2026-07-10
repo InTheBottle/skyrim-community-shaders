@@ -64,7 +64,12 @@ namespace
 		// correctness (the mechanism survived every buffer-side fix). The camera
 		// check makes testing uniform across every main-view walk while still
 		// excluding shadow/reflection/cubemap/first-person culls.
-		const bool bracketed = MOC::IsMainViewCamera(a_self->camera);
+		// Scene-list (accumulation) walks only: they run on JOB threads with the
+		// RENDER camera and decide the pass lists (= the draws). The frozen cull
+		// camera's per-pass subtree walks run on the RENDER THREAD interleaved
+		// with utility/lighting submission -- testing there billed MOC CPU to
+		// those overlay windows for little extra culling.
+		const bool bracketed = MOC::IsSceneListCamera(a_self->camera);
 		if (bracketed && a_object && !MOC::TestObject(a_object)) {
 			MarkCulledLikeEngine(a_self, a_object);
 			return;  // occluded -> do not accumulate / recurse
@@ -200,7 +205,7 @@ namespace
 		{
 			const bool visible = func(a_self, a_bound);
 			if (visible && a_bound &&
-				MOC::IsMainViewCamera(static_cast<RE::NiCullingProcess*>(a_self)->camera) &&
+				MOC::IsSceneListCamera(static_cast<RE::NiCullingProcess*>(a_self)->camera) &&
 				!MOC::TestMultiBound(a_bound))
 				return false;
 			return visible;
@@ -214,7 +219,7 @@ namespace
 		{
 			const bool visible = func(a_self, a_bound);
 			if (visible && a_bound &&
-				MOC::IsMainViewCamera(static_cast<RE::NiCullingProcess*>(a_self)->camera) &&
+				MOC::IsSceneListCamera(static_cast<RE::NiCullingProcess*>(a_self)->camera) &&
 				!MOC::TestMultiBound(a_bound))
 				return false;
 			return visible;

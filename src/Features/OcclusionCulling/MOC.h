@@ -103,6 +103,15 @@ namespace MOC
 	bool IsMainViewCamera(const RE::NiCamera* a_camera);
 
 	/**
+	 * @brief True only for the RENDER camera (the scene-list accumulation culls on
+	 *        job threads). The frozen cull camera's per-pass subtree walks run ON
+	 *        THE RENDER THREAD interleaved with draw submission -- testing there
+	 *        bills MOC CPU to the utility/lighting windows while adding little
+	 *        (accumulation already decided the pass lists).
+	 */
+	bool IsSceneListCamera(const RE::NiCamera* a_camera);
+
+	/**
 	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a
 	 *        scene teardown is imminent (loading screen opening): a gather in flight
 	 *        races freed scene-graph nodes otherwise.

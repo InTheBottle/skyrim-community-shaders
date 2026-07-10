@@ -90,8 +90,8 @@ namespace MOC
 		// Buffer resolution (boot-time; CS_MOC_RES=WxH overrides, W mult of 8, H mult of 4).
 		// Higher = tighter conservative tests = more culling yield; raster cost is on the
 		// worker threads, so the on-path cost is resolution-independent.
-		unsigned int MOC_WIDTH = 640;
-		unsigned int MOC_HEIGHT = 360;
+		unsigned int MOC_WIDTH = 480;
+		unsigned int MOC_HEIGHT = 270;
 
 		// STANDARD Intel MOC model (sample code / paper): ONE buffer per frame --
 		// clear, rasterize the occluders with THIS frame's matrices, and only
@@ -126,6 +126,14 @@ namespace MOC
 			RE::BSGeometry* geometry;
 			float           distanceSquared;
 			float           coverageScore;  // worldBound.radius / distance -- projected-size proxy
+			// Resolved at gather time (Phase 2 pre-warm) so the raster enqueue does
+			// ZERO map lookups: enq was ~1.0ms of the 2.4ms raster at 409 meshes,
+			// and raster-completion latency is the frame's entire MOC tax (the cull
+			// jobs wait on it -- NO_WAIT probe measured -1.3% vs -19.3%).
+			const std::uint32_t* idxData = nullptr;
+			std::uint32_t        idxCount = 0;
+			const float*         verts = nullptr;
+			bool                 twoSided = false;
 		};
 		std::vector<GeoEntry> g_geoList;
 
@@ -168,9 +176,14 @@ namespace MOC
 		// frame they are testing for.
 		std::atomic<std::uint32_t> g_kickFrame{ 0xFFFFFFFFu };    // claim -> builder
 		std::atomic<std::uint32_t> g_rasterFrame{ 0xFFFFFFFFu };  // builder -> testers
+		// CS_MOC_NO_WAIT=1: PERF PROBE ONLY (like force-cull) -- queries that
+		// arrive before raster completion return visible instead of waiting.
+		// Reintroduces per-walk inconsistency (flicker class); never ship on.
+		bool g_noWaitProbe = false;
 		std::atomic<std::uint64_t> g_waitNs{ 0 };          // total test-side wait
 		std::atomic<std::uint64_t> g_waitCount{ 0 };       // waits that actually spun
 		double                     g_lastRasterMs = 0.0;   // builder thread only
+		double                     g_lastEnqueueMs = 0.0;  // builder thread only
 
 		// True once the buffer for @p a_frame is complete; false when no build
 		// was kicked this frame (menus, loads) or the bounded wait expired --
@@ -181,6 +194,8 @@ namespace MOC
 				return true;
 			if (g_kickFrame.load(std::memory_order_relaxed) != a_frame)
 				return false;  // no build this frame -- nothing to test against
+			if (g_noWaitProbe)
+				return false;  // probe: never wait, skip culling until complete
 			const auto t0 = std::chrono::steady_clock::now();
 			const auto deadline = t0 + std::chrono::milliseconds(4);
 			bool ok = false;
@@ -374,7 +389,7 @@ namespace MOC
 					const std::size_t simplified = meshopt_simplify(
 						p.Data, p.Data, p.Count,
 						reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
-						static_cast<std::size_t>(p.Count * 0.5f), 1e-3f, 0, nullptr);
+						static_cast<std::size_t>(p.Count * 0.25f), 1e-3f, 0, nullptr);
 					p.Count = static_cast<std::uint32_t>(simplified);
 				}
 
@@ -992,7 +1007,16 @@ namespace MOC
 					// better; partial fills mid-frame are conservative by contract.
 					std::uint32_t enqueued = 0;
 					for (auto& e : g_readyList) {
-						RasterizeOccluder(e.geometry);
+						if (!e.verts || !e.idxData || !e.geometry)
+							continue;
+						const XMMATRIX worldRel = GetXMFromNiPosAdjust(e.geometry->world, g_posAdjust);
+						const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, g_viewProj);
+						g_pool->SetMatrix(reinterpret_cast<const float*>(&worldViewProj));
+						g_pool->RenderTriangles(
+							e.verts, e.idxData,
+							static_cast<int>(e.idxCount / 3),
+							e.twoSided ? MaskedOcclusionCulling::BACKFACE_NONE : MaskedOcclusionCulling::BACKFACE_CW,
+							MaskedOcclusionCulling::CLIP_PLANE_ALL);
 						++enqueued;
 					}
 					// Terrain heightmap meshes: world-space verts, so camera-relative
@@ -1011,6 +1035,7 @@ namespace MOC
 							++enqueued;
 						}
 					}
+					g_lastEnqueueMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - rasterT0).count();
 					g_lastOccluderCount = enqueued;
 				} else {
 					g_lastOccluderCount = 0;
@@ -1066,8 +1091,13 @@ namespace MOC
 				for (auto& e : g_geoList) {
 					IndexPair idx;
 					float*    verts = nullptr;
-					if (e.geometry)
-						GetCachedGeometry(e.geometry, idx, verts);
+					if (e.geometry && GetCachedGeometry(e.geometry, idx, verts) && verts && idx.Data) {
+						e.idxData = idx.Data;
+						e.idxCount = idx.Count;
+						e.verts = verts;
+						auto* sp = e.geometry->lightingShaderProp_cast();
+						e.twoSided = sp && sp->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTwoSided);
+					}
 				}
 
 				g_lastGatherMs = std::chrono::duration<double, std::milli>(
@@ -1131,6 +1161,12 @@ namespace MOC
 					MOC_HEIGHT = h & ~3u;  // multiple of 4
 				}
 			}
+		}
+		{
+			char nwBuf[8] = {};
+			g_noWaitProbe = GetEnvironmentVariableA("CS_MOC_NO_WAIT", nwBuf, sizeof(nwBuf)) && nwBuf[0] == '1';
+			if (g_noWaitProbe)
+				logger::warn("[MOC] NO_WAIT probe active: tests never wait (perf probe, image may flicker)");
 		}
 		g_moc->SetResolution(MOC_WIDTH, MOC_HEIGHT);
 		g_moc->ClearBuffer();
@@ -1500,11 +1536,8 @@ namespace MOC
 		// worker-thread CopyResource/Map killed the process); see DumpDebugImages, called
 		// from the render thread (Feature::Prepass).
 		if ((frame % 120u) == 0u) {
-			const double buildMs = std::chrono::duration<double, std::milli>(
-				std::chrono::high_resolution_clock::now() - g_buildStart)
-									   .count();
-			logger::info("[MOC][diag] frame={} enqueue={:.2f}ms raster={:.2f}ms gather={:.2f}ms occluders={} cells={}/culled={} | tested={} culled={} (aabb {}/{} sphere {}/{}) tree {}/{} waitMs={:.2f}/n={}",
-				frame, buildMs, g_lastRasterMs, g_lastGatherMs, g_lastOccluderCount,
+			logger::info("[MOC][diag] frame={} enq={:.2f}ms raster={:.2f}ms gather={:.2f}ms occluders={} cells={}/culled={} | tested={} culled={} (aabb {}/{} sphere {}/{}) tree {}/{} waitMs={:.2f}/n={}",
+				frame, g_lastEnqueueMs, g_lastRasterMs, g_lastGatherMs, g_lastOccluderCount,
 				g_cellsSeen, g_cellsCulled,
 				g_tested.load(), g_culled.load(),
 				g_culledAABB.load(), g_testedAABB.load(), g_culledSphere.load(), g_testedSphere.load(),
@@ -1745,6 +1778,11 @@ namespace MOC
 	bool IsMainViewCamera(const RE::NiCamera* a_camera)
 	{
 		return a_camera && (a_camera == GetMainCamera() || a_camera == *g_cullCamera);
+	}
+
+	bool IsSceneListCamera(const RE::NiCamera* a_camera)
+	{
+		return a_camera && a_camera == GetMainCamera();
 	}
 
 	bool TestInstanceGroup(RE::BSMultiBoundAABB* a_aabb)
