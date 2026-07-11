@@ -2,6 +2,19 @@
 
 #include "Globals.h"
 
+// STATUS (WIP): the mechanism runs -- the shadow loop records onto the deferred context,
+// FinishCommandList + ExecuteCommandList replays it, no crash, and the private dynamic-VB
+// ring keeps the shared ring uncorrupted. Correctness is NOT there yet: single-session A/B
+// (engine mode 0 vs deferred mode 1, frozen scene) shows the deferred frame ~2.1x brighter
+// (mean 76.6 vs 36) -- shadows are largely too weak. Forcing the main dirty word at scope
+// start recovered render-target/depth/raster/viewport (partial improvement) but not the
+// rest. Leading suspects, to be checked with a RenderDoc capture of the shadow depth
+// textures: (a) cross-context WRITE_DISCARD of the SHARED per-draw/bone constant-buffer
+// rings (the dynamic-VB ring needed privatizing for the same reason -- the CB rings likely
+// do too); (b) a missing depth->SRV barrier at ExecuteCommandList so RenderShadowmasks
+// samples stale/undefined shadow depth; (c) the shadow-mask pass depending on immediate-
+// context state the scope isolates. Gated off by default (CS_SHADOW_DEFERRED unset).
+
 namespace
 {
 	// ---------------------------------------------------------------------------------
@@ -34,6 +47,16 @@ namespace
 		// AV at ~0x109xxx). The unmap FUN_140D6C9E0 (id 75485) already reads the redirected
 		// context and unmaps buffers[currentIndex], so it needs no change.
 		inline REL::Relocation<void* const*>   g_dynVBBuffers{ REL::Offset(0x3025F18) };  // [idx] = ID3D11Buffer*
+	}
+
+	// --- diagnostic: count DrawIndexed calls recorded on the deferred context ---
+	std::atomic<std::uint64_t> g_deferredDraws{ 0 };
+	using DrawIndexed_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, INT);
+	DrawIndexed_t g_origDeferredDrawIndexed = nullptr;
+	void STDMETHODCALLTYPE DrawIndexedCounter(ID3D11DeviceContext* a_ctx, UINT a_n, UINT a_start, INT a_base)
+	{
+		g_deferredDraws.fetch_add(1, std::memory_order_relaxed);
+		g_origDeferredDrawIndexed(a_ctx, a_n, a_start, a_base);
 	}
 
 	// Detour on DrawWorld::RenderShadowmaps 0x1412E3480 -- the once-per-frame shadow-map
@@ -123,6 +146,21 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	globals::d3d::context = deferred;
 	scopeActive = true;
 
+	// Force the main pipeline state dirty so the FIRST shadow pass fully re-establishes it
+	// on the fresh deferred context. The engine's SetDirtyStates only re-binds CHANGED
+	// state, assuming the rest persisted from earlier immediate-context passes this frame
+	// -- which a deferred context (default-state at creation and after each
+	// ExecuteCommandList) does NOT have, so without this the shadow draws render with a
+	// stale/default render target + depth-stencil/raster/viewport and write empty depth (no
+	// shadows). Only the main word 0x143027EB0 (RT/depth/raster/viewport/blend/IA/topology,
+	// all of which persist across passes within a shadow map) is forced: SetDirtyStates
+	// processes just its known bits from valid caches and clears the word, and the shadow
+	// passes re-bind their own shaders/CBs/SRVs/samplers per pass. The per-stage SRV/sampler
+	// and CS-UAV dirty words are NOT forced -- their caches hold null/garbage for stages the
+	// shadow path doesn't use, which crashes the bind. The end-of-scope restore undoes this.
+	auto* const sflags = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
+	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags
+
 	callOriginal();
 
 	scopeActive = false;
@@ -135,10 +173,13 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 
 	// Close the recording and replay it in place. RestoreContextState=TRUE so the
 	// immediate context is left exactly as the engine expected before the shadow scope.
+	const auto drawsThisScope = g_deferredDraws.exchange(0, std::memory_order_relaxed);
 	winrt::com_ptr<ID3D11CommandList> commandList;
 	if (SUCCEEDED(deferred->FinishCommandList(FALSE, commandList.put())) && commandList) {
 		immediate->ExecuteCommandList(commandList.get(), TRUE);
 		++framesDeferred;
+		if ((framesDeferred & 0x3F) == 1)
+			logger::info("[ShadowDeferred] frame {}: recorded {} DrawIndexed on the deferred context", framesDeferred, drawsThisScope);
 	} else {
 		logger::error("[ShadowDeferred] FinishCommandList failed; shadows this frame are lost");
 	}
@@ -187,6 +228,19 @@ void ShadowDeferred::Setup()
 		logger::error("[ShadowDeferred] CreateDeferredContext failed (0x{:08X}); disabling", static_cast<std::uint32_t>(hr));
 		mode.store(Mode::kOff, std::memory_order_relaxed);
 		return;
+	}
+
+	// Diagnostic: patch the deferred context's own vtable DrawIndexed (index 12) to count
+	// recorded draws. The deferred context is a distinct DXVK class from the immediate one,
+	// so this touches only our context.
+	{
+		auto** vtbl = *reinterpret_cast<void***>(deferredContext.get());
+		DWORD  oldProtect = 0;
+		if (VirtualProtect(&vtbl[12], sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+			g_origDeferredDrawIndexed = reinterpret_cast<DrawIndexed_t>(vtbl[12]);
+			vtbl[12] = reinterpret_cast<void*>(&DrawIndexedCounter);
+			VirtualProtect(&vtbl[12], sizeof(void*), oldProtect, &oldProtect);
+		}
 	}
 
 	InstallHooks();
