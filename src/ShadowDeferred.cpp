@@ -158,6 +158,19 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	// passes re-bind their own shaders/CBs/SRVs/samplers per pass. The per-stage SRV/sampler
 	// and CS-UAV dirty words are NOT forced -- their caches hold null/garbage for stages the
 	// shadow path doesn't use, which crashes the bind. The end-of-scope restore undoes this.
+	// A fresh deferred context starts with a 0x0 viewport AND an empty scissor rect. Skyrim
+	// uses scissor rects with scissor-test enabled, so without a scissor set every shadow
+	// draw is clipped away (writing no depth) while ClearDepthStencilView -- which ignores
+	// viewport/scissor -- still clears the map, exactly matching the observed "shadows
+	// cleared but never drawn". Seed a max-size viewport + scissor; the engine's own
+	// UpdateViewPort overrides the viewport per shadow map, and the scissor stays wide open.
+	{
+		const D3D11_VIEWPORT vp{ 0.0f, 0.0f, 16384.0f, 16384.0f, 0.0f, 1.0f };
+		const D3D11_RECT     sc{ 0, 0, 16384, 16384 };
+		deferred->RSSetViewports(1, &vp);
+		deferred->RSSetScissorRects(1, &sc);
+	}
+
 	auto* const sflags = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
 	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags. NOTE: the deferred output is
 	                          // byte-for-byte identical whether this is 0xFFFFFFFF or has the
