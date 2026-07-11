@@ -47,6 +47,7 @@ namespace MOC
 	extern bool          CullTreeLODGroups;          // occlusion-test distant-tree LOD instance groups
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
+	extern bool          TerrainLODOccluders;        // rasterize distant terrain LOD (.btr) -- not conservative; off
 	extern bool          CullSmallVisible;           // main-view distance-scaled small-object cull (mesh stops rendering)
 	extern float         SmallVisibleMinSize;        // visible cull: base bound-radius threshold at the camera
 	extern float         SmallVisibleSlope;          // visible cull: threshold growth per unit of camera distance

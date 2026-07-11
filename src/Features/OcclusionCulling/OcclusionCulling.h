@@ -48,6 +48,9 @@ struct OcclusionCulling : public Feature
 		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
 		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
 		bool AlphaTestedOccluders = false;
+		// Rasterize distant terrain LOD as occluders. Off: the coarse LOD terrain is not
+		// conservative (can over-occlude); the heightmap-built loaded grid is always used.
+		bool TerrainLODOccluders = false;
 		// Two distance-scaled small-object culls (radius < min + slope*camDist), never actors.
 		// VISIBLE: drops the mesh from the main view (pops in motion -> off by default).
 		bool  CullSmallVisible = false;

@@ -1055,6 +1055,8 @@
     "feature.occlusion_culling.small_visible": "Cull Small Visible Objects",
     "feature.occlusion_culling.small_visible_slope": "Visible Cull Distance Growth",
     "feature.occlusion_culling.small_visible_tooltip": "Drops distant small objects from the MAIN VIEW entirely (their mesh stops rendering). Saves the most but removes on-screen geometry, so it pops in motion -- tune conservatively and check while moving. Actors are never culled.",
+    "feature.occlusion_culling.terrain_lod_occluders": "Distant Terrain LOD as Occluders",
+    "feature.occlusion_culling.terrain_lod_occluders_tooltip": "Rasterize the game's coarse distant terrain LOD as occluders. Off by default: unlike the heightmap-built near terrain (which stays below the real surface), the LOD mesh can rise above it and wrongly occlude visible geometry. The loaded-grid heightmap terrain is always used either way.",
     "feature.occlusion_culling.tree_lod": "Cull Distant Tree LOD",
     "feature.occlusion_culling.tree_occluders": "Opaque Tree Parts as Occluders",
     "feature.perf_overlay.appearance": "Appearance",

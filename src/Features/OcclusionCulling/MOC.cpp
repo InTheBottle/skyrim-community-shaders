@@ -93,6 +93,12 @@ namespace MOC
 	bool CullTreeLODGroups = true;
 	bool TreeOccluders = true;
 	bool AlphaTestedOccluders = false;
+	// Rasterize the game's distant terrain LOD (.btr under LODRoot/LandLOD) as occluders.
+	// OFF by default: unlike the heightmap-built land meshes (which take the per-quad MIN
+	// height and so stay below the real surface), the coarse LOD terrain can bulge ABOVE
+	// the real ground and over-occlude -> wrongly culls visible geometry. Heightmap land
+	// (loaded grid) is always used regardless.
+	bool TerrainLODOccluders = false;
 	// Two independent distance-scaled small-object culls, both pure size/distance
 	// math vs the player camera (min + slope*camDist), no raster buffer. Neither
 	// ever culls actors or kAlwaysDraw objects.
@@ -1090,12 +1096,16 @@ namespace MOC
 					}
 				}
 			}
-			// Distant terrain LOD: the ground at vista distances.
-			if (auto* lodRoot = ChildNodeAt(shadowScene, 2)) {  // "LODRoot"
-				for (std::uint16_t i = 0; i < lodRoot->GetChildren().capacity(); ++i) {
-					auto* child = ChildAt(lodRoot, i);
-					if (child && std::string_view{ child->name.c_str() } == "LandLOD")
-						RenderLandLOD(child);
+			// Distant terrain LOD (the ground at vista distances). OFF by default: the
+			// coarse LOD mesh is not a conservative occluder (it can rise above the real
+			// terrain and over-occlude). Heightmap land above always runs.
+			if (TerrainLODOccluders) {
+				if (auto* lodRoot = ChildNodeAt(shadowScene, 2)) {  // "LODRoot"
+					for (std::uint16_t i = 0; i < lodRoot->GetChildren().capacity(); ++i) {
+						auto* child = ChildAt(lodRoot, i);
+						if (child && std::string_view{ child->name.c_str() } == "LandLOD")
+							RenderLandLOD(child);
+					}
 				}
 			}
 

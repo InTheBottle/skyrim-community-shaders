@@ -355,6 +355,9 @@ void OcclusionCulling::PostPostLoad()
 	// CS_MOC_ALPHA_OCCLUDERS=0/1: alpha-TESTED geometry as solid occluders (A/B).
 	if (GetEnvironmentVariableA("CS_MOC_ALPHA_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.AlphaTestedOccluders = buf[0] == '1';
+	// CS_MOC_TERRAIN_LOD=0/1: distant terrain LOD as occluders (A/B).
+	if (GetEnvironmentVariableA("CS_MOC_TERRAIN_LOD", buf, sizeof(buf)) && buf[0])
+		settings.TerrainLODOccluders = buf[0] == '1';
 	// CS_MOC_VALIDATE=1: engine-cull agreement instrumentation (see Process1_Impl).
 	if (GetEnvironmentVariableA("CS_MOC_VALIDATE", buf, sizeof(buf)) && buf[0] == '1')
 		g_validateMode = true;
@@ -469,6 +472,7 @@ void OcclusionCulling::SyncSettingsToMOC()
 	MOC::CullTreeLODGroups = settings.CullTreeLOD;
 	MOC::TreeOccluders = settings.TreeOccluders;
 	MOC::AlphaTestedOccluders = settings.AlphaTestedOccluders;
+	MOC::TerrainLODOccluders = settings.TerrainLODOccluders;
 	MOC::CullSmallVisible = settings.CullSmallVisible;
 	MOC::SmallVisibleMinSize = settings.SmallVisibleMinSize;
 	MOC::SmallVisibleSlope = settings.SmallVisibleSlope;
@@ -542,6 +546,10 @@ void OcclusionCulling::DrawSettings()
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.tree_lod", "Cull Distant Tree LOD"), &settings.CullTreeLOD);
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.tree_occluders", "Opaque Tree Parts as Occluders"), &settings.TreeOccluders);
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.alpha_occluders", "Alpha-Tested Objects as Occluders"), &settings.AlphaTestedOccluders);
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.terrain_lod_occluders", "Distant Terrain LOD as Occluders"), &settings.TerrainLODOccluders);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.terrain_lod_occluders_tooltip",
+			"Rasterize the game's coarse distant terrain LOD as occluders. Off by default: unlike the heightmap-built near terrain (which stays below the real surface), the LOD mesh can rise above it and wrongly occlude visible geometry. The loaded-grid heightmap terrain is always used either way."));
 
 	ImGui::Spacing();
 	ImGui::TextDisabled("%s", T("feature.occlusion_culling.small_header", "Small-Object Culling"));
@@ -637,6 +645,8 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.TreeOccluders = o_json["TreeOccluders"];
 	if (o_json["AlphaTestedOccluders"].is_boolean())
 		settings.AlphaTestedOccluders = o_json["AlphaTestedOccluders"];
+	if (o_json["TerrainLODOccluders"].is_boolean())
+		settings.TerrainLODOccluders = o_json["TerrainLODOccluders"];
 	if (o_json["CullSmallVisible"].is_boolean())
 		settings.CullSmallVisible = o_json["CullSmallVisible"];
 	if (o_json["SmallVisibleMinSize"].is_number())
@@ -670,6 +680,7 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["CullTreeLOD"] = settings.CullTreeLOD;
 	o_json["TreeOccluders"] = settings.TreeOccluders;
 	o_json["AlphaTestedOccluders"] = settings.AlphaTestedOccluders;
+	o_json["TerrainLODOccluders"] = settings.TerrainLODOccluders;
 	o_json["CullSmallVisible"] = settings.CullSmallVisible;
 	o_json["SmallVisibleMinSize"] = settings.SmallVisibleMinSize;
 	o_json["SmallVisibleSlope"] = settings.SmallVisibleSlope;
