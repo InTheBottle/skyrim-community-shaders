@@ -76,6 +76,12 @@ namespace MOC
 	float        SimplifyStrength = 0.25f;
 	float        SimplifyError = 1e-2f;
 	unsigned int SimplifyOptions = 0;
+	// Build + use the runtime distance LODs (two sloppy-simplified coarser meshes picked
+	// per frame by projected error). OFF = every occluder rasterizes at its base mesh
+	// regardless of distance. Sloppy LODs are NOT conservative (the silhouette can grow),
+	// so turning this off removes any LOD-caused over-occlusion at the cost of a heavier
+	// raster. Live-rebuilt on change, like the other simplify knobs.
+	bool BuildRuntimeLODs = true;
 	// Only objects/subtrees with at least this world-bound radius are occlusion-tested.
 	// Lower = more tested objects (more draws saved) at more test cost per frame.
 	float OccluderTestMinRadius = 0.0f;
@@ -492,9 +498,11 @@ namespace MOC
 				}
 				// Runtime occluder LODs: sloppy targets ~30% and ~8% of the BASE
 				// indices; result_error reported back for the per-frame projected
-				// error budget. Built once per mesh on the builder thread (skipped
-				// when simplification is off -- the full mesh is then the only LOD).
-				if (SimplifyMode != 0 && p.Count > 900) {
+				// error budget. Built once per mesh on the builder thread. Independent
+				// of the base algorithm -- gated only on BuildRuntimeLODs, so the base
+				// mesh can be full-res (mode Off) yet still get distance LODs, or a
+				// simplified base can skip LODs entirely.
+				if (BuildRuntimeLODs && p.Count > 900) {
 					float err1 = 0.0f;
 					auto* lod1 = new std::uint32_t[p.Count];
 					const std::size_t c1 = meshopt_simplifySloppy(

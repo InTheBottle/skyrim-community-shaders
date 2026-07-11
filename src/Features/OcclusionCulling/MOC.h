@@ -40,6 +40,7 @@ namespace MOC
 	extern float         SimplifyStrength;           // base simplify target as fraction of index count
 	extern float         SimplifyError;              // target error (relative unless ErrorAbsolute option)
 	extern unsigned int  SimplifyOptions;            // meshopt_SimplifyX bitmask (quality mode only)
+	extern bool          BuildRuntimeLODs;           // build+use distance LODs (off = base mesh everywhere)
 	extern float         OccluderTestMinRadius;      // min world-bound radius for per-object tests
 	extern bool          ExclusiveOcclusion;         // neutralize vanilla occlusion planes (MOC is the only occlusion)
 	extern float         OccluderMinLeafSize;        // gather leaf gate: skip occluder meshes smaller than this

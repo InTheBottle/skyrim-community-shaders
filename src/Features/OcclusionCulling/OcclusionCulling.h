@@ -41,6 +41,7 @@ struct OcclusionCulling : public Feature
 		float        SimplifyStrength = 0.25f;  // base target as a fraction of the index count
 		float        SimplifyError = 1e-2f;     // target error (relative unless ErrorAbsolute)
 		unsigned int SimplifyOptions = 0;
+		bool         BuildRuntimeLODs = true;   // distance LODs (off = base mesh at all distances)
 		// Only objects with at least this world-bound radius are occlusion-tested.
 		float OccluderTestMinRadius = 0.0f;
 		// Neutralize vanilla occlusion planes: MOC is the only occlusion mechanism.

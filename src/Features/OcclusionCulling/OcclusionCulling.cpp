@@ -327,6 +327,9 @@ void OcclusionCulling::PostPostLoad()
 		if (v >= 0 && v <= 3)
 			settings.SimplifyMode = v;
 	}
+	// CS_MOC_RUNTIME_LODS=0/1: build+use distance LODs override (A/B).
+	if (GetEnvironmentVariableA("CS_MOC_RUNTIME_LODS", buf, sizeof(buf)) && buf[0])
+		settings.BuildRuntimeLODs = buf[0] == '1';
 	// CS_MOC_FORCE_CULL=<pct>: DIAGNOSTIC -- force-cull a percentage of kept objects to
 	// measure the fps-per-culled-object curve. Breaks the image; env-only, never persisted.
 	if (GetEnvironmentVariableA("CS_MOC_FORCE_CULL", buf, sizeof(buf)) && buf[0]) {
@@ -459,11 +462,13 @@ void OcclusionCulling::SyncSettingsToMOC()
 	                             (MOC::SimplifyMode != settings.SimplifyMode ||
 									 MOC::SimplifyStrength != settings.SimplifyStrength ||
 									 MOC::SimplifyError != settings.SimplifyError ||
-									 MOC::SimplifyOptions != settings.SimplifyOptions);
+									 MOC::SimplifyOptions != settings.SimplifyOptions ||
+									 MOC::BuildRuntimeLODs != settings.BuildRuntimeLODs);
 	MOC::SimplifyMode = std::clamp(settings.SimplifyMode, 0, 3);
 	MOC::SimplifyStrength = std::clamp(settings.SimplifyStrength, 0.02f, 1.0f);
 	MOC::SimplifyError = std::max(settings.SimplifyError, 0.0f);
 	MOC::SimplifyOptions = settings.SimplifyOptions;
+	MOC::BuildRuntimeLODs = settings.BuildRuntimeLODs;
 	if (simplifyChanged)
 		MOC::RebuildOccluderMeshCache();
 	MOC::OccluderTestMinRadius = settings.OccluderTestMinRadius;
@@ -591,6 +596,10 @@ void OcclusionCulling::DrawSettings()
 			changed |= ImGui::CheckboxFlags(T("feature.occlusion_culling.simplify_pruneopt", "Prune Components"), &settings.SimplifyOptions, 1u << 3);
 		}
 	}
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.runtime_lods", "Occluder Distance LODs"), &settings.BuildRuntimeLODs);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.runtime_lods_tooltip",
+			"Use progressively coarser occluder meshes at distance (two extra sloppy-simplified LODs picked per frame). Faster raster, but sloppy LODs are not conservative -- their silhouette can grow and over-occlude. Turn OFF to rasterize every occluder at its base mesh (fully conservative) if distant geometry looks wrongly culled. Rebuilds occluders immediately."));
 
 	ImGui::EndDisabled();
 
@@ -633,6 +642,8 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.SimplifyError = o_json["SimplifyError"];
 	if (o_json["SimplifyOptions"].is_number_unsigned())
 		settings.SimplifyOptions = o_json["SimplifyOptions"];
+	if (o_json["BuildRuntimeLODs"].is_boolean())
+		settings.BuildRuntimeLODs = o_json["BuildRuntimeLODs"];
 	if (o_json["OccluderTestMinRadius"].is_number())
 		settings.OccluderTestMinRadius = o_json["OccluderTestMinRadius"];
 	if (o_json["ExclusiveOcclusion"].is_boolean())
@@ -674,6 +685,7 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["SimplifyStrength"] = settings.SimplifyStrength;
 	o_json["SimplifyError"] = settings.SimplifyError;
 	o_json["SimplifyOptions"] = settings.SimplifyOptions;
+	o_json["BuildRuntimeLODs"] = settings.BuildRuntimeLODs;
 	o_json["OccluderTestMinRadius"] = settings.OccluderTestMinRadius;
 	o_json["ExclusiveOcclusion"] = settings.ExclusiveOcclusion;
 	o_json["OccluderMinLeafSize"] = settings.OccluderMinLeafSize;
