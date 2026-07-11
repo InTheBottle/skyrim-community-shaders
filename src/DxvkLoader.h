@@ -27,6 +27,10 @@ namespace DxvkLoader
 	/** @brief Whether Load() has succeeded. */
 	bool IsLoaded();
 
+	/** @brief True if CS_NATIVE_D3D11=1 -- run on the system D3D11 runtime instead of the
+	 *  bundled DXVK, and disable the Vulkan-only upscaler stack. */
+	bool NativeModeRequested();
+
 	/** @brief Directory holding the staged native DLLs
 	 *  (Data/SKSE/Plugins/CommunityShaders/dxvk), resolved relative to this
 	 *  plugin's own module so it is independent of the process CWD or a mod

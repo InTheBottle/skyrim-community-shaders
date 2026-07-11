@@ -33,12 +33,30 @@ namespace DxvkLoader
 		return std::filesystem::path(buf).parent_path() / L"CommunityShaders" / L"dxvk";
 	}
 
+	bool NativeModeRequested()
+	{
+		// CS_NATIVE_D3D11=1 forces the system D3D11 runtime instead of the bundled DXVK
+		// (and disables the Vulkan-only upscaler stack). Used to validate the shadow-deferred
+		// path on native drivers, which handle deferred command lists robustly where DXVK's
+		// deferred context mis-handles the engine's shared dynamic buffers.
+		static const bool s_native = [] {
+			char buf[8] = {};
+			return GetEnvironmentVariableA("CS_NATIVE_D3D11", buf, sizeof(buf)) && buf[0] == '1';
+		}();
+		return s_native;
+	}
+
 	bool Load()
 	{
 		if (g_attempted) {
 			return g_loaded;
 		}
 		g_attempted = true;
+
+		if (NativeModeRequested()) {
+			logger::info("[DXVK] CS_NATIVE_D3D11=1 -- skipping DXVK, using the system D3D11 runtime");
+			return false;
+		}
 
 		const auto dir = GetDxvkDir();
 		if (dir.empty()) {

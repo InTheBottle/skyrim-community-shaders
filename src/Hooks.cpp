@@ -1174,20 +1174,35 @@ namespace Hooks
 		// interposition, the FFX/SL frame-gen + upscaling plugins, the DXVK interop device) is built on it,
 		// and there is no meaningful native-D3D11 mode anymore. If the bundled DLLs can't be loaded, fail
 		// loudly rather than limp along on the system d3d11/dxgi (which would silently disable everything).
-		if (!DxvkLoader::Load()) {
+		const bool nativeMode = DxvkLoader::NativeModeRequested();
+		const bool dxvkLoaded = DxvkLoader::Load();  // returns false immediately in native mode
+		if (!nativeMode && !dxvkLoaded) {
 			stl::report_and_fail(
 				"Community Shaders could not load its bundled DXVK renderer (dxvk_d3d11.dll / dxvk_dxgi.dll) "
 				"from Data/SKSE/Plugins/CommunityShaders/dxvk. Reinstall Community Shaders or verify the files exist."sv);
 		}
+		if (nativeMode) {
+			// Native D3D11: disable the Vulkan-only upscaler so it doesn't install its own
+			// device hook or the Streamline interposition; the device/factory hooks below
+			// then fall through to the system d3d11/dxgi the IAT already resolves to.
+			globals::features::upscaling.loaded = false;
+			logger::info("[Native] CS_NATIVE_D3D11=1: DXVK + upscaling disabled, using system d3d11/dxgi");
+		}
 
 		if (!globals::features::upscaling.loaded) {
 			logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-			SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
-			*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = reinterpret_cast<uintptr_t>(DxvkLoader::GetD3D11CreateDeviceAndSwapChain());
+			// PatchIAT returns the entry it replaced -- the system d3d11 export -- which is the
+			// native fallback when DXVK isn't loaded.
+			const auto iatOriginal = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+			*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = dxvkLoaded ?
+			                                                     reinterpret_cast<uintptr_t>(DxvkLoader::GetD3D11CreateDeviceAndSwapChain()) :
+			                                                     iatOriginal;
 		}
 
 		logger::info("Hooking CreateDXGIFactory");
-		SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
-		*(uintptr_t*)&ptrCreateDXGIFactory = reinterpret_cast<uintptr_t>(DxvkLoader::GetCreateDXGIFactory());
+		const auto dxgiOriginal = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", "CreateDXGIFactory");
+		*(uintptr_t*)&ptrCreateDXGIFactory = dxvkLoaded ?
+		                                         reinterpret_cast<uintptr_t>(DxvkLoader::GetCreateDXGIFactory()) :
+		                                         dxgiOriginal;
 	}
 }
