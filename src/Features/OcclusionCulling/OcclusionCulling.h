@@ -52,6 +52,9 @@ struct OcclusionCulling : public Feature
 		// Rasterize distant terrain LOD as occluders. Off: the coarse LOD terrain is not
 		// conservative (can over-occlude); the heightmap-built loaded grid is always used.
 		bool TerrainLODOccluders = false;
+		// Move the occlusion test off the scene-list cull walk (builder pre-tests a snapshot,
+		// Process1 reads a cache). Keeps the test cost out of the Utility barrier. Experimental.
+		bool AsyncOcclusionTest = false;
 		// Two distance-scaled small-object culls (radius < min + slope*camDist), never actors.
 		// VISIBLE: drops the mesh from the main view (pops in motion -> off by default).
 		bool  CullSmallVisible = false;

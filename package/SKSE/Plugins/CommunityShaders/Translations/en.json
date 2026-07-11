@@ -1017,6 +1017,8 @@
     "feature.lod_blending.lod_terrain_gamma": "LOD Terrain Gamma",
     "feature.lod_blending.name": "LOD Blending",
     "feature.occlusion_culling.alpha_occluders": "Alpha-Tested Objects as Occluders",
+    "feature.occlusion_culling.async_test": "Async Occlusion Testing (experimental)",
+    "feature.occlusion_culling.async_test_tooltip": "Move the per-object occlusion test off the scene-list cull walk: the builder pre-tests last frame's candidates against this frame's buffer and Process1 just reads the result. Keeps the test cost out of the Utility barrier (no spike even with heavy occluders). Slightly less culling on newly-appeared objects for one frame. Experimental.",
     "feature.occlusion_culling.debug_buffer": "Occlusion Depth Buffer",
     "feature.occlusion_culling.debug_buffer_hint": "Grayscale = rasterized static occluders (brighter = closer). Empty until CS_OCCLUSION=1 and occluders are rendered.",
     "feature.occlusion_culling.debug_buffer_unavailable": "Depth buffer texture not available.",

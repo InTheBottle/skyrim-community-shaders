@@ -105,6 +105,18 @@ namespace MOC
 	// the real ground and over-occlude -> wrongly culls visible geometry. Heightmap land
 	// (loaded grid) is always used regardless.
 	bool TerrainLODOccluders = false;
+	// Async occlusion testing: move the per-object test OFF the scene-list cull walk. The
+	// builder tests a snapshot of last frame's candidates against THIS frame's buffer and
+	// publishes a visibility table; Process1 reads the table instead of testing inline, so
+	// the test never blocks the BuildSceneLists barrier (no Utility inflation). Bounds are
+	// value-copied (world-space -> frame-stable for statics), the buffer is same-frame, and
+	// the object pointer is a hash key only (never deref'd off-thread) -> no dangling deref,
+	// no wrong culls (a miss keeps). Experimental; off by default.
+	bool AsyncOcclusionTest = false;
+
+	// Builder-internal (defined after TestSphereBound; called from BuilderLoop above it).
+	void RunAsyncTest();
+
 	// Two independent distance-scaled small-object culls, both pure size/distance
 	// math vs the player camera (min + slope*camDist), no raster buffer. Neither
 	// ever culls actors or kAlwaysDraw objects.
@@ -329,6 +341,42 @@ namespace MOC
 		// clears the mesh cache at the top of its next kick (it owns the ready list, so
 		// no cross-thread race) and re-converts every occluder with the new settings.
 		std::atomic<bool> g_rebuildMeshCache{ false };
+
+		// --- Async occlusion-test state (see AsyncOcclusionTest) ---
+		// Snapshot of cull candidates, double-buffered: Process1 appends to g_snapAppend
+		// (this frame), the builder tests the OTHER buffer (last frame's) after its raster.
+		struct SnapEntry
+		{
+			const void* key;             // object pointer -- hash key ONLY, never deref'd here
+			float       cx, cy, cz, r;   // value-copied world bound
+		};
+		constexpr std::uint32_t    kSnapCap = 1u << 18;  // 262144 candidates/frame cap
+		std::vector<SnapEntry>     g_snap[2];
+		std::atomic<std::uint32_t> g_snapCount[2]{ { 0 }, { 0 } };
+		std::atomic<int>           g_snapAppend{ 0 };  // buffer Process1 appends to this frame
+		// {version, testBuffer} published as ONE atomic (version << 1 | bufIdx) so the builder
+		// reads a CONSISTENT pair -- a flip between separate reads would let it test a buffer
+		// the current frame is appending to yet stamp with the current version (defeating the
+		// gate). The builder stamps its table with the version it captured here; if a flip
+		// then advances the version, the gate rejects the (possibly torn) table -> keep.
+		std::atomic<std::uint64_t> g_asyncStamp{ 0 };
+		// Published visibility table (immutable once published; double-buffered, 2-frame
+		// recycle so a read never races the build). Keyed by object pointer. Each verdict
+		// carries the TESTED bound so Process1 can reject a stale verdict for an object that
+		// MOVED since (avoids culling a non-actor mover emerging from behind an occluder).
+		struct Verdict
+		{
+			bool  visible;
+			float cx, cy, cz, r;
+		};
+		struct ResultTable
+		{
+			std::uint32_t                             version = 0xFFFFFFFFu;
+			std::unordered_map<const void*, Verdict>  vis;
+		};
+		ResultTable                g_resultTable[2];
+		std::atomic<ResultTable*>  g_publishedResults{ nullptr };
+		int                        g_resultBuild = 0;
 
 
 		// WorldScenegraph global (holds a NiNode*). Nukem 0x2F4CE30 -> SE REL::ID(517006).
@@ -1241,6 +1289,11 @@ namespace MOC
 				// never rasterizes a shadow/sun view -- shadow culling is disabled.
 				g_rasterFrame.store(g_kickFrame.load(std::memory_order_acquire), std::memory_order_release);
 
+				// ASYNC TEST: the buffer is complete, so test last frame's candidate
+				// snapshot against it and publish the verdict table here on the builder
+				// thread -- off the scene-list cull barrier entirely. No-op unless enabled.
+				RunAsyncTest();
+
 				if (!g_hotWorkers)
 					g_pool->SuspendThreads();
 
@@ -1875,6 +1928,10 @@ namespace MOC
 
 	void KickBuild()
 	{
+		// Flip the async snapshot before the scene-list cull runs (this frame's kick =
+		// the frame boundary). Ordered before BuildOccluders so the builder, once signaled,
+		// sees the frozen test buffer.
+		BeginAsyncTestFrame();
 		if (auto* cam = GetMainCamera())
 			BuildOccluders(cam);
 	}
@@ -1958,13 +2015,14 @@ namespace MOC
 			return r == MaskedOcclusionCulling::VISIBLE;
 		}
 
-		bool TestSphere(RE::NiAVObject* a_object)
+		// Sphere occlusion test on a VALUE bound (center + radius) -- no object deref, so
+		// the async path can call it with a snapshot's value-copied bound off-thread.
+		bool TestSphereBound(float a_cx, float a_cy, float a_cz, float sphereRadius)
 		{
-			const float sphereRadius = a_object->worldBound.radius;
 			if (sphereRadius <= 5.0f)
 				return true;
 
-			const RE::NiPoint3& c = a_object->worldBound.center;
+			const RE::NiPoint3 c{ a_cx, a_cy, a_cz };
 
 			// Camera-relative sphere center (w = 1).
 			XMVECTOR bounds = _mm_sub_ps(_mm_setr_ps(c.x, c.y, c.z, 1.0f), g_posAdjustV);
@@ -2025,6 +2083,12 @@ namespace MOC
 			const auto r = g_moc->TestRect(xyMins.m128_f32[0], xyMins.m128_f32[1], xyMaxs.m128_f32[0], xyMaxs.m128_f32[1], closestSpherePointW);
 			return r == MaskedOcclusionCulling::VISIBLE;
 		}
+
+		bool TestSphere(RE::NiAVObject* a_object)
+		{
+			const auto& b = a_object->worldBound;
+			return TestSphereBound(b.center.x, b.center.y, b.center.z, b.radius);
+		}
 	}  // namespace
 
 	bool TestObject(RE::NiAVObject* a_object)
@@ -2072,6 +2136,106 @@ namespace MOC
 			(aabb ? g_culledAABB : g_culledSphere).fetch_add(1, std::memory_order_relaxed);
 		}
 		return visible;
+	}
+
+	// Async test frame boundary -- called once per frame from the DrawWorld_PreRender kick
+	// (render thread, BEFORE the scene-list cull). Flips the snapshot buffer so the builder
+	// tests what Process1 appended last frame, clears the new append buffer, and stamps a
+	// fresh version so this frame's reads miss (keep) until the builder republishes.
+	void BeginAsyncTestFrame()
+	{
+		if (!AsyncOcclusionTest)
+			return;
+		if (g_snap[0].size() != kSnapCap) {  // lazy alloc on first use (render thread, no appends yet)
+			g_snap[0].resize(kSnapCap);
+			g_snap[1].resize(kSnapCap);
+		}
+		const int prev = g_snapAppend.load(std::memory_order_relaxed);
+		const int next = prev ^ 1;
+		g_snapCount[next].store(0, std::memory_order_relaxed);
+		g_snapAppend.store(next, std::memory_order_release);
+		// Publish {new version, testBuffer=prev} atomically. The builder tests `prev` (last
+		// frame's appends) at the version it reads here; Process1 appends to `next`.
+		const std::uint32_t newVer = static_cast<std::uint32_t>(g_asyncStamp.load(std::memory_order_relaxed) >> 1) + 1u;
+		g_asyncStamp.store((static_cast<std::uint64_t>(newVer) << 1) | static_cast<std::uint32_t>(prev), std::memory_order_release);
+	}
+
+	// Test the frozen snapshot against the just-rasterized buffer and publish the verdict
+	// table -- called on the builder thread right after the raster completes (buffer ready,
+	// no WaitForRasterComplete needed). Writes the SPARE table then atomically publishes it;
+	// the 2-frame recycle guarantees no reader is still on the table being rebuilt.
+	void RunAsyncTest()
+	{
+		if (!AsyncOcclusionTest || !g_moc || g_snap[0].size() != kSnapCap)
+			return;
+		// Read {version, testBuffer} as ONE atomic snapshot so the pair can't decouple.
+		const std::uint64_t stamp = g_asyncStamp.load(std::memory_order_acquire);
+		const int           tb = static_cast<int>(stamp & 1u);
+		const std::uint32_t ver = static_cast<std::uint32_t>(stamp >> 1);
+		const std::uint32_t n = std::min(g_snapCount[tb].load(std::memory_order_acquire), kSnapCap);
+		const int           ri = g_resultBuild ^ 1;  // build the SPARE table
+		ResultTable&        t = g_resultTable[ri];
+		t.version = 0xFFFFFFFFu;  // mark building
+		t.vis.clear();
+		t.vis.reserve(n);
+		for (std::uint32_t i = 0; i < n; ++i) {
+			const auto& e = g_snap[tb][i];
+			t.vis.emplace(e.key, Verdict{ TestSphereBound(e.cx, e.cy, e.cz, e.r), e.cx, e.cy, e.cz, e.r });
+		}
+		// Stamp with the version captured ABOVE. If a flip has since advanced the version
+		// (builder was lapped and may have read a torn buffer), the gate in TestObjectCached
+		// rejects this table (version mismatch) -> keep. Correct results only survive when
+		// the builder kept up.
+		t.version = ver;
+		g_resultBuild = ri;
+		g_publishedResults.store(&t, std::memory_order_release);
+	}
+
+	// Drop-in for TestObject on the async path: records the object for next frame's test and
+	// returns THIS frame's published verdict (miss -> keep). Same cheap-first guards as
+	// TestObject (radius / app-culled / actor) so the snapshot only holds testable objects.
+	bool TestObjectCached(RE::NiAVObject* a_object)
+	{
+		if (!g_init || !EnableOcclusionTesting || !a_object)
+			return true;
+		if (a_object->worldBound.radius < OccluderTestMinRadius)
+			return true;
+		if (a_object->GetAppCulled())
+			return true;
+		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
+			return true;
+
+		// Record for NEXT frame's async test (value-copy the world bound).
+		const int           b = g_snapAppend.load(std::memory_order_acquire);
+		const std::uint32_t i = g_snapCount[b].fetch_add(1, std::memory_order_relaxed);
+		if (i < g_snap[b].size()) {  // size is 0 until BeginAsyncTestFrame allocates -> never OOB
+			const auto& bd = a_object->worldBound;
+			g_snap[b][i] = SnapEntry{ a_object, bd.center.x, bd.center.y, bd.center.z, bd.radius };
+		}
+
+		// Read THIS frame's verdict. Version-gated: until the builder republishes for this
+		// frame, the table is stale -> miss -> keep (conservative). Table is immutable once
+		// published, so the concurrent read is safe.
+		const std::uint32_t curVer = static_cast<std::uint32_t>(g_asyncStamp.load(std::memory_order_acquire) >> 1);
+		const ResultTable*  t = g_publishedResults.load(std::memory_order_acquire);
+		if (t && t->version == curVer) {
+			if (auto it = t->vis.find(a_object); it != t->vis.end()) {
+				const Verdict& v = it->second;
+				if (v.visible)
+					return true;  // visible -> keep (no harm even if stale)
+				// Occluded verdict: only trust it if the object hasn't MOVED since it was
+				// tested (its bound is the same). A non-actor mover emerging from behind an
+				// occluder would otherwise be wrongly culled for a frame -> keep if it moved.
+				const auto&  bd = a_object->worldBound;
+				const float  dx = bd.center.x - v.cx, dy = bd.center.y - v.cy, dz = bd.center.z - v.cz;
+				if (dx * dx + dy * dy + dz * dz > 1.0f || bd.radius != v.r)
+					return true;  // moved -> keep (conservative)
+				g_tested.fetch_add(1, std::memory_order_relaxed);
+				g_culled.fetch_add(1, std::memory_order_relaxed);
+				return false;  // occluded and stationary -> cull
+			}
+		}
+		return true;  // miss -> keep
 	}
 
 	bool TestMultiBound(void* a_multiBound)

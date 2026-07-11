@@ -71,8 +71,12 @@ namespace
 		// those overlay windows for little extra culling.
 		const bool bracketed = MOC::IsSceneListCamera(a_self->camera);
 		// MAIN view: optional small-VISIBLE cull (pure size math, no raster wait) first,
-		// then the MOC occlusion test. TestSmallVisible is a no-op unless the user opts in.
-		if (bracketed && a_object && (!MOC::TestSmallVisible(a_object) || !MOC::TestObject(a_object))) {
+		// then the MOC occlusion test. In async mode the test is a lock-free cache lookup
+		// (verdict computed off-thread by the builder) instead of an inline TestRect, so it
+		// never stalls the scene-list barrier. TestSmallVisible is a no-op unless opted in.
+		if (bracketed && a_object &&
+			(!MOC::TestSmallVisible(a_object) ||
+				(MOC::AsyncOcclusionTest ? !MOC::TestObjectCached(a_object) : !MOC::TestObject(a_object)))) {
 			MarkCulledLikeEngine(a_self, a_object);
 			return;  // small or occluded -> do not accumulate / recurse
 		}
@@ -361,6 +365,9 @@ void OcclusionCulling::PostPostLoad()
 	// CS_MOC_TERRAIN_LOD=0/1: distant terrain LOD as occluders (A/B).
 	if (GetEnvironmentVariableA("CS_MOC_TERRAIN_LOD", buf, sizeof(buf)) && buf[0])
 		settings.TerrainLODOccluders = buf[0] == '1';
+	// CS_MOC_ASYNC=0/1: async (off-barrier) occlusion testing (A/B).
+	if (GetEnvironmentVariableA("CS_MOC_ASYNC", buf, sizeof(buf)) && buf[0])
+		settings.AsyncOcclusionTest = buf[0] == '1';
 	// CS_MOC_VALIDATE=1: engine-cull agreement instrumentation (see Process1_Impl).
 	if (GetEnvironmentVariableA("CS_MOC_VALIDATE", buf, sizeof(buf)) && buf[0] == '1')
 		g_validateMode = true;
@@ -478,6 +485,7 @@ void OcclusionCulling::SyncSettingsToMOC()
 	MOC::TreeOccluders = settings.TreeOccluders;
 	MOC::AlphaTestedOccluders = settings.AlphaTestedOccluders;
 	MOC::TerrainLODOccluders = settings.TerrainLODOccluders;
+	MOC::AsyncOcclusionTest = settings.AsyncOcclusionTest;
 	MOC::CullSmallVisible = settings.CullSmallVisible;
 	MOC::SmallVisibleMinSize = settings.SmallVisibleMinSize;
 	MOC::SmallVisibleSlope = settings.SmallVisibleSlope;
@@ -555,6 +563,10 @@ void OcclusionCulling::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("%s", T("feature.occlusion_culling.terrain_lod_occluders_tooltip",
 			"Rasterize the game's coarse distant terrain LOD as occluders. Off by default: unlike the heightmap-built near terrain (which stays below the real surface), the LOD mesh can rise above it and wrongly occlude visible geometry. The loaded-grid heightmap terrain is always used either way."));
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.async_test", "Async Occlusion Testing (experimental)"), &settings.AsyncOcclusionTest);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.async_test_tooltip",
+			"Move the per-object occlusion test off the scene-list cull walk: the builder pre-tests last frame's candidates against this frame's buffer and Process1 just reads the result. Keeps the test cost out of the Utility barrier (no spike even with heavy occluders). Slightly less culling on newly-appeared objects for one frame. Experimental."));
 
 	ImGui::Spacing();
 	ImGui::TextDisabled("%s", T("feature.occlusion_culling.small_header", "Small-Object Culling"));
@@ -658,6 +670,8 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.AlphaTestedOccluders = o_json["AlphaTestedOccluders"];
 	if (o_json["TerrainLODOccluders"].is_boolean())
 		settings.TerrainLODOccluders = o_json["TerrainLODOccluders"];
+	if (o_json["AsyncOcclusionTest"].is_boolean())
+		settings.AsyncOcclusionTest = o_json["AsyncOcclusionTest"];
 	if (o_json["CullSmallVisible"].is_boolean())
 		settings.CullSmallVisible = o_json["CullSmallVisible"];
 	if (o_json["SmallVisibleMinSize"].is_number())
@@ -693,6 +707,7 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["TreeOccluders"] = settings.TreeOccluders;
 	o_json["AlphaTestedOccluders"] = settings.AlphaTestedOccluders;
 	o_json["TerrainLODOccluders"] = settings.TerrainLODOccluders;
+	o_json["AsyncOcclusionTest"] = settings.AsyncOcclusionTest;
 	o_json["CullSmallVisible"] = settings.CullSmallVisible;
 	o_json["SmallVisibleMinSize"] = settings.SmallVisibleMinSize;
 	o_json["SmallVisibleSlope"] = settings.SmallVisibleSlope;

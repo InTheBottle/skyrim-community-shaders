@@ -49,6 +49,7 @@ namespace MOC
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
 	extern bool          TerrainLODOccluders;        // rasterize distant terrain LOD (.btr) -- not conservative; off
+	extern bool          AsyncOcclusionTest;         // test off the cull-walk barrier (builder pre-tests, cache lookup)
 	extern bool          CullSmallVisible;           // main-view distance-scaled small-object cull (mesh stops rendering)
 	extern float         SmallVisibleMinSize;        // visible cull: base bound-radius threshold at the camera
 	extern float         SmallVisibleSlope;          // visible cull: threshold growth per unit of camera distance
@@ -126,6 +127,12 @@ namespace MOC
 
 	/** @brief Main-view small-object cull -- drops the mesh (keep=true; never actors/kAlwaysDraw). */
 	bool TestSmallVisible(RE::NiAVObject* a_object);
+
+	/** @brief Async-path occlusion test: records the object and returns the builder's cached verdict (keep on miss). */
+	bool TestObjectCached(RE::NiAVObject* a_object);
+
+	/** @brief Flip the async candidate snapshot; call once/frame from the DrawWorld_PreRender kick. */
+	void BeginAsyncTestFrame();
 
 	/** @brief Small-caster shadow cull -- drops the shadow only (keep=true; never actors/kAlwaysDraw). */
 	bool TestShadowCasterSmall(RE::NiAVObject* a_object);
