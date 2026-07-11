@@ -359,6 +359,17 @@ void OcclusionCulling::PostPostLoad()
 	SyncSettingsToMOC();
 	MOC::Init();
 
+	// CS_MOC_NO_HOOKS=1: TRUE-VANILLA baseline for benchmarks -- skip every
+	// detour, vtable patch and the MOC builder entirely; the game runs with
+	// zero occlusion-culling instrumentation (not even trampoline overhead).
+	{
+		char nhBuf[8] = {};
+		if (GetEnvironmentVariableA("CS_MOC_NO_HOOKS", nhBuf, sizeof(nhBuf)) && nhBuf[0] == '1') {
+			logger::warn("[OcclusionCulling] CS_MOC_NO_HOOKS=1: no hooks installed (pure vanilla baseline)");
+			return;
+		}
+	}
+
 	// Detour the Process1/Process2 FUNCTION BODIES of both culling-process classes
 	// (base BSCullingProcess and the BSParabolicCullingProcess overrides the main world
 	// cull runs on). Body detours are essential: the engine's main cull walk calls

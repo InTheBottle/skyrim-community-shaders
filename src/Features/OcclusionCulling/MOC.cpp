@@ -135,6 +135,13 @@ namespace MOC
 			std::uint32_t        idxCount = 0;
 			const float*         verts = nullptr;
 			bool                 twoSided = false;
+			float                radius = 0.0f;
+			const std::uint32_t* lod1Data = nullptr;
+			std::uint32_t        lod1Count = 0;
+			float                lod1ErrAbs = 0.0f;  // errRel * radius
+			const std::uint32_t* lod2Data = nullptr;
+			std::uint32_t        lod2Count = 0;
+			float                lod2ErrAbs = 0.0f;
 		};
 		std::vector<GeoEntry> g_geoList;
 
@@ -238,6 +245,18 @@ namespace MOC
 			std::uint32_t* Data = nullptr;
 			std::uint32_t  Count = 0;      // total indices (== triCount * 3)
 			std::uint32_t  VertCount = 0;  // verts in the cached position stream
+			// Runtime occluder LODs (user design): sloppy-simplified index sets
+			// sharing the same vertex stream, selected per frame by projected
+			// error < half a buffer pixel -- silhouette expansion the buffer
+			// cannot resolve is harmless, and distant occluders carry most of
+			// the triangle volume. errRel = meshopt result_error (relative to
+			// mesh extents); absolute error ~= errRel * mesh radius.
+			std::uint32_t* Lod1Data = nullptr;
+			std::uint32_t  Lod1Count = 0;
+			float          Lod1ErrRel = 0.0f;
+			std::uint32_t* Lod2Data = nullptr;
+			std::uint32_t  Lod2Count = 0;
+			float          Lod2ErrRel = 0.0f;
 		};
 
 		std::unordered_map<void*, float*>    g_vertMap;
@@ -393,6 +412,39 @@ namespace MOC
 						reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
 						static_cast<std::size_t>(p.Count * 0.25f), 1e-3f, 0, nullptr);
 					p.Count = static_cast<std::uint32_t>(simplified);
+				}
+				// Runtime occluder LODs: sloppy targets ~10% and ~3% of the BASE
+				// indices; result_error reported back for the per-frame projected
+				// error budget. Built once per mesh on the builder thread.
+				if (SimplifyOccluders && p.Count > 900) {
+					float err1 = 0.0f;
+					auto* lod1 = new std::uint32_t[p.Count];
+					const std::size_t c1 = meshopt_simplifySloppy(
+						lod1, p.Data, p.Count,
+						reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
+						static_cast<std::size_t>(p.Count * 0.30f), 2e-2f, &err1);
+					if (c1 >= 3 && c1 < p.Count) {
+						p.Lod1Data = lod1;
+						p.Lod1Count = static_cast<std::uint32_t>(c1);
+						p.Lod1ErrRel = err1;
+					} else {
+						delete[] lod1;
+					}
+					if (p.Lod1Data) {
+						float err2 = 0.0f;
+						auto* lod2 = new std::uint32_t[p.Lod1Count];
+						const std::size_t c2 = meshopt_simplifySloppy(
+							lod2, p.Lod1Data, p.Lod1Count,
+							reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
+							static_cast<std::size_t>(p.Count * 0.08f), 8e-2f, &err2);
+						if (c2 >= 3 && c2 < p.Lod1Count) {
+							p.Lod2Data = lod2;
+							p.Lod2Count = static_cast<std::uint32_t>(c2);
+							p.Lod2ErrRel = err2;
+						} else {
+							delete[] lod2;
+						}
+					}
 				}
 
 				p.VertCount = vertCount;
@@ -1012,15 +1064,29 @@ namespace MOC
 					// waits. A complete buffer (no missing floors/walls) culls strictly
 					// better; partial fills mid-frame are conservative by contract.
 					std::uint32_t enqueued = 0;
+					// px-per-world-unit at unit distance: proj[1][1] = cot(fovY/2).
+					const float pxScale = g_proj.r[1].m128_f32[1] * (static_cast<float>(MOC_HEIGHT) * 0.5f);
 					for (auto& e : g_readyList) {
 						if (!e.verts || !e.idxData || !e.geometry)
 							continue;
+						// Coarsest LOD whose silhouette error projects below half a
+						// buffer pixel at this distance (user's LOD design).
+						const float          dist = std::sqrt(std::max(e.distanceSquared, 1.0f));
+						const std::uint32_t* idxSel = e.idxData;
+						std::uint32_t        cntSel = e.idxCount;
+						if (e.lod2Data && (e.lod2ErrAbs * pxScale) / dist < 0.5f) {
+							idxSel = e.lod2Data;
+							cntSel = e.lod2Count;
+						} else if (e.lod1Data && (e.lod1ErrAbs * pxScale) / dist < 0.5f) {
+							idxSel = e.lod1Data;
+							cntSel = e.lod1Count;
+						}
 						const XMMATRIX worldRel = GetXMFromNiPosAdjust(e.geometry->world, g_posAdjust);
 						const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, g_viewProj);
 						g_pool->SetMatrix(reinterpret_cast<const float*>(&worldViewProj));
 						g_pool->RenderTriangles(
-							e.verts, e.idxData,
-							static_cast<int>(e.idxCount / 3),
+							e.verts, idxSel,
+							static_cast<int>(cntSel / 3),
 							e.twoSided ? MaskedOcclusionCulling::BACKFACE_NONE : MaskedOcclusionCulling::BACKFACE_CW,
 							MaskedOcclusionCulling::CLIP_PLANE_ALL);
 						++enqueued;
@@ -1102,6 +1168,13 @@ namespace MOC
 						e.idxData = idx.Data;
 						e.idxCount = idx.Count;
 						e.verts = verts;
+						e.radius = e.geometry->worldBound.radius;
+						e.lod1Data = idx.Lod1Data;
+						e.lod1Count = idx.Lod1Count;
+						e.lod1ErrAbs = idx.Lod1ErrRel * e.radius;
+						e.lod2Data = idx.Lod2Data;
+						e.lod2Count = idx.Lod2Count;
+						e.lod2ErrAbs = idx.Lod2ErrRel * e.radius;
 						auto* sp = e.geometry->lightingShaderProp_cast();
 						e.twoSided = sp && sp->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTwoSided);
 					}
@@ -1555,6 +1628,12 @@ namespace MOC
 		// worldspace transition). The loading screen covers the teardown window; skipping
 		// builds there costs nothing (nothing worth culling renders) and starves the
 		// builder before the graph is torn down.
+		// Feature toggled off => no builder work at all (gather + raster used to
+		// keep running with testing disabled, contaminating every OFF baseline by
+		// ~1ms/frame of MOC infrastructure and costing real users who toggle off).
+		if (!EnableOcclusionTesting)
+			return false;
+
 		if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) {
 			g_settleUntilKick.store(g_kickCounter.load(std::memory_order_relaxed) + 240, std::memory_order_relaxed);
 			return false;
