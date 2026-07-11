@@ -99,6 +99,19 @@ public:
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }
 	[[nodiscard]] bool IsActive() const { return GetMode() != Mode::kOff; }
+	[[nodiscard]] bool HooksInstalled() const { return hooksInstalled; }
+
+	/** @brief Runtime mode switch (devbench A/B): only meaningful when the hooks were
+	 *         installed at Setup (launch with CS_UTIL_RE_MODE != 0); the detour reads the
+	 *         mode per pass, so flipping mid-session is safe -- a frame split between
+	 *         engine and replica passes stays coherent because both share all state. */
+	bool SetMode(Mode a_mode)
+	{
+		if (!hooksInstalled)
+			return false;
+		mode.store(a_mode, std::memory_order_relaxed);
+		return true;
+	}
 
 	/** @brief Read CS_UTIL_RE_MODE, create resources, install hooks. Called from
 	 *         State::Setup (device ready). Inert at mode 0. */

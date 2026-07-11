@@ -1,5 +1,7 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
+#include "UtilityPassReplica.h"
+
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
 // DEVBENCH_BRIDGE_ENABLED (set by CMake when the devbench-api port is available);
 // otherwise this file compiles to an empty Install(). Inert at runtime when no
@@ -632,6 +634,34 @@ namespace
 	/**
 	 * @brief Processes DevBench settings tool requests (save, load, reset).
 	 */
+	json BuildUtilReResult(const json& a_args)
+	{
+		auto* replica = UtilityPassReplica::GetSingleton();
+		const std::string action = a_args.value("action", std::string{ "get" });
+		if (action == "get") {
+			return json{
+				{ "mode", static_cast<std::uint32_t>(replica->GetMode()) },
+				{ "hooksInstalled", replica->HooksInstalled() },
+			};
+		}
+		if (action == "set") {
+			if (!a_args.contains("mode"))
+				return json{ { "error", "missing required parameter 'mode'" } };
+			const auto m = a_args["mode"].get<std::uint32_t>();
+			if (m > 2)
+				return json{ { "error", "mode must be 0 (off), 1 (compare) or 2 (replace)" } };
+			if (!replica->SetMode(static_cast<UtilityPassReplica::Mode>(m)))
+				return json{ { "error", "hooks not installed -- launch with CS_UTIL_RE_MODE set" } };
+			return json{ { "action", "set" }, { "mode", m } };
+		}
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
+	}
+
+	void UtilReToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildUtilReResult, a_argsJson, a_sink, a_write);
+	}
+
 	void SettingsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
@@ -679,6 +709,10 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, or reset the GLOBAL Community Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after communityshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
 		dvb->RegisterTool("communityshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+
+		static constexpr const char* utilreDesc =
+			R"({"description":"Runtime mode switch for the UtilityPassReplica RE baseline (utility-pass replica). Requires launching the game with CS_UTIL_RE_MODE set (hooks install at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1|2 (0=off/engine, 1=compare/double-render, 2=replace/replica) -- takes effect on the next pass, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
+		dvb->RegisterTool("communityshaders.utilre", utilreDesc, &UtilReToolHandler, nullptr);
 	}
 }
 
