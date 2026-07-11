@@ -10,6 +10,7 @@
 #include "Menu.h"
 #include "Menu/DisplaySettingsMenu.h"
 #include "ShaderCache.h"
+#include "ShadowDeferred.h"
 #include "State.h"
 #include "Util.h"
 
@@ -144,7 +145,12 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 
 	bool shaderFound = func(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 
-	if (!shaderFound && shader->shaderType.get() != RE::BSShader::Type::Effect) {
+	// Shadow depth passes run on a private deferred context with engine-original shaders
+	// (see ShadowDeferred): the engine BeginTechnique above already bound the original VS/PS
+	// through the redirected context via the SetVertexShader/SetPixelShader gates below;
+	// skip CS substitution, which would bind through the immediate-context copy.
+	if (!shaderFound && shader->shaderType.get() != RE::BSShader::Type::Effect &&
+		!ShadowDeferred::GetSingleton()->ShadowScopeActive()) {
 		RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*shader, state->modifiedVertexDescriptor);
 		RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*shader, state->modifiedPixelDescriptor);
 		if (vertexShader == nullptr || (!skipPixelShader && pixelShader == nullptr)) {
@@ -779,10 +785,16 @@ namespace Hooks
 
 	struct BSShader__BeginTechnique_SetVertexShader
 	{
-		static void thunk(RE::BSGraphics::Renderer*, RE::BSGraphics::VertexShader* a_vertexShader)
+		static void thunk(RE::BSGraphics::Renderer* a_renderer, RE::BSGraphics::VertexShader* a_vertexShader)
 		{
 			auto state = globals::state;
 			auto shaderCache = globals::shaderCache;
+
+			// Shadow depth passes: engine-original VS on the redirected (deferred) context.
+			if (ShadowDeferred::GetSingleton()->ShadowScopeActive()) {
+				func(a_renderer, a_vertexShader);
+				return;
+			}
 
 			if (!state->settingCustomShader) {
 				if (shaderCache->IsEnabled()) {
@@ -812,10 +824,16 @@ namespace Hooks
 
 	struct BSShader__BeginTechnique_SetPixelShader
 	{
-		static void thunk(RE::BSGraphics::Renderer*, RE::BSGraphics::PixelShader* a_pixelShader)
+		static void thunk(RE::BSGraphics::Renderer* a_renderer, RE::BSGraphics::PixelShader* a_pixelShader)
 		{
 			auto state = globals::state;
 			auto shaderCache = globals::shaderCache;
+
+			// Shadow depth passes: engine-original PS on the redirected (deferred) context.
+			if (ShadowDeferred::GetSingleton()->ShadowScopeActive()) {
+				func(a_renderer, a_pixelShader);
+				return;
+			}
 
 			if (!state->settingCustomShader) {
 				if (shaderCache->IsEnabled()) {

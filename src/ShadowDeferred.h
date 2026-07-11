@@ -55,6 +55,20 @@ public:
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }
 	[[nodiscard]] bool IsActive() const { return GetMode() != Mode::kOff; }
+	[[nodiscard]] bool HooksInstalled() const { return hooksInstalled; }
+
+	/** @brief Runtime mode switch (devbench A/B): only meaningful when the detour was
+	 *         installed at boot (launch with CS_SHADOW_DEFERRED=1). The detour reads the
+	 *         mode per frame -- mode 0 runs the engine's shadow loop untouched, mode 1
+	 *         records it on the deferred context -- so flipping mid-session is safe and
+	 *         enables single-session engine-vs-deferred screenshot A/B. */
+	bool SetMode(Mode a_mode)
+	{
+		if (!hooksInstalled)
+			return false;
+		mode.store(a_mode, std::memory_order_relaxed);
+		return true;
+	}
 
 	/** @brief True while a shadow scope is recording onto the deferred context. CS's
 	 *         BeginTechnique substitution thunks read this to bypass shader substitution
@@ -71,6 +85,12 @@ public:
 	 *         Called from State::Setup once the device is ready. Inert at mode 0. */
 	void Setup();
 
+	/** @brief DrawWorld::RenderShadowmaps (0x1412E3480) detour body: redirect the context
+	 *         globals to the deferred context, run the original shadow loop (recording),
+	 *         then FinishCommandList + ExecuteCommandList in place, isolating the render
+	 *         state around the scope. @param a_original pointer to the trampoline func. */
+	void RenderShadowmapsDetour(void* a_original);
+
 private:
 	ShadowDeferred() = default;
 
@@ -80,6 +100,12 @@ private:
 	bool                                   hooksInstalled = false;
 	bool                                   scopeActive = false;
 	winrt::com_ptr<ID3D11DeviceContext>    deferredContext;
+
+	// Private copy of the engine's dynamic-VB ring buffer (skinned faces). Swapped into
+	// the engine ring-slot pointers only while the shadow scope records, so the shadow
+	// path's deferred-context DISCARD maps never touch the shared buffers the immediate
+	// context reuses for the main-view pass. Created lazily from the engine buffer's desc.
+	winrt::com_ptr<ID3D11Buffer>           privateDynVB;
 
 	// Rolling stats for the log.
 	std::uint64_t framesDeferred = 0;

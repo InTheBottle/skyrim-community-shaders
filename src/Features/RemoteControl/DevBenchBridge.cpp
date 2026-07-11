@@ -1,5 +1,6 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
+#include "ShadowDeferred.h"
 #include "UtilityPassReplica.h"
 
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
@@ -662,6 +663,34 @@ namespace
 		RunHandler(&BuildUtilReResult, a_argsJson, a_sink, a_write);
 	}
 
+	json BuildShadowDeferredResult(const json& a_args)
+	{
+		auto* sd = ShadowDeferred::GetSingleton();
+		const std::string action = a_args.value("action", std::string{ "get" });
+		if (action == "get") {
+			return json{
+				{ "mode", static_cast<std::uint32_t>(sd->GetMode()) },
+				{ "hooksInstalled", sd->HooksInstalled() },
+			};
+		}
+		if (action == "set") {
+			if (!a_args.contains("mode"))
+				return json{ { "error", "missing required parameter 'mode'" } };
+			const auto m = a_args["mode"].get<std::uint32_t>();
+			if (m > 1)
+				return json{ { "error", "mode must be 0 (engine) or 1 (deferred)" } };
+			if (!sd->SetMode(static_cast<ShadowDeferred::Mode>(m)))
+				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_DEFERRED=1" } };
+			return json{ { "action", "set" }, { "mode", m } };
+		}
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
+	}
+
+	void ShadowDeferredToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildShadowDeferredResult, a_argsJson, a_sink, a_write);
+	}
+
 	void SettingsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
@@ -713,6 +742,10 @@ namespace DevBenchBridge
 		static constexpr const char* utilreDesc =
 			R"({"description":"Runtime mode switch for the UtilityPassReplica RE baseline (utility-pass replica). Requires launching the game with CS_UTIL_RE_MODE set (hooks install at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1|2 (0=off/engine, 1=compare/double-render, 2=replace/replica) -- takes effect on the next pass, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
 		dvb->RegisterTool("communityshaders.utilre", utilreDesc, &UtilReToolHandler, nullptr);
+
+		static constexpr const char* shadowDeferredDesc =
+			R"({"description":"Runtime mode switch for ShadowDeferred (runs the engine's shadow-map commands on a private deferred context). Requires launching with CS_SHADOW_DEFERRED=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1 (0=engine renders shadows, 1=deferred replica) -- takes effect next frame, safe mid-session; used for single-session engine-vs-deferred screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
+		dvb->RegisterTool("communityshaders.shadowdeferred", shadowDeferredDesc, &ShadowDeferredToolHandler, nullptr);
 	}
 }
 
