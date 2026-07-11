@@ -34,8 +34,6 @@ struct OcclusionCulling : public Feature
 		// Raster budget per frame, closest-first (not a MOC library limit). With the
 		// threaded raster + simplified meshes the default covers typical scenes fully.
 		std::int32_t MaxOccludersPerFrame = 384;
-		// CullingThreadpool worker count; applied at boot (pool is created once).
-		std::int32_t RasterThreads = 4;
 		// meshopt_simplify occluder meshes at cache time (~half the indices).
 		bool SimplifyOccluders = true;
 		// Only objects with at least this world-bound radius are occlusion-tested.
@@ -45,10 +43,11 @@ struct OcclusionCulling : public Feature
 		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
 		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
 		bool AlphaTestedOccluders = false;
-		bool  CullSunShadows = false;  // venue/time-conditional occlusion; experimental
-		bool  CullSmallShadows = true;   // distance-scaled small-caster contribution cull (HZD-style)
-		float ShadowCullNearRadius = 32.0f;
-		float ShadowCullDistSlope = 0.012f;
+		// Main-view small-object cull: drop objects whose bound radius < (min + slope*camDist).
+		// Cheap size test; shrinks the opaque and z-prepass draw lists. Never culls actors.
+		bool  CullSmallObjects = true;
+		float SmallObjectMinSize = 0.0f;
+		float SmallObjectDistSlope = 0.012f;
 		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
 		float OccluderMinLeafSize = 100.0f;
 	};

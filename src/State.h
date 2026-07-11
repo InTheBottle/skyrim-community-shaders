@@ -71,6 +71,9 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
+	// When set (by the dev bench REST bridge), per-type frame timing is populated even
+	// with the performance overlay closed, so automated A/B runs can read it headless.
+	std::atomic<bool> benchForceFrameTiming{ false };
 
 	enum ConfigMode
 	{

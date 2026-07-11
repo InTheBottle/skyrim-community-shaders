@@ -122,7 +122,8 @@ void State::Draw()
 			}
 		}
 
-		if (globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible())
+		if ((globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible()) ||
+			benchForceFrameTiming.load(std::memory_order_relaxed))
 			Debug();
 
 		updateShader = false;

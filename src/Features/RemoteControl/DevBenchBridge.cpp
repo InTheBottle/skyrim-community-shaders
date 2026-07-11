@@ -352,6 +352,20 @@ namespace
 							 byType[kTypeNames[i]] = globals::state->drawSubmitsByTypeLastFrame[i].load(std::memory_order_relaxed);
 					 return byType;
 				 }() },
+				{ "frame_time_by_type", [] {
+					 static constexpr const char* kTypeNames[] = { "none", "grass", "sky", "water", "bloodsplatter",
+						 "imagespace", "lighting", "effect", "utility", "distanttree", "particle", "total_enum" };
+					 json byType = json::object();
+					 if (globals::state) {
+						 // Per-type timing is otherwise only populated while the perf overlay is
+						 // on screen; flip this so headless A/B runs read it. Sticky after the
+						 // first poll -- a few QueryPerformanceCounter calls per draw.
+						 globals::state->benchForceFrameTiming.store(true, std::memory_order_relaxed);
+						 for (std::size_t i = 0; i <= RE::BSShader::Type::Total; ++i)
+							 byType[kTypeNames[i]] = globals::state->smoothFrameTimePerType[i];
+					 }
+					 return byType;
+				 }() },
 			};
 		}
 		if (kind == "profiler") {

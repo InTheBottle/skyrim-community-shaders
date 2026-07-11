@@ -36,7 +36,6 @@ namespace MOC
 	extern float         OccluderMaxDistance;        // 2D distance cap for occluder gather (default 20000)
 	extern float         OccluderFirstLevelMinSize;  // min worldBound radius of a top-level occluder (default 200)
 	extern std::uint32_t MaxOccludersPerFrame;       // raster budget, closest-first (default 512; not a library limit)
-	extern std::int32_t  RasterThreads;              // CullingThreadpool worker count (applied at boot)
 	extern bool          SimplifyOccluders;          // meshopt_simplify occluder meshes at cache time
 	extern float         OccluderTestMinRadius;      // min world-bound radius for per-object tests
 	extern bool          ExclusiveOcclusion;         // neutralize vanilla occlusion planes (MOC is the only occlusion)
@@ -45,10 +44,9 @@ namespace MOC
 	extern bool          CullTreeLODGroups;          // occlusion-test distant-tree LOD instance groups
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
-	extern bool          CullSunShadows;             // sun-view occlusion of shadow casters (all cascades)
-	extern bool          CullSmallShadows;           // distance-scaled small shadow-caster culling
-	extern float         ShadowCullNearRadius;
-	extern float         ShadowCullDistSlope;
+	extern bool          CullSmallObjects;           // main-view distance-scaled small-object culling
+	extern float         SmallObjectMinSize;         // base bound-radius threshold at the camera
+	extern float         SmallObjectDistSlope;       // threshold growth per unit of camera distance
 
 	/** @brief Create the global MOC instance (1280x720). Safe to call once; no-op if already initialized. */
 	void Init();
@@ -115,14 +113,8 @@ namespace MOC
 	 */
 	bool IsSceneListCamera(const RE::NiCamera* a_camera);
 
-	/** @brief True for the sun's shadow-gather camera (stage-1 caster pre-gather). */
-	bool IsSunGatherCamera(const RE::NiCamera* a_camera);
-
-	/** @brief Sun-view occlusion test for a shadow caster (world-bound cube vs the sun buffer). */
-	bool TestObjectSunView(RE::NiAVObject* a_object);
-
-	/** @brief Distance-scaled small shadow-caster contribution cull (HZD-style; keep=true). */
-	bool TestShadowCasterSmall(RE::NiAVObject* a_object);
+	/** @brief Distance-scaled main-view small-object cull (keep=true; never actors/kAlwaysDraw). */
+	bool TestObjectSmall(RE::NiAVObject* a_object);
 
 	/**
 	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a
