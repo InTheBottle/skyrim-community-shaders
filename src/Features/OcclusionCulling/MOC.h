@@ -46,6 +46,9 @@ namespace MOC
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
 	extern bool          CullSunShadows;             // sun-view occlusion of shadow casters (all cascades)
+	extern bool          CullSmallShadows;           // distance-scaled small shadow-caster culling
+	extern float         ShadowCullNearRadius;
+	extern float         ShadowCullDistSlope;
 
 	/** @brief Create the global MOC instance (1280x720). Safe to call once; no-op if already initialized. */
 	void Init();
@@ -117,6 +120,9 @@ namespace MOC
 
 	/** @brief Sun-view occlusion test for a shadow caster (world-bound cube vs the sun buffer). */
 	bool TestObjectSunView(RE::NiAVObject* a_object);
+
+	/** @brief Distance-scaled small shadow-caster contribution cull (HZD-style; keep=true). */
+	bool TestShadowCasterSmall(RE::NiAVObject* a_object);
 
 	/**
 	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a

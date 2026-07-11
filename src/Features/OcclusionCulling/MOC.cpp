@@ -83,7 +83,10 @@ namespace MOC
 	bool CullTreeLODGroups = true;
 	bool TreeOccluders = true;
 	bool AlphaTestedOccluders = false;
-	bool CullSunShadows = true;
+	bool  CullSunShadows = true;
+	bool  CullSmallShadows = true;
+	float ShadowCullNearRadius = 32.0f;
+	float ShadowCullDistSlope = 0.012f;
 
 	namespace
 	{
@@ -1819,7 +1822,7 @@ namespace MOC
 		// Sun shadow-gather camera (dirLight = ShadowSceneNode+0x210, gather cam
 		// +0x578; IDA 2026-07-11). Read per frame; matrices for the builder's
 		// sun pass and the sun-view caster tests.
-		if (CullSunShadows) {
+		if (CullSunShadows || CullSmallShadows) {
 			static REL::Relocation<std::uint8_t**> ssnGlobal{ REL::ID(513211) };
 			const RE::NiCamera*                    sunCam = nullptr;
 			if (auto* ssn = *ssnGlobal) {
@@ -2114,6 +2117,32 @@ namespace MOC
 	bool IsSunGatherCamera(const RE::NiCamera* a_camera)
 	{
 		return a_camera && a_camera == g_sunGatherCam.load(std::memory_order_acquire);
+	}
+
+	// Distance-scaled small-caster shadow culling (user/HZD design): a caster
+	// whose bounding sphere is smaller than (near + slope*camDist) contributes a
+	// sub-pixel shadow -- and screen-space shadows regenerate the near-field
+	// contact shadows -- so it can be dropped from the shadow map. Threshold GROWS
+	// with distance from the PLAYER camera (g_posAdjust), so distant clutter is
+	// culled aggressively while nearby objects survive. Pure size/distance math,
+	// no raster buffer. Returns true = keep.
+	bool TestShadowCasterSmall(RE::NiAVObject* a_object)
+	{
+		if (!CullSmallShadows)
+			return true;
+		const auto& b = a_object->worldBound;
+		if (b.radius <= 0.0f)
+			return true;
+		const float dx = b.center.x - g_posAdjust.x;
+		const float dy = b.center.y - g_posAdjust.y;
+		const float dz = b.center.z - g_posAdjust.z;
+		const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+		const float threshold = ShadowCullNearRadius + ShadowCullDistSlope * dist;
+		const bool  keep = b.radius >= threshold;
+		g_sunTested.fetch_add(1, std::memory_order_relaxed);
+		if (!keep)
+			g_sunCulled.fetch_add(1, std::memory_order_relaxed);
+		return keep;
 	}
 
 	bool TestObjectSunView(RE::NiAVObject* a_object)

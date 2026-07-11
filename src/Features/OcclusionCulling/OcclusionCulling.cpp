@@ -85,9 +85,14 @@ namespace
 			const auto fl = a_object->GetFlags().underlying();
 			if (a_object->worldBound.radius > 0.0f && !(fl & 0x800) && !(fl & 0x1000)) {
 				auto* ref = a_object->GetUserData();
-				if ((!ref || ref->formType != RE::FormType::ActorCharacter) && !MOC::TestObjectSunView(a_object)) {
-					MarkCulledLikeEngine(a_self, a_object);
-					return;  // occluded from the sun -> not a caster this frame
+				if (!ref || ref->formType != RE::FormType::ActorCharacter) {
+					// Small-caster contribution cull (cheap size test, SSS-masked) +
+					// optional sun-view occlusion. Either dropping it removes the
+					// caster from every cascade.
+					if (!MOC::TestShadowCasterSmall(a_object) || !MOC::TestObjectSunView(a_object)) {
+						MarkCulledLikeEngine(a_self, a_object);
+						return;
+					}
 				}
 			}
 		}
@@ -355,6 +360,13 @@ void OcclusionCulling::PostPostLoad()
 	// CS_MOC_SUN=0/1: sun-view shadow-caster culling override for A/B runs.
 	if (GetEnvironmentVariableA("CS_MOC_SUN", buf, sizeof(buf)) && buf[0])
 		settings.CullSunShadows = buf[0] == '1';
+	// CS_MOC_SHADOW_SMALL=0/1: distance-scaled small shadow-caster culling.
+	if (GetEnvironmentVariableA("CS_MOC_SHADOW_SMALL", buf, sizeof(buf)) && buf[0])
+		settings.CullSmallShadows = buf[0] == '1';
+	if (GetEnvironmentVariableA("CS_MOC_SHADOW_NEAR", buf, sizeof(buf)) && buf[0])
+		settings.ShadowCullNearRadius = static_cast<float>(atof(buf));
+	if (GetEnvironmentVariableA("CS_MOC_SHADOW_SLOPE", buf, sizeof(buf)) && buf[0])
+		settings.ShadowCullDistSlope = static_cast<float>(atof(buf));
 	// CS_MOC_ALPHA_OCCLUDERS=0/1: alpha-TESTED geometry as solid occluders (A/B).
 	if (GetEnvironmentVariableA("CS_MOC_ALPHA_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.AlphaTestedOccluders = buf[0] == '1';
@@ -461,6 +473,9 @@ void OcclusionCulling::SyncSettingsToMOC()
 	MOC::TreeOccluders = settings.TreeOccluders;
 	MOC::AlphaTestedOccluders = settings.AlphaTestedOccluders;
 	MOC::CullSunShadows = settings.CullSunShadows;
+	MOC::CullSmallShadows = settings.CullSmallShadows;
+	MOC::ShadowCullNearRadius = settings.ShadowCullNearRadius;
+	MOC::ShadowCullDistSlope = settings.ShadowCullDistSlope;
 	MOC::DiagForceCullPercent = diagForceCullPercent;  // env-only diagnostic, not persisted
 }
 
@@ -533,6 +548,17 @@ void OcclusionCulling::DrawSettings()
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.tree_lod", "Cull Distant Tree LOD"), &settings.CullTreeLOD);
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.tree_occluders", "Opaque Tree Parts as Occluders"), &settings.TreeOccluders);
 	changed |= ImGui::Checkbox(T("feature.occlusion_culling.alpha_occluders", "Alpha-Tested Objects as Occluders"), &settings.AlphaTestedOccluders);
+
+	ImGui::Spacing();
+	ImGui::TextDisabled("%s", T("feature.occlusion_culling.shadow_header", "Shadow Casters"));
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.small_shadows", "Cull Small Shadow Casters"), &settings.CullSmallShadows);
+	if (auto* t = T("feature.occlusion_culling.small_shadows_tooltip", "Drops distant small objects from sun shadow maps (screen-space shadows cover the near field). Threshold grows with distance."); ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", t);
+	if (settings.CullSmallShadows) {
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.shadow_near", "Shadow Cull Base Size"), &settings.ShadowCullNearRadius, 0.0f, 128.0f, "%.0f");
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.shadow_slope", "Shadow Cull Distance Growth"), &settings.ShadowCullDistSlope, 0.0f, 0.08f, "%.3f");
+	}
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.sun_occlusion", "Sun-View Shadow Occlusion (experimental)"), &settings.CullSunShadows);
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("%s", T("feature.occlusion_culling.exclusive_tooltip",
 			"Neutralize the vanilla occlusion planes during the main cull so MOC is the only occlusion mechanism. Experimental; view-frustum culling is unaffected."));
@@ -589,6 +615,14 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.TreeOccluders = o_json["TreeOccluders"];
 	if (o_json["AlphaTestedOccluders"].is_boolean())
 		settings.AlphaTestedOccluders = o_json["AlphaTestedOccluders"];
+	if (o_json["CullSmallShadows"].is_boolean())
+		settings.CullSmallShadows = o_json["CullSmallShadows"];
+	if (o_json["ShadowCullNearRadius"].is_number())
+		settings.ShadowCullNearRadius = o_json["ShadowCullNearRadius"];
+	if (o_json["ShadowCullDistSlope"].is_number())
+		settings.ShadowCullDistSlope = o_json["ShadowCullDistSlope"];
+	if (o_json["CullSunShadows"].is_boolean())
+		settings.CullSunShadows = o_json["CullSunShadows"];
 
 	SyncSettingsToMOC();
 }
@@ -608,6 +642,10 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["CullTreeLOD"] = settings.CullTreeLOD;
 	o_json["TreeOccluders"] = settings.TreeOccluders;
 	o_json["AlphaTestedOccluders"] = settings.AlphaTestedOccluders;
+	o_json["CullSmallShadows"] = settings.CullSmallShadows;
+	o_json["ShadowCullNearRadius"] = settings.ShadowCullNearRadius;
+	o_json["ShadowCullDistSlope"] = settings.ShadowCullDistSlope;
+	o_json["CullSunShadows"] = settings.CullSunShadows;
 }
 
 void OcclusionCulling::RestoreDefaultSettings()
