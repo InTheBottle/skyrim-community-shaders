@@ -35,6 +35,13 @@ RenderDoc* RenderDoc::GetSingleton()
 
 void RenderDoc::Load()
 {
+	// Idempotent: XSEPlugin::Load calls this before InstallEarlyHooks (renderdoc.dll must
+	// install its global IAT hooks before the originals are captured), and the generic
+	// feature Load loop calls it again afterwards.
+	if (renderDocModule) {
+		return;
+	}
+
 	// Only load RenderDoc if the user has enabled capture
 	if (!enableRenderDocCapture) {
 		logger::debug("[RenderDoc] RenderDoc capture disabled, skipping initialization");
@@ -532,6 +539,16 @@ std::filesystem::path RenderDoc::GetCapturesPath() const
 
 std::filesystem::path RenderDoc::GetRenderDocDllPath() const
 {
+	// CS_RENDERDOC_DLL overrides the default location. When capturing Vulkan (DXVK mode),
+	// point it at the SAME file the registered Vulkan implicit layer references
+	// (e.g. C:\Program Files\RenderDoc\renderdoc.dll): the Windows loader keys modules by
+	// full path, so loading a different copy in-app puts TWO RenderDoc instances in the
+	// process (in-app + layer) that fight over the Vulkan dispatch chain and hang
+	// instance creation.
+	wchar_t overridePath[MAX_PATH]{};
+	if (GetEnvironmentVariableW(L"CS_RENDERDOC_DLL", overridePath, MAX_PATH) && overridePath[0]) {
+		return std::filesystem::path(overridePath);
+	}
 	// RenderDoc DLL should be in Data/Renderdoc/
 	return Util::PathHelpers::GetDataPath() / "Renderdoc" / "renderdoc.dll";
 }

@@ -1,5 +1,6 @@
 #include "D3DX9MathUpgrade.h"
 #include "Deferred.h"
+#include "Features/RenderDoc.h"
 #include "Features/Upscaling.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
@@ -226,6 +227,14 @@ bool Load()
 	}
 
 	if (errors.empty()) {
+		// RenderDoc (when enabled) must load before InstallEarlyHooks: renderdoc.dll
+		// re-patches every module's d3d11/dxgi imports by name at load time, which would
+		// steal the game's IAT slot back from CS's device-creation hook and bypass
+		// hk_D3D11CreateDeviceAndSwapChain (losing the forced FEATURE_LEVEL_11_1 ->
+		// DXGI_ERROR_DEVICE_REMOVED). Loading it first means PatchIAT captures RenderDoc's
+		// hook as the original, so the chain is game -> CS -> RenderDoc -> system and the
+		// device is wrapped for capture. Load() is idempotent for the loop below.
+		globals::features::renderDoc.Load();
 		Hooks::InstallEarlyHooks();
 		logger::info("Calling feature Load methods");
 		Feature::ForEachLoadedFeature("Load", [](Feature* feature) { feature->Load(); });

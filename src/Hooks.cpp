@@ -391,6 +391,11 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	pAdapter->GetDesc(&adapterDesc);
 	globals::state->SetAdapterDescription(adapterDesc.Description, adapterDesc.VendorId, adapterDesc.DeviceId);
 
+	// If this line is missing from the log, another hooking layer (e.g. RenderDoc's IAT
+	// patching) has stolen the game's import slot and the feature-level force below never
+	// happened -- see the RenderDoc load-ordering note in XSEPlugin::Load.
+	logger::info("D3D11CreateDeviceAndSwapChain intercepted (forcing D3D_FEATURE_LEVEL_11_1)");
+
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
 
 	DXGI_SWAP_CHAIN_DESC modifiedDesc = *pSwapChainDesc;
@@ -594,6 +599,21 @@ namespace Hooks
 
 			logger::info("Accessing render device information");
 			globals::ReInit();
+
+			// Report which module implements the device: system d3d11.dll, DXVK, or a
+			// RenderDoc wrapper. Confirms whether a capture layer actually wrapped the
+			// device (its vtable then lives in renderdoc.dll) versus silently missing it.
+			if (auto* device = globals::d3d::device) {
+				void* firstVFunc = (*reinterpret_cast<void***>(device))[0];
+				HMODULE implModule = nullptr;
+				wchar_t implPath[MAX_PATH]{};
+				if (::GetModuleHandleExW(
+						GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+						static_cast<LPCWSTR>(firstVFunc), &implModule) &&
+					::GetModuleFileNameW(implModule, implPath, MAX_PATH) != 0) {
+					logger::info("D3D11 device implemented by {}", stl::utf16_to_utf8(implPath).value_or("<unknown>"s));
+				}
+			}
 
 			logger::info("Detouring virtual function tables");
 			// InstallSwapChainPresentHooks installs SwapChainPresentBottom (suppression) and OMSetBlendState first.

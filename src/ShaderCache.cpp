@@ -1565,6 +1565,11 @@ namespace SShaderCache
 		memcpy(rawPtr + sizeof(RE::BSGraphics::VertexShader), shaderData.GetBufferPointer(),
 			shaderData.GetBufferSize());
 		std::unique_ptr<RE::BSGraphics::VertexShader> newShader{ shaderPtr };
+		// Placement-new of the POD RE struct leaves members uninitialized; shader must be
+		// null so the CreateVertexShader failure path in MakeAndAddVertexShader doesn't
+		// Release() garbage (the D3D runtime does not write the out-param on some failures,
+		// e.g. DXGI_ERROR_DEVICE_REMOVED).
+		newShader->shader = nullptr;
 		newShader->byteCodeSize = (uint32_t)shaderData.GetBufferSize();
 		newShader->id = descriptor;
 		newShader->vertexDesc = 0;
@@ -2575,8 +2580,12 @@ RE::BSGraphics::VertexShader* ShaderCache::MakeAndAddVertexShader(const RE::BSSh
 
 		const auto result = device->CreateVertexShader(shaderBlob->GetBufferPointer(), newShader->byteCodeSize, nullptr, reinterpret_cast<ID3D11VertexShader**>(&newShader->shader));
 		if (FAILED(result)) {
-			logger::error("Failed to create vertex shader {}::{:X} hr=0x{:08X}",
-				magic_enum::enum_name(shader.shaderType.get()), descriptor, (uint32_t)result);
+			// GetDeviceRemovedReason distinguishes a driver-detected fault (INVALID_CALL /
+			// DEVICE_HUNG / DRIVER_INTERNAL_ERROR) from an hr fabricated by a wrapper layer
+			// (S_OK here means the underlying device is actually still alive).
+			logger::error("Failed to create vertex shader {}::{:X} hr=0x{:08X} removedReason=0x{:08X}",
+				magic_enum::enum_name(shader.shaderType.get()), descriptor, (uint32_t)result,
+				(uint32_t)device->GetDeviceRemovedReason());
 			if (newShader->shader != nullptr) {
 				newShader->shader->Release();
 			}
