@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "ParallelShaderSetup.h"
+#include "UtilityPassReplica.h"
 #include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
 #include "Features/ExponentialHeightFog.h"
@@ -263,6 +264,10 @@ void State::Setup()
 	// enabled; creates per-worker deferred contexts + render-state copies but does not yet
 	// route any pass through them. See docs/development/parallel-shader-setup.md.
 	ParallelShaderSetup::GetSingleton()->Setup();
+
+	// Utility-pass RE replica (baseline reverse engineering). Inert unless
+	// CS_UTIL_RE_MODE=1/2; see src/UtilityPassReplica.h.
+	UtilityPassReplica::GetSingleton()->Setup();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();
