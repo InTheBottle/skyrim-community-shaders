@@ -34,8 +34,13 @@ struct OcclusionCulling : public Feature
 		// Raster budget per frame, closest-first (not a MOC library limit). With the
 		// threaded raster + simplified meshes the default covers typical scenes fully.
 		std::int32_t MaxOccludersPerFrame = 384;
-		// meshopt_simplify occluder meshes at cache time (~half the indices).
-		bool SimplifyOccluders = true;
+		// Occluder mesh simplification, all live-rebuilt on change. Mode: 0=off,
+		// 1=quality (meshopt_simplify), 2=sloppy, 3=prune. Options = meshopt_SimplifyX
+		// bitmask (LockBorder|Sparse|ErrorAbsolute|Prune, quality mode only).
+		int          SimplifyMode = 1;
+		float        SimplifyStrength = 0.25f;  // base target as a fraction of the index count
+		float        SimplifyError = 1e-2f;     // target error (relative unless ErrorAbsolute)
+		unsigned int SimplifyOptions = 0;
 		// Only objects with at least this world-bound radius are occlusion-tested.
 		float OccluderTestMinRadius = 0.0f;
 		// Neutralize vanilla occlusion planes: MOC is the only occlusion mechanism.
@@ -43,11 +48,16 @@ struct OcclusionCulling : public Feature
 		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
 		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
 		bool AlphaTestedOccluders = false;
-		// Main-view small-object cull: drop objects whose bound radius < (min + slope*camDist).
-		// Cheap size test; shrinks the opaque and z-prepass draw lists. Never culls actors.
-		bool  CullSmallObjects = true;
-		float SmallObjectMinSize = 0.0f;
-		float SmallObjectDistSlope = 0.012f;
+		// Two distance-scaled small-object culls (radius < min + slope*camDist), never actors.
+		// VISIBLE: drops the mesh from the main view (pops in motion -> off by default).
+		bool  CullSmallVisible = false;
+		float SmallVisibleMinSize = 0.0f;
+		float SmallVisibleSlope = 0.012f;
+		// SHADOWS: drops the object's shadow only (mesh still renders); cuts shadow-map
+		// draws = the bulk of Utility. Safe (invisible) -> on by default.
+		bool  CullSmallShadows = true;
+		float SmallShadowMinSize = 0.0f;
+		float SmallShadowSlope = 0.015f;
 		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
 		float OccluderMinLeafSize = 100.0f;
 	};

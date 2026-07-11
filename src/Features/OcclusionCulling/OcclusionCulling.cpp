@@ -70,12 +70,19 @@ namespace
 		// with utility/lighting submission -- testing there billed MOC CPU to
 		// those overlay windows for little extra culling.
 		const bool bracketed = MOC::IsSceneListCamera(a_self->camera);
-		// Small-object cull first: pure size/distance math, no raster dependency, so it
-		// culls sub-pixel clutter without waiting on the occlusion buffer. Objects it
-		// keeps then go through the occlusion test.
-		if (bracketed && a_object && (!MOC::TestObjectSmall(a_object) || !MOC::TestObject(a_object))) {
+		// MAIN view: optional small-VISIBLE cull (pure size math, no raster wait) first,
+		// then the MOC occlusion test. TestSmallVisible is a no-op unless the user opts in.
+		if (bracketed && a_object && (!MOC::TestSmallVisible(a_object) || !MOC::TestObject(a_object))) {
 			MarkCulledLikeEngine(a_self, a_object);
 			return;  // small or occluded -> do not accumulate / recurse
+		}
+
+		// SUN shadow-gather pass: small-caster SHADOW cull. A rejection here removes the
+		// caster from every cascade -- its mesh still renders in the main view, only its
+		// shadow is dropped. Pure size math; no MOC buffer is involved for shadows.
+		if (!bracketed && a_object && MOC::IsSunGatherCamera(a_self->camera) && !MOC::TestShadowCasterSmall(a_object)) {
+			MarkCulledLikeEngine(a_self, a_object);
+			return;
 		}
 
 
@@ -314,9 +321,12 @@ void OcclusionCulling::PostPostLoad()
 		if (v > 0)
 			settings.MaxOccludersPerFrame = v;
 	}
-	// CS_MOC_NO_SIMPLIFY=1: disable occluder mesh simplification (A/B of cull-rate impact).
-	if (GetEnvironmentVariableA("CS_MOC_NO_SIMPLIFY", buf, sizeof(buf)) && buf[0] == '1')
-		settings.SimplifyOccluders = false;
+	// CS_MOC_SIMPLIFY_MODE=<0..3>: occluder simplification algorithm override (A/B).
+	if (GetEnvironmentVariableA("CS_MOC_SIMPLIFY_MODE", buf, sizeof(buf)) && buf[0]) {
+		const int v = atoi(buf);
+		if (v >= 0 && v <= 3)
+			settings.SimplifyMode = v;
+	}
 	// CS_MOC_FORCE_CULL=<pct>: DIAGNOSTIC -- force-cull a percentage of kept objects to
 	// measure the fps-per-culled-object curve. Breaks the image; env-only, never persisted.
 	if (GetEnvironmentVariableA("CS_MOC_FORCE_CULL", buf, sizeof(buf)) && buf[0]) {
@@ -333,13 +343,15 @@ void OcclusionCulling::PostPostLoad()
 	// CS_MOC_TREE_OCCLUDERS=0/1: opaque tree parts as occluders, override for A/B runs.
 	if (GetEnvironmentVariableA("CS_MOC_TREE_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.TreeOccluders = buf[0] == '1';
-	// CS_MOC_SMALL=0/1: main-view small-object culling override for A/B runs.
-	if (GetEnvironmentVariableA("CS_MOC_SMALL", buf, sizeof(buf)) && buf[0])
-		settings.CullSmallObjects = buf[0] == '1';
-	if (GetEnvironmentVariableA("CS_MOC_SMALL_MIN", buf, sizeof(buf)) && buf[0])
-		settings.SmallObjectMinSize = static_cast<float>(atof(buf));
-	if (GetEnvironmentVariableA("CS_MOC_SMALL_SLOPE", buf, sizeof(buf)) && buf[0])
-		settings.SmallObjectDistSlope = static_cast<float>(atof(buf));
+	// CS_MOC_SMALL_VIS / CS_MOC_SMALL_SHADOW=0/1: small VISIBLE / SHADOW culls (A/B).
+	if (GetEnvironmentVariableA("CS_MOC_SMALL_VIS", buf, sizeof(buf)) && buf[0])
+		settings.CullSmallVisible = buf[0] == '1';
+	if (GetEnvironmentVariableA("CS_MOC_SMALL_VIS_SLOPE", buf, sizeof(buf)) && buf[0])
+		settings.SmallVisibleSlope = static_cast<float>(atof(buf));
+	if (GetEnvironmentVariableA("CS_MOC_SMALL_SHADOW", buf, sizeof(buf)) && buf[0])
+		settings.CullSmallShadows = buf[0] == '1';
+	if (GetEnvironmentVariableA("CS_MOC_SMALL_SHADOW_SLOPE", buf, sizeof(buf)) && buf[0])
+		settings.SmallShadowSlope = static_cast<float>(atof(buf));
 	// CS_MOC_ALPHA_OCCLUDERS=0/1: alpha-TESTED geometry as solid occluders (A/B).
 	if (GetEnvironmentVariableA("CS_MOC_ALPHA_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.AlphaTestedOccluders = buf[0] == '1';
@@ -437,16 +449,32 @@ void OcclusionCulling::SyncSettingsToMOC()
 	// 4096 and silently override the tuned default (measured: 1463 occluders ->
 	// raster 6.5ms vs 384 -> 1.9ms). The slider can still lower it.
 	MOC::MaxOccludersPerFrame = static_cast<std::uint32_t>(std::clamp(settings.MaxOccludersPerFrame, 1, 512));
-	MOC::SimplifyOccluders = settings.SimplifyOccluders;  // affects newly cached meshes
+	// A simplification change must re-run on already-cached meshes, so invalidate the
+	// mesh cache when either simplify knob differs from what MOC currently holds. Guarded
+	// on IsInitialized so the boot-time sync (cache empty) never triggers a rebuild.
+	const bool simplifyChanged = MOC::IsInitialized() &&
+	                             (MOC::SimplifyMode != settings.SimplifyMode ||
+									 MOC::SimplifyStrength != settings.SimplifyStrength ||
+									 MOC::SimplifyError != settings.SimplifyError ||
+									 MOC::SimplifyOptions != settings.SimplifyOptions);
+	MOC::SimplifyMode = std::clamp(settings.SimplifyMode, 0, 3);
+	MOC::SimplifyStrength = std::clamp(settings.SimplifyStrength, 0.02f, 1.0f);
+	MOC::SimplifyError = std::max(settings.SimplifyError, 0.0f);
+	MOC::SimplifyOptions = settings.SimplifyOptions;
+	if (simplifyChanged)
+		MOC::RebuildOccluderMeshCache();
 	MOC::OccluderTestMinRadius = settings.OccluderTestMinRadius;
 	MOC::ExclusiveOcclusion = settings.ExclusiveOcclusion;
 	MOC::OccluderMinLeafSize = settings.OccluderMinLeafSize;
 	MOC::CullTreeLODGroups = settings.CullTreeLOD;
 	MOC::TreeOccluders = settings.TreeOccluders;
 	MOC::AlphaTestedOccluders = settings.AlphaTestedOccluders;
-	MOC::CullSmallObjects = settings.CullSmallObjects;
-	MOC::SmallObjectMinSize = settings.SmallObjectMinSize;
-	MOC::SmallObjectDistSlope = settings.SmallObjectDistSlope;
+	MOC::CullSmallVisible = settings.CullSmallVisible;
+	MOC::SmallVisibleMinSize = settings.SmallVisibleMinSize;
+	MOC::SmallVisibleSlope = settings.SmallVisibleSlope;
+	MOC::CullSmallShadows = settings.CullSmallShadows;
+	MOC::SmallShadowMinSize = settings.SmallShadowMinSize;
+	MOC::SmallShadowSlope = settings.SmallShadowSlope;
 	MOC::DiagForceCullPercent = diagForceCullPercent;  // env-only diagnostic, not persisted
 }
 
@@ -517,18 +545,44 @@ void OcclusionCulling::DrawSettings()
 
 	ImGui::Spacing();
 	ImGui::TextDisabled("%s", T("feature.occlusion_culling.small_header", "Small-Object Culling"));
-	changed |= ImGui::Checkbox(T("feature.occlusion_culling.small_objects", "Cull Small Objects"), &settings.CullSmallObjects);
-	if (auto* t = T("feature.occlusion_culling.small_objects_tooltip", "Drops small objects from the main view once they are far enough that they cover a negligible screen area. Cheap size test; shrinks both the opaque and depth passes. Threshold grows with distance; actors are never culled."); ImGui::IsItemHovered())
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.small_shadows", "Cull Small Object Shadows"), &settings.CullSmallShadows);
+	if (auto* t = T("feature.occlusion_culling.small_shadows_tooltip", "Drops distant small objects from the SHADOW MAPS only -- their mesh still renders, just its shadow disappears. Cuts shadow-map draw calls (the bulk of the Utility shader time) with no visible change. Threshold grows with distance; actors are never culled. Safe to raise."); ImGui::IsItemHovered())
 		ImGui::SetTooltip("%s", t);
-	if (settings.CullSmallObjects) {
-		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.small_min", "Small Cull Base Size"), &settings.SmallObjectMinSize, 0.0f, 128.0f, "%.0f");
-		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.small_slope", "Small Cull Distance Growth"), &settings.SmallObjectDistSlope, 0.0f, 0.08f, "%.3f");
-	}
+	if (settings.CullSmallShadows)
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.small_shadow_slope", "Shadow Cull Distance Growth"), &settings.SmallShadowSlope, 0.0f, 0.08f, "%.3f");
 
-	changed |= ImGui::Checkbox(T("feature.occlusion_culling.simplify", "Simplify Occluder Meshes"), &settings.SimplifyOccluders);
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.small_visible", "Cull Small Visible Objects"), &settings.CullSmallVisible);
+	if (auto* t = T("feature.occlusion_culling.small_visible_tooltip", "Drops distant small objects from the MAIN VIEW entirely (their mesh stops rendering). Saves the most but removes on-screen geometry, so it pops in motion -- tune conservatively and check while moving. Actors are never culled."); ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", t);
+	if (settings.CullSmallVisible)
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.small_visible_slope", "Visible Cull Distance Growth"), &settings.SmallVisibleSlope, 0.0f, 0.08f, "%.3f");
+
+	ImGui::Spacing();
+	ImGui::TextDisabled("%s", T("feature.occlusion_culling.simplify_header", "Occluder Mesh Simplification"));
+	// Every meshoptimizer simplifier, selectable live -- each change rebuilds the loaded
+	// occluder geometry so the effect (raster cost, cull accuracy, buffer view) is visible
+	// immediately.
+	const char* const kSimplifyModes[] = {
+		T("feature.occlusion_culling.simplify_off", "Off (full detail)"),
+		T("feature.occlusion_culling.simplify_quality", "Quality (meshopt_simplify)"),
+		T("feature.occlusion_culling.simplify_sloppy", "Sloppy (meshopt_simplifySloppy)"),
+		T("feature.occlusion_culling.simplify_prune", "Prune (meshopt_simplifyPrune)")
+	};
+	changed |= ImGui::Combo(T("feature.occlusion_culling.simplify_mode", "Simplification Algorithm"), &settings.SimplifyMode, kSimplifyModes, IM_ARRAYSIZE(kSimplifyModes));
 	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("%s", T("feature.occlusion_culling.simplify_tooltip",
-			"Reduce occluder meshes to ~half the triangles at cache time (meshoptimizer). Big raster speedup; affects newly loaded meshes."));
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.simplify_mode_tooltip",
+			"Which meshoptimizer algorithm simplifies the occluder meshes. Quality preserves topology; Sloppy is faster and coarser (the silhouette may grow); Prune only drops small disconnected pieces. Changing any of these rebuilds the loaded occluders immediately."));
+	if (settings.SimplifyMode != 0) {
+		if (settings.SimplifyMode != 3)  // Prune has no ratio target
+			changed |= ImGui::SliderFloat(T("feature.occlusion_culling.simplify_strength", "Target Detail"), &settings.SimplifyStrength, 0.02f, 1.0f, "%.2f");
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.simplify_error", "Target Error"), &settings.SimplifyError, 0.0001f, 1.0f, "%.4f", ImGuiSliderFlags_Logarithmic);
+		if (settings.SimplifyMode == 1) {  // option flags apply to Quality only
+			changed |= ImGui::CheckboxFlags(T("feature.occlusion_culling.simplify_lockborder", "Lock Border"), &settings.SimplifyOptions, 1u << 0);
+			changed |= ImGui::CheckboxFlags(T("feature.occlusion_culling.simplify_sparse", "Sparse"), &settings.SimplifyOptions, 1u << 1);
+			changed |= ImGui::CheckboxFlags(T("feature.occlusion_culling.simplify_errorabs", "Absolute Error"), &settings.SimplifyOptions, 1u << 2);
+			changed |= ImGui::CheckboxFlags(T("feature.occlusion_culling.simplify_pruneopt", "Prune Components"), &settings.SimplifyOptions, 1u << 3);
+		}
+	}
 
 	ImGui::EndDisabled();
 
@@ -561,8 +615,16 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.OccluderFirstLevelMinSize = o_json["OccluderFirstLevelMinSize"];
 	if (o_json["MaxOccludersPerFrame"].is_number_integer())
 		settings.MaxOccludersPerFrame = o_json["MaxOccludersPerFrame"];
-	if (o_json["SimplifyOccluders"].is_boolean())
-		settings.SimplifyOccluders = o_json["SimplifyOccluders"];
+	if (o_json["SimplifyMode"].is_number_integer())
+		settings.SimplifyMode = o_json["SimplifyMode"];
+	else if (o_json["SimplifyOccluders"].is_boolean())  // migrate the old bool
+		settings.SimplifyMode = o_json["SimplifyOccluders"] ? 1 : 0;
+	if (o_json["SimplifyStrength"].is_number())
+		settings.SimplifyStrength = o_json["SimplifyStrength"];
+	if (o_json["SimplifyError"].is_number())
+		settings.SimplifyError = o_json["SimplifyError"];
+	if (o_json["SimplifyOptions"].is_number_unsigned())
+		settings.SimplifyOptions = o_json["SimplifyOptions"];
 	if (o_json["OccluderTestMinRadius"].is_number())
 		settings.OccluderTestMinRadius = o_json["OccluderTestMinRadius"];
 	if (o_json["ExclusiveOcclusion"].is_boolean())
@@ -575,12 +637,18 @@ void OcclusionCulling::LoadSettings(json& o_json)
 		settings.TreeOccluders = o_json["TreeOccluders"];
 	if (o_json["AlphaTestedOccluders"].is_boolean())
 		settings.AlphaTestedOccluders = o_json["AlphaTestedOccluders"];
-	if (o_json["CullSmallObjects"].is_boolean())
-		settings.CullSmallObjects = o_json["CullSmallObjects"];
-	if (o_json["SmallObjectMinSize"].is_number())
-		settings.SmallObjectMinSize = o_json["SmallObjectMinSize"];
-	if (o_json["SmallObjectDistSlope"].is_number())
-		settings.SmallObjectDistSlope = o_json["SmallObjectDistSlope"];
+	if (o_json["CullSmallVisible"].is_boolean())
+		settings.CullSmallVisible = o_json["CullSmallVisible"];
+	if (o_json["SmallVisibleMinSize"].is_number())
+		settings.SmallVisibleMinSize = o_json["SmallVisibleMinSize"];
+	if (o_json["SmallVisibleSlope"].is_number())
+		settings.SmallVisibleSlope = o_json["SmallVisibleSlope"];
+	if (o_json["CullSmallShadows"].is_boolean())
+		settings.CullSmallShadows = o_json["CullSmallShadows"];
+	if (o_json["SmallShadowMinSize"].is_number())
+		settings.SmallShadowMinSize = o_json["SmallShadowMinSize"];
+	if (o_json["SmallShadowSlope"].is_number())
+		settings.SmallShadowSlope = o_json["SmallShadowSlope"];
 
 	SyncSettingsToMOC();
 }
@@ -592,16 +660,22 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["OccluderMaxDistance"] = settings.OccluderMaxDistance;
 	o_json["OccluderFirstLevelMinSize"] = settings.OccluderFirstLevelMinSize;
 	o_json["MaxOccludersPerFrame"] = settings.MaxOccludersPerFrame;
-	o_json["SimplifyOccluders"] = settings.SimplifyOccluders;
+	o_json["SimplifyMode"] = settings.SimplifyMode;
+	o_json["SimplifyStrength"] = settings.SimplifyStrength;
+	o_json["SimplifyError"] = settings.SimplifyError;
+	o_json["SimplifyOptions"] = settings.SimplifyOptions;
 	o_json["OccluderTestMinRadius"] = settings.OccluderTestMinRadius;
 	o_json["ExclusiveOcclusion"] = settings.ExclusiveOcclusion;
 	o_json["OccluderMinLeafSize"] = settings.OccluderMinLeafSize;
 	o_json["CullTreeLOD"] = settings.CullTreeLOD;
 	o_json["TreeOccluders"] = settings.TreeOccluders;
 	o_json["AlphaTestedOccluders"] = settings.AlphaTestedOccluders;
-	o_json["CullSmallObjects"] = settings.CullSmallObjects;
-	o_json["SmallObjectMinSize"] = settings.SmallObjectMinSize;
-	o_json["SmallObjectDistSlope"] = settings.SmallObjectDistSlope;
+	o_json["CullSmallVisible"] = settings.CullSmallVisible;
+	o_json["SmallVisibleMinSize"] = settings.SmallVisibleMinSize;
+	o_json["SmallVisibleSlope"] = settings.SmallVisibleSlope;
+	o_json["CullSmallShadows"] = settings.CullSmallShadows;
+	o_json["SmallShadowMinSize"] = settings.SmallShadowMinSize;
+	o_json["SmallShadowSlope"] = settings.SmallShadowSlope;
 }
 
 void OcclusionCulling::RestoreDefaultSettings()

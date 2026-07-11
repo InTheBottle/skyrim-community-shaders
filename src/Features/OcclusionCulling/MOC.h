@@ -36,7 +36,10 @@ namespace MOC
 	extern float         OccluderMaxDistance;        // 2D distance cap for occluder gather (default 20000)
 	extern float         OccluderFirstLevelMinSize;  // min worldBound radius of a top-level occluder (default 200)
 	extern std::uint32_t MaxOccludersPerFrame;       // raster budget, closest-first (default 512; not a library limit)
-	extern bool          SimplifyOccluders;          // meshopt_simplify occluder meshes at cache time
+	extern int           SimplifyMode;               // 0=off 1=quality 2=sloppy 3=prune (live-rebuild)
+	extern float         SimplifyStrength;           // base simplify target as fraction of index count
+	extern float         SimplifyError;              // target error (relative unless ErrorAbsolute option)
+	extern unsigned int  SimplifyOptions;            // meshopt_SimplifyX bitmask (quality mode only)
 	extern float         OccluderTestMinRadius;      // min world-bound radius for per-object tests
 	extern bool          ExclusiveOcclusion;         // neutralize vanilla occlusion planes (MOC is the only occlusion)
 	extern float         OccluderMinLeafSize;        // gather leaf gate: skip occluder meshes smaller than this
@@ -44,9 +47,12 @@ namespace MOC
 	extern bool          CullTreeLODGroups;          // occlusion-test distant-tree LOD instance groups
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
-	extern bool          CullSmallObjects;           // main-view distance-scaled small-object culling
-	extern float         SmallObjectMinSize;         // base bound-radius threshold at the camera
-	extern float         SmallObjectDistSlope;       // threshold growth per unit of camera distance
+	extern bool          CullSmallVisible;           // main-view distance-scaled small-object cull (mesh stops rendering)
+	extern float         SmallVisibleMinSize;        // visible cull: base bound-radius threshold at the camera
+	extern float         SmallVisibleSlope;          // visible cull: threshold growth per unit of camera distance
+	extern bool          CullSmallShadows;           // shadow-map distance-scaled small-caster cull (shadow only)
+	extern float         SmallShadowMinSize;         // shadow cull: base bound-radius threshold at the camera
+	extern float         SmallShadowSlope;           // shadow cull: threshold growth per unit of camera distance
 
 	/** @brief Create the global MOC instance (1280x720). Safe to call once; no-op if already initialized. */
 	void Init();
@@ -113,8 +119,14 @@ namespace MOC
 	 */
 	bool IsSceneListCamera(const RE::NiCamera* a_camera);
 
-	/** @brief Distance-scaled main-view small-object cull (keep=true; never actors/kAlwaysDraw). */
-	bool TestObjectSmall(RE::NiAVObject* a_object);
+	/** @brief True for the sun shadow-gather camera (stage-1 caster pre-gather). */
+	bool IsSunGatherCamera(const RE::NiCamera* a_camera);
+
+	/** @brief Main-view small-object cull -- drops the mesh (keep=true; never actors/kAlwaysDraw). */
+	bool TestSmallVisible(RE::NiAVObject* a_object);
+
+	/** @brief Small-caster shadow cull -- drops the shadow only (keep=true; never actors/kAlwaysDraw). */
+	bool TestShadowCasterSmall(RE::NiAVObject* a_object);
 
 	/**
 	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a
@@ -122,6 +134,14 @@ namespace MOC
 	 *        races freed scene-graph nodes otherwise.
 	 */
 	void QuiesceBuilder();
+
+	/**
+	 * @brief Invalidate the cached converted/simplified occluder meshes so the builder
+	 *        re-converts them with the current simplification settings. Call after a
+	 *        SimplifyMode / Strength / Error / Options change to rebuild the active geometry
+	 *        live. Thread-safe (sets a flag the builder processes on its next kick).
+	 */
+	void RebuildOccluderMeshCache();
 
 	/** @brief Drop the cached converted verts/indices for a torn-down BSGraphics::TriShape. */
 	void RemoveCachedGeometry(void* a_rendererData);

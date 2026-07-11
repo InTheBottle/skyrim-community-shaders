@@ -60,10 +60,22 @@ namespace MOC
 	// library limit -- a budget for the per-frame build. With the threaded raster +
 	// simplified meshes the default covers everything a typical scene gathers.
 	std::uint32_t MaxOccludersPerFrame = 4096;
-	// LOD-simplify occluder meshes to ~half the indices at cache time (meshopt_simplify,
-	// Nukem's parameters). Cuts raster cost ~2-3x; conservativeness is preserved within
-	// the simplifier's error bound (1e-3 of mesh extents).
-	bool SimplifyOccluders = true;
+	// Occluder mesh simplification at cache time -- fully live-tunable (changing ANY of
+	// these invalidates the cache and rebuilds the active occluder geometry). Every
+	// meshoptimizer algorithm is selectable so the effect can be compared in-game.
+	//   Mode: 0 = Off (full-res occluders)
+	//         1 = Quality (meshopt_simplify, topology-preserving, honours Options)
+	//         2 = Sloppy  (meshopt_simplifySloppy, ignores topology, silhouette may move)
+	//         3 = Prune   (meshopt_simplifyPrune, only drops small disconnected parts)
+	//   Strength = base target as a fraction of the index count (Quality/Sloppy).
+	//   Error    = target error (relative to mesh extents unless the ErrorAbsolute
+	//              option bit is set); also the Prune size threshold.
+	//   Options  = meshopt_SimplifyX bitmask (Quality only): LockBorder|Sparse|
+	//              ErrorAbsolute|Prune = bits 0..3.
+	int          SimplifyMode = 1;
+	float        SimplifyStrength = 0.25f;
+	float        SimplifyError = 1e-2f;
+	unsigned int SimplifyOptions = 0;
 	// Only objects/subtrees with at least this world-bound radius are occlusion-tested.
 	// Lower = more tested objects (more draws saved) at more test cost per frame.
 	float OccluderTestMinRadius = 0.0f;
@@ -81,12 +93,21 @@ namespace MOC
 	bool CullTreeLODGroups = true;
 	bool TreeOccluders = true;
 	bool AlphaTestedOccluders = false;
-	// Main-view small-object cull: drop objects whose bound radius is below
-	// (min + slope*camDist). Cheap size/distance test, no raster; shrinks the
-	// opaque and z-prepass draw lists. Never culls actors or kAlwaysDraw objects.
-	bool  CullSmallObjects = true;
-	float SmallObjectMinSize = 0.0f;
-	float SmallObjectDistSlope = 0.012f;
+	// Two independent distance-scaled small-object culls, both pure size/distance
+	// math vs the player camera (min + slope*camDist), no raster buffer. Neither
+	// ever culls actors or kAlwaysDraw objects.
+	//   VISIBLE: drops the small object from the MAIN view (its mesh stops
+	//     rendering). Off by default -- removing on-screen objects pops in motion.
+	//   SHADOWS: drops the small object from the SHADOW MAPS only (mesh still
+	//     renders; just its shadow disappears). On by default -- shadow-map draws
+	//     are the bulk of the Utility shader time and a distant small object's
+	//     shadow is imperceptible, so this cuts Utility with no visible change.
+	bool  CullSmallVisible = false;
+	float SmallVisibleMinSize = 0.0f;
+	float SmallVisibleSlope = 0.012f;
+	bool  CullSmallShadows = true;
+	float SmallShadowMinSize = 0.0f;
+	float SmallShadowSlope = 0.015f;
 
 	namespace
 	{
@@ -116,8 +137,11 @@ namespace MOC
 		// a buffer built at kick time is valid for the whole frame. The ortho
 		// sun volume is approximated by a pushed-back narrow-FOV perspective
 		// camera so all existing (perspective, 1/w) machinery applies.
-		std::atomic<std::uint64_t>       g_smallTested{ 0 };
-		std::atomic<std::uint64_t>       g_smallCulled{ 0 };
+		std::atomic<const RE::NiCamera*> g_sunGatherCam{ nullptr };  // shadow-caster pre-gather cam
+		std::atomic<std::uint64_t>       g_visTested{ 0 };
+		std::atomic<std::uint64_t>       g_visCulled{ 0 };
+		std::atomic<std::uint64_t>       g_shadowTested{ 0 };
+		std::atomic<std::uint64_t>       g_shadowCulled{ 0 };
 		CullingThreadpool*      g_pool = nullptr;
 		bool                    g_init = false;
 
@@ -279,6 +303,21 @@ namespace MOC
 		std::unordered_map<void*, IndexPair> g_indexMap;
 		std::mutex                           g_cacheMutex;
 
+		// Free all three index buffers an IndexPair owns (base + both LODs). The old
+		// per-mesh/shutdown frees only released Data, leaking the LOD buffers.
+		inline void FreeIndexPair(IndexPair& p)
+		{
+			delete[] p.Data;
+			delete[] p.Lod1Data;
+			delete[] p.Lod2Data;
+			p = {};
+		}
+
+		// Set by the UI/REST thread when a simplification setting changes; the builder
+		// clears the mesh cache at the top of its next kick (it owns the ready list, so
+		// no cross-thread race) and re-converts every occluder with the new settings.
+		std::atomic<bool> g_rebuildMeshCache{ false };
+
 
 		// WorldScenegraph global (holds a NiNode*). Nukem 0x2F4CE30 -> SE REL::ID(517006).
 		REL::Relocation<RE::NiNode**> g_worldScenegraph{ REL::ID(517006) };
@@ -419,25 +458,42 @@ namespace MOC
 				p.Count = triCount * 3;
 				p.Data = ConvertIndices(reinterpret_cast<const std::uint16_t*>(rendererData->rawIndexData), p.Count);
 
-				// LOD-simplify big occluder meshes at cache time (Nukem's parameters:
-				// target half the indices, 1e-3 relative error, only above 300 indices).
-				// The raw slot-0 buffer IS the float3-position stream meshopt expects.
-				if (SimplifyOccluders && p.Count > 300) {
-					const std::size_t simplified = meshopt_simplify(
-						p.Data, p.Data, p.Count,
-						reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
-						static_cast<std::size_t>(p.Count * 0.25f), 1e-3f, 0, nullptr);
-					p.Count = static_cast<std::uint32_t>(simplified);
+				// Simplify the base occluder mesh via the selected meshoptimizer algorithm
+				// (only above 300 indices). The raw slot-0 buffer IS the float3-position
+				// stream meshopt expects; in-place (dst == src) is supported.
+				const float* const vpos = reinterpret_cast<const float*>(rendererData->rawVertexData);
+				if (SimplifyMode != 0 && p.Count > 300) {
+					const std::size_t target = static_cast<std::size_t>(p.Count * SimplifyStrength);
+					std::size_t       simplified = p.Count;
+					switch (SimplifyMode) {
+					case 1:  // quality, topology-preserving (honours Options bitmask)
+						simplified = meshopt_simplify(p.Data, p.Data, p.Count, vpos, vertCount, stride,
+							target, SimplifyError, SimplifyOptions, nullptr);
+						break;
+					case 2:  // sloppy, faster, silhouette may move
+						simplified = meshopt_simplifySloppy(p.Data, p.Data, p.Count, vpos, vertCount, stride,
+							target, SimplifyError, nullptr);
+						break;
+					case 3:  // prune small disconnected components only (no ratio target)
+						simplified = meshopt_simplifyPrune(p.Data, p.Data, p.Count, vpos, vertCount, stride,
+							SimplifyError);
+						break;
+					default:
+						break;
+					}
+					if (simplified >= 3 && simplified <= p.Count)
+						p.Count = static_cast<std::uint32_t>(simplified);
 				}
-				// Runtime occluder LODs: sloppy targets ~10% and ~3% of the BASE
+				// Runtime occluder LODs: sloppy targets ~30% and ~8% of the BASE
 				// indices; result_error reported back for the per-frame projected
-				// error budget. Built once per mesh on the builder thread.
-				if (SimplifyOccluders && p.Count > 900) {
+				// error budget. Built once per mesh on the builder thread (skipped
+				// when simplification is off -- the full mesh is then the only LOD).
+				if (SimplifyMode != 0 && p.Count > 900) {
 					float err1 = 0.0f;
 					auto* lod1 = new std::uint32_t[p.Count];
 					const std::size_t c1 = meshopt_simplifySloppy(
 						lod1, p.Data, p.Count,
-						reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
+						vpos, vertCount, stride,
 						static_cast<std::size_t>(p.Count * 0.30f), 2e-2f, &err1);
 					if (c1 >= 3 && c1 < p.Count) {
 						p.Lod1Data = lod1;
@@ -451,7 +507,7 @@ namespace MOC
 						auto* lod2 = new std::uint32_t[p.Lod1Count];
 						const std::size_t c2 = meshopt_simplifySloppy(
 							lod2, p.Lod1Data, p.Lod1Count,
-							reinterpret_cast<const float*>(rendererData->rawVertexData), vertCount, stride,
+							vpos, vertCount, stride,
 							static_cast<std::size_t>(p.Count * 0.08f), 8e-2f, &err2);
 						if (c2 >= 3 && c2 < p.Lod1Count) {
 							p.Lod2Data = lod2;
@@ -1112,6 +1168,26 @@ namespace MOC
 				}
 				g_builderBusy.store(true, std::memory_order_release);
 
+				// Live mesh-cache rebuild: a simplification setting changed, so free every
+				// cached converted mesh (base + LODs) and drop the prepared/pending lists
+				// (they point INTO the freed cache). This kick then rasterizes nothing and
+				// re-gathers -- the next kick rebuilds with the new settings. Done here on
+				// the builder thread so nothing else is touching the lists.
+				if (g_rebuildMeshCache.exchange(false, std::memory_order_acq_rel)) {
+					{
+						std::scoped_lock lock(g_cacheMutex);
+						for (auto& [key, verts] : g_vertMap)
+							delete[] verts;
+						for (auto& [key, idx] : g_indexMap)
+							FreeIndexPair(idx);
+						g_vertMap.clear();
+						g_indexMap.clear();
+					}
+					g_readyList.clear();
+					g_geoList.clear();
+					logger::info("[MOC] occluder mesh cache invalidated; rebuilding with new simplification settings");
+				}
+
 				const auto t0 = std::chrono::high_resolution_clock::now();
 
 				// Phase 1: rasterize last kick's prepared list. All pool calls live here.
@@ -1559,7 +1635,7 @@ namespace MOC
 		for (auto& [key, verts] : g_vertMap)
 			delete[] verts;
 		for (auto& [key, idx] : g_indexMap)
-			delete[] idx.Data;
+			FreeIndexPair(idx);
 		g_vertMap.clear();
 		g_indexMap.clear();
 		g_geoList.clear();
@@ -1621,12 +1697,12 @@ namespace MOC
 
 	void RemoveCachedGeometry(void* a_rendererData)
 	{
-		std::uint32_t* indices = nullptr;
-		float*         verts = nullptr;
+		IndexPair idx{};
+		float*    verts = nullptr;
 		{
 			std::scoped_lock lock(g_cacheMutex);
 			if (auto it = g_indexMap.find(a_rendererData); it != g_indexMap.end()) {
-				indices = it->second.Data;
+				idx = it->second;
 				g_indexMap.erase(it);
 			}
 			if (auto it = g_vertMap.find(a_rendererData); it != g_vertMap.end()) {
@@ -1634,8 +1710,15 @@ namespace MOC
 				g_vertMap.erase(it);
 			}
 		}
-		delete[] indices;
+		FreeIndexPair(idx);  // base + both LODs (the old path leaked the LODs)
 		delete[] verts;
+	}
+
+	void RebuildOccluderMeshCache()
+	{
+		// Ask the builder to invalidate + rebuild its converted-mesh cache on its next
+		// kick (see the flag handler in BuilderLoop). Cheap and thread-safe -- just a flag.
+		g_rebuildMeshCache.store(true, std::memory_order_release);
 	}
 
 	// Returns true iff this cull pass is the MAIN world view and the occluder buffer is
@@ -1713,6 +1796,22 @@ namespace MOC
 		// all our tests feed camera-relative centers (posAdjust already subtracted).
 		g_frustum.CreateFromViewProjMatrix(g_viewProj);
 
+		// Identify the sun shadow-gather camera (dirLight = ShadowSceneNode+0x210,
+		// gather cam +0x578; IDA 2026-07-11) so the small-caster SHADOW cull runs on
+		// that pass and nowhere else. No matrices/buffer -- the cull is pure size math,
+		// NOT a MOC occlusion test (MOC never rasterizes a shadow view).
+		if (CullSmallShadows) {
+			static REL::Relocation<std::uint8_t**> ssnGlobal{ REL::ID(513211) };
+			const RE::NiCamera*                    sunCam = nullptr;
+			if (auto* ssn = *ssnGlobal) {
+				if (auto* dirLight = *reinterpret_cast<std::uint8_t**>(ssn + 0x210))
+					sunCam = *reinterpret_cast<const RE::NiCamera**>(dirLight + 0x578);
+			}
+			g_sunGatherCam.store(sunCam, std::memory_order_release);
+		} else {
+			g_sunGatherCam.store(nullptr, std::memory_order_release);
+		}
+
 		const float          fov = atanf(1.0f / g_proj.r[0].m128_f32[0]) * 2.0f * (180.0f / 3.14159265359f);
 		const float          aspect = g_proj.r[1].m128_f32[1] / g_proj.r[0].m128_f32[0];
 		const float          mynear = g_proj.r[2].m128_f32[3] / (g_proj.r[2].m128_f32[2] - 1.0f);
@@ -1747,8 +1846,9 @@ namespace MOC
 				g_culledAABB.load(), g_testedAABB.load(), g_culledSphere.load(), g_testedSphere.load(),
 				g_treeCulled.load(), g_treeTested.load(),
 				g_waitNs.exchange(0, std::memory_order_relaxed) / 1e6, g_waitCount.exchange(0, std::memory_order_relaxed));
-			logger::info("[MOC][small] tested={} culled={}",
-				g_smallTested.load(std::memory_order_relaxed), g_smallCulled.load(std::memory_order_relaxed));
+			logger::info("[MOC][small] visible tested={} culled={} | shadow tested={} culled={}",
+				g_visTested.load(std::memory_order_relaxed), g_visCulled.load(std::memory_order_relaxed),
+				g_shadowTested.load(std::memory_order_relaxed), g_shadowCulled.load(std::memory_order_relaxed));
 
 		}
 		g_buildDone.store(frame, std::memory_order_release);
@@ -1991,36 +2091,64 @@ namespace MOC
 		return a_camera && a_camera == GetMainCamera();
 	}
 
-	// Distance-scaled small-object culling for the MAIN view (user/HZD design): an
-	// object whose bounding sphere is smaller than (min + slope*camDist) covers a
-	// negligible screen area at that distance and is dropped from the main scene
-	// list -- which shrinks BOTH the opaque (Lighting) pass and the z-prepass
-	// (Utility), the cheap counterpart to occlusion testing. Threshold GROWS with
-	// distance from the player camera (g_posAdjust): distant clutter is culled,
-	// nearby objects always survive. Actors (skinned-bounds lag) and kAlwaysDraw
-	// objects are never culled. Pure size/distance math, no raster buffer.
-	// Returns true = keep.
-	bool TestObjectSmall(RE::NiAVObject* a_object)
+	bool IsSunGatherCamera(const RE::NiCamera* a_camera)
 	{
-		if (!CullSmallObjects || !a_object)
+		return a_camera && a_camera == g_sunGatherCam.load(std::memory_order_acquire);
+	}
+
+	namespace
+	{
+		// Shared distance-scaled small-object test (user/HZD design): an object whose
+		// bounding sphere is smaller than (min + slope*camDist) covers a negligible
+		// area at that distance. Threshold GROWS with distance from the player camera
+		// (g_posAdjust): distant clutter is culled, nearby objects always survive.
+		// Actors (skinned-bounds lag) and kAlwaysDraw objects are never culled.
+		// Pure size/distance math, no raster buffer. Returns true = keep.
+		inline bool SmallCullKeeps(RE::NiAVObject* a_object, float a_minSize, float a_slope)
+		{
+			const auto fl = a_object->GetFlags().underlying();
+			if ((fl & 0x800) || (fl & 0x1000))  // kAlwaysDraw / shortcut -> never cull
+				return true;
+			if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
+				return true;  // never size-cull actors (skinned bounds lag one frame)
+			const auto& b = a_object->worldBound;
+			if (b.radius <= 0.0f)
+				return true;
+			const float dx = b.center.x - g_posAdjust.x;
+			const float dy = b.center.y - g_posAdjust.y;
+			const float dz = b.center.z - g_posAdjust.z;
+			const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+			return b.radius >= a_minSize + a_slope * dist;
+		}
+	}
+
+	// Small VISIBLE-object cull: drops the small object from the MAIN view (its mesh
+	// stops rendering). Shrinks the opaque + z-prepass draw lists but removes on-screen
+	// geometry, so it pops in motion -- off by default. Returns true = keep.
+	bool TestSmallVisible(RE::NiAVObject* a_object)
+	{
+		if (!CullSmallVisible || !a_object)
 			return true;
-		const auto fl = a_object->GetFlags().underlying();
-		if ((fl & 0x800) || (fl & 0x1000))  // kAlwaysDraw / shortcut -> never cull
-			return true;
-		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
-			return true;  // never size-cull actors (skinned bounds lag one frame)
-		const auto& b = a_object->worldBound;
-		if (b.radius <= 0.0f)
-			return true;
-		const float dx = b.center.x - g_posAdjust.x;
-		const float dy = b.center.y - g_posAdjust.y;
-		const float dz = b.center.z - g_posAdjust.z;
-		const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-		const float threshold = SmallObjectMinSize + SmallObjectDistSlope * dist;
-		const bool  keep = b.radius >= threshold;
-		g_smallTested.fetch_add(1, std::memory_order_relaxed);
+		const bool keep = SmallCullKeeps(a_object, SmallVisibleMinSize, SmallVisibleSlope);
+		g_visTested.fetch_add(1, std::memory_order_relaxed);
 		if (!keep)
-			g_smallCulled.fetch_add(1, std::memory_order_relaxed);
+			g_visCulled.fetch_add(1, std::memory_order_relaxed);
+		return keep;
+	}
+
+	// Small-caster SHADOW cull: drops the small object from the SHADOW MAPS only (its
+	// mesh still renders in the main view; only its shadow disappears). Runs on the
+	// sun shadow-gather pass, so a rejection removes the caster from every cascade,
+	// cutting shadow-map draws -- the bulk of the Utility shader time -- with no
+	// visible change. Returns true = keep.
+	bool TestShadowCasterSmall(RE::NiAVObject* a_object)
+	{
+		if (!CullSmallShadows || !a_object)
+			return true;
+		const bool keep = SmallCullKeeps(a_object, SmallShadowMinSize, SmallShadowSlope);
+		g_shadowTested.fetch_add(1, std::memory_order_relaxed);
+		if (!keep)
+			g_shadowCulled.fetch_add(1, std::memory_order_relaxed);
 		return keep;
 	}
 
