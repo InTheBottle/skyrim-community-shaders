@@ -42,8 +42,8 @@ struct OcclusionCulling : public Feature
 		float OccluderTestMinRadius = 0.0f;
 		// Neutralize vanilla occlusion planes: MOC is the only occlusion mechanism.
 		bool ExclusiveOcclusion = false;
-		bool CullTreeLOD = true;
-		bool TreeOccluders = true;
+		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
+		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
 		bool AlphaTestedOccluders = false;
 		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
 		float OccluderMinLeafSize = 100.0f;
