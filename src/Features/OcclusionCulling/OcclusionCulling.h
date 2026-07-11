@@ -61,7 +61,7 @@ struct OcclusionCulling : public Feature
 		// draws = the bulk of Utility. Safe (invisible) -> on by default.
 		bool  CullSmallShadows = true;
 		float SmallShadowMinSize = 0.0f;
-		float SmallShadowSlope = 0.015f;
+		float SmallShadowSlope = 0.03f;  // measured: nets Utility down ~0.3ms vs occlusion-off
 		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
 		float OccluderMinLeafSize = 100.0f;
 	};

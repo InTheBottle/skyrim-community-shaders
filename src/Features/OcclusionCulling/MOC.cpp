@@ -119,7 +119,7 @@ namespace MOC
 	float SmallVisibleSlope = 0.012f;
 	bool  CullSmallShadows = true;
 	float SmallShadowMinSize = 0.0f;
-	float SmallShadowSlope = 0.015f;
+	float SmallShadowSlope = 0.03f;  // measured to net Utility down vs occlusion-off
 
 	namespace
 	{
