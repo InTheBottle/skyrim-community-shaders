@@ -115,14 +115,25 @@ public:
 	 */
 	void ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
 
-	/** @brief True when the pass is inside the replica's current RE coverage
-	 *         (Stage A: unskinned, non-custom TRISHAPE utility passes). */
+	/** @brief True when the pass is inside the replica's current RE coverage:
+	 *         non-custom TRISHAPE / SUB_INDEX_TRISHAPE geometry plus skinned passes on
+	 *         the static skin-instance Render branch. Stencil-above-water and the
+	 *         dynamic bone-setter branch stay whole-pass engine. */
 	[[nodiscard]] bool CanReplicate(RE::BSRenderPass* a_pass) const;
 
 private:
 	UtilityPassReplica() = default;
 
 	void InstallHooks();
+
+	/** @brief Replicated BSGraphics::Renderer::DrawTriShape (1.5.97 0x140D6BFE0):
+	 *         dirty-state flush + IB/VB binds + DrawIndexed(3*tris, start, 0). */
+	void DrawTriShapeReplica(void* a_rendererData, std::uint32_t a_startIndex, std::uint32_t a_triCount);
+
+	/** @brief Replicated skinned dispatcher (1.5.97 0x141308970), static branch:
+	 *         ShaderSetup (raw alpha-test), draw-struct build, optional dynamic-shape
+	 *         ring upload, skin-instance Render vfunc, RestoreGeometry. */
+	void ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_alphaTest, std::uint32_t a_renderFlags);
 
 	// --- compare-mode recording ---
 	void BeginWindow(std::vector<RecordedCall>& a_sink);
@@ -139,6 +150,7 @@ private:
 	// Rolling divergence stats for the log (compare mode).
 	std::uint64_t passesCompared = 0;
 	std::uint64_t passesDiverged = 0;
+	std::uint64_t divergedByClass[3] = {};   ///< [0]=trishape [1]=subindex [2]=skinned
+	std::uint32_t dumpBudgetByClass[3] = { 8, 24, 24 };  ///< per-class full-dump budgets
 	std::uint64_t passesUnsupported = 0;     ///< outside replica coverage -> engine fallback
-	std::uint32_t divergenceLogBudget = 64;  ///< full dumps for the first N divergent passes
 };

@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "State.h"
 
+#include <intrin.h>
 #include <winrt/base.h>
 
 #include <RE/B/BSRenderPass.h>
@@ -37,16 +38,81 @@ namespace
 	std::uintptr_t g_csBase = 0;
 	std::uintptr_t g_csEnd = 0;
 
-	// Set only while the ENGINE window records: drop D3D11 calls a CS feature injects on
-	// the engine's draw leaf (return address inside our own module). The REPLICA window
-	// is never filtered -- it hand-codes the draw leaf (so no CS injection) and reaches
-	// the engine setup functions by direct call, whose tail-called binds legitimately
-	// report a CS return address that must NOT be dropped.
+	// Set while EITHER window records: drop D3D11 calls whose return address lands inside
+	// the CS module. CS features hook the engine's shader-bind and draw leaves (e.g. the
+	// BeginTechnique VS/PS write-thunks in Hooks.cpp, per-object CB injection) and issue
+	// D3D11 calls from CS code on the REAL render -- those are overlays on top of the
+	// engine command stream and fire identically in both windows, so symmetric filtering
+	// keeps the diff exact. The replica's own engine-equivalent calls (engine helpers,
+	// vfuncs, and its hand-coded draw leaf) are routed through an executable stub OUTSIDE
+	// the module image (see EngineCall) so their return addresses do not match the filter;
+	// engine-internal TAIL-CALLED binds also inherit the stub's return address, which is
+	// what makes the symmetric filter sound (a direct call from CS would mis-attribute
+	// them as CS injections).
 	bool g_filterCs = false;
+
+	// The out-of-module call stub. Forwards the four register args untouched plus the
+	// 5th/6th STACK args (IASetVertexBuffers takes six) into a fresh frame, then calls
+	// the target from the slot at +0x28. Compare mode is single-threaded (owner gate),
+	// so one slot suffices.
+	std::uint8_t* g_stub = nullptr;
+	void**        g_stubSlot = nullptr;
+	bool          g_stubActive = false;
+
+	void BuildEngineCallStub()
+	{
+		auto* mem = static_cast<std::uint8_t*>(
+			VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+		if (!mem)
+			return;
+		static constexpr std::uint8_t kStub[] = {
+			0x48, 0x83, 0xEC, 0x38,              // +0x00 sub  rsp, 38h
+			0x48, 0x8B, 0x44, 0x24, 0x60,        // +0x04 mov  rax, [rsp+60h]   (caller 5th arg)
+			0x48, 0x89, 0x44, 0x24, 0x20,        // +0x09 mov  [rsp+20h], rax
+			0x48, 0x8B, 0x44, 0x24, 0x68,        // +0x0E mov  rax, [rsp+68h]   (caller 6th arg)
+			0x48, 0x89, 0x44, 0x24, 0x28,        // +0x13 mov  [rsp+28h], rax
+			0xFF, 0x15, 0x0A, 0x00, 0x00, 0x00,  // +0x18 call qword ptr [rip+0Ah]  (slot @ +0x28)
+			0x48, 0x83, 0xC4, 0x38,              // +0x1E add  rsp, 38h
+			0xC3,                                // +0x22 ret
+			0xCC, 0xCC, 0xCC, 0xCC, 0xCC,        // +0x23 pad to +0x28
+		};
+		static_assert(sizeof(kStub) == 0x28);
+		std::memcpy(mem, kStub, sizeof(kStub));
+		g_stub = mem;
+		g_stubSlot = reinterpret_cast<void**>(mem + 0x28);
+	}
+
+	// Call an engine function (or D3D11 vfunc) the way the engine would: when the replica
+	// window is recording, indirect through the out-of-module stub so downstream
+	// tail-called D3D11 binds carry a non-CS return address; otherwise a direct call.
+	// The stub forwards up to six args (four register + two stack).
+	template <class R, class... Args>
+	inline R EngineCall(const void* a_fn, Args... a_args)
+	{
+		using Fn = R (*)(Args...);
+		if (g_stubActive && g_stub) {
+			*g_stubSlot = const_cast<void*>(a_fn);
+			return reinterpret_cast<Fn>(g_stub)(a_args...);
+		}
+		return reinterpret_cast<Fn>(const_cast<void*>(a_fn))(a_args...);
+	}
+
+	// Vtable-indexed EngineCall.
+	template <std::size_t IDX, class R, class T, class... Args>
+	inline R EngineCallV(T* a_obj, Args... a_args)
+	{
+		auto* vt = *reinterpret_cast<void** const*>(a_obj);
+		return EngineCall<R>(vt[IDX], static_cast<void*>(a_obj), a_args...);
+	}
 
 	// Unsupported-reason tally (diagnostic): which CanReplicate gate sends a pass to the
 	// engine fallback. [0]=no-geom [1]=skinned [2]=custom [3]=non-trishape [4]=no-rd [5]=stencil.
 	std::atomic<std::uint64_t> g_unsupReason[6]{};
+
+	// GeometryType histogram (geom+0x150) of fallback passes outside the covered
+	// {TRISHAPE, SUB_INDEX_TRISHAPE} set, so remaining coverage work targets what
+	// actually occurs in-game.
+	std::atomic<std::uint64_t> g_geomTypeHist[16]{};
 
 	inline bool EngineCaller(const void* a_ret)
 	{
@@ -419,6 +485,70 @@ namespace engine
 	// value and sets a spurious OMSetBlendState.
 	inline REL::Relocation<std::uint32_t*> g_shadowGeomToken{ REL::Offset(0x1E10660) };
 
+	// BSGraphics::Renderer singleton (first arg of the draw leaves).
+	inline REL::Relocation<std::uint8_t*> g_renderer{ REL::Offset(0x3028490) };
+
+	// Bone-palette CB ring cursor (0x143027A00, values 0..3): GetID3D11Resource
+	// (0x140D6FFD0) hands out one of four 3840-byte dynamic CBs (0x143027A08..20) per
+	// bone upload and advances this cursor. The compare harness must restore it before
+	// the replica window or the double-render binds DIFFERENT (content-identical) ring
+	// CBs and every skinned pass false-diffs on the buffer pointer.
+	inline REL::Relocation<std::uint32_t*> g_boneCBRingCursor{ REL::Offset(0x3027A00) };
+
+	// Dynamic-VB ring state (0x143025F30, one qword: LO = ring-buffer index 0..2, HI =
+	// byte offset into the 4MB buffer). FUN_140D6C8A0 allocates skinned dynamic-shape
+	// slices here; restoring it lets the replica re-map the same slice (rewriting
+	// byte-identical data under WRITE_NO_OVERWRITE) so the recorded bind offsets match.
+	inline REL::Relocation<std::uint64_t*> g_dynVBRingState{ REL::Offset(0x3025F30) };
+
+	// Engine TLS index (0x143497408): the render path stamps per-thread markers into the
+	// module TLS block -- +1896 is the memory-context tag the standard path sets to 26,
+	// +10752 is the accumulator the skinned dispatcher zeroes (FUN_14131f7c0).
+	inline REL::Relocation<std::uint32_t*> g_tlsIndex{ REL::Offset(0x3497408) };
+	inline std::uint8_t* TlsBlock()
+	{
+		auto* tlsArray = reinterpret_cast<std::uint8_t**>(__readgsqword(0x58));
+		return tlsArray[*g_tlsIndex];
+	}
+
+	// BSSubIndexTriShape (GeometryType 8) helpers: segment-coalesce pass (CPU-only state
+	// maintenance, 0x140D59430) and the "always draw whole shape" global (0x1430243B0).
+	using SubIndexPreDraw_t = void (*)(void*);
+	inline REL::Relocation<SubIndexPreDraw_t> SubIndexPreDraw{ REL::Offset(0xD59430) };
+	inline REL::Relocation<std::uint8_t*>     g_subIndexWholeDraw{ REL::Offset(0x30243B0) };
+
+	// Skinned-path dynamic-data upload (BSDynamicTriShape under a skin, e.g. faces):
+	// map a slice of the shared dynamic ring (out: ring offset), lock/fetch the CPU-side
+	// dynamic vertex data, copy, unmap, unlock. All engine helpers, addresses verified
+	// against the dispatcher disasm at 0x141308A05.
+	using MapSkinDyn_t = void* (*)(void*, std::uint32_t, std::int32_t*);
+	inline REL::Relocation<MapSkinDyn_t> MapSkinDynamicData{ REL::Offset(0xD6C8A0) };  // 0x140D6C8A0
+	using UnmapSkinDyn_t = void (*)(void*, void*);
+	inline REL::Relocation<UnmapSkinDyn_t> UnmapSkinDynamicData{ REL::Offset(0xD6C9E0) };  // 0x140D6C9E0
+	using DynShapeLock_t = void* (*)(void*);
+	inline REL::Relocation<DynShapeLock_t> DynShapeLockData{ REL::Offset(0xC723C0) };  // 0x140C723C0
+	using DynShapeUnlock_t = void (*)(void*);
+	inline REL::Relocation<DynShapeUnlock_t> DynShapeUnlock{ REL::Offset(0xC72420) };  // 0x140C72420
+
+	// The draw-struct the skinned dispatcher builds on its stack and hands to the
+	// skin-instance Render vfunc (37). Layout verified against the disasm at
+	// 0x141308A05 (stack frame rsp+0x30..0x6D).
+	struct SkinDrawStruct
+	{
+		void*         boneSetter;    // +0x00  shader+0x10 (NiBoneMatrixSetterI) or null
+		void*         geometry;      // +0x08
+		std::uint64_t unk10;         // +0x10  = 0
+		std::int32_t  singleLevel;   // +0x18  (pass+0x1E >> 7) & 1
+		std::int32_t  lodIndex;      // +0x1C  pass+0x1E & 0x7F
+		float         unk20;         // +0x20  = 0.0f
+		std::int32_t  dynOffset[6];  // +0x24  [0] = -1; dynamic-ring offset out-param
+		std::uint16_t boneMode;      // +0x3C  = 1 only on the bone-setter branch
+		std::uint16_t pad3E;
+	};
+	static_assert(sizeof(SkinDrawStruct) == 0x40);
+	static_assert(offsetof(SkinDrawStruct, dynOffset) == 0x24);
+	static_assert(offsetof(SkinDrawStruct, boneMode) == 0x3C);
+
 	// Engine helpers still called in Stage A (replaced in later stages).
 	using SetDirtyStates_t = void (*)(bool);
 	inline REL::Relocation<SetDirtyStates_t> SetDirtyStates{ REL::Offset(0xD705B0) };
@@ -463,6 +593,8 @@ void UtilityPassReplica::Setup()
 			g_csEnd = g_csBase + nt->OptionalHeader.SizeOfImage;
 		}
 	}
+
+	BuildEngineCallStub();
 
 	engineWindow.reserve(64);
 	replicaWindow.reserve(64);
@@ -518,11 +650,13 @@ void UtilityPassReplica::BeginWindow(std::vector<RecordedCall>& a_sink)
 	a_sink.clear();
 	g_openMaps.fill({});
 	g_sink = &a_sink;
+	g_filterCs = true;
 }
 
 void UtilityPassReplica::EndWindow()
 {
 	g_sink = nullptr;
+	g_filterCs = false;
 }
 
 void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
@@ -589,16 +723,14 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		const std::uint32_t savedOutFlag = outFlag ? *outFlag : 0u;
 		const std::uint32_t savedInFlag = inFlag ? *inFlag : 0u;
 		const std::uint32_t savedShadowGeomToken = *engine::g_shadowGeomToken;
+		const std::uint32_t savedBoneCBRingCursor = *engine::g_boneCBRingCursor;
+		const std::uint64_t savedDynVBRingState = *engine::g_dynVBRingState;
 
-		// Ground truth first: the engine renders and we record its command window. Filter
-		// on: CS features that hook the engine's draw leaf inject their own binds/CBs on the
-		// real render; those are overlays, not the engine command stream we replicate, so a
-		// call whose return address lands in our own module is dropped from this window.
-		g_filterCs = true;
+		// Ground truth first: the engine renders and we record its command window
+		// (BeginWindow arms the symmetric CS-injection filter).
 		BeginWindow(engineWindow);
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
-		g_filterCs = false;
 
 		// Restore pre-engine state, then the replica issues its own window from the
 		// same starting point. Depth-only work is idempotent, so the double render is
@@ -612,13 +744,20 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		if (inFlag)
 			*inFlag = savedInFlag;
 		*engine::g_shadowGeomToken = savedShadowGeomToken;
+		// Re-mapping the same ring CBs is safe: WRITE_DISCARD renames, and the replica
+		// writes byte-identical palettes.
+		*engine::g_boneCBRingCursor = savedBoneCBRingCursor;
+		*engine::g_dynVBRingState = savedDynVBRingState;
 
-		// Replica window: NEVER filtered. It hand-codes the draw leaf (so no CS injection)
-		// and calls the engine setup functions directly; their tail-called binds report a
-		// CS return address that is legitimate and must be recorded.
+		// Replica window: same symmetric filter; the replica's engine-equivalent calls
+		// go through the out-of-module stub (g_stubActive) so they and the engine's
+		// tail-called binds survive the filter while CS-hook injections drop out
+		// exactly as they did in the engine window.
+		g_stubActive = true;
 		BeginWindow(replicaWindow);
 		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
+		g_stubActive = false;
 
 		DiffWindows(a_pass, a_technique);
 		return;
@@ -639,27 +778,34 @@ bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 		return false;
 	}
 	const auto* geomBytes = reinterpret_cast<const std::uint8_t*>(geom);
-	if (*reinterpret_cast<void* const*>(geomBytes + 0x130)) {  // skin instance
-		g_unsupReason[1].fetch_add(1, std::memory_order_relaxed);
-		return false;
-	}
-	if (geomBytes[0x109] & 8) {  // needs-custom-render
-		g_unsupReason[2].fetch_add(1, std::memory_order_relaxed);
-		return false;
-	}
-	if (geomBytes[0x150] != 3) {  // GeometryType TRISHAPE
-		g_unsupReason[3].fetch_add(1, std::memory_order_relaxed);
-		return false;
-	}
-	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138)) {  // rendererData
-		g_unsupReason[4].fetch_add(1, std::memory_order_relaxed);
-		return false;
-	}
 	// STENCIL_ABOVE_WATER releases the bound PS on first use -- running it twice in
 	// compare mode would double-Release. Excluded until the replica owns that path.
 	const std::uint32_t f = a_pass->passEnum - 0x2B;
 	if ((f & 0x1200) == 0x1200) {
 		g_unsupReason[5].fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
+	if (*reinterpret_cast<void* const*>(geomBytes + 0x130)) {  // skin instance
+		// Skinned coverage (Stage B): the static skin-instance Render branch. The
+		// dynamic bone-setter branch (geometry vfunc 54 non-zero) routes into the full
+		// Draw dispatch and stays whole-pass engine until that path is replicated.
+		if (EngineCallV<54, std::uint64_t>(const_cast<RE::BSGeometry*>(geom)) != 0) {
+			g_unsupReason[1].fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
+		return true;
+	}
+	if (geomBytes[0x109] & 8) {  // needs-custom-render
+		g_unsupReason[2].fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
+	if (geomBytes[0x150] != 3 && geomBytes[0x150] != 8) {  // TRISHAPE / SUB_INDEX_TRISHAPE
+		g_unsupReason[3].fetch_add(1, std::memory_order_relaxed);
+		g_geomTypeHist[geomBytes[0x150] & 15].fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
+	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138)) {  // rendererData
+		g_unsupReason[4].fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
 	return true;
@@ -681,11 +827,11 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		// BeginPass (0x1413086C0): RestoreTechnique on the outgoing shader, clear the
 		// caches, SetupTechnique on the incoming one, then re-stamp the caches.
 		if (auto* prev = *engine::g_currentShader)
-			prev->RestoreTechnique(*engine::g_currentTechnique);
+			EngineCallV<3, void>(prev, *engine::g_currentTechnique);  // RestoreTechnique
 		*engine::g_currentShader = nullptr;
 		*engine::g_currentTechnique = 0;
 		*engine::g_currentMaterial = nullptr;
-		if (!shader->SetupTechnique(a_technique))
+		if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
 			return;  // engine bails the whole pass on setup failure
 		*engine::g_currentShader = shader;
 		*engine::g_currentTechnique = a_technique;
@@ -697,7 +843,7 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 	                                          nullptr;
 	if (material != *engine::g_currentMaterial) {
 		if (material)
-			shader->SetupMaterial(static_cast<RE::BSShaderMaterial*>(material));
+			EngineCallV<4, void>(shader, material);  // SetupMaterial
 		*engine::g_currentMaterial = material;
 	}
 
@@ -706,67 +852,178 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 	auto* geomBytes = reinterpret_cast<std::uint8_t*>(geom);
 	geomBytes[0x108] = static_cast<std::uint8_t>(a_pass->LODMode.index);
 
-	// ---- _Standard path (0x1413088C0): ShaderSetup -> Draw -> RestoreGeometry ----
+	// ---- geometry dispatch (RenderPassImmediately tail, 1.5.97 0x1413084C5) ----
+	if (*reinterpret_cast<void**>(geomBytes + 0x130)) {
+		ReplicaRenderSkinned(a_pass, a_alphaTest, a_renderFlags);
+		return;
+	}
+
+	// ---- _Standard path (0x1413088C0): TLS tag -> ShaderSetup -> Draw -> Restore ----
+	// The standard path stamps memory-context tag 26 into the module TLS block for the
+	// duration of the draw and restores the previous tag after (no D3D11 effect; kept
+	// for faithful replication of engine-visible state).
+	auto* const         tlsTag = reinterpret_cast<std::uint32_t*>(engine::TlsBlock() + 1896);
+	const std::uint32_t savedTlsTag = *tlsTag;
+	*tlsTag = 26;
+
 	const bool alphaTest = a_alphaTest || *engine::g_useEarlyZ != 0;
 
 	// ShaderSetup (0x141309F80): alpha-blend + alpha-test-ref setup, then SetupGeometry.
 	if (shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
-		if ((a_renderFlags & 4) && !engine::IsGrassShadowBlacklist(a_pass->passEnum))
-			engine::SetupGeometryAlphaBlending(shader, engine::GetNiProperty(a_pass), a_pass->shaderProperty, alphaTest);
+		if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), a_pass->passEnum))
+			EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
+				EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass),
+				a_pass->shaderProperty, alphaTest);
 		if (alphaTest) {
-			if (auto* alphaProp = engine::GetNiProperty(a_pass))
-				engine::SetupAlphaTestRef(shader, alphaProp, a_pass->shaderProperty);
+			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass))
+				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
 		}
 	}
-	shader->SetupGeometry(a_pass, a_renderFlags);
+	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
 
-	// ---- Draw, TRISHAPE leaf (0x141307160 case 2 -> DrawTriShape 0x140D6BFE0) ----
-	{
-		auto* rd = *reinterpret_cast<engine::TriShapeData**>(geomBytes + 0x138);
-		const std::uint16_t triCount = *reinterpret_cast<const std::uint16_t*>(geomBytes + 0x158);
+	// ---- Draw dispatch (0x141307160) on GeometryType (geom+0x150) ----
+	auto* rd = *reinterpret_cast<engine::TriShapeData**>(geomBytes + 0x138);
+	const std::uint16_t wholeTriCount = *reinterpret_cast<const std::uint16_t*>(geomBytes + 0x158);
 
-		if (*engine::S_vertexDesc != rd->vertexDesc) {
-			*engine::S_vertexDesc = rd->vertexDesc;
-			*engine::S_stateUpdateFlags |= 0x400;  // DIRTY_VERTEX_DESC
+	switch (geomBytes[0x150]) {
+	case 3:  // TRISHAPE -> DrawTriShape whole
+		DrawTriShapeReplica(rd, 0, wholeTriCount);
+		break;
+	case 8:  // SUB_INDEX_TRISHAPE (case 7): segment-coalesce, then whole or per-segment
+		EngineCall<void>(reinterpret_cast<void*>(engine::SubIndexPreDraw.address()), static_cast<void*>(geom));
+		if (*engine::g_subIndexWholeDraw) {
+			DrawTriShapeReplica(rd, 0, wholeTriCount);
+		} else {
+			// drawAll byte geom+0x171; active-segment count geom+0x168; segment array
+			// geom+0x160, stride 0x14: +0x00 startIndex, +0x0C numTris, +0x10 enabled.
+			const bool          drawAll = geomBytes[0x171] != 0;
+			const std::uint32_t count = drawAll ? 1u : *reinterpret_cast<const std::uint32_t*>(geomBytes + 0x168);
+			const auto*         seg = *reinterpret_cast<const std::uint8_t* const*>(geomBytes + 0x160);
+			for (std::uint32_t i = 0; i < count; ++i, seg += 0x14) {
+				if (!seg[0x10])
+					continue;
+				const std::uint32_t numTris = drawAll ? wholeTriCount : *reinterpret_cast<const std::uint32_t*>(seg + 0x0C);
+				const std::uint32_t start = drawAll ? 0u : *reinterpret_cast<const std::uint32_t*>(seg + 0x00);
+				DrawTriShapeReplica(rd, start, numTris);
+			}
 		}
-		if (*engine::S_topology != 4 /*D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST*/) {
-			*engine::S_topology = 4;
-			*engine::S_stateUpdateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
-		}
-		engine::SetDirtyStates(false);
-
-		auto*      ctx = globals::d3d::context;
-		const UINT stride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
-		const UINT offset = 0;
-		ctx->IASetIndexBuffer(rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0);
-		ctx->IASetVertexBuffers(0, 1, &rd->vertexBuffer, &stride, &offset);
-		ctx->DrawIndexed(3u * triCount, 0, 0);
+		break;
 	}
 
-	shader->RestoreGeometry(a_pass, a_renderFlags);
+	EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
+	*tlsTag = savedTlsTag;
+}
+
+void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t a_startIndex, std::uint32_t a_triCount)
+{
+	// BSGraphics::Renderer::DrawTriShape (0x140D6BFE0), replicated exactly: vertex-desc
+	// and topology change detection into the dirty word, state flush, then unconditional
+	// IB/VB binds and the indexed draw (the engine does NOT cache the IB/VB binds here).
+	auto* rd = static_cast<engine::TriShapeData*>(a_rendererData);
+	if (*engine::S_vertexDesc != rd->vertexDesc) {
+		*engine::S_vertexDesc = rd->vertexDesc;
+		*engine::S_stateUpdateFlags |= 0x400;  // DIRTY_VERTEX_DESC
+	}
+	if (*engine::S_topology != 4 /*D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST*/) {
+		*engine::S_topology = 4;
+		*engine::S_stateUpdateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
+	}
+	EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
+
+	auto*      ctx = globals::d3d::context;
+	const UINT stride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
+	const UINT offset = 0;
+	EngineCallV<19, void>(ctx, rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0u);   // IASetIndexBuffer
+	EngineCallV<18, void>(ctx, 0u, 1u, &rd->vertexBuffer, &stride, &offset); // IASetVertexBuffers
+	EngineCallV<12, void>(ctx, 3u * a_triCount, a_startIndex, 0);            // DrawIndexed
+}
+
+void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_alphaTest, std::uint32_t a_renderFlags)
+{
+	// ---- skinned path (0x141308970), static skin-instance branch ----
+	// CanReplicate already excluded the dynamic bone-setter branch (geometry vfunc 54).
+	// Notable deltas vs the standard path: the per-thread dynamic accumulator at
+	// TLS+10752 is zeroed on entry (FUN_14131f7c0), the alpha-test flag is used RAW
+	// (no early-Z OR), and the draw goes through the skin instance's Render vfunc (37),
+	// which loops partitions, uploads bone palettes via the shader's bone-setter
+	// interface, and issues the per-partition draws -- all engine code, shared with the
+	// passes the engine still renders itself.
+	auto* shader = a_pass->shader;
+	auto* geom = a_pass->geometry;
+	auto* geomBytes = reinterpret_cast<std::uint8_t*>(geom);
+	auto* skin = *reinterpret_cast<void**>(geomBytes + 0x130);
+
+	*reinterpret_cast<std::uint32_t*>(engine::TlsBlock() + 10752) = 0;
+
+	// ShaderSetup (0x141309F80) with the RAW alpha-test flag.
+	if (shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
+		if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), a_pass->passEnum))
+			EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
+				EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass),
+				a_pass->shaderProperty, a_alphaTest);
+		if (a_alphaTest) {
+			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass))
+				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
+		}
+	}
+	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
+
+	// Draw-struct layout verified against the dispatcher disasm at 0x141308A05.
+	const auto lodByte = reinterpret_cast<const std::uint8_t*>(a_pass)[0x1E];
+	engine::SkinDrawStruct s{};
+	s.boneSetter = shader ? reinterpret_cast<std::uint8_t*>(shader) + 0x10 : nullptr;
+	s.geometry = geom;
+	s.singleLevel = (lodByte >> 7) & 1;
+	s.lodIndex = lodByte & 0x7F;
+	s.dynOffset[0] = -1;
+
+	// Dynamic-shape sub-block (skinned BSDynamicTriShape, e.g. faces): upload the
+	// CPU-side dynamic vertex data into the shared dynamic ring; the ring offset lands
+	// in s.dynOffset[0] and the partition draw consumes it.
+	if (void* dyn = EngineCallV<12, void*>(geom)) {  // AsBSDynamicTriShape
+		auto* dynBytes = reinterpret_cast<std::uint8_t*>(dyn);
+		const auto size = *reinterpret_cast<const std::uint32_t*>(dynBytes + 0x170);
+		void* dst = EngineCall<void*>(reinterpret_cast<void*>(engine::MapSkinDynamicData.address()),
+			reinterpret_cast<void*>(engine::g_renderer.address()), size, static_cast<std::int32_t*>(s.dynOffset));
+		if (dst) {
+			const void* src = EngineCall<void*>(reinterpret_cast<void*>(engine::DynShapeLockData.address()), dyn);
+			std::memcpy(dst, src, size);
+			EngineCall<void>(reinterpret_cast<void*>(engine::UnmapSkinDynamicData.address()),
+				reinterpret_cast<void*>(engine::g_renderer.address()), dst);
+			EngineCall<void>(reinterpret_cast<void*>(engine::DynShapeUnlock.address()), dyn);
+		}
+	}
+
+	EngineCallV<37, void>(skin, static_cast<void*>(&s));  // NiSkinInstance/BSDismember Render
+
+	EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
 }
 
 void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_technique)
 {
-	// KNOWN RESIDUAL (~5% of passes, all in the force-all-dirty state where S->flags,
-	// EB4 and EB8 read 0xFFFFFFFF/0xFFFF at the pass): the replica emits one extra
-	// OMSetBlendState the engine window omits. Verified (topology reads 4, so the address
-	// base is right) that S->flags stays 0xFFFFFFFF through the replica's entire setup --
-	// no engine setup call clears the alpha-blend dirty bit (0x80). The engine window
-	// reaches DrawTriShape with 0x80 already clear, which only a CS feature hooking the
-	// engine's draw leaf (the same one injecting the filtered 64B CB) can be doing -- it
-	// touches blend state on the real render, and the hand-coded DrawTriShape bypasses it.
-	// The replica therefore reproduces the PURE engine command stream; the "extra" call is
-	// a correct, redundant re-application of the already-correct blend state. Left as-is:
-	// closing it means replicating the CS draw-leaf hook, which belongs to REPLACE mode.
+	// Validated state (village + Riverwood + Whiterun interior, in motion): 1.1M+ passes,
+	// zero structural divergence across all three classes. The only observed diff class
+	// is a one-shot CS shader-cache transition: an async compile finishing BETWEEN the
+	// two windows flips the BeginTechnique PS thunk from its engine-fallback bind
+	// (recorded) to CS substitution (filtered), so the engine window carries one extra
+	// PSSetShader exactly once per compile completion. Benign and self-identifying.
 	++passesCompared;
 	// Coverage/di­vergence heartbeat so long runs report progress without a debugger.
-	if ((passesCompared & 0x3FFF) == 0)
+	if ((passesCompared & 0x3FFF) == 0) {
+		logger::info("[UtilityPassReplica] divergedByClass tri={} subIndex={} skinned={}",
+			divergedByClass[0], divergedByClass[1], divergedByClass[2]);
 		logger::info("[UtilityPassReplica] compared={} diverged={} unsupported={} (noGeom={} skin={} custom={} nonTri={} noRD={} stencil={})",
 			passesCompared, passesDiverged, passesUnsupported,
 			g_unsupReason[0].load(std::memory_order_relaxed), g_unsupReason[1].load(std::memory_order_relaxed),
 			g_unsupReason[2].load(std::memory_order_relaxed), g_unsupReason[3].load(std::memory_order_relaxed),
 			g_unsupReason[4].load(std::memory_order_relaxed), g_unsupReason[5].load(std::memory_order_relaxed));
+		std::string detail = "uncoveredGeomTypes[";
+		for (int i = 0; i < 16; ++i)
+			if (const auto n = g_geomTypeHist[i].load(std::memory_order_relaxed))
+				detail += fmt::format(" {}:{}", i, n);
+		detail += " ]";
+		logger::info("[UtilityPassReplica] {}", detail);
+	}
 	const bool sameSize = engineWindow.size() == replicaWindow.size();
 	bool identical = sameSize;
 	std::size_t firstDiff = 0;
@@ -785,12 +1042,18 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 		return;
 
 	++passesDiverged;
-	if (divergenceLogBudget == 0)
+	// Class the divergence so each coverage stage gets its own dump budget and count:
+	// skinned (geom+0x130), sub-index (type 8), plain trishape.
+	const auto* gb = reinterpret_cast<const std::uint8_t*>(a_pass->geometry);
+	const int   cls = *reinterpret_cast<void* const*>(gb + 0x130) ? 2 : (gb[0x150] == 8 ? 1 : 0);
+	++divergedByClass[cls];
+	if (dumpBudgetByClass[cls] == 0)
 		return;
-	--divergenceLogBudget;
+	--dumpBudgetByClass[cls];
 
-	logger::warn("[UtilityPassReplica][DIFF] pass={} technique=0x{:X} engineCalls={} replicaCalls={} firstDiff={}",
-		static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
+	static constexpr const char* kClassNames[3] = { "trishape", "subindex", "skinned" };
+	logger::warn("[UtilityPassReplica][DIFF] class={} pass={} technique=0x{:X} engineCalls={} replicaCalls={} firstDiff={}",
+		kClassNames[cls], static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
 		sameSize ? std::to_string(firstDiff) : "size-mismatch");
 	const std::size_t n = std::max(engineWindow.size(), replicaWindow.size());
 	for (std::size_t i = 0; i < n && i < 64; ++i) {

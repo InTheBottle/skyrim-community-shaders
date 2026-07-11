@@ -2184,3 +2184,1307 @@ Shadow maps / z-prepass draw through: case 3 (static trishapes — vast majority
 - 0x14302AE50 static particles DynamicTriShape; 0x14302AC58 static CB-holder returned by 0x140D6FFD0
 - 0x143283BB0 strip-particle CPU vertex staging; 0x143477BB0 strip-particle CPU index staging
 - 0x1432336C0 BSSkyShader::pInstance
+
+================================================================================================
+# PART II: remaining utility render paths (skinned / custom / non-TRISHAPE / stencil)
+# Own IDA analysis, adversarially cross-verified against the 1.5.97 disassembly.
+================================================================================================
+
+
+================================================================================================
+## Cluster 1
+================================================================================================
+
+# RE: BSBatchRenderer custom render path @ 0x141308B20 (SkyrimSE 1.5.97)
+
+## Custom path body
+
+### Entry conditions (from dispatcher 0x141308440, `RenderPassImmediately(Pass, Technique, AlphaTest, RenderFlags)`)
+
+Shared prologue executed for ALL three paths before dispatch:
+
+1. **Technique dedup**: if `MEMORY[0x143283BA4] (currentTechnique) == Technique && Technique != 0x5C006076 && Pass->m_Shader == MEMORY[0x143283BA8] (currentShader)` → skip BeginPass. Otherwise `dword_141E0DF8C = Technique` and call `BeginPass(Technique, shader)` @0x1413086C0; if it returns 0 the pass is aborted (return).
+2. **Material dedup**: `mat = Pass->m_ShaderProperty(+0x8) ? shaderProperty->material(+0x78) : NULL`; if `mat != MEMORY[0x143490BB0] (currentMaterial)` → if non-NULL call shader vtbl **+0x20 = SetupMaterial(mat)** (`Func4_20`), then `MEMORY[0x143490BB0] = mat`.
+3. **LOD byte**: `geometry->byte[0x108] = Pass->m_LODMode (byte @pass+0x1E)` — written unconditionally for all paths.
+4. **Dispatch**:
+   - `geometry->skinInstance (qword @+0x130) != 0` → skinned path 0x141308970
+   - else `geometry->flags byte @+0x109 & 8` (bit 11 of the dword at geom+0x108) → **CUSTOM path 0x141308B20** — call site 0x1413084F6/0x1413084F8: `test byte [rsi+109h], 8` then tail-ish call with **rcx=Pass, dl=AlphaTest, r8d=RenderFlags**
+   - else → standard path 0x1413088C0
+
+**Who sets the bit**: the +0x109 |= 8 flag is set in the **NiParticles constructors** — 0x140C79F70, 0x140C79BB0 (heap-allocating factory, alloc size 0x168), 0x140C795C0 (`NiParticles::CreateClone`), 0x140C79CA0 (`*(obj+265) |= 8u`; 265 = 0x109). The same ctors write `vertexDesc = 0x0840200004000051` at qword offset 41 (= +0x148) and `byte[336 = 0x150] (GeometryType) = 1`. The bit is cleared (`and byte [.. +0x109], 0xF7`) in the base geometry ctor FUN_140C711A0 (@0x140C7129A) and in 0x140C71A80 / 0x140C80AA0 / NiAVObject::sub_140C80B80 (@0x140C80C44). So the custom path is the **NiParticles-family (particle geometry, GeometryType 1 → Draw dispatch case for particles)** path.
+
+### Full body (decompiled, 0x141308B20)
+
+```c
+int32 __usercall RenderPassImmediately_Custom@<eax>(char *a1@<rcx>, uint32 a2@<r8d>, float a3@<xmm0>, int64 a4@<rdx>)
+{
+  v4 = *a1;                                             // 0x141308b2f  pass->m_Shader (pass+0)
+  (v4->vftable->Func6_30)(v4, a1);                      // 0x141308b41  shader vtbl+0x30 = SetupGeometry(pass, RenderFlags)
+  NiProperty = BSRenderPass::GetNiProperty(a1);          // 0x141308b47
+  BSEffectShader::sub_14131F440(v4, NiProperty, *(a1+1), 1); // 0x141308b59  SetupAlphaBlendState(shader, alphaProp, shaderProperty(pass+8), useAlphaTestBit=1)
+  if ( BSRenderPass::GetNiProperty(a1) )                 // 0x141308b61
+  {
+    v8 = BSRenderPass::GetNiProperty(a1);                // 0x141308b6e
+    BSEffectShader::SetAlphaTestRef(v4, v8, *(a1+1));    // 0x141308b7d
+  }
+  BSRenderPass::FUN_141307160(a1, a1, a3);               // 0x141308b85  Draw dispatch (rcx=pass only; other args are decompiler artifacts)
+  return (v4->vftable->Func7_38)(v4, a1, a2);            // tail jmp [rax+38h]: shader vtbl+0x38 = RestoreGeometry(pass, RenderFlags)
+}
+```
+
+Register-level facts (from disasm):
+- 0x141308B2F `mov rdi,[rcx]` → shader; 0x141308B32 `mov rbx,rcx` → pass; 0x141308B35 `mov rdx,rcx` — **immediately clobbers rdx = the incoming AlphaTest argument; AlphaTest is NEVER read in this function**; 0x141308B38 `mov esi,r8d` saves RenderFlags.
+- 0x141308B41 `call [rax+30h]` with rcx=shader, rdx=pass, and **r8d still holding the incoming RenderFlags** (unclobbered) → this is `shader->SetupGeometry(pass, RenderFlags)`; the decompiler dropped the 3rd arg.
+- 0x141308B59 `sub_14131F440(shader, alphaProp, pass->m_ShaderProperty(+0x8), r9b=1)` — 4th arg **hardcoded 1**.
+- 0x141308B85 `FUN_141307160` called with rcx=pass (rdx/xmm0 in decompile are dead-register artifacts).
+- Epilogue 0x141308BA5: `jmp qword [rax+38h]` with rcx=shader, rdx=pass, r8d=esi(RenderFlags) → `shader->RestoreGeometry(pass, RenderFlags)` as a tail call.
+
+**No TLS write** anywhere in this function (see Delta). **No direct D3D11 immediate-context calls** — all state mutations go through RendererShadowState dirty bits (base 0x143027EB0) and are flushed later by the draw-time state applier invoked from the Draw dispatch chain.
+
+### Exact call sequence (D3D11-relevant, in order)
+1. `shader->SetupGeometry(pass, RenderFlags)` — virtual, vtbl+0x30 (per-shader; for NiParticles passes this is BSParticleShader/BSEffectShader::SetupGeometry — sets per-geometry constants/dirty bits; not expanded here, virtual and shader-dependent, same vfunc the standard path uses).
+2. Alpha blend-mode selection from the geometry's NiAlphaProperty → writes RendererShadowState `alphaBlendMode @0x143027F58` (dirty 0x80) and `alphaTestEnabled @0x143027F64` (dirty 0x100). Details below.
+3. If geometry has an NiAlphaProperty: alpha-test reference → writes `alphaTestRef float @0x143027F68` (dirty 0x200).
+4. `FUN_141307160(pass)` — Draw dispatch (already REd; GeometryType switch at geom+0x150; particles = type 1) — this is where deferred state is flushed and DrawIndexed/Draw is issued.
+5. `shader->RestoreGeometry(pass, RenderFlags)` — virtual, vtbl+0x38.
+
+## Callees
+
+### BSRenderPass::GetNiProperty @ 0x1412FD8A0
+```c
+NiAlphaProperty *GetNiProperty(BSRenderPass *a1) {
+  return a1->m_Geometry->Properties_120[0];   // qword at geometry+0x120 = NiAlphaProperty*
+}
+```
+Plain helper (not a vfunc): the NiAlphaProperty pointer lives at **geometry+0x120** (second slot of the properties[2] array at +0x118).
+
+### SetupAlphaBlendState (idb: BSEffectShader::sub_14131F440) @ 0x14131F440
+Signature: `(BSShader* shader /*unused*/, NiAlphaProperty* alphaProp, BSShaderProperty* shaderProp, char useAlphaTestBit)`.
+
+Reads `alphaFlags = u16 @alphaProp+0x30`, `materialAlpha = float @shaderProp+0x30`. Writes three RendererShadowState globals (base **0x143027EB0** = stateUpdateFlags dword):
+- `0x143027F58` (+0xA8) = alphaBlendMode (0..4); change → `stateUpdateFlags |= 0x80` (DIRTY_ALPHA_BLEND)
+- `0x143027F64` (+0xB4) = alphaTestEnabled (bool); change → `stateUpdateFlags |= 0x100`
+- (companion fn) `0x143027F68` (+0xB8) = alphaTestRef (float); change → `stateUpdateFlags |= 0x200`
+
+Logic (full body quoted in-line above from decompiler; summarized precisely):
+```
+blendEnable = alphaProp && (alphaFlags & 1)
+testEnable  = alphaProp && useAlphaTestBit && (alphaFlags & 0x200)
+src = (alphaFlags >> 1) & 0xF        // NiAlphaProperty blend function enum
+dstField = alphaFlags & 0x1E0        // dst function << 5
+
+if (materialAlpha >= 1.0 && !blendEnable):        // opaque
+    if (alphaBlendMode@F58 != 0) { F58 = 0; flags |= 0x80 }
+    if (testEnable != alphaTestEnabled@F64) { F64 = testEnable; flags |= 0x100 }
+    return
+// translucent:
+if (!blendEnable)                     -> mode 1    // materialAlpha < 1 forces standard blend
+else if (src==6 /*SRC_ALPHA*/ && dstField==0xE0 /*INV_SRC_ALPHA*/)      -> mode 1
+else if ((src==6 && dstField==0) || (src==0 && dstField==0)             // (SRC_ALPHA,ONE) / (ONE,ONE)
+      ||  (src==6 && dstField==0x120 /*INV_DST_ALPHA*/))                -> mode 2   // additive
+else if (src==4 /*DST_COLOR*/ && dstField==0xE0)                        -> mode 3
+else if ((src==1 /*ZERO*/ && dstField==0x40 /*SRC_COLOR*/)
+      ||  (src==4 && dstField==0x20 /*ZERO*/))                          -> mode 4   // multiplicative
+else: leave mode unchanged
+on mode change: F58 = mode; flags |= 0x80
+finally: if (testEnable != F64) { F64 = testEnable; flags |= 0x100 }
+```
+
+### BSEffectShader::SetAlphaTestRef @ 0x14131F2A0
+```c
+threshold = byte @alphaProp+0x32;                 // NiAlphaProperty alphaTestRef 0..255
+v = (int)(threshold * shaderProp->alpha_0x30);    // scaled by material alpha
+if (alphaTestRef@0x143027F68 != v * (1/255.0f)) {
+  stateUpdateFlags@0x143027EB0 |= 0x200;
+  alphaTestRef@0x143027F68 = v * 0.0039215689f;
+}
+```
+
+### FUN_141307160 @ 0x141307160 — Draw dispatch. Already REd; called here with rcx=pass, no other live args. Same call as in the standard path.
+
+### Shader vfuncs (both virtual, per-shader implementations)
+- vtbl **+0x30** = `SetupGeometry(BSRenderPass*, uint32 RenderFlags)` (confirmed by ShaderSetup 0x141309F80 tail `jmp [rax+30h]`, idb slot name `SetupGeometry_30`)
+- vtbl **+0x38** = `RestoreGeometry(BSRenderPass*, uint32 RenderFlags)`
+(vtbl map for reference: +0x10 SetupTechnique, +0x18 RestoreTechnique, +0x20 SetupMaterial, +0x28 RestoreMaterial.)
+
+### BeginPass @ 0x1413086C0 (shared prologue, for completeness)
+If `currentShader@0x143283BA8` non-NULL → `currentShader->RestoreTechnique(currentTechnique@0x143283BA4)` (vtbl+0x18); zero both; zero `currentMaterial@0x143490BB0`; call `newShader->SetupTechnique(Technique)` (vtbl+0x10); on success cache technique+shader into 0x143283BA4/0x143283BA8, on failure zero them and return 0.
+
+## Delta vs standard path (0x1413088C0)
+
+Standard path body (idb misnames it "Skinned"; it is the **non-skinned, non-custom** path per the dispatcher):
+```c
+tlsSlot = *(TEB->TlsPointer[ TlsIndex@0x143497408 ]) + 0x768;   // dword marker slot
+saved = *tlsSlot; *tlsSlot = 26;                                 // marker value 26
+shader = *pass;
+alphaTestArg = AlphaTest || byte_14302C8E5;                      // global console-toggled bool
+FUN_141309f80(pass, shader, alphaTestArg, RenderFlags);          // ShaderSetup: alpha setup + SetupGeometry
+FUN_141307160(pass);                                             // Draw dispatch
+shader->RestoreGeometry(pass, RenderFlags);                      // vtbl+0x38
+*tlsSlot = saved;
+```
+And inside ShaderSetup 0x141309F80 (already REd): `if (shader != BSSkyShader_singleton@0x1432336C0) { if ((RenderFlags & 4) && !FUN_1412CCE20(pass->passEnum@+0x18)) SetupAlphaBlendState(shader, alphaProp, shaderProp, alphaTestArg); if (alphaTestArg && alphaProp) SetAlphaTestRef(...); }` then tail `shader->SetupGeometry(pass, RenderFlags)`. `FUN_1412CCE20(e)` = `(e - 0x5C000058) <= 3`, i.e. pass enums 0x5C000058..0x5C00005B are excluded from blend setup.
+
+Differences of the CUSTOM path:
+
+1. **No TLS marker**: custom never touches the per-thread marker slot (TlsIndex@0x143497408, slot offset +0x768). Standard writes 26 around setup+draw and restores it.
+2. **Order inversion**: custom calls `shader->SetupGeometry(pass, RenderFlags)` **first**, then does alpha blend/test-ref setup, then draws. Standard does alpha blend/test-ref setup first and SetupGeometry last (as the tail of ShaderSetup), immediately before the draw. Net effect: in the custom path the alpha state derived from the NiAlphaProperty **cannot be overridden by SetupGeometry**; it wins over anything SetupGeometry set.
+3. **AlphaTest argument ignored**: dl (AlphaTest) is clobbered at 0x141308B35 and never used. Instead:
+   - SetupAlphaBlendState is called with `useAlphaTestBit = 1` **unconditionally** → the NiAlphaProperty's own test-enable bit (alphaFlags & 0x200) always decides alpha testing (standard passes `AlphaTest || byte_14302C8E5`).
+   - SetAlphaTestRef is called whenever the geometry **has** an alpha property (standard additionally requires the alphaTestArg to be true).
+4. **Gates skipped**: custom performs alpha setup with none of ShaderSetup's three gates — no BSSkyShader-singleton exclusion (0x1432336C0), no `(RenderFlags & 4)` requirement, no passEnum 0x5C000058..0x5C00005B blacklist.
+5. **Identical**: shared dispatcher prologue (technique/material dedup, LOD byte write), Draw dispatch FUN_141307160(pass), RestoreGeometry(pass, RenderFlags) tail, and the fact that no D3D11 immediate-context vfunc is called directly — everything is dirty-bit deferred through RendererShadowState 0x143027EB0.
+6. **No geometry vfuncs**: the custom path calls **zero** vfuncs on the geometry object (GetNiProperty is a non-virtual helper reading geom+0x120). There is no geometry vfunc called by custom that standard doesn't call — the only extra calls vs standard are the *direct* (ungated) invocations of SetupAlphaBlendState/SetAlphaTestRef, which standard reaches only conditionally via ShaderSetup 0x141309F80.
+
+## CAVEATS
+
+- The semantic meaning of the ShaderSetup passEnum blacklist range 0x5C000058..0x5C00005B (FUN_1412CCE20) was not resolved to named techniques; given the adjacent BSSkyShader-singleton exclusion it is plausibly a sky/sun technique block, but this is unverified (idb autoname "IsGrassShadowBlacklist" is also unverified).
+- byte_14302C8E5 (OR'd into the standard path's alphaTest arg) is written by a console handler the idb autonames "ToggleEarlyZ"; its exact gameplay semantics (force-alpha-test when depth-prepass active?) were not verified.
+- Dirty-bit naming: I report observed behavior (blend mode change→0x80, test-enable change→0x100, test-ref change→0x200 at stateUpdateFlags 0x143027EB0). Community headers sometimes name 0x100/0x200 the other way around; trust the observed mapping here.
+- SetupGeometry/RestoreGeometry (vtbl+0x30/+0x38) are virtual and per-shader; I did not expand any concrete implementation since the same slots are invoked by the standard path (per task scope). For NiParticles passes the bound shader is typically BSParticleShader or BSEffectShader — which one depends on the pass, not on this dispatcher.
+- The bit-3 writer search used specific x86 encodings (`80 /r disp32=0x109, imm 8` and the `F7` clear); writers using a different addressing form (e.g. dword-wide flag ops on +0x108, or reg+reg addressing) would not have been found. All found setters are NiParticles ctor/clone/factory functions; other setters may exist.
+- Decompiler artifacts: the float xmm0 args on RenderPassImmediately_Custom/FUN_141307160 and the duplicated `(a1, a1)` argument are dead-register noise; disasm confirms rcx=pass is the only live argument to the Draw dispatch, and confirms r8d(RenderFlags) is live into the SetupGeometry vfunc even though the decompiler dropped it.
+
+### Machine-extracted caveats
+- passEnum blacklist range 0x5C000058..0x5C00005B not resolved to named techniques (likely sky-related; idb autoname 'IsGrassShadowBlacklist' unverified)
+- byte_14302C8E5 semantics unverified (console-toggled; idb autoname ToggleEarlyZ)
+- dirty-bit names for 0x100/0x200 reported from observed writes (enable->0x100, ref->0x200); community headers may name them oppositely
+- SetupGeometry/RestoreGeometry vfunc implementations not expanded (virtual, per-shader, same slots as standard path)
+- bit-3 writer search covered only disp32 imm-form encodings; dword-wide or reg+reg writers would be missed
+- decompiler artifact args (xmm0 float, duplicated pass arg) documented and disasm-verified as dead
+
+================================================================================================
+## Cluster 2
+================================================================================================
+
+# BSUtilityShader NiBoneMatrixSetterI (bone-matrix setter) — RE report (SkyrimSE 1.5.97, image base 0x140000000)
+
+## Vtable identification (addresses)
+
+`BSUtilityShader::Ctor` = **0x14130DCE0** (found via xrefs to the main vtable). Body:
+
+```c
+BSUtilityShader *__fastcall BSUtilityShader::Ctor(char **a1)
+{
+  BSLightingShader::ctor(a1, "Utility");   // BSShader base ctor @ 0x14131F2F0
+  *(a1 + 8) = 8;                            // this+0x08: shader type id = 8 (Utility)
+  *a1   = 0x1418685B0;                      // this+0x00: BSUtilityShader main vftable
+  a1[2] = 0x141868608;                      // this+0x10: NiBoneMatrixSetterI vftable
+  a1[3] = 0x141868620;                      // this+0x18: BSReloadShaderI vftable
+  unk_143495D50 = a1;                       // BSUtilityShader::pInstance global
+}
+```
+
+- **BSUtilityShader main vftable**: 0x1418685B0 (this+0x00)
+- **NiBoneMatrixSetterI vftable (this+0x10)**: **0x141868608**, exactly 2 entries:
+  - `[0]` @0x141868608 → **0x141310758** — adjustor-thunk destructor: `BSUtilityShader::dtor_141310770(this - 0x10, deleteFlag)`. Role: virtual (vector-deleting) dtor through the NiBoneMatrixSetterI base.
+  - `[1]` @0x141868610 → **0x14131F630** — **SetBoneMatrices implementation** (the +8 entry the skinned dispatcher calls). NOTE: this function is **shared, not Utility-specific** — it is referenced by 100+ vtables in the 0x141850950..0x14185xxxx range (every BSShader-family / NiBoneMatrixSetterI vtable points at the same implementation; it is effectively `BSShader::SetBoneMatrix`).
+  - The qword after ([2] @0x141868618 = 0x141990B40) is **not a function**; it is the RTTI CompleteObjectLocator of the *next* vftable (0x141868620), so the NiBoneMatrixSetterI vtable has exactly the 2 entries above.
+- **BSReloadShaderI vftable (this+0x18)**: 0x141868620, single entry 0x14131F800 → thunk to `BSShader::LoadShaders_14131F810(this - 0x18, streamOrPath)` (shader reload interface; out of scope).
+- `unk_143495D50` = BSUtilityShader singleton pointer global.
+
+### Call site (skinned dispatcher 0x141308970, verified at instruction level)
+
+At 0x141308AB3–0x141308ACA (taken when `geometry->vfunc[54]` i.e. `[vtbl+0x1B0](geometry)` returns nonzero, after `BSRenderPass::FUN_141309f80(pass, shader, flag, a4)` geometry/technique setup):
+
+```asm
+lea  rcx, [rsi+10h]        ; rcx = &shader->NiBoneMatrixSetterI (this+0x10)
+mov  rax, [rcx]            ; vtable 0x141868608
+lea  r9,  [rbx+7Ch]        ; r9  = &geometry->world (NiTransform @ geom+0x7C)
+lea  r8,  [rsp+30h]        ; r8  = stack struct (ctor FUN_140c7bad0; word @+0x3C set to 1)
+mov  rdx, [rbx+130h]       ; rdx = geometry->skinInstance (NiSkinInstance* @ geom+0x130)
+call qword ptr [rax+8]     ; SetBoneMatrices(iface, skinInstance, stackStruct, &geomWorld) ; 5th arg (-2) is a gs-cookie idiom, unused
+```
+
+Immediately after: `BSRenderPass::FUN_141307160(pass)` = the geometry Draw dispatch, then stack-struct dtor `FUN_140c7bb10`. The whole dispatcher ends with a tail-jump to `shader->vfunc[7]` (`[vtbl+0x38]`, RestoreGeometry).
+
+The stack struct (0x50 bytes, ctor `FUN_140c7bad0` zeroes +0x08..+0x38, dword +0x3C, qword +0x48; dtor `FUN_140c7bb10` releases the six pointers at +0x08..+0x30): **the setter reads only the WORD at +0x3C** ("skinning enabled" gate) — the dispatcher sets it to 1 unconditionally. The non-hardware branch of the dispatcher instead fills this struct (+0: iface ptr, +8: geometry, +0x18: LOD flag = (pass+0x1E)>>7&1, +0x1C: LODMode&0x7F) and calls `skinInstance->vfunc[37]` (`[vtbl+0x128]`) — the NiSkinInstance software/partition render path, which invokes the same setter internally.
+
+Also note `FUN_14131f7c0` (0x14131F7C0) called at dispatcher entry: zeroes **TLS+0x2A00** = the per-thread "last skin instance uploaded" cache, forcing a fresh upload for the pass (the cache then dedups repeat setter calls within the pass, e.g. per dismember partition).
+
+## SetBoneMatrices full pseudocode
+
+**0x14131F630** — `BSShader::SetBoneMatrix(NiBoneMatrixSetterI* this, NiSkinInstance* skin, SetterArgs* args, NiTransform* geomWorld /*unused here*/ )` (verbatim decompile, corrected against disasm):
+
+```c
+int32 __fastcall SetBoneMatrix(NiBoneMatrixSetterI *a1, NiSkinInstance *skin /*rdx*/,
+                               SetterArgs *args /*r8*/, NiTransform *geomWorld /*r9*/)
+{
+  tls = *(TEB->TlsSlots /*gs:58h*/ + 8 * dword_143497408);   // per-thread BSGraphics block
+  saved = *(uint32*)(tls + 0x768);
+  *(uint32*)(tls + 0x768) = 26;                              // debug/technique marker, restored on exit
+
+  if ( *(void**)(tls + 0x2A00) != skin                       // per-thread lastSkinInstance cache
+    && args && *(uint16*)((char*)args + 0x3C) )              // gate: word @args+0x3C != 0
+  {
+    *(void**)(tls + 0x2A00) = skin;
+    UpdateBoneMatrices_140D74F70(skin, geomWorld);           // rdx = geomWorld (see below)
+
+    float *cur  = *(float**)((char*)skin + 0x48);            // packed 3x4 bone matrices (current)
+    float *prev = *(float**)((char*)skin + 0x50);            // packed 3x4 bone matrices (previous frame)
+    uint32 rows = 3 * *(uint32*)(*(char**)((char*)skin + 0x10) + 0x58); // 3 * NiSkinData->numBones
+
+    // --- current bones -> VS b10 ---
+    int64 *buf10 = GetID3D11Resource(0x143028490 /*Renderer, unused*/, rows, &mapped, 10);
+        //  = pick ring CB [0x143027A08 + cursor*8], cursor=(cursor+1)&3 @0x143027A00,
+        //    ctx->Map(cb, 0, D3D11_MAP_WRITE_DISCARD(4), 0, &ms); mapped = ms.pData;
+        //    qword_14302AC58 = cb; return &qword_14302AC58;
+    memcpy_s(mapped, 16*rows, cur, 16*rows);                 // FUN_14131FF40
+    if (*buf10) ctx->Unmap(*buf10, 0);                       // [vtbl+0x78]
+    ctx->VSSetConstantBuffers(10, 1, buf10);                 // [vtbl+0x38]
+
+    // --- previous bones -> VS b9 ---
+    int64 *buf9 = GetID3D11Resource(0x143028490, rows, &mapped2, 9);  // next ring CB
+    memcpy_s(mapped2, 16*rows, prev, 16*rows);
+    if (*buf9) ctx->Unmap(*buf9, 0);
+    ctx->VSSetConstantBuffers(9, 1, buf9);
+  }
+  *(uint32*)(tls + 0x768) = saved;
+}
+```
+
+`ctx` = `*(ID3D11DeviceContext**)0x143027EA0` (the immediate/deferred context slot, aka `MEMORY[0x1430261B0][926]`).
+
+### Helper: bone palette build — 0x140D74F70 `NiSkinInstance::UpdateBoneMatrices(skin, NiTransform* geomWorld)`
+
+(IDA shows 1 arg but rdx **is** consumed as `source1` = geomWorld.)
+
+```c
+EnterCriticalSection(&skin->lock_60);                        // skin+0x60 CRITICAL_SECTION
+if (skin->frameId_38 != dword_14302C8DC)                     // global frame counter → once per frame
+{
+  skin->frameId_38 = dword_14302C8DC;
+  n     = skinData->numBones;                                // *(skin+0x10) + 0x58, uint32
+  cur   = skin->boneMatrices_48;  prev = skin->prevBoneMatrices_50;
+  if (48*n <= skin->allocatedSize_44)
+      memcpy_s(prev, 48*n, cur, 48*n);                       // save last frame's palette FIRST
+  else {                                                     // (re)allocate both, 16-aligned, 48*n bytes
+      free(cur);  cur  = skin->boneMatrices_48     = alloc(48*n, 16);
+      free(prev); prev = skin->prevBoneMatrices_50 = alloc(48*n, 16);
+      skin->allocatedSize_44 = 48*n;  reallocated = 1;
+  }
+  skin->numMatrices_3C = n;  skin->numRegistersPerMatrix_40 = 3;
+
+  // (dead in this build) tmp = Invert(rootParent_20->world_7C);         FUN_14039a980
+  //                      tmp = skinData->rootParentToSkin_18 * tmp;     Multiply(a,out,b): out=a*b
+  //                      v17 = geomWorld * tmp;   // v17 never read afterwards
+  NiTransform **boneWorlds = skin->boneWorldTransforms_30;   // array of NiTransform* (one per bone)
+  BoneData *bd = skinData->boneData_50;                      // stride 0x58; +0 = NiTransform skinToBone
+  float *dst = cur;
+  for (i = 0; i < n; ++i, bd = (char*)bd + 0x58, ++boneWorlds, dst += 12) {
+    if (*boneWorlds) {
+      NiTransform m;  Multiply_1402AB750(*boneWorlds, &m, &bd->skinToBone);  // m = boneWorld_i * skinToBone_i
+      s = m.scale;
+      dst[0]=m.rot[0]*s; dst[1]=m.rot[1]*s; dst[2] =m.rot[2]*s; dst[3] =m.pos.x;   // row 0
+      dst[4]=m.rot[3]*s; dst[5]=m.rot[4]*s; dst[6] =m.rot[5]*s; dst[7] =m.pos.y;   // row 1
+      dst[8]=m.rot[6]*s; dst[9]=m.rot[7]*s; dst[10]=m.rot[8]*s; dst[11]=m.pos.z;   // row 2
+    }                                                        // NULL bone => 48 bytes left stale
+  }
+  if (reallocated) memcpy_s(prev, 48*n, cur, 48*n);          // first frame: prev = cur
+}
+LeaveCriticalSection(&skin->lock_60);
+```
+
+`NiTransform::Multiply_1402AB750(a, out, b)`: `out.rot = a.rot*b.rot` (FUN_140185e80), `out.pos = a.rot*b.pos*a.scale + a.pos`, `out.scale = a.scale*b.scale` — i.e. `out = a ∘ b` (b applied first). `FUN_14039a980(t, out)` = NiTransform inverse (rot transposed, scale reciprocal, pos = -Rᵀ·t/s).
+
+### Helper: 0x140D6FFD0 `GetID3D11Resource(renderer /*ignored*/, rowCount /*ignored*/, void** outMapped, int which)`
+
+```asm
+cmp r9d,7 ; jz  → rdx = [0x143027E90]                        ; which==7: dedicated 16-byte CB ([924])
+else:       ecx = dword [0x143027A00]                        ; ring cursor 0..3
+            rdx = [0x143027A08 + rcx*8]                      ; ring of 4 dynamic CBs ([779..782])
+            [0x143027A00] = (ecx+1) & 3
+rcx = [0x143027EA0] ; ctx                                    ; qword_14302AC58 = rdx (global scratch)
+ctx->Map(rdx, 0, 4 /*WRITE_DISCARD*/, 0, &ms)                ; [vtbl+0x70]
+*outMapped = ms.pData ; return &qword_14302AC58              ; caller binds via this global's address
+```
+
+`which` (10/9) is otherwise ignored — both bone uploads draw from the **same shared ring**, consuming 2 of the 4 ring slots per skinned upload.
+
+### Ring buffer creation — 0x140D720D0 (renderer init)
+
+The 4 ring CBs: `device(0x143025F08)->CreateBuffer` ([devvtbl+0x18]) with `{ByteWidth=3840, Usage=D3D11_USAGE_DYNAMIC(2), BindFlags=D3D11_BIND_CONSTANT_BUFFER(4), CPUAccessFlags=D3D11_CPU_ACCESS_WRITE(0x10000), MiscFlags=0, StructureByteStride=0}` → stored at 0x143027A08/10/18/20. **3840 bytes = 240 float4 = 80 bones × 3 rows** (matches `Bones[240]`/`PreviousBones[240]` in the shaders). Same function creates the size-16 CB at 0x143027E90 ([924], `which==7`) and the per-size CB pools at [783], [785..], [805..], [815..], [843..], [863..], [883..], plus 576-byte [922] and 720-byte [923].
+
+## D3D11 command sequence
+
+Per skinned pass (when `lastSkinInstance(TLS+0x2A00) != skin` and `args->word_3C != 0`), in exact order, all on `ctx = *(0x143027EA0)`:
+
+1. `Map(ringCB[c], 0, D3D11_MAP_WRITE_DISCARD, 0, &ms)` — vfunc 14 (+0x70); ring cursor c→c+1&3.
+2. CPU `memcpy_s(ms.pData, 48*numBones, skin->boneMatrices_48, 48*numBones)`.
+3. `Unmap(ringCB[c], 0)` — vfunc 15 (+0x78), skipped only if the buffer ptr is NULL.
+4. `VSSetConstantBuffers(StartSlot=10, 1, &ringCB[c])` — vfunc 7 (+0x38). → **b10 = current bones** (`BonesBuffer`).
+5. `Map(ringCB[c+1], 0, D3D11_MAP_WRITE_DISCARD, 0, &ms2)`.
+6. CPU `memcpy_s(ms2.pData, 48*numBones, skin->prevBoneMatrices_50, 48*numBones)`.
+7. `Unmap(ringCB[c+1], 0)`.
+8. `VSSetConstantBuffers(StartSlot=9, 1, &ringCB[c+1])` — → **b9 = previous-frame bones** (`PreviousBonesBuffer`).
+
+No PS binds, no other state touched. Bindings persist across subsequent passes; the TLS cache (reset at each dispatcher entry by 0x14131F7C0) prevents duplicate uploads for the same skin instance within one pass. `ppConstantBuffers` for both binds points at the global scratch `qword_14302AC58` (0x14302AC58), overwritten per GetID3D11Resource call.
+
+## Data layout (bone palette format, offsets)
+
+**Palette format**: per bone, **3×float4 rows = 48 bytes**, row-major top-3-rows of the 4×4 world matrix, translation in `.w`:
+- row0 = `(R00·s, R01·s, R02·s, T.x)`, row1 = `(R10·s, R11·s, R12·s, T.y)`, row2 = `(R20·s, R21·s, R22·s, T.z)`
+- `M_i = boneWorld_i ∘ skinToBone_i` (bind-pose inverse composed into bone world; convention `v_world = M · v_skin` — each output row is dotted with `float4(pos,1)`), uniform scale premultiplied into the rotation, translation NOT scaled (already world). NiMatrix3 `Data[3r+c]` is row-major here (Multiply's position transform uses Data[0..2] as row 0). Full world-space (no eye-relative adjustment at this stage). CB capacity: **80 bones max** (3840-byte CB); memcpy_s dst-size equals src-size, so >80 bones is not guarded by the buffer size.
+
+**NiSkinInstance** (this binary):
+- +0x10 `NiPointer<NiSkinData> skinData`
+- +0x20 `NiAVObject* rootParent`
+- +0x30 `NiTransform** boneWorldTransforms` (array of per-bone NiTransform*, may contain NULLs)
+- +0x38 `uint32 frameId` (vs global frame counter `dword_14302C8DC`)
+- +0x3C `uint32 numMatrices`, +0x40 `uint32 numRegistersPerMatrix` (=3), +0x44 `uint32 allocatedBytes`
+- +0x48 `float* boneMatrices` (current, 16-aligned heap), +0x50 `float* prevBoneMatrices`
+- +0x60 `CRITICAL_SECTION lock`
+
+**NiSkinData**: +0x18 `NiTransform rootParentToSkin` (used only in the dead prologue), +0x50 `BoneData* boneData` (stride **0x58**, `NiTransform skinToBone` at +0), +0x58 `uint32 numBones`.
+
+**Geometry/pass** (call-site): skinInstance @ geom+0x130, world NiTransform @ geom+0x7C, LOD byte @ pass+0x1E.
+
+**Globals**: TLS index dword @0x143497408; TLS block: +0x768 marker dword (saved/set 26/restored), +0x2A00 lastSkinInstance. Renderer-data statics: 0x143027A00 ring cursor, 0x143027A08 ring CB[4] (3840B), 0x143027E90 16B CB, 0x143027EA0 ID3D11DeviceContext*, 0x143025F08 ID3D11Device*, 0x14302AC58 scratch "current CB" qword, 0x14302C8DC frame counter, 0x143495D50 BSUtilityShader instance.
+
+## CAVEATS
+
+- The bone setter 0x14131F630 is the **shared BSShader implementation** (100+ vtables point at it, xref list truncated at 100), so BSUtilityShader does not override it; behavior is identical for Lighting etc.
+- The `which==7` path of GetID3D11Resource and the meaning of TLS+0x768 = 26 (debug/annotation marker id) were not chased further; the value is saved/restored and has no D3D side effect in this function.
+- The prologue composition in 0x140D74F70 (`geomWorld * rootParentToSkin * inv(rootParentWorld)` into a stack temp) is computed but **never consumed** in this build as decompiled — likely vestigial; flagged rather than guessed. Consequently the `geomWorld` (r9 = geom+0x7C) argument has **no effect** on the uploaded palette here.
+- `Multiply(a,out,b) = a∘b` operand order was inferred from its position math (out.pos = a.rot·b.pos·a.s + a.pos); the rotation sub-helper FUN_140185E80 was not decompiled (assumed consistent).
+- NULL entries in boneWorldTransforms leave that bone's 48 bytes **stale** (unwritten) in the palette.
+- CommonLibSSE names `NiSkinInstance::bones` at +0x30 as `NiTransform**`; matches the binary. What sits at +0x28 was not examined.
+- Whether geometry vfunc 54 (`[vtbl+0x1B0]`, the HW-skinning gate in the dispatcher) is `GetSkinPartition`-like was not verified; only its gating role is asserted.
+- The word gate `args+0x3C` is set to 1 unconditionally by the utility skinned dispatcher; other callers (NiSkinInstance vfunc 37 path) may pass 0 to skip the upload — not traced.
+
+### Machine-extracted caveats
+- SetBoneMatrix 0x14131F630 is the shared BSShader-wide implementation (100+ vtables reference it), not a BSUtilityShader-specific override.
+- The prologue composition in 0x140D74F70 (geomWorld * rootParentToSkin * inv(rootParentWorld)) is computed into a stack temp that is never read — apparently dead; therefore the geomWorld argument (geom+0x7C) has no effect on the uploaded palette in this build.
+- NiTransform::Multiply operand order (out = a applied-after b) inferred from its position math; the 3x3 rotation sub-helper FUN_140185E80 was not decompiled.
+- NULL bone pointers in skinInstance+0x30 leave that bone's 48 bytes stale (unwritten) in the palette.
+- Meaning of TLS+0x768 marker value 26 and the which==7 GetID3D11Resource path were not chased further.
+- Geometry vfunc 54 ([vtbl+0x1B0]) gating the HW-skinned branch was not identified beyond its gating role; the alternate branch (NiSkinInstance vfunc 37, [vtbl+0x128]) software/partition path was not traced.
+- memcpy_s destination size equals source size (48*numBones), so bone counts >80 are not guarded against the 3840-byte ring CB capacity by this code.
+
+================================================================================================
+## Cluster 3
+================================================================================================
+
+# STENCIL_ABOVE_WATER utility technique flow (F = passEnum-0x2B, (F & 0x1200) == 0x1200) — SkyrimSE 1.5.97
+
+Function-role correction first (vtable order matters for hooking): `0x14130DF90` = SetupTechnique (Func2), `0x14130DD80` = **RestoreTechnique** (Func3, takes the technique enum), `0x14130EC70` = SetupGeometry (Func6, takes BSRenderPass*), `0x141310300` = **RestoreGeometry** (Func7, takes BSRenderPass* — the task prompt called this one "RestoreTechnique"; it is the per-pass restore). Both restores participate in the 0x1200 protocol and are documented below.
+
+Struct layouts used throughout (confirmed against `Renderer::SetPixelShader 0x140d6fd60`, `Renderer::SetVertexShader 0x140d6f9b0`, and the Map/Unmap sites):
+
+- `BSGraphics::PixelShader`: `+0` techniqueId(u32), `+8` **ID3D11PixelShader\* m_Shader**, `+0x10` PerTechnique{ID3D11Buffer\* buf, void\* data}, `+0x20` PerMaterial, `+0x30` PerGeometry{buf@0x30, data@0x38}, `+0x40` u8 constantOffsets[].
+- `BSGraphics::VertexShader`: `+0` techniqueId, `+8` ID3D11VertexShader\* m_Shader, `+0x18` PerTechnique{buf@0x18, data@0x20}, `+0x38` PerGeometry{buf@0x38, data@0x40}, `+0x50` u8 constantOffsets[].
+- Globals: `0x1430281F8` = m_CurrentVertexShader (VertexShader\*), `0x143028200` = m_CurrentPixelShader (PixelShader\*) — both inside the `dword_143028070` render-state block (`0x143028070 + 98*4` / `+100*4`). `0x143027EA0` = stored ID3D11DeviceContext\* used for shader CB Map/Unmap/SetConstantBuffers; `0x1430261B0[926]` = the same immediate context used by SetDirtyStates; `0x1430261B0` = renderer device-objects block (precreated state arrays). `0x143027EB0` = m_StateUpdateFlags (dirty bits). BSUtilityShader stores the current raw technique F at `this+0x90` (`_pad_20[112]`) and `F & 0x7F` at `this+0x94`, written in SetupTechnique at 0x14130e0e4.
+
+## FUN_140d6fcf0 semantics
+
+Full decompilation (entire function; first arg `&renderer 0x143028490` is **unused**):
+
+```c
+int32 __fastcall FUN_140d6fcf0(int64 a1_renderer_unused, int64 a2_pixelShader)
+{
+  if ( a2_pixelShader ) {
+    v2 = *(a2_pixelShader + 8);           // ID3D11PixelShader* m_Shader
+    if ( v2 ) {
+      (*(*v2 + 16LL))(v2);                // vtbl+0x10 = IUnknown::Release  (QI=0, AddRef=8, Release=16)
+      *(a2_pixelShader + 8) = 0;          // m_Shader = nullptr
+    }
+  }
+}
+```
+
+Disasm confirms: `mov rcx,[rdx+8]; test rcx,rcx; jz; mov rax,[rcx]; call [rax+10h]; mov qword [rbx+8],0`. It does **not** Release-then-swap, does **not** null-bind — it is a **one-shot destructive Release of the D3D pixel-shader COM object owned by the passed PixelShader cache entry, followed by nulling the entry's m_Shader field**. It does NOT touch the context (no `PSSetShader(NULL)` is issued) and does not touch `0x143028200` itself (the PixelShader\* stays current; only its `+8` becomes null).
+
+**Ownership semantics**: the PixelShader table entry (in `BSUtilityShader`'s pixel-shader hash table, buckets at shader+0x80, walked by BeginTechnique) holds exactly one reference to the ID3D11PixelShader, created at shader-load time. FUN_140d6fcf0 consumes that single owned reference. Because the field is nulled in the same guarded block, the function is **idempotent**: a second call on the same entry is a no-op. There is no AddRef anywhere in this flow.
+
+**Only caller in the whole binary**: `BSUtilityShader::SetupGeometry` at 0x14130f3a5 (the other xref, 0x143571200, is just this function's .pdata RUNTIME_FUNCTION entry). The call site: `FUN_140d6fcf0(&MEMORY[0x143028490], v2)` where `v2 = MEMORY[0x143028200]` was **captured at SetupGeometry entry** (0x14130ec86) — i.e. the technique's own PS entry that BeginTechnique just made current.
+
+**Net effect / why the engine does this**: the (F&0x1200)==0x1200 utility technique wants no pixel shader (stencil-only marking with color writes disabled). Instead of binding null, the engine permanently destroys the compiled PS for this technique's psid the first time a 0x1200 pass runs. Timing wrinkle (verified from code order, not runtime): on the **first-ever** execution after shader load, BeginTechnique has already issued `PSSetShader(ps->m_Shader)` (real object; the context's own ref keeps it alive), and the Release happens after that bind — so the first draw executes with the real PS bound; from the next BeginTechnique onward `PSSetShader(*(ps+8)=NULL)` binds null. Steady state = null PS.
+
+### Exact SetupGeometry 0x1200 branch (0x14130f318..0x14130f3a5)
+
+Reached only when `(F & 0x20004000) != 0x4000` (true for F=0x1200) and the grayscale path `(F & 0x100000)` was not taken. `v47` = dirty flags, `v49` = alphaBlendWriteMode (0x143027F60) read earlier, `v41` = depthModePrevious (0x143027F3C) read at 0x14130f1ab:
+
+```c
+if ( (F & 0x1200) == 0x1200 ) {
+  if ( unk_143027F40 != 0xFF00000001LL ) {          // {stencilMode=1, stencilRef=0xFF}
+    v47 |= 8;  unk_143027F40 = 0xFF00000001LL;  dirty = v47;      // DIRTY_DEPTH_STENCILREF_MODE
+  }
+  if ( v49 ) {                                       // alphaBlendWriteMode != 0
+    v47 |= 0x80;  unk_143027F60 = 0;  dirty = v47;   // color writes OFF, DIRTY_ALPHA_BLEND
+  }
+  if ( unk_143027F38 ) {                             // depthMode != 0
+    unk_143027F38 = 0;                               // depth mode 0 (disabled)
+    dirty = (unk_143027F3C_prev != 0) ? (v47|4) : (v47 & ~4);     // DIRTY_DEPTH_MODE compare-vs-previous
+  }
+  *(vsPerGeoMapped + 4 * vs->constantOffsets[7]) = dword_141E0E014;   // raw dword copy
+  FUN_140d6fcf0(&renderer_143028490, currentPS_143028200);            // Release + null ps->m_Shader
+}
+```
+
+`dword_141E0E014` is a float in [0,1] (statically 0), recomputed by `FUN_1404c5660` (the imagespace water/DOF update, which also drives ImageSpaceEffectDepthOfField mode selection and `qword_141E0DFF4+4`): 0 when two water bools at watersystem+0xB8/+0xB9 are clear, else `clamp01((val@+0xC0 − a)/(b − a))`, or 1.0f (0x3F800000) — a camera-vs-water-plane blend factor. It is copied bit-for-bit into the utility VS PerGeometry cbuffer (b2) at float index `constantOffsets[7]` (byte at VertexShader+0x57).
+
+Full per-pass D3D11 call order for a pure-0x1200 pass through SetupGeometry (ctx = `[0x143027EA0]`):
+1. `ctx->Map(vs->PerGeometry.buf /*vs+0x38*/, 0, D3D11_MAP_WRITE_DISCARD(4), 0, &p)`; mapped ptr → vs+0x40 (0x14130ecdf)
+2. `ctx->Map(ps->PerGeometry.buf /*ps+0x30*/, 0, DISCARD, 0, &p)`; → ps+0x38 (0x14130ed26; executed because currentPS pointer ≠ null — stays true even after m_Shader was nulled)
+3. non-skinned (F bit 2 clear): world→view matrix built by FUN_1412c3440 + `D3DXMatrixTranspose` into vsPerGeo at `4*constantOffsets[0]` (0x14130ef1f); skinned bit skips this
+4. the 0x1200 shadow-state writes + CB write + FUN_140d6fcf0 (above)
+5. tree-anim block skipped (needs F&0x4000000); `BSRenderPass::GetNiProperty(pass)` (0x1412fd8a0) → alpha gate: since currentPS≠null, if (no NiAlphaProperty ∨ !(alphaFlags&1)) ∧ (F&0x80)==0 ∧ (F&0x14000)!=0x10000 → jump straight to the tail. (If the geometry has an alpha-blending NiAlphaProperty or F has AlphaTest 0x80, the PS alpha-ref constants at `4*ps->constantOffsets[0]` get written first — gate at 0x14130f74e/0x14130f764.)
+6. tail (LABEL_154, 0x14130f8a6): `ctx->Unmap(vs->PerGeometry.buf, 0)`; `ctx->Unmap(ps->PerGeometry.buf, 0)`; `ctx->VSSetConstantBuffers(2, 1, &vs->PerGeometry.buf)`; `ctx->PSSetConstantBuffers(2, 1, &ps->PerGeometry.buf)`.
+
+The shadow-state writes are materialized later by `BSGraphics::SetDirtyStates (0x140d705b0)` before the DrawIndexed: dirty&0xC → `ctx->OMSetDepthStencilState(deviceBlock_1430261B0[40*depthMode_143027F38 + stencilMode_143027F40], stencilRef_143027F44)`; dirty&0x80 → `ctx->OMSetBlendState(deviceBlock[384 + 52*u143027F58 + 26*u143027F5C + 2*writeMode_143027F60 + dw_143028484], blendFactor_141E07168, 0xFFFFFFFF)`.
+
+## Restore protocol
+
+Two layers, split between per-pass RestoreGeometry and per-technique RestoreTechnique. The 64-bit global `unk_143027F40` is the packed pair `{u32 stencilMode @0x143027F40, u32 stencilRef @0x143027F44}` of RendererShadowState (offsets +0x90/+0x94 from 0x143027EB0); dirty bit 8 forces re-issue of OMSetDepthStencilState.
+
+**RestoreGeometry 0x141310300** (a2 = BSRenderPass\*, `a2+28` = pass+0x1C = accumulationHint; v2 = stored F from shader+0x90):
+
+```c
+if ( (v2 & 0x1200) != 0x1200 && pass->accumulationHint == 10 && unk_143027F40 != 0xFF00000000LL ) {
+  dirty |= 8;  unk_143027F40 = 0xFF00000000LL;      // {stencilMode=0, ref=0xFF}
+}
+```
+
+This branch is the undo of a *different* stencil use: in SetupGeometry's shadow-mask path (F&0x1E00000, at 0x14130f126..0x14130f18e) a pass with accumulationHint==10 (LOD-fade dither) sets `{mode=11, ref=(fade*31)}`. RestoreGeometry resets that to `{mode=0, ref=0xFF}` after each such pass. The `(F & 0x1200) != 0x1200` gate deliberately **excludes** the STENCIL_ABOVE_WATER technique from this per-pass reset: its `{1, 0xFF}` must persist across all passes of the technique block (per-pass resetting would thrash dirty-bit 8 / OMSetDepthStencilState between every pass, and the hint==10 case can't co-occur meaningfully). So for 0x1200 passes RestoreGeometry leaves stencil state alone. (Its remaining body: the F&0x100000 grayscale raster/depth restore, and the `dword_141E10660` blend-write-mode stash restore — `dword_141E10660` is statically 13 = sentinel "nothing stashed", set only by the grayscale+blockOutTexture path in SetupGeometry at 0x14130f292 and reset to 13 after restore; a pure 0x1200 pass never touches it, so that block no-ops.)
+
+**RestoreTechnique 0x14130DD80** is where the 0x1200 state is actually undone, once, at technique end (final check reads the stored F at shader+0x90, at 0x14130def2):
+
+```c
+if ( (this->rawTechnique_0x90 & 0x1200) == 0x1200 ) {
+  if ( unk_143027F40 != 0xFF00000000LL ) { dirty |= 8;    unk_143027F40 = 0xFF00000000LL; }  // stencilMode 0, ref 0xFF
+  if ( unk_143027F60 != 1 )              { dirty |= 0x80; unk_143027F60 = 1; }               // alphaBlendWriteMode back to default 1
+}
+FUN_14131fce0();   // BSShader::EndTechnique — verified EMPTY function (no-op)
+```
+
+Note the depth mode (0x143027F38, forced to 0 by SetupGeometry) is **not** restored by either function for the 0x1200 technique — it leaks until the next technique's Setup writes it (every utility/lighting Setup sets it explicitly, so this is benign engine-wide but a replica that owns the pass must reproduce the leak to stay state-identical). The stencilRef protocol overall: ref stays 0xFF at all times for this technique; only the mode toggles 1→0. `pass->accumulationHint == 10` never gates anything in the 0x1200 flow itself — it only gates the *other* (fade-dither, mode 11) protocol which the 0x1200 gate in RestoreGeometry explicitly bypasses.
+
+## Technique-ID impact
+
+`SetupTechnique 0x14130DF90`: `F = passEnum - 43`; `vsid = FUN_141334900(F)`; `psid = FUN_141334970(F)`; then `BeginTechnique(this, vsid, psid, noPS = !v6)` where
+
+```
+v6 = (F & 0x14000) == 0x14000
+   || ((F & 0x20004000) != 0x4000 && (F & 0x1E02000) != 0x2000)
+   || (F & 0x80) != 0
+   || (F & 0x14000) == 0x10000;
+```
+
+For any F with (F&0x1200)==0x1200 and without 0x4000/0x2000: the second clause is true → **v6 = true → a4(noPS) = false → the PS is looked up in the table and is REQUIRED** (BeginTechnique returns 0 and the pass is skipped if either VS or PS entry is missing). So this technique is *not* dispatched as a null-PS technique — it binds a real PS entry whose D3D object then gets destroyed by SetupGeometry.
+
+**vsid reducer FUN_141334900**: `vsid = F & 0xF7E5FF9F` (clears bits 0x081A0060 = 27,20,19,17,6,5). The shadow-mask override (`byte_141E0DE4C && (F&0x1E00000)`→`(F&0x1E00000)|0x2002`) does not apply (F&0x1E00000==0). The second reduction (`v1 &= 0xDFFFE1E4` — the depth/shadowmap group collapse) requires `((F&0x20004000)==0x4000 || (F&0x1E02000)==0x2000)` which is false for 0x1200. → **vsid keeps both 0x200 and 0x1000 bits intact** (plus vertex-format bits 0..4,7,8): a dedicated RENDER_NORMAL|RENDER_NORMAL_CLEAR vertex shader is selected.
+
+**psid reducer FUN_141334970**: the early `return 0x2000` collapse has the same false precondition. → `psid = F & 0xFFFFFB83` (clears 0x47C = bits 2,3,4,5,6,10 — Skinned/Normals/BinormalTangent/bits5-6 and RenderNormalFalloff), and the `(F&0x1E00000)` shadow-mask override doesn't apply. → **psid keeps 0x1200** (plus bits 0,1,7). So the released pixel shader is the dedicated cache entry `psid = F & 0xFFFFFB83`; all skinned/vertex-format variants of the technique share that one PS entry, and no non-0x1200 technique can map onto it (bits 9 and 12 are never cleared by the reducer for the non-shadow group).
+
+BeginTechnique 0x14131FBD0 itself: hash-walks the VS table (buckets at shader+0x50, size at +0x34) for vsid and the PS table (buckets at +0x80, size at +0x64) for psid, then `Renderer::SetShader(0x140d6f9b0)` — sets dirty 0x400 (input-layout re-resolve), stores VS ptr to 0x1430281F8, **immediately** `ctx->VSSetShader(vs->m_Shader,0,0)` — and `Renderer::SetPixelShader(0x140d6fd60)` — stores PS ptr to 0x143028200, immediately `ctx->PSSetShader(ps ? ps->m_Shader : 0, 0, 0)`. No refcounting on either side. After BeginTechnique succeeds, SetupTechnique maps VS PerTechnique (vs+0x18) and (v6) PS PerTechnique (ps+0x10) with DISCARD, and for pure 0x1200 (F&0x1E00100 != 0x100, F&0x1E00000 == 0, F&0x40000 == 0, F&0x20004000 != 0x4000, F&0x100000 == 0) **writes nothing into either**, then Unmaps both and binds them: `ctx->VSSetConstantBuffers(0,1,&vs->PerTechnique.buf)`, `ctx->PSSetConstantBuffers(0,1,&ps->PerTechnique.buf)` (0x14130e6f4/0x14130e70a). (Per-technique b0 content is therefore DISCARD garbage — engine behavior; the selected shaders evidently don't read it.)
+
+## Double-render hazard + safe compensation
+
+**If both runs execute the engine's own code paths (call-original twice)**: nothing double-Releases. FUN_140d6fcf0 is self-guarded (`if (m_Shader) { Release; m_Shader = null; }`), so the replica's second pass finds `m_Shader == null` and no-ops. All other side effects in Setup/Restore are value-idempotent compare-and-write shadow-state updates plus DISCARD-mapped CB rewrites of identical bytes. The only cross-run asymmetry is the **first-ever execution of the technique per shader-lifetime**: run 1 draws with the real PS bound (bound by BeginTechnique before the Release), run 2's BeginTechnique binds NULL (m_Shader already nulled) — a potential one-frame visual/compare diff, and with F&0x80 (alpha-test, psid keeps bit 7) a real stencil-output diff since the real PS's `clip()` would be lost. From the second execution on, both runs bind null and are byte-identical.
+
+**What actually double-Releases** — the hazard is entirely in a *re-implementation*: the object at risk is the **ID3D11PixelShader** owned by the utility PixelShader cache entry `psid = F & 0xFFFFFB83` (field `+8` of the struct pointed to by `[0x143028200]`). Failure modes:
+1. Replica caches `ID3D11PixelShader* s = ps->m_Shader` (e.g. at SetupTechnique time) and later Releases `s` unconditionally, or Releases without also nulling `ps->m_Shader` → engine (or the replica's next frame) Releases again → refcount underflow: the second Release consumes the D3D context's bind-time reference, so the object is destroyed while still recorded in the pipeline binding table → use-after-free on the next PSSetShader/draw (crash in driver/DXVK).
+2. Replica (or CS ShaderCache-style hook) **re-populates** `ps->m_Shader` for this psid each frame without an AddRef per store → the engine's SetupGeometry Releases a reference the installer never owned, once per technique execution → underflow of the installer's object.
+
+**Safe compensation for engine-then-replica compare mode** (making both runs identical *including* the first-frame window):
+
+```cpp
+// BEFORE the engine executes SetupTechnique/SetupGeometry for the 0x1200 pass:
+auto* ps    = *(PixelShader**)0x143028200_after_BeginTechnique;   // or the psid entry from the table
+auto* saved = ps->m_Shader;            // ID3D11PixelShader*
+if (saved) saved->AddRef();            // take one extra owned reference
+// ... engine runs: binds saved (if first time), Releases it, nulls the field ...
+ps->m_Shader = saved;                  // transfer YOUR reference back into the entry (null after first frame)
+// ... replica runs the identical path: BeginTechnique binds it again, SetupGeometry
+//     Releases (consuming your AddRef) and nulls the field again.  Net refcount: balanced.
+```
+
+Each of the two Releases consumes exactly one owned reference; behavior (real-PS-then-null timeline) is identical for both runs on every frame. If first-frame identity is not needed, the zero-cost alternative is: replica simply re-runs the original functions (or an exact copy that keeps the guarded release against the **live** `[0x143028200]->m_Shader`, never a cached copy) — no compensation, accepting the one-time null-vs-real PS divergence. If the replica *owns* the pass exclusively (engine path suppressed), it must reproduce all of: stencil {1,0xFF} + writeMode 0 + depthMode 0 with correct dirty bits (8 / 0x80 / 4-with-prev-compare), the `constantOffsets[7] = dword_141E0E014` VS b2 write, the guarded release-and-null, the b2 rebinds, and RestoreTechnique's {0,0xFF} + writeMode 1 — while leaving depthMode 0 un-restored.
+
+### Key addresses
+
+| Item | Address |
+|---|---|
+| BSUtilityShader::SetupTechnique (Func2) | 0x14130DF90 |
+| BSUtilityShader::RestoreTechnique (Func3) | 0x14130DD80 (0x1200 undo at 0x14130def2) |
+| BSUtilityShader::SetupGeometry (Func6) | 0x14130EC70 (0x1200 branch 0x14130f318, release call 0x14130f3a5) |
+| BSUtilityShader::RestoreGeometry (Func7) | 0x141310300 (0x1200-gated stencil reset 0x14131037e) |
+| FUN_140d6fcf0 (release current-PS D3D object) | 0x140d6fcf0 — single code caller |
+| BSShader::BeginTechnique | 0x14131FBD0; EndTechnique 0x14131fce0 = empty |
+| Renderer::SetVertexShader / SetPixelShader | 0x140d6f9b0 / 0x140d6fd60 |
+| vsid / psid reducers | 0x141334900 (`F & 0xF7E5FF9F`) / 0x141334970 (`F & 0xFFFFFB83`) |
+| BSGraphics::SetDirtyStates (flush) | 0x140d705b0 (DSS apply 0x140d707c9, blend apply 0x140d70913) |
+| m_StateUpdateFlags / depthMode / depthModePrev | 0x143027EB0 / 0x143027F38 / 0x143027F3C |
+| stencilMode / stencilRef (packed qword) | 0x143027F40 / 0x143027F44 |
+| alphaBlendWriteMode / stash sentinel(=13) | 0x143027F60 / 0x141E10660 |
+| currentVS / currentPS / CB-context / device block | 0x1430281F8 / 0x143028200 / 0x143027EA0 / 0x1430261B0 |
+| water blend factor (VS b2, constantOffsets[7]) | 0x141E0E014, written by FUN_1404c5660 |
+
+## CAVEATS
+
+- The exact D3D11_DEPTH_STENCIL_DESC behind stencilMode 1 vs 0 (and depthMode 0) was not re-derived — the device-init state-creation loop was not decompiled. The flush indexes precreated states as `deviceBlock_1430261B0[40*depthMode + stencilMode]` with `ref = [0x143027F44]`; a replica should index/bind the engine's own precreated array (or reuse CommonLib's enum mapping) rather than trusting a guessed desc.
+- The blend-state index formula `384 + 52*[0x143027F58] + 26*[0x143027F5C] + 2*writeMode + [0x143028484]` implies writeMode range 0..12 (sentinel 13); writeMode 0 = no color writes / 1 = default was inferred from usage (0 set by stencil/grayscale-off paths, 1 restored as default), not from the creation desc.
+- The pass-creation site for STENCIL_ABOVE_WATER (passEnum 0x2B + 0x1200 = 0x122B, presumably BSWaterShaderProperty/water-stencil accumulation) was not located — the immediate-search timed out and it wasn't required. Analysis assumes F = 0x1200 plus optional vertex-format bits (0..4) and possibly 0x80 (alpha test); every gate was evaluated symbolically so extra low bits don't change any conclusion except the noted alpha-test first-frame clip() caveat.
+- `dword_141E0E014` was characterized from FUN_1404c5660's disasm (clamp01 blend factor derived from water-system fields +0xB8/+0xB9 bools and +0xC0 float; 0 when both bools clear, 1.0 in the far branch); the precise gameplay meaning of those fields (camera above/below water) was not verified further.
+- "First draw after shader (re)load executes with the real PS bound, later draws with null PS" is proven from code order (PSSetShader in BeginTechnique precedes the Release in SetupGeometry; D3D bind holds its own reference) but was not runtime-verified with a capture.
+- BSUtilityShader member offsets 0x90 (stored raw F) / 0x94 (F&0x7F) derive from the decompiler's `_pad_20[112]/[116]` with pad base 0x20; consistent with BSShader size 0x90 but not independently typed in this idb.
+
+### Machine-extracted caveats
+- Exact D3D11_DEPTH_STENCIL_DESC for stencilMode 1/0 and depthMode 0 not re-derived; flush indexes precreated states deviceBlock_1430261B0[40*depthMode + stencilMode] with ref from 0x143027F44 - replica should reuse the engine array or CommonLib enums
+- Blend writeMode 0 = no color writes / 1 = default inferred from usage and index formula (weight 2, sentinel 13), not from the creation desc
+- Pass-creation site for passEnum 0x122B (STENCIL_ABOVE_WATER) not located (immediate search timed out); F assumed 0x1200 + optional vertex-format bits, gates evaluated symbolically
+- dword_141E0E014 characterized as clamp01 water blend factor from FUN_1404c5660 disasm; exact meaning of source fields (+0xB8/+0xB9/+0xC0 of the water object) not fully verified
+- First-execution window (real PS bound for the first draw, null thereafter) proven from code order, not runtime-captured; matters for compare mode and for alpha-test (F&0x80) variants whose PS clip() affects stencil output
+- BSUtilityShader offsets 0x90/0x94 (stored raw technique F, F&0x7F) derived from decompiler pad offsets, not independently typed
+
+================================================================================================
+## Cluster 4
+================================================================================================
+
+# RE: Skinned render-pass dispatcher @ 0x141308970 (SkyrimSE.exe 1.5.97)
+
+NOTE ON LABELS: the idb names 0x141308970 `RenderPassImmediately_Standard`, but this is the **SKINNED** dispatcher (reached from BSBatchRenderer::RenderPassImmediately 0x141308440 when `geometry+0x130` (skinInstance) != 0). The idb labels for 0x141308970/0x1413088C0 are swapped vs reality.
+
+## Dispatcher body
+
+Signature (real): `void RenderPassImmediately_Skinned(BSRenderPass* pass /*rcx*/, uint8 alphaTest /*dl*/, uint32 renderFlags /*r8d*/)`. The decompiler's `a4@<xmm0>` is spurious (never read).
+
+Annotated decompile (0x141308970):
+
+```c
+v5 = (uint8)a2;                 // dl: alpha-test/technique bool, forwarded to SetupGeometry helper
+v7 = *(pass + 0x10);            // rbx = geometry (BSGeometry*)
+v8 = *(pass + 0x00);            // rsi = shader   (BSShader*)
+v9 = *(geometry + 0x130);       // r15 = skinInstance (NiSkinInstance*) — loaded up-front
+FUN_14131f7c0();                // TLS: zero per-thread "last skin instance" cache (see Bracket fns)
+if ( geometry->vtbl[54](geometry) )          // call [vtbl+0x1B0] = AsBSSkinnedDecalTriShape()
+{
+    // ===== TRUE: skinned DECAL path (BSSkinnedDecalTriShape only) =====
+    FUN_141309f80(pass, shader, v5, renderFlags);   // alpha setup + shader->SetupGeometry (vtbl+0x30)
+    FUN_140c7bad0(a1a);                             // NiSkinPartition::Partition::Partition() on stack (0x50 bytes)
+    *(uint16*)((char*)a1a + 0x3C) = 1;              // partition.numBones = 1  (gates SetBoneMatrix)
+    // NiBoneMatrixSetterI iface = shader+0x10 (BSShader's 2nd vtable); slot 1 (+8) = SetBoneMatrix
+    (*(*(shader+0x10) + 8))( shader+0x10,           // this  = NiBoneMatrixSetterI*
+                             *(geometry + 0x130),   // rdx   = NiSkinInstance*
+                             a1a,                    // r8    = NiSkinPartition::Partition* (temp)
+                             geometry + 0x7C );      // r9    = NiTransform* = &geometry->world
+    // NOTE: "-2" in the decompile is NOT an argument — it is the EH-state sentinel
+    // `mov [rsp+20h], 0FFFFFFFFFFFFFFFEh` written in the prologue, which happens to sit in the
+    // 5th-arg home slot. SetBoneMatrix takes 4 args.
+    FUN_141307160(pass);                            // GeometryType draw dispatch (already-REd; draws the decal)
+    FUN_140c7bb10(a1a);                             // Partition::~Partition()
+}
+else
+{
+    // ===== FALSE: normal skinned path (BSTriShape / BSDynamicTriShape / everything else) =====
+    FUN_141309f80(pass, shader, v5, renderFlags);   // same SetupGeometry wrapper
+    v10 = (*(uint8*)(pass + 0x1E) >> 7) & 1;        // LODMode bit7  = "exact LOD match" flag
+    v11 = *(uint8*)(pass + 0x1E) & 0x7F;            // LODMode bits0-6 = LOD level
+    v12 = geometry->vtbl[12](geometry);             // call [vtbl+0x60] = AsBSDynamicTriShape()
+    // build 0x28-byte stack struct at a1a:
+    a1a[0x00] = shader ? shader+0x10 : 0;           // NiBoneMatrixSetterI*
+    a1a[0x08] = geometry;
+    a1a[0x10] = 0;                                  // (qword) never read in 1.5.97 skinned path
+    a1a[0x18] = v10;                                // dword: exact-match flag
+    a1a[0x1C] = v11;                                // dword: LOD level
+    a1a[0x20] = 0.0f;                               // float: never read in this path
+    a1a[0x24] = -1;                                 // dword: dynamic-VB byte offset (out of FUN_140d6c8a0)
+    if ( v12 )                                      // dynamic tri shape: upload CPU dynamic verts
+    {
+        // ring-allocate *(v12+0x170) bytes from the 4MB dynamic-VB ring; offset -> a1a[0x24]
+        v15 = FUN_140d6c8a0(0x143028490 /*Renderer, ignored*/, *(uint32*)(v12+0x170), &a1a[0x24]);
+        v16 = *(uint32*)(v12 + 0x170);              // dynamicDataSize
+        v17 = BSDynamicTriShape_Lock(v12);          // sub_140C723C0: spinlock, returns *(v12+0x160) = pDynamicData
+        memcpy_s(v15, v16, v17, v16);               // FUN_14130a030
+        FUN_140d6c9e0();                            // ctx->Unmap(currentRingBuffer, 0)
+        BSDynamicTriShape_Unlock(v12);              // sub_140C72420
+    }
+    (*(*v9 + 0x128))(v9, a1a);                      // skinInstance->vfunc37(renderData*) — renders all partitions
+}
+return shader->vtbl[7](shader, pass, renderFlags);  // tail jmp [vtbl+0x38] = BSShader::RestoreGeometry
+```
+
+Exact D3D11 call order for a full skinned dynamic draw (FALSE branch, dynamic, per partition):
+1. `ID3D11DeviceContext::End(query)` — only on ring overflow (vf28, +0xE0)
+2. `GetData(query,&u32,4,flags)` loop — only when recycling an un-signaled buffer (vf29, +0xE8; first poll flags=1 D3D11_ASYNC_GETDATA_DONOTFLUSH, then 0, Sleep(1) between)
+3. `Map(dynVB[idx], 0, D3D11_MAP_WRITE_NO_OVERWRITE(5), 0, &mapped)` (vf14, +0x70)
+4. CPU `memcpy_s(mapped+offset, size, shape->pDynamicData, size)`
+5. `Unmap(dynVB[idx], 0)` (vf15, +0x78)
+6. per partition (inside SetBoneMatrix): `Unmap(boneCB10,0)`; `VSSetConstantBuffers(10,1,&boneCB)` (vf7, +0x38); `Unmap(boneCB9,0)`; `VSSetConstantBuffers(9,1,&prevBoneCB)`
+7. manager draw vfunc → IASetVertexBuffers/DrawIndexed (inside geometry-manager, singleton ptr @0x1430136C0; +0x30 = DrawDynamicTriShape, +0x38 = DrawTriShape)
+
+## vfunc54 semantics
+
+`[geometry_vtbl + 0x1B0]` (index 54) is **`AsBSSkinnedDecalTriShape()`** — a Gamebryo-style RTTI cast returning `this` or null.
+
+Vtables (slot0 = dtor xref):
+- BSTriShape vtable = 0x141766FF8 → [+0x1B0] = **0x140218960**: `return 0;`
+- BSDynamicTriShape vtable = 0x141768A50 → [+0x1B0] = **0x140218960** (same shared stub): `return 0;`
+- BSSkinnedDecalTriShape vtable = 0x1417671C0 → [+0x1B0] = **0x140C678E0**: `return a1;` (returns `this`)
+
+So **only BSSkinnedDecalTriShape returns non-zero** (its own pointer); the TRUE branch is the skinned-decal path. Sanity cross-check: `[vtbl+0x60]` (index 12) = `AsBSDynamicTriShape()`: base stub 0x140165910 `return 0`, BSDynamicTriShape override 0x140218930 `return this` (BSTriShape and BSSkinnedDecalTriShape both use the null stub — a skinned decal never takes the dynamic-upload sub-block).
+
+## Bracket fns
+
+**FUN_14131f7c0 — TLS skin-cache invalidate:**
+```c
+tls = *(TEB->ThreadLocalStoragePointer /*TEB+0x58*/ + 8 * MEMORY[0x143497408] /*TLS index*/);
+*(QWORD*)(tls + 10752 /*0x2A00*/) = 0;   // per-thread "last NiSkinInstance uploaded" cache
+```
+This slot is the dedupe key inside SetBoneMatrix (`if (tls+0x2A00 != skin …)`), so clearing it at pass entry forces bone-CB re-upload once per pass even if the same skin rendered last.
+
+**FUN_140c7bad0 = `NiSkinPartition::Partition::Partition()`** (proved: used as the element ctor with elemsize 80 in NiSkinPartition::LoadBinary_140C7B340 via `fForeachMemSetFunctor(partArray, 80, n, FUN_140c7bad0)`, dtor = FUN_140c7bb10, vector-deleting dtor FUN_140c7d4f0 uses elemsize 80). Zeroes: +0x08,+0x10,+0x18,+0x20,+0x28,+0x30 (six array ptrs), +0x38 (dword: numVertices|numTriangles), +0x3C (dword: numBones|numStrips), +0x48 (rendererData handle).
+
+**FUN_140c7bb10 = `Partition::~Partition()`**: frees the six arrays (+0x08..+0x30) via `dtor_140c249b0` → `(*(**0x142F77208 + 0x10))(*0x142F77208, ptr, 9)` (global heap-interface pointer @0x142F77208; vf1(+8)=alloc(size,align) — see FUN_140c24750 — vf2(+0x10)=free(ptr, 9)); then if +0x48 (rendererData) non-null, releases it via geometry-manager `(*mgr_vtbl + 0x28)(mgr, handle)` (mgr = singleton ptr @**0x1430136C0**). Companion setter FUN_140c7bb90(part, h): release old via mgr vf+0x28, store, addref via mgr vf+0x20.
+
+**Partition layout (0x50 bytes; from stream loader FUN_140c7bc30):**
+| off | field |
+|---|---|
+| +0x00 | BSVertexDesc (u64, SSE stream ver ≥ 0x64) |
+| +0x08 | uint16* bones (numBones entries) |
+| +0x10 | float* weights (numVertices*numWeightsPerVertex) |
+| +0x18 | uint16* vertexMap (numVertices) |
+| +0x20 | uint8* boneIndices/palette (numVertices*numWeightsPerVertex) |
+| +0x28 | uint16* triList / strip indices (3*numTriangles or Σstrips) |
+| +0x30 | uint16* stripLengths (numStrips) |
+| +0x38 | u16 numVertices |
+| +0x3A | u16 numTriangles |
+| +0x3C | u16 numBones |
+| +0x3E | u16 numStrips |
+| +0x40 | u16 numWeightsPerVertex |
+| +0x42 | u8 LOD slot (used in visibility LUT) |
+| +0x43 | u8 (ver ≥ 0x4F flag byte) |
+| +0x48 | rendererData handle (BSGraphics tri-shape data, managed via mgr @0x1430136C0) |
+
+## True-branch call contract
+
+Call site 0x141308AB3-0x141308ACA:
+```
+lea rcx,[rsi+10h]      ; this = &shader->NiBoneMatrixSetterI (BSShader 2nd vtable @ +0x10)
+mov rdx,[rbx+130h]     ; NiSkinInstance* = geometry+0x130  (v7[38] — qword index 38 = byte 0x130)
+lea r8,[rsp+..a1a]     ; NiSkinPartition::Partition* (stack temp; ctor'd, then numBones(word @+0x3C)=1)
+lea r9,[rbx+7Ch]       ; NiTransform*  — "v7+124" is BYTE offset 0x7C = NiAVObject::world transform
+call [rax+8]           ; NiBoneMatrixSetterI vfunc 1 = SetBoneMatrix
+```
+- `v7[38]` = **geometry+0x130 = skinInstance** (same value cached in r15/v9).
+- `v7 + 124` as printed by Hex-Rays is misleading: the machine code is `lea r9,[rbx+7Ch]` — raw byte offset **0x7C = NiAVObject::world (NiTransform: rot 0x7C..0x9F, pos 0xA0..0xAB, scale 0xAC)** (local is 0x48..0x7B).
+- `-2` is **not an argument**: it is the `mov qword [rsp+20h], -2` EH-unwind-state sentinel from the prologue that aliases the 5th-arg home slot. The callee takes 4 args.
+
+**The single shared implementation** (all shader NiBoneMatrixSetterI vtables sampled — 0x141850948, 0x141856540, 0x1418511B8, 0x141851310 — point at it): `BSShader::SetBoneMatrix @ 0x14131F630`:
+```c
+tls+0x760 saved, set to 26 (perf/context marker); 
+if (tls+0x2A00 != skin && partition && *(dword*)(partition+0x3C) /*numBones|strips*/ != 0) {
+  tls+0x2A00 = skin;
+  FUN_140D74F70(skin);                         // update skin->BoneMatrices under skin->Lock(+0x60):
+                                               //   once per frame (skin+0x38 vs frame counter @0x14302C8DC),
+                                               //   composes rootParent->world(+0x7C) x skinData(+0x10)->rootToSkin(+0x18)
+                                               //   then per-bone boneWorld(+0x30[i]) x skinToBone(skinData+0x50, stride 88),
+                                               //   stores transposed scaled 4x3 into skin+0x48 (cur) / skin+0x50 (prev)
+  n = 3 * *(dword*)(skin->skinData(+0x10) + 0x58);   // 3 float4 rows per bone
+  buf10 = GetID3D11Resource(Renderer@0x143028490, n, &mapped, 10);  // per-frame CB alloc (0x140D6FFD0)
+  memcpy_s(mapped, 16*n, skin+0x48, 16*n);           // current bone matrices
+  ctx->Unmap(buf10,0); ctx->VSSetConstantBuffers(10,1,&buf10);      // b10 = bones
+  buf9 = GetID3D11Resource(..., n, &mapped, 9);
+  memcpy_s(mapped, 16*n, skin+0x50, 16*n);           // previous-frame bone matrices
+  ctx->Unmap(buf9,0);  ctx->VSSetConstantBuffers(9,1,&buf9);        // b9 = previous bones (motion vectors)
+}
+```
+This is exactly why the dispatcher sets the temp partition's numBones word to 1: it satisfies the `*(partition+0x3C) != 0` gate. **The 4th arg (&geometry->world) is ignored by this implementation.** The bone data comes from the skin instance, not the partition. After SetBoneMatrix, the TRUE branch draws through the ordinary GeometryType dispatch FUN_141307160(pass) (the already-REd draw leaf), then destroys the temp Partition.
+
+## False-branch struct + dynamic sub-block
+
+**Stack struct (0x28 bytes) passed to `skinInstance->vfunc[37]` ([vtbl+0x128]):**
+| off | value | source | consumer |
+|---|---|---|---|
+| +0x00 | shader ? shader+0x10 : 0 | NiBoneMatrixSetterI* | NiSkinPartition::Func37 → SetBoneMatrix this |
+| +0x08 | geometry | pass+0x10 | Func37: reads geom+0x130 (skin) and geom+0x7C (world) and calls geom vf12 (AsBSDynamicTriShape) |
+| +0x10 | 0 (qword) | const | **never read** in the 1.5.97 skinned chain |
+| +0x18 | (pass+0x1E)>>7 & 1 (dword) | LODMode bit7 | LUT row select ("exact match" mode) |
+| +0x1C | (pass+0x1E)&0x7F (dword) | LODMode bits0-6 | LOD level for LUT |
+| +0x20 | 0.0f (movss) | const | **never read** in this chain |
+| +0x24 | -1, overwritten by ring offset | out-param of FUN_140d6c8a0 | dynamic-draw vertex-buffer byte offset |
+
+**vfunc37 implementations** (NiSkinInstance vtable index 37, offset 0x128):
+- `NiSkinInstance::Func37_140C7E170(this, data)` → `FUN_140c7ca10(this->skinPartition /*+0x18*/, data)`: loops `for i in 0..skinPartition->numPartitions(+0x10)` calling `skinPartition->vfunc[37](data, i)`.
+- `BSDismemberSkinInstance::Func37_140C6B9F0`: if per-partition enable array (this+0x90) exists, calls `skinPartition->vfunc[37](data, i)` only for partitions whose enable dword is set; else falls back to NiSkinInstance::Func37.
+
+**Per-partition renderer `NiSkinPartition::Func37_140C7CA70(this, data, i)`:**
+```c
+part = this->partitions(+0x18) + 0x50*i;
+if (!byte_141E06650[12*data->exactFlag(+0x18) + 3*data->lodLevel(+0x1C) + part->lodSlot(+0x42)])
+    return 0;                                             // LOD visibility LUT (24 bytes, see below)
+data->setter(+0x00)->vfunc1( setter,                      // SetBoneMatrix(
+        *(data->geometry(+0x08) + 0x130),                 //   skin,
+        part,                                             //   partition,     — real partition, numBones gate real
+        data->geometry + 0x7C );                          //   &geom->world)  — ignored by impl
+if (dyn = geometry->vfunc12() /* AsBSDynamicTriShape, called twice */)
+    mgr(@0x1430136C0)->vfunc[6](+0x30)(mgr, part->rendererData(+0x48), dyn+0x178, 0,
+                                       part->numTriangles(+0x3A), data->dynOffset(+0x24));
+                                                          // DrawDynamicTriShape(handle, &dyn+0x178, start=0, numTris, vbByteOffset)
+else
+    mgr->vfunc[7](+0x38)(mgr, part->rendererData(+0x48), 0, part->numTriangles(+0x3A));
+                                                          // DrawTriShape(handle, start=0, numTris)
+```
+LUT `byte_141E06650` (24 bytes = [exactFlag][lodLevel 0..3][lodSlot 0..2]):
+- exactFlag=0: lvl0:{0,0,0} lvl1:{1,0,0} lvl2:{1,1,0} lvl3:{1,1,1} → draw partitions with lodSlot < lodLevel
+- exactFlag=1: lvl0:{1,0,0} lvl1:{0,1,0} lvl2:{0,0,1} lvl3:{0,0,0} → draw only lodSlot == lodLevel
+
+**Dynamic-tri-shape sub-block (dispatcher-side, before vf37):**
+- geometry vfunc at +0x60 (index 12) = `AsBSDynamicTriShape()`; non-null only for BSDynamicTriShape (and subclasses e.g. BSParticleShaderGeometry / faces).
+- BSDynamicTriShape fields: +0x148 vertexDesc, +0x15A vertexCount(u16), **+0x160 pDynamicData (CPU copy), +0x168 lock ownerTID, +0x16C lock recursion count, +0x170 dynamicDataSize (u32), +0x178 opaque per-shape slot passed by address to the manager's dynamic draw**.
+- `sub_140C723C0` (lock/get): `Mutex::Lock1_140132BD0(&shape+0x168, 0); return *(shape+0x160);` — recursive owner-TID spinlock, returns the CPU dynamic vertex data.
+- `sub_140C72420` (unlock): lfence; if owner==GetCurrentThreadId(): if count==1 { owner=0; mfence; ICX(count,1→0) } else InterlockedDecrement(count).
+- `FUN_14130a030` = memcpy_s clone (dest,destSize,src,count; errno 22/34 + memset-zero on failure).
+
+**FUN_140d6c8a0 — dynamic-VB ring allocator (globals @ 0x143025F18; rcx arg ignored):**
+- 3 × ID3D11Buffer* dynamic VBs at **0x143025F18 + 8*idx** (idx 0..2), each **0x400000 (4 MiB)**.
+- current index: dword @ **0x143025F30**; current byte offset: dword @ **0x143025F34**.
+- 3 × ID3D11Query* (event) at **0x143026168 + 8*idx**; 3 × u8 "GPU-done" flags at **0x143026164 + idx**.
+- device context fetched from cached ptr @ **0x143027EA0** (same object as MEMORY[0x1430261B0][926]).
+- Algorithm: if offset+size > 4MiB → clear flag[idx], `ctx->End(query[idx])` (vf28), idx=(idx+1)%3, offset=0. If flag[newIdx]==0 → loop `ctx->GetData(query[newIdx], &u32, 4, flags)` (vf29; first poll flags=1 DONOTFLUSH, then 0; Sleep(1) between) until S_OK && data!=0; flag = (data==1). Then `ctx->Map(buf[idx], 0, D3D11_MAP_WRITE_NO_OVERWRITE /*5*/, 0, &mapped)` (vf14); store idx/newOffset back; `*out = oldOffset`; return mapped.pData + oldOffset.
+- `FUN_140d6c9e0` = `ctx->Unmap(buf[currentIdx], 0)` (vf15).
+- So protocol per dynamic shape: ring-alloc → Map(NO_OVERWRITE) → memcpy_s of shape->pDynamicData under the shape spinlock → Unmap → offset recorded in struct+0x24 → consumed as the VB byte offset by the manager's DrawDynamicTriShape (vfunc +0x30 of singleton @0x1430136C0).
+
+## CAVEATS
+- The geometry-data manager singleton (pointer @ 0x1430136C0; vf3(+0x18)=create tri-shape data, vf4(+0x20)=addref, vf5(+0x28)=release, vf6(+0x30)=DrawDynamicTriShape, vf7(+0x38)=DrawTriShape, vf15(+0x78)=write dynamic vertex component, vf30(+0xF0)/vf31(+0xF8)=create/release shared vertex block): I did not locate its concrete class/vtable (no write xref surfaced; only reads). Its draw vfuncs were not decompiled here — they are the layer that issues IASetVertexBuffers/DrawIndexed (the already-REd DrawTriShape leaf @0x140D6BFE0 family).
+- BSDynamicTriShape+0x178: passed by address to the dynamic draw; exact meaning (cached binding record vs. second size field) not determined.
+- False-branch struct fields +0x10 (qword 0) and +0x20 (float 0.0) are written but never read anywhere in the NiSkinInstance/BSDismemberSkinInstance → NiSkinPartition::Func37 chain; other vfunc37 overrides (if any exist beyond the two found) were not exhaustively enumerated.
+- The heap interface @0x142F77208 (vf+8 alloc(size,align=4/16), vf+0x10 free(ptr, 9), vf+0x18 realloc) used for partition arrays and skin bone-matrix arrays: concrete class not identified; the constant 9 in free() is unexplained (pool/area id?).
+- Partition ctor does NOT zero +0x00 (vertexDesc), +0x40 (numWeightsPerVertex), +0x42/+0x43 — in the TRUE branch's stack temp these hold garbage; they are provably unread by SetBoneMatrix (only +0x3C dword gates), but any hook replicating this should still zero-init the full 0x50 for safety.
+- LUT byte_141E06650 read as 24 bytes; lodLevel values > 3 would index past it (engine presumably never produces them, bits0-6 of pass+0x1E notwithstanding). Not verified.
+- NiAVObject layout used (local@0x48, world@0x7C) matches CommonLibSSE and the rootParent->WorldTransform_7C field name in the idb, but was not independently re-derived here.
+
+### Machine-extracted caveats
+- Geometry-data manager singleton (ptr @0x1430136C0) concrete class/vtable not located; its DrawTriShape/DrawDynamicTriShape vfuncs (+0x38/+0x30) not decompiled in this pass.
+- BSDynamicTriShape+0x178 (passed by address to the dynamic draw) purpose undetermined.
+- False-branch struct fields +0x10 and +0x20 are written but never read in the discovered consumer chain; other vfunc37 overrides not exhaustively enumerated.
+- Heap interface @0x142F77208 class unidentified; the constant 9 passed to its free() unexplained.
+- Partition stack temp in the TRUE branch leaves +0x00/+0x40/+0x42/+0x43 uninitialized (provably unread by SetBoneMatrix, but replicas should zero the full 0x50).
+- byte_141E06650 LUT verified only for lodLevel 0..3; larger values would index out of the 24-byte table.
+- NiAVObject world-transform offset 0x7C taken from CommonLibSSE/idb field names, not independently re-derived.
+
+================================================================================================
+## Cluster 5
+================================================================================================
+
+# RE report — non-TRISHAPE cases of the geometry Draw dispatch `FUN_141307160` (SkyrimSE 1.5.97)
+
+`FUN_141307160(BSRenderPass* pass@rcx, int64 a2@rbx, float a3@xmm0)`:
+`geom = *(pass+0x10)`, `switch(byte geom+0x150 − 1)` (13 cases, `ja` default = return). Case N handles GeometryType N+1. All draws go through `BSGraphics::SetDirtyStates_140d705b0(0)` before any IA/Draw call, so full pipeline state (shaders, CBs, RTs, samplers, textures, input layout, raster/blend/DS state) is flushed from the RendererShadowState first; the leaf functions only touch IA-stage state + Draw.
+
+## Shared infrastructure (used by all cases)
+
+### Globals
+| Address | Meaning |
+|---|---|
+| `0x143028490` | BSGraphics::Renderer singleton (`flt_143028470+0x20`), passed as rcx to all draw leaves (never dereferenced in them — vestigial `this`) |
+| `0x143027EA0` | ID3D11DeviceContext* (immediate). Identical to `(qword*)0x1430261B0)[926]` (0x1430261B0+0x1CF0) |
+| `0x143025F08` | ID3D11Device* |
+| `0x143027EB0` | RendererShadowState stateUpdateFlags (dword). Bit 0x400 = vertex-desc/input-layout dirty, bit 0x800 = topology dirty |
+| `0x143027EB4` | PSResourceModifiedBits (dword) — consumed by SetDirtyStates at 0x140d70bec..0x140d70c2b |
+| `0x143027FF0` | `qword_143027FF0[]` = shadow-state PSTexture SRV array (`&PSTexture[0]`; RendererShadowState+0x140), flushed via PSSetShaderResources in SetDirtyStates (0x140d70c07) |
+| `0x1430281F0` | shadow-state current vertexDesc (qword; `dword_143028070[96]`) |
+| `0x1430281F8` | shadow-state current vertex shader object (qword; `dword_143028070[98]`). VS+0x10 = bytecode length, VS+0x48 = vertex-input mask, VS+0x68 = bytecode start |
+| `0x143028208` | shadow-state current primitive topology (dword; `dword_143028070[102]`) |
+| `0x143025F18` | Dynamic-geometry VB ring (see below) |
+| `0x14302AE50` | Static lazily-initialized "particle quad" geometry descriptor (case 0) |
+| `0x143283BB0` / `0x143477BB0` | CPU staging: strip-particle vertex / index build buffers (case 1) |
+| `0x14302C8DC` | BSGraphics::State::uiFrameCount — `++` once per frame in the end-frame/Present function `FUN_140d6a2b0` (0x140d6a300) |
+| `0x14302C8E8` | NiSourceTexture* default/fallback texture (BSGraphics::State block; also used by `BSLightingShaderProperty::sub_1412C56D0` as texture fallback, written at shader-manager init `FUN_1412eeb90`). Used SRV = `*(*(tex+0x48)+0x10)` (rendererTexture→SRV) |
+| `0x1430243B0` | byte flag "map render / draw-all-segments": set to 1 in `FUN_1404b35e0` and cleared in `FUN_1404b2960` (local/world-map rendering system; MapMenu/TESWorldSpace involved) |
+| `0x1434963C8` | byte flag read ONLY by case 8; **no writer exists in the binary** → always 0 (dead debug toggle) |
+| `0x141E07140` / `0x141E07144` / `0x141E07160` | global input-layout hash cache (lock/size/table). Key = CRC (`sub_140C06570`) of `(curVertexDesc & VS->inputMask@+0x48)`; insert via `FUN_140d71830` |
+
+### The two static draw leaves
+`FUN_140d6bfe0(renderer, rendererData a2, uint32 startIndex a3, int triCount a4)` — the known DrawTriShape:
+```c
+if (qword[0x1430281F0] != *(a2+0x10)) { qword[0x1430281F0] = *(a2+0x10); dirty|=0x400; }
+if (dword[0x143028208] != 4)         { dword[0x143028208] = 4; dirty|=0x800; }   // TRIANGLELIST
+SetDirtyStates(0);
+ctx->IASetIndexBuffer(*(a2+8), DXGI_FORMAT_R16_UINT /*57*/, 0);                   // vfunc 19, r9d=0
+stride = (4 * *(a2+0x10)) & 0x3C;  offset = 0;
+ctx->IASetVertexBuffers(0, 1, (ID3D11Buffer**)a2 /* [a2+0]=VB */, &stride, &offset); // vfunc 18
+ctx->DrawIndexed(3*a4, a3, 0);                                                     // vfunc 12
+```
+`FUN_140d6c0e0(renderer, rendererData, startIndex, triCount, void** a5)` — byte-identical **except** `IASetIndexBuffer(*a5, 57, 0)`: the index buffer comes from an alternate IB slot pointer instead of `rendererData+8`. Used by cases 5/6 when `byte(pass+0x1C) == 12`.
+
+### Dynamic-geometry VB ring (`qword_143025F18`)
+- `[0..2]` (0x143025F18/20/28): three 4 MiB `ID3D11Buffer` dynamic VBs; `[3].lo` (dword 0x143025F30) = current ring index, `[3].hi` (0x143025F34) = current byte offset; `[4]` (0x143025F38) = shared particle-quad index buffer (R16, 6 indices/4 verts); `[5]` (0x143025F40) = shared particle "corner" VB (slot-0 stream, stride 4); `[6]` (0x143025F48) = cached ID3D11InputLayout for particle-shader dynamic geometry; `[7]` (0x143025F50) = cached ID3D11InputLayout for strip particles; `[74+i]` = per-buffer ID3D11Query (event); `[77+i]` = query-satisfied flag.
+- **Allocator `FUN_140d6c8a0(renderer, int size, uint32* outOffset)`**:
+```c
+if (curOffset + size > 0x400000) {              // 4 MiB wrap
+    ctx->End(query[curIdx]);                    // vfunc 28
+    readyFlag[curIdx] = 0; curIdx = (curIdx+1)%3; curOffset = 0;
+}
+if (!readyFlag[curIdx])                          // busy-wait GPU done with that third
+    while (ctx->GetData(query[curIdx], &r, 4, flags 1 then 0) < 0 || !r) Sleep(1);  // vfunc 29
+ctx->Map(buf[curIdx], 0, D3D11_MAP_WRITE_NO_OVERWRITE /*5*/, 0, &m);                // vfunc 14
+*outOffset = oldOffset;  curOffset = oldOffset + size;  return m.pData + oldOffset;
+```
+- `FUN_140d6ca10(renderer, unused, desc, unusedOutPtr, size)` = `FUN_140d6c8a0(renderer, size ? size : *(desc+0x1C), desc+0x18)` — i.e. **the allocation offset is stored into `desc+0x18`** (the rendererData/descriptor itself); the r9 out-pointer argument the dispatch passes (e.g. `shape+0x178`, `&stackvar`) is **ignored/vestigial**. `FUN_140d6d5d0` is an identical clone.
+- `FUN_140d6ca30()` / `FUN_140d6d5f0()` = `ctx->Unmap(dynVB[curIdx], 0)` (vfunc 15).
+- **Draw `FUN_140d6ca60(renderer, desc, ignoredPtr, uint32 startIndex@r9d, int triCount stack)`** copies `desc[0]`,`desc[8]`,`desc[0x10]` and `desc[0x18]` then tail-calls `FUN_140d6cab0`:
+```c
+// FUN_140d6cab0: vd = desc[0x10]
+vertexDesc-dirty check (0x400) + topology=4 check (0x800);  SetDirtyStates(0);
+ctx->IASetIndexBuffer(desc[8], 57, 0);
+bufs    = { desc[0],          dynVB[curIdx] };
+strides = { (4*vd)&0x3C,      (vd>>2)&0x3C  };
+offsets = { 0,                desc[0x18]    };   // <- allocator-written offset
+ctx->IASetVertexBuffers(0, 2, bufs, strides, offsets);
+ctx->DrawIndexed(3*triCount, startIndex, 0);
+```
+`BSGraphics::Renderer::FUN_140d6d620` is the LINELIST twin (topology 2, `DrawIndexed(2*count, start, 0)`, then `desc[0x18] = -1`).
+
+### `byte(pass+0x1C) == 12` gate (cases 5 and 6)
+Disasm: `cmp byte ptr [rcx+1Ch], 0Ch` — a **byte** compare on BSRenderPass+0x1C (the project's "accumulationHint" slot). When equal, the multi-index shapes draw with their **alternate index set** (`geom+0x160` IB slot + alternate counts) via `FUN_140d6c0e0`; otherwise the normal IB via `FUN_140d6bfe0`. No other case reads pass fields besides `pass+0x10`.
+
+---
+
+## Case 0 (GeometryType 1 — NiParticles quad particles)
+Geometry fields read: `geom+0x158` (**qword** = NiParticlesData* here, not triCount), `geom+0x148` (vertexDesc dword), world transform @0x7C, ModelBound @0x110 (inside PackParticleData).
+```c
+count = particleData->vfunc[+0x130]();  count = min(count & 0xFFFF, 2048);
+stride = (dword(geom+0x148) >> 2) & 0x3C;                 // 20 bytes for desc 0x…51
+if (!count) return;
+desc = FUN_140d6c7e0();   // static 0x14302AE50, lazy init (thread-safe static guard):
+                          //   [0]=cornerVB(0x143025F40) [8]=quadIB(0x143025F38)
+                          //   [0x10]=vertexDesc 0x0840200004000051  [0x18]=-1  [0x20]=1
+ptr = FUN_140d6ca10(renderer, 0, desc, &dummy, 4*count*stride);   // offset -> desc+0x18
+if (ptr) { PackParticleData_140d76080(count, geom, ptr); FUN_140d6ca30(); /*Unmap*/ }
+FUN_140d6ca60(renderer, desc, &dummy, 0, 2*count);        // called even if Map failed
+```
+`PackParticleData_140d76080` CPU-expands each particle into a camera-facing quad: 4 vertices × 20 B `{float3 corner position (world, relative to bound center); float texIndex/subtexture (from speedToAspect array, 0 if absent); uint32 RGBA color (alpha zeroed when a·fade ≤ 0.05)}`, using view axes from `qword_143028230` (shadow-state camera rows) and sorted indices from `FUN_140c88190/140c88200` (radix sort by depth into scrap arrays).
+D3D11 sequence (inside cab0): dirty checks → `SetDirtyStates(0)` → `IASetIndexBuffer(quadIB, R16_UINT, 0)` → `IASetVertexBuffers(0, 2, {cornerVB, dynVB}, {4, 20}, {0, allocOffset})` → `DrawIndexed(6*count, 0, 0)`.
+
+## Case 1 (GeometryType 2 — BSStripParticleSystem)
+```c
+vertCount = 0; indexCount = 0;
+BSStripParticleSystem::sub_140D76D80(vtxStaging 0x143283BB0, psys, idxStaging 0x143477BB0,
+                                     &vertCount, a3 /*float in xmm0 forwarded from caller*/, &indexCount);
+if (vertCount && indexCount)
+    FUN_140d6ce60(vtx@rdx, renderer@rcx, a2@rbx(unused), vertCount@r8d, idx@r9, indexCount stack);
+```
+`sub_140D76D80`: iterates strips (`psys+0x158` → BSStripPSysData; strip count @data+0x7C, per-strip ring descriptors @data+0xA8, stride 40). Per point emits **4 vertices × 40 B** `{float3 pos@0, float u@12 (accumulates by a3 per step), float v@16 (0.0/1.0), float subtexIndex@20 (-1 if none), float3 normal/binormal@24, uint32 RGBA@36}` and strip indices (u16) with degenerate stitching (`prev-1, prev` pair) between strips. Outputs: `*a4 = 4*totalPoints`, `*a6 = index count incl. degenerates`.
+`FUN_140d6ce60` D3D11 sequence:
+1. `p = FUN_140d6c8a0(renderer, 40*vertCount, &off1)`; `memcpy_s(p, …, vtxStaging, 40*vertCount)` (`FUN_140d74a60` = memcpy_s); `ctx->Unmap(dynVB[cur], 0)`.
+2. `ctx->IASetVertexBuffers(0, 1, &dynVB[cur], {40}, {off1})`.
+3. `p2 = FUN_140d6c8a0(renderer, 2*indexCount, &off2)`; memcpy indices; `ctx->Unmap(dynVB[cur], 0)`.
+4. `ctx->IASetIndexBuffer(dynVB[cur], R16_UINT/*57*/, off2)` — the **index buffer is the dynamic VB at a byte offset**.
+5. topology: `dword[0x143028208]=5` (TRIANGLESTRIP, dirty|=0x800); **clears** dirty bit 0x400 (`v & 0xFFFFFBFF`) because it manages the input layout manually; `SetDirtyStates(0)`.
+6. If `qword_143025F18[7]==0`: `device->CreateInputLayout` (vfunc 11) with 4 elements stride 40 — `POSITION0 R32G32B32_FLOAT@0`, `TEXCOORD0 R32G32B32_FLOAT@12`, `NORMAL0 R32G32B32_FLOAT@24`, `COLOR0 R8G8B8A8_UNORM(28)@36` — against current VS bytecode (`VS=qword[0x1430281F8]`, bytecode `VS+0x68`, length `*(VS+0x10)`), out → `0x143025F50`.
+7. `ctx->IASetInputLayout(layout)` (vfunc 17); then key = CRC(`qword[0x1430281F0] & *(VS+0x48)`); if not in the global layout cache (`0x141E07160`), `FUN_140d71830(layout, key)` inserts it; `dirty|=0x400` (forces proper rebind on next normal draw).
+8. `ctx->DrawIndexed(indexCount, 0, 0)` (strip: raw index count, no ×3).
+
+## Case 3 (GeometryType 4 — BSDynamicTriShape)
+Fields: shape via vfunc `geom+0x60` (AsDynamicTriShape); `shape+0x138` rendererData; `shape+0x160` dynamic-data CPU ptr; `shape+0x168/0x16C` spinlock tid/recursion; `shape+0x170` dynamic data size (dword); `shape+0x174` last-upload frame stamp; `shape+0x158` triCount (word). rendererData: `+0` VB, `+8` IB, `+0x10` vertexDesc, `+0x18` dynamic offset, `+0x1C` default alloc size.
+```c
+shape = geom->vfunc60();  rd = *(shape+0x138);
+if (*(u32*)(shape+0x174) != frameCount@0x14302C8DC) {        // once per frame
+    *(shape+0x174) = frameCount;
+    dst = FUN_140d6ca10(renderer, shape, rd, shape+0x178 /*ignored*/, 0);  // size=*(rd+0x1C), offset->rd+0x18
+    size = *(u32*)(shape+0x170);
+    src = BSParticleShaderGeometry::sub_140C723F0(shape);     // spinlock(shape+0x168); return *(shape+0x160)
+    FUN_14130a030(dst, size, src, size);                      // memcpy_s
+    BSDynamicTriShape::sub_140C72420(shape);                  // unlock
+    FUN_140d6ca30();                                          // Unmap(dynVB[cur], 0)
+}
+FUN_140d6ca60(renderer, rd, shape+0x178 /*ignored*/, 0, (u16)*(shape+0x158));
+```
+D3D11 (cab0): dirty checks (vertexDesc `rd+0x10`, topology 4) → SetDirtyStates(0) → `IASetIndexBuffer(rd[8], R16, 0)` → `IASetVertexBuffers(0,2,{rd[0],dynVB},{(4vd)&0x3C,(vd>>2)&0x3C},{0, rd[0x18]})` → `DrawIndexed(3*triCount, 0, 0)`.
+
+## Case 4 (GeometryType 5 — BSMeshLODTriShape)
+Fields: `geom+0x108` current LOD byte (bit7 = "draw single level"), `geom+0x160` = `uint32 lodSize[3]` (triangles per LOD level), `geom+0x138` rendererData.
+```c
+lod = (u8)geom[0x108];
+count = FUN_141330240(geom, lod);
+//   bit7 set:   return lodSize[lod & 0x7F];
+//   bit7 clear: return Σ lodSize[0 .. lod-1];             (pairwise-unrolled sum)
+if (!count) return;
+start = FUN_1413300c0(geom);          // re-reads lod dword @geom+0x108
+//   bit7 set:   return 3 * Σ lodSize[0 .. (lod&0x7F)-1];   else 0
+FUN_140d6bfe0(renderer, *(geom+0x138), start, count);
+```
+D3D11: exactly the standard TRISHAPE sequence with computed `StartIndexLocation`/`IndexCount=3*count`. Index buffer is laid out LOD0|LOD1|LOD2 consecutively.
+
+## Case 5 (GeometryType 6 — LOD multi-index tri shape)
+Fields: `geom+0x108` LOD dword (bit7 as above), `geom+0x1D8` = per-LOD `uint32 pair[ ][2] {cnt_main, cnt_alt}`, `geom+0x160` = alternate index-buffer slot (qword; `*(geom+0x160)` = ID3D11Buffer*), `geom+0x138` rendererData.
+```c
+lod = (u8)geom[0x108];
+if (byte(pass+0x1C) == 12) {          // alternate index set
+    count = FUN_1413308f0(geom, lod, 1);   // bit7 ? pair[lod&0x7F][1] : Σ pair[i][1], i<lod  (base geom+0x1D8, element = +4*(which+2*i))
+    start = FUN_141330850(geom, 1);        // 3 * (bit7 ? Σ pair[i][1], i<(lod&0x7F) : 0)
+    FUN_140d6c0e0(renderer, rd, start, count, (void**)(geom+0x160));  // IASetIndexBuffer(*(geom+0x160))
+} else {
+    count = FUN_1413308f0(geom, lod, 0);
+    start = FUN_141330850(geom, 0);
+    FUN_140d6bfe0(renderer, rd, start, count);                        // IASetIndexBuffer(rd[8])
+}
+```
+D3D11: standard sequence; only IB source and start/count differ.
+
+## Case 6 (GeometryType 7 — BSMultiIndexTriShape)
+Fields: `geom+0x160` alternate IB slot (qword), `geom+0x168` alternate triCount (dword), `geom+0x158` triCount (word), `geom+0x138` rendererData.
+```c
+if (byte(pass+0x1C) == 12)
+    FUN_140d6c0e0(renderer, rd, 0, *(u32*)(geom+0x168), (void**)(geom+0x160));
+else
+    FUN_140d6bfe0(renderer, rd, 0, (u16)*(geom+0x158));
+```
+
+## Case 7 (GeometryType 8 — BSSubIndexTriShape)
+Fields: `geom+0x138` rendererData; segment system: `geom+0x160` = segment-record array ptr, `geom+0x168` = numSegments (dword), `geom+0x16C` = active-range count, `geom+0x170` = dirty byte, `geom+0x171` = "draw whole object" byte, `geom+0x158` triCount (word). Segment record stride 20 (0x14): `+0` StartIndexLocation (u32, index units), `+4` ownTriCount, `+8` enabled byte, `+0xC` mergedTriCount, `+0x10` rangeActive byte.
+```c
+rd = *(geom+0x138);
+BSSubIndexTriShape::sub_140D59430(geom);
+//   if dirty(+0x170): walk segments last→first, coalescing consecutive enabled
+//   segments into contiguous draw ranges: head seg gets rangeActive=1 and
+//   mergedTriCount = own + next.merged (start inherited from next when own==0);
+//   absorbed segs get rangeActive=0; +0x16C = number of active ranges; clears +0x170.
+if (byte[0x1430243B0]) {                                  // map rendering: draw everything
+    FUN_140d6bfe0(renderer, rd, 0, (u16)*(geom+0x158));  return;
+}
+n = geom[0x171] ? 1 : *(u32*)(geom+0x168);   if (!n) return;
+for (i = 0, off = 0; i < n; i++, off += 0x14) {           // ASCENDING
+    seg = *(geom+0x160) + off;
+    if (!seg[0x10]) continue;                             // rangeActive
+    count = geom[0x171] ? (u16)*(geom+0x158) : *(u32*)(seg+0xC);
+    start = geom[0x171] ? 0                  : *(u32*)(seg+0);
+    FUN_140d6bfe0(renderer, rd, start, count);            // full standard sequence per range
+}
+```
+D3D11: one standard TRISHAPE sequence (incl. SetDirtyStates + IASetIndexBuffer + IASetVertexBuffers) **per active merged range** — not batched.
+
+## Case 8 (GeometryType 9 — BSSubIndexLandTriShape, landscape)
+Fields: as case 7 plus `geom+0x178` = ptr to per-segment `uint32 textureMask[]` (bit b set = land-texture layer b unused/invalid from this segment). Segment records identical to case 7.
+```c
+rd = *(geom+0x138);
+if (byte[0x1434963C8]) {          // DEAD: never written, always 0
+    seg0 = *(geom+0x160);
+    FUN_140d6bfe0(renderer, rd, geom[0x171]?0:*(u32*)seg0, geom[0x171]?(u16)*(geom+0x158):*(u32*)(seg0+0xC));
+    return;
+}
+// live path: iterate segments DESCENDING from numSegments-1 down to 1 (segment 0 is NEVER drawn here;
+// if geom[0x171] is set n=1 so NOTHING is drawn)
+bit = 5; bitMask = 0x20;
+for (i = (geom[0x171] ? 1 : *(u32*)(geom+0x168)) - 1, off = 20*i;  i >= 1;  i--, off -= 20) {
+    mask = *(u32*)(*(geom+0x178) + 4*i);                  // FUN_141334070(geom, i)
+    if ((mask & bitMask) == 0) {
+        // demote unused landscape texture slots to the default texture:
+        do {
+            srv = tex0x14302C8E8 ? *(*(tex+0x48)+0x10) : 0;    // NiSourceTexture->rendererTexture->SRV
+            if (qword_143027FF0[bit]   != srv) { qword_143027FF0[bit]   = srv; dword[0x143027EB4] |= 1<<bit; }     // PS t[bit]   (diffuse layer)
+            if (qword_143027FF0[bit+7] != srv) { qword_143027FF0[bit+7] = srv; dword[0x143027EB4] |= 1<<(bit+7); } // PS t[bit+7] (normal layer)
+            if (bit == 0) break;
+            bitMask >>= 1; bit--;
+        } while ((mask & bitMask) == 0);
+    }
+    seg = *(geom+0x160) + off;
+    if (seg[0x10]) {                                       // rangeActive
+        count = geom[0x171] ? (u16)*(geom+0x158) : *(u32*)(seg+0xC);
+        start = geom[0x171] ? 0                  : *(u32*)(seg+0);
+        FUN_140d6bfe0(renderer, rd, start, count);         // SetDirtyStates inside flushes the SRV rebinds
+    }
+}
+```
+The SRV writes are shadow-state only (`qword_143027FF0[slot]` + dirty bits in `0x143027EB4`); the actual `PSSetShaderResources` happens inside `SetDirtyStates` in the subsequent `FUN_140d6bfe0`. `bit`/`bitMask` persist across segments (monotonically decreasing 5→0), so slots are demoted at most once per shape.
+
+## Case 9 (GeometryType 10 — grass, multi-stream instancing)
+Fields: `geom+0x170` = batch count (dword), `geom+0x160` = array of instance-group ptrs (8 B each), `geom+0x158` triCount (word), `geom+0x148` vertexDesc (qword), `geom+0x138` rendererData. Instance group: `+0x40` = ID3D11Buffer* instance-data VB, `+0x4C` = instance count (dword), `+0x50` = active byte.
+```c
+for (i = 0; i < *(u32*)(geom+0x170); i++) {
+    inst = ((void**)*(geom+0x160))[i];
+    if (!inst || !*(u8*)(inst+0x50)) continue;
+    // per-batch VS constant buffer (batch index):
+    holder = GetID3D11Resource(renderer, 1, &cpu, 7);
+    //   a4==7 → cb = qword[0x143027E90] ( = (qword*)0x1430261B0)[924] );  (a4!=7 would use a
+    //   round-robin ring of 4 buffers @0x1430261B0[779..782] with counter dword @[778])
+    //   ctx->Map(cb, 0, D3D11_MAP_WRITE_DISCARD /*4*/, 0, &m);  *cpu = m.pData;  returns &qword_14302AC58 (holds cb)
+    *(u32*)cpu = i;                                   // write batch index into the cbuffer
+    if (*holder) ctx->Unmap(*holder, 0);              // vfunc 15
+    ctx->VSSetConstantBuffers(7, 1, holder);          // vfunc 7 — VS b7 = grass batch index
+    fDrawGrass_140D6C1E0(renderer, rd, 0, (u16)*(geom+0x158),
+                         *(u32*)(inst+0x4C), *(u64*)(geom+0x148), (int64**)(inst+0x40));
+}
+```
+`fDrawGrass_140D6C1E0` D3D11 sequence: vertexDesc dirty check vs `geom` vertexDesc (a6) → topology 4 → `SetDirtyStates(0)` → `IASetIndexBuffer(rd[8], R16, 0)` → `IASetVertexBuffers(0, 2, {rd[0], *(inst+0x40)}, {(4*vd)&0x3C, (vd>>2)&0x3C}, {0, 0})` → `DrawIndexedInstanced(3*triCount, instCount, 0, 0, 0)` (vfunc 20, ctx+0xA0).
+
+## Case 10 (GeometryType 11 — particle-shader dynamic tri shape)
+Fields: shape via vfunc `geom+0x60`; `shape+0x15A` vertexCount (word); `shape+0x160` dynamic data ptr; `shape+0x168/0x16C` spinlock.
+```c
+shape = geom->vfunc60();
+n = (u16)*(shape+0x15A);
+data = sub_140C723F0(shape);         // lock + return *(shape+0x160)
+FUN_140d6cbe0(data@rdx, renderer@rcx, n@r8d);
+sub_140C72420(shape);                // unlock
+```
+`FUN_140d6cbe0` D3D11 sequence (stride 48):
+1. `p = FUN_140d6c8a0(renderer, 48*n, &off)`; `memcpy_s(p, …, data, 48*n)`; `ctx->Unmap(dynVB[cur], 0)`.
+2. topology 4 (dirty 0x800 if changed); **clears** dirty 0x400; `SetDirtyStates(0)`.
+3. If `qword_143025F18[6]==0`: `device->CreateInputLayout` — `POSITION0 R32G32B32A32_FLOAT(2)@0`, `NORMAL0 R32G32B32A32_FLOAT(2)@16`, `TEXCOORD0 R32G32B32_FLOAT(6)@32`, `TEXCOORD1 R8G8B8A8_SINT(32)@44`, stride 48, vs current VS bytecode → cached @0x143025F48.
+4. Layout-cache lookup (key CRC(curVertexDesc & VS mask)); insert via `FUN_140d71830` if absent; `ctx->IASetInputLayout(qword_143025F18[6])`; `dirty|=0x400`.
+5. `ctx->IASetIndexBuffer(qword_143025F18[4] /*shared quad IB*/, R16, 0)`.
+6. `ctx->IASetVertexBuffers(0, 1, &dynVB[cur], {48}, {off})`.
+7. `ctx->DrawIndexed(6*(n>>2), 0, 0)` — quads: 6 indices per 4 vertices.
+
+## Case 11 (GeometryType 12 — BSLines)
+`FUN_140d6d310(renderer, rd = *(geom+0x138), count = (u16)*(geom+0x158))`:
+vertexDesc dirty check on `rd+0x10` → topology `2` (LINELIST, dirty 0x800) → `SetDirtyStates(0)` → `IASetIndexBuffer(rd[8], R16, 0)` → `IASetVertexBuffers(0,1,rd,{(4*vd)&0x3C},{0})` → `DrawIndexed(2*count, 0, 0)`.
+
+## Case 12 (GeometryType 13 — BSDynamicLines)
+Fields: `geom+0x138` rendererData; `geom+0x160` dynamic data size (dword); `geom+0x164/0x168` spinlock tid/recursion; `geom+0x170` dynamic data ptr (qword, returned by `NiParticleSystem::GetModifierList` @0x141317e50 = lock(+0x164)+return *(+0x170)); `geom+0x158` lineCount (word).
+```c
+rd = *(geom+0x138);
+dst  = FUN_140d6d5d0(renderer, rd, 0);        // alloc *(rd+0x1C) bytes, offset -> rd+0x18, Map NO_OVERWRITE
+size = *(u32*)(geom+0x160);
+src  = GetModifierList(geom);                  // lock, *(geom+0x170)
+FUN_14130a030(dst, size, src, size);           // memcpy_s
+FUN_140d6d5f0();                               // ctx->Unmap(dynVB[cur], 0)
+FUN_140d6d620(renderer, rd, 0, (u16)*(geom+0x158));
+FUN_141317e80(geom);                           // unlock (+0x164/+0x168)
+```
+`FUN_140d6d620` D3D11 sequence: vertexDesc dirty check (`rd+0x10`) → topology `2` → `SetDirtyStates(0)` → `IASetIndexBuffer(rd[8], R16, 0)` → `IASetVertexBuffers(0, 2, {rd[0], dynVB[cur]}, {(4*vd)&0x3C, (vd>>2)&0x3C}, {0, rd[0x18]})` → `DrawIndexed(2*count, 0, 0)` → `*(u32*)(rd+0x18) = -1` (offset reset; unlike case 3 the dynamic-lines upload is NOT frame-stamped — it re-uploads every draw).
+
+---
+
+## Utility-pass relevance ranking (as requested)
+- Cases 4/5/6/7/8 all bottom out in the **already-REd `FUN_140d6bfe0` sequence** (or its `c0e0` twin differing only in IB source). The only new state they introduce is: computed start/count (4/5), the `pass+0x1C == 12` alternate-IB select (5/6), per-range multi-draw (7/8), and case 8's shadow-state PSTexture demotion writes (slots b and b+7, b=5..0) which flush through `SetDirtyStates`.
+- Case 3/12/10/0/1 add the dynamic-VB ring allocator (Map WRITE_NO_OVERWRITE + event-query fencing at 4 MiB granularity, ring of 3) and, for 10/1, a manual `IASetInputLayout` + dirty-bit 0x400 repair.
+- Case 9 is the only path that touches a constant buffer directly (Map DISCARD + `VSSetConstantBuffers(7,…)`) and the only `DrawIndexedInstanced` user in the dispatch.
+
+## CAVEATS
+- Geometry-type names (BSMeshLODTriShape, BSSubIndexLandTriShape, etc.) are inferred from the CommonLib/SSE GeometryType enum and behavior; no RTTI was consulted in this session. Offsets/behavior are ground truth; class names are best-effort labels.
+- The `byte(pass+0x1C)==12` gate: field identity ("accumulationHint" per the project's BSRenderPass convention) and the meaning of value 12 were not traced to pass-creation writers; only the compare width (byte) and effect (alternate index set) are verified.
+- `unk_14302C8E8`: verified as a NiSourceTexture* fallback in the BSGraphics::State block (SRV path `+0x48`→`+0x10` confirmed); which specific default texture it is (white/black/land default) was not traced into its initializer `FUN_1412eeb90`.
+- `unk_1430243B0` semantics ("map-render draw-all") inferred from its writers `FUN_1404b35e0`/`FUN_1404b2960` (MapMenu / TESWorldSpace context); not exhaustively confirmed.
+- `unk_1434963C8` has exactly one xref (the read in case 8) and no writer — stated as dead/always-0 on that basis; a runtime patch could theoretically set it.
+- `PackParticleData_140d76080` and `sub_140D76D80` vertex-field semantics (which float is U vs subtexture index, normal vs binormal) are interpreted from layout/usage, not shader-side confirmation. The full math of PackParticleData (billboard axes, speed-to-aspect stretching path) is summarized, not exhaustively documented.
+- `BSSubIndexTriShape::sub_140D59430` merge algorithm is summarized at the invariant level (coalesce enabled runs, head range carries summed count); the exact handling of the `enabled && next.active` break path was read but not re-derived case-by-case.
+- In `FUN_140d6c8a0`, the per-buffer query/flag slots were decompiled as `qword_143025F18[74+i]` / `[77+i]`; the +73/+4 pointer arithmetic in the pseudocode makes the exact flag byte width (byte vs dword at those qword slots) slightly ambiguous, though functionally it is a boolean per ring buffer.
+- Decompiler signatures for `FUN_140d6ca60`/`FUN_140d6cab0` were broken ("local allocation failed"); argument routing was reconstructed from disassembly (verified: offset from `desc+0x18`, start index in r9d, count on stack) — the r8 "out offset" pointer arguments passed by the dispatch (`&stackvar`, `shape+0x178`) are ignored by all callees and documented as vestigial.
+
+### Machine-extracted caveats
+- Geometry-type class names are inferred from the CommonLib GeometryType enum and observed behavior, not RTTI; offsets and D3D11 sequences are ground truth.
+- byte(pass+0x1C)==12 gate: compare width (byte) and effect (alternate index set via FUN_140d6c0e0) are verified, but the field's identity as 'accumulationHint' and the semantics of value 12 were not traced to pass writers.
+- unk_14302C8E8 is a fallback NiSourceTexture* in the BSGraphics::State block; which specific default texture it is was not traced into its initializer FUN_1412eeb90.
+- unk_1430243B0 = map-render draw-all flag is inferred from writers FUN_1404b35e0/FUN_1404b2960 (MapMenu/TESWorldSpace context).
+- unk_1434963C8 (case 8 single-draw path) has no writer in the binary and is treated as always 0 (dead path).
+- PackParticleData_140d76080 and sub_140D76D80 vertex field semantics (U vs subtexture index etc.) are interpreted from layout, not confirmed against shader inputs; the billboard/aspect math is summarized rather than exhaustively documented.
+- BSSubIndexTriShape::sub_140D59430 segment-coalescing is documented at invariant level; the merge break path was read but not re-derived edge-case by edge-case.
+- FUN_140d6ca60/FUN_140d6cab0 decompiled with broken signatures; argument routing was reconstructed from disassembly (offset comes from desc+0x18; the out-offset pointers the dispatch passes, e.g. shape+0x178, are ignored/vestigial).
+- In FUN_140d6c8a0 the per-ring-buffer query-ready flag slot width (byte vs dword at qword_143025F18[77+i]) is slightly ambiguous in the pseudocode; functionally one boolean per buffer.
+
+================================================================================================
+## Cluster 6
+================================================================================================
+
+# NiSkinInstance vfunc37 (Render, vtable +0x128) — skinned utility path FALSE branch — SkyrimSE 1.5.97
+
+## Vtable + implementations found (addresses)
+
+| Class | vtable (.rdata) | slot 37 addr | vfunc37 impl |
+|---|---|---|---|
+| NiSkinInstance | `0x141767CF0` (COL ptr at 0x141767CE8; 38 slots total, vfunc37 is the LAST) | `0x141767E18` | **`0x140C7E170`** |
+| BSDismemberSkinInstance | `0x141767E28` (COL ptr at 0x141767E20) | `0x141767F50` | **`0x140C6B9F0`** |
+| NiSkinPartition | `0x14176A0A0` (COL ptr at 0x14176A098) | `0x14176A1C8` | **`0x140C7CA70`** (the real per-partition draw; same slot index 37) |
+
+Support functions:
+- `0x140C7CA10` — partition loop helper (called by NiSkinInstance impl)
+- `0x14131F630` — NiBoneMatrixSetterI vfunc1 = **SetBoneMatrix / bone-palette upload** (single shared impl referenced by 100+ shader vtables; BSUtilityShader's NiBoneMatrixSetterI vtable = `0x141868608`, slot1 at 0x141868610)
+- `0x140D74F70` — NiSkinInstance::UpdateBoneMatrices (frame-gated CPU bone matrix build)
+- `0x140D6FFD0` (`GetID3D11Resource`) — map a per-frame dynamic constant buffer from a ring
+- `0x14131F7C0` — clears the per-thread "last skin instance" TLS cache (called at entry of skinned dispatcher 0x141308970)
+- Geometry-data manager singleton: global ptr **`0x1430136C0`** → static object **`0x141E10A50`**, vtable **`0x14186BF80`**. Relevant entries: vfunc3(+0x18)=`0x141327F70`→`0x140D6BE60` (CreateTriShape), vfunc6(+0x30)=`0x141327FF0`→`0x140D6CAB0` (DrawDynamicTriShape), vfunc7(+0x38)=`0x141327FD0`→**`0x140D6BFE0`** (DrawTriShape — the already-REd standard leaf). All wrappers pass `&Renderer` = `0x143028490`. Set in shader-system init `FUN_141294060` at 0x1412940F3 (`unk_1430136C0 = &off_141E10A50`).
+- Dynamic VB ring: map `0x140D6C8A0`, unmap `0x140D6C9E0`; `memcpy_s` = `0x14130A030`; SIMD copy = `0x14131FF40`.
+
+## Call chain
+
+`RenderPassImmediately_Skinned (0x141308970)` FALSE branch (`geometry->vfunc54(+0x1B0) == 0`):
+1. `FUN_14131f7c0()` — TLS[0x2A00] (last-skin-instance cache) = 0 (done at function entry, both branches).
+2. `BSRenderPass::FUN_141309f80(pass, shader, techniqueFlag, a3)` — shader technique setup (SetupTechnique/SetupGeometry, pre-existing RE).
+3. Builds `drawStruct` on stack (layout below).
+4. **If geometry is dynamic** (`v12 = geometry->vfunc12(+0x60)` ≠ 0): maps the 4MB dynamic VB ring (`FUN_140d6c8a0(&Renderer, size=*(v12+0x170), &drawStruct+0x24)` — returns dest ptr, writes ring offset into drawStruct+0x24), locks BSDynamicTriShape data (`0x140C723C0`: spinlock at +0x168, returns ptr at +0x160), `memcpy_s(dst, size, src, size)`, unmap (`0x140D6C9E0` = `ctx->Unmap(dynVB[idx],0)`), unlock (`0x140C72420`).
+5. `skinInstance->vfunc37(skinInstance, &drawStruct)` where `skinInstance = *(geometry+0x130)`.
+6. `shader->vfunc7(+0x38)(shader, pass, a3)` — RestoreTechnique/cleanup.
+
+## NiSkinInstance::Render pseudocode
+
+`0x140C7E170`:
+```c
+int32 NiSkinInstance::Func37(NiSkinInstance *this, DrawData *a2) {
+  return FUN_140c7ca10(this->SkinPartition_18, a2);   // this+0x18 = NiSkinPartition*
+}
+```
+`0x140C7CA10` (partition loop):
+```c
+int32 FUN_140c7ca10(NiSkinPartition *sp, DrawData *a2) {
+  uint32 n = *(uint32*)(sp + 0x10);                    // partition count
+  for (uint32 i = 0; i < n; ++i)
+    result = (*(*sp + 0x128))(sp, a2, i);              // NiSkinPartition::vfunc37
+  return result;
+}
+```
+
+`NiSkinPartition::Func37 (0x140C7CA70)` — verified against disassembly:
+```c
+char NiSkinPartition::Func37(NiSkinPartition *this, DrawData *a2, uint32 idx) {
+  Partition *p = *(this + 0x18) + 0x50 * idx;          // partition array @+0x18, stride 0x50
+  // LOD gate:  byte_141E06650[ 12*a2->singleLevelLOD@0x18 + 3*a2->lodIndex@0x1C + p->LODLevel@0x42 ]
+  if (!byte_141E06650[12 * *(dword*)(a2+0x18) + 3 * *(dword*)(a2+0x1C) + *(byte*)(p+0x42)])
+    return 0;                                           // partition culled for this LOD
+  // bone-palette upload callback (NiBoneMatrixSetterI vfunc1):
+  //   rcx = *(a2+0)  iface,  rdx = *( *(a2+8) + 0x130 ) skinInstance,
+  //   r8  = p (Partition*),  r9  = *(a2+8) + 0x7C (&geometry->worldTransform)
+  (*(**(a2+0) + 8))(iface, skinInstance, p, &geom->world);
+  dyn = geometry->vfunc12(+0x60)(geometry);             // geometry = *(a2+8)
+  if (dyn) {  // dynamic (BSDynamicTriShape) skinned draw
+    // vfunc6(+0x30) of *0x1430136C0: (mgr, p->rendererData@0x48, dyn+0x178 (UNUSED),
+    //                                 startIndex=0, numTris=*(u16*)(p+0x3A), dynVBOffset=*(dword*)(a2+0x24))
+    (*(*mgr + 0x30))(mgr, *(p+0x48), dyn+0x178, 0, *(u16*)(p+0x3A), *(dword*)(a2+0x24));
+  } else {    // static skinned draw
+    // vfunc7(+0x38): (mgr, p->rendererData@0x48, startIndex=0, numTris=*(u16*)(p+0x3A))
+    (*(*mgr + 0x38))(mgr, *(p+0x48), 0, *(u16*)(p+0x3A));
+  }
+  return 1;
+}
+```
+
+**LOD gate LUT** `byte_141E06650` (24 bytes = `[flag][lodIndex 0..3][partitionLOD 0..2]`):
+```
+flag=0 (multi-LOD):  lod0:{0,0,0}  lod1:{1,0,0}  lod2:{1,1,0}  lod3:{1,1,1}   // draw partitions with LODLevel < lodIndex
+flag=1 (single-LOD): lod0:{1,0,0}  lod1:{0,1,0}  lod2:{0,0,1}  lod3:{0,0,0}   // draw only LODLevel == lodIndex
+```
+
+## BSDismember override delta
+
+`BSDismemberSkinInstance::Func37 (0x140C6B9F0)`:
+```c
+if (*(qword*)(this+0x90) == 0)          // partition-data array (BSDismemberSkinInstance::Data*, 4-byte entries)
+    return NiSkinInstance::Func37(this, a2);   // tail-jump to base
+NiSkinPartition *sp = *(this+0x18);
+uint32 n = *(dword*)(sp+0x10);
+for (i = 0; i < n; ++i)
+    if (*(BYTE*)(*(this+0x90) + 4*i))   // first byte of Data[i] (partFlag low byte; bit0=editor-visible) nonzero
+        (*(*sp + 0x128))(sp, a2, i);    // same NiSkinPartition::vfunc37
+```
+Delta = per-partition visibility mask only (byte test on each 4-byte `{partFlag u16, bodyPart u16}` entry at this+0x90); base path when the array is null. No other behavior change.
+
+## drawStruct layout (built at 0x141308A05..0x141308A29, stack rsp+0x30; consumed offsets confirmed in 0x140C7CA70 disasm)
+
+| Offset | Type | Value / meaning |
+|---|---|---|
+| +0x00 | `NiBoneMatrixSetterI*` | `&shader->vftable_NiBoneMatrixSetterI` = **BSShader + 0x10** (BSUtilityShader: vtable 0x141868608); callee invokes its vfunc1 (+8) |
+| +0x08 | `BSGeometry*` | pass->geometry (`*(pass+0x10)`); callee reads geom+0x130 (skinInstance), geom+0x7C (world NiTransform), geom vfunc12 |
+| +0x10 | qword | 0 (not read by this path) |
+| +0x18 | dword | `(pass->LODMode@0x1E >> 7) & 1` — single-level-LOD flag |
+| +0x1C | dword | `pass->LODMode@0x1E & 0x7F` — LOD index |
+| +0x20 | dword | 0 (not read by this path) |
+| +0x24 | dword | dynamic-VB byte offset; **init -1**, overwritten by `FUN_140d6c8a0`'s out-param when geometry is dynamic; passed to DrawDynamicTriShape as slot-1 IASetVertexBuffers offset |
+
+Bone-setter callback signature (vfunc1 at iface_vtbl+8): `void SetBoneMatrices(NiBoneMatrixSetterI* this, NiSkinInstance* skin /*rdx*/, NiSkinPartition::Partition* part /*r8*/, NiTransform* geomWorld /*r9*/)`.
+
+## NiSkinPartition::Partition layout (stride 0x50; from Partition::LoadBinary FUN_140c7bc30 + draw usage)
+
+| Offset | Field |
+|---|---|
+| +0x00 | u64 vertexDesc (NIF ver >= 100) |
+| +0x08 | u16* bones (indices into skin bone palette) |
+| +0x10 | float* weights |
+| +0x18 | u16* vertexMap |
+| +0x20 | u8* boneIndices (numVerts*weightsPerVert) |
+| +0x28 | u16* triList indices |
+| +0x30 | u16* stripLengths |
+| +0x38 | u16 numVertices |
+| +0x3A | u16 **numTriangles** (draw count source) |
+| +0x3C | u16 **numBones** (bone-setter gate: `cmp word [r8+3Ch],0`) |
+| +0x3E | u16 numStrips |
+| +0x40 | u16 numWeightsPerVertex |
+| +0x42 | u8 **LODLevel** (LUT gate byte) |
+| +0x43 | u8 globalVB flag (ver >= 0x4F) |
+| +0x48 | **rendererData** (BSGraphics::TriShape*, created at load via mgr vfunc3(+0x18)(mgr, vertexData, vertexDesc, triIndices, 3*numTris) = 0x140D6BE60) |
+
+rendererData (48-byte alloc, 0x140D6BE60): **+0x00 ID3D11Buffer\* VB** (filled by FUN_140d4e060), **+0x08 ID3D11Buffer\* IB** (device->CreateBuffer: ByteWidth=2*numIndices, Usage=DEFAULT, BindFlags=INDEX_BUFFER, init=triList; device at Renderer+0x48, vfunc+0x18), **+0x10 u64 vertexDesc**, +0x28 CPU copy of u16 indices, +0x30 refcount=1. Per-partition IB ⇒ DrawIndexed always starts at 0.
+
+## Partition draw D3D11 sequence (in order, per partition)
+
+Context = qword at **0x143027EA0** (= `*(0x1430261B0 base)[926]`, same global block).
+
+**A. Bone palette upload** — SetBoneMatrices `0x14131F630`, skipped when `TLS[0x2A00] == skinInstance` (cache; cleared once per pass-dispatch by 0x14131F7C0 ⇒ executes once per skin instance per pass, not per partition) or `part==NULL` or `part->numBones@0x3C == 0`:
+1. `TLS[0x2A00] = skinInstance`; TLS[0x768] arena id set to 26 (restored at exit).
+2. `UpdateBoneMatrices(skinInstance, geomWorld)` `0x140D74F70`: frame-gated (`skin->FrameId@0x38 != *(dword*)0x14302C8DC`), under `EnterCriticalSection(skin+0x60)`. Copies current→prev (`skin+0x48` → `skin+0x50`, 48 bytes/bone) or reallocs both (16-aligned, size@+0x44, count@+0x3C, numRegisters=3@+0x40); composes `xform = geomWorld * skinData->rootTransform(skinData+0x18) …` then per bone i: `m = boneWorld[i](skin+0x30 array) * skinData->boneData[i].skinToBone` (boneData at skinData+0x50, stride 0x58, bone count at skinData+0x58); stores 3×float4 rows `{R[r][0..2]*scale, pos[r]}` into `skin->BoneMatrices@0x48`.
+3. rows = `3 * *(dword*)(skinData+0x58)` (skinData = skin+0x10).
+4. `GetID3D11Resource(&Renderer 0x143028490, rows, &mapped, 10)` `0x140D6FFD0`: picks CB from **4-entry round-robin ring** at block+0x1858 (`0x143027A08 + 8*idx`), counter dword at `0x143027A00` (`(c+1)&3`); *size arg ignored*; stores chosen buffer in scratch `0x14302AC58`; **`ctx->Map(cb, 0, D3D11_MAP_WRITE_DISCARD(4), 0, &mapped)`** (vfunc14, +0x70). (`kind==7` would use fixed buffer at 0x143027E90 — not this path; kinds 9/10 share the ring.)
+5. copy `16*rows` bytes from `skin->BoneMatrices@0x48` (current) into mapped.
+6. **`ctx->Unmap(cb, 0)`** (vfunc15, +0x78).
+7. **`ctx->VSSetConstantBuffers(10, 1, &cb)`** (vfunc7, +0x38) — **b10 = current bone palette**.
+8. Repeat 4–6 with kind 9 and `skin->PrevBoneMatrices@0x50`, then **`ctx->VSSetConstantBuffers(9, 1, &cb2)`** — **b9 = previous-frame bone palette**.
+
+**B. Static draw leaf** — DrawTriShape `0x140D6BFE0` (mgr vfunc7 wrapper 0x141327FD0), args (rendererData, startIndex=0, numTris=part+0x3A):
+1. If `RSS.vertexDesc@0x1430281F0 != rendererData->vertexDesc@0x10`: store it, `RSS.dirty@0x143027EB0 |= 0x400`.
+2. If `RSS.topology@0x143028208 != 4` (TRIANGLELIST): store 4, `dirty |= 0x800`.
+3. `BSGraphics::SetDirtyStates(0)` `0x140D705B0` — flushes all dirty state (input layout from vertexDesc, topology, CBs, etc. — pre-existing RE).
+4. **`ctx->IASetIndexBuffer(rendererData->IB@0x08, DXGI_FORMAT_R16_UINT(57), 0)`** (vfunc19, +0x98).
+5. **`ctx->IASetVertexBuffers(0, 1, &rendererData->VB@0x00, stride = (vertexDesc<<2)&0x3C, offset = 0)`** (vfunc18, +0x90).
+6. **`ctx->DrawIndexed(3*numTris, 0, 0)`** (vfunc12, +0x60).
+
+**B'. Dynamic draw leaf** — DrawDynamicTriShape `0x140D6CAB0` (mgr vfunc6 wrapper 0x141327FF0), args (rendererData, dyn+0x178 UNUSED, startIndex=0, numTris, dynOffset=drawStruct+0x24):
+1–3. identical vertexDesc/topology dirty handling + `SetDirtyStates(0)`.
+4. `ctx->IASetIndexBuffer(rendererData->IB, R16_UINT, 0)`.
+5. **`ctx->IASetVertexBuffers(0, 2, {rendererData->VB, dynVBRing[idx]}, strides {(desc<<2)&0x3C, (desc>>2)&0x3C}, offsets {0, dynOffset})`** — dynVBRing = `qword[0x143025F18 + 8*idx]`, idx = dword@`0x143025F30`.
+6. `ctx->DrawIndexed(3*numTris, startIndex(=0), 0)`.
+
+**Dynamic VB ring map (dispatcher pre-step, 0x140D6C8A0)**: ring of 3 VBs at `0x143025F18[0..2]`, current index dword @`0x143025F30`, running offset dword @`0x143025F34`, cap **0x400000**; on overflow: `ctx->End(query[idx])` (vfunc28, +0xE0, queries at `0x143026168+8*idx`), advance idx mod 3, offset=0, clear signaled flag (bytes at `0x143026164+idx`); if flag clear: spin `ctx->GetData(query, &v,4, flags)` (vfunc29, +0xE8) with `Sleep(1)`; then `ctx->Map(dynVB[idx], 0, D3D11_MAP_WRITE_NO_OVERWRITE(5), 0, &m)`; returns `m.pData+offset`, out-param = offset (→ drawStruct+0x24), commits idx/new offset.
+
+## Global state writes (replica must reproduce)
+
+- `TLS[0x2A00]` (tls index at `0x143497408`): last-bound skin instance; **cleared at every skinned-pass dispatch entry**, set in bone setter. Governs bone-CB re-upload.
+- `TLS[0x768]`: memory arena id save/set(26)/restore — allocation context only.
+- RendererShadowState dirty dword `0x143027EB0`: `|=0x400` (vertexDesc), `|=0x800` (topology); consumed/cleared by SetDirtyStates.
+- `0x1430281F0` (u64): current vertexDesc ← rendererData+0x10.
+- `0x143028208` (dword): topology ← 4 (TRIANGLELIST).
+- VS constant buffer bindings **b9 (prev bones)** and **b10 (current bones)** changed on ctx.
+- Bone-CB ring counter `0x143027A00` (&3); scratch `0x14302AC58`.
+- Dynamic-VB ring state `0x143025F30/0x143025F34`, signaled flags `0x143026164+i` (dynamic geometry only).
+- `skin->FrameId@0x38` ← frame counter `*(dword*)0x14302C8DC`; `skin+0x48/+0x50` bone matrix arrays rewritten (CPU side, under skin+0x60 critsec).
+- IA state on ctx: index buffer (R16_UINT), vertex stream 0 (+ stream 1 for dynamic).
+
+## CAVEATS
+
+- The class name of the manager object at `*0x1430136C0` (static instance 0x141E10A50, vtable 0x14186BF80) could not be resolved: its RTTI TypeDescriptor (RVA 0x1EBD968) is zero-filled in this unpacked dump. Functionally it is the BSGraphics geometry-data create/draw interface (CreateTriShape/DrawTriShape/DrawDynamicTriShape wrappers over Renderer 0x143028490).
+- b10=current / b9=previous register assignment is inferred from copy order (skin+0x48 written by this frame's UpdateBoneMatrices goes to slot 10; skin+0x50, which is copied from the old +0x48 before recompute, goes to slot 9). Not cross-checked against shader disassembly here.
+- `GetID3D11Resource` ignores its size argument; the ring CBs are preallocated at unknown size (creation site not chased). Kinds 9 and 10 draw from the SAME 4-buffer ring — the kind value only distinguishes 7.
+- `FUN_140d4e060` (vertex-buffer creation inside CreateTriShape) was not decompiled; VB contents = per-partition SSE vertex data passed into Partition::LoadBinary.
+- In the dynamic path, the `dyn+0x178` argument passed to DrawDynamicTriShape is dead (never read by 0x140D6CAB0).
+- geometry vfunc12 (+0x60) "returns dynamic-shape data object" is derived from usage (+0x160 data ptr, +0x168 spinlock, +0x170 size dword); exact class (BSDynamicTriShape) inferred from idb names.
+- LOD LUT is 24 bytes; a lodIndex > 3 (pass byte@0x1E & 0x7F) would index out of bounds — no clamp exists in 0x140C7CA70; game data presumably guarantees 0..3.
+- The TRUE branch of the skinned dispatcher (geometry vfunc54/+0x1B0 ≠ 0, e.g. face-gen custom path) was out of scope and is not covered.
+- UpdateBoneMatrices' exact skinData member offsets (rootTransform at skinData+0x18, boneData array at +0x50 stride 0x58, bone count at +0x58) are read from the decompile of 0x140D74F70; the two intermediate NiTransform::Multiply argument orders were not instruction-verified.
+
+### Machine-extracted caveats
+- Class name of the draw-manager object at *0x1430136C0 unresolved: RTTI TypeDescriptor (0x141EBD968) is zero-filled in the unpacked dump; identified functionally as the BSGraphics geometry create/draw interface over Renderer 0x143028490.
+- b10=current / b9=previous bone-palette register assignment inferred from copy order in SetBoneMatrices; not cross-checked against VS shader disassembly.
+- GetID3D11Resource ignores its size argument; kinds 9 and 10 share one 4-buffer round-robin CB ring whose creation site/size was not chased.
+- FUN_140d4e060 (vertex-buffer creation inside CreateTriShape) not decompiled; VB contents assumed per-partition SSE vertex data.
+- Dynamic path: the dyn+0x178 argument passed to DrawDynamicTriShape is dead (unused by 0x140D6CAB0).
+- geometry vfunc12 (+0x60) semantics (returns dynamic-shape data with data@+0x160, spinlock@+0x168, size@+0x170) derived from usage and idb names (BSDynamicTriShape).
+- LOD LUT is only 24 bytes; lodIndex (pass byte@0x1E & 0x7F) > 3 would read out of bounds - no clamp in code, assumed guaranteed 0..3 by game data.
+- TRUE branch of the skinned dispatcher (geometry vfunc54 +0x1B0 != 0) out of scope, not analyzed.
+- UpdateBoneMatrices skinData offsets (root xform +0x18, boneData +0x50 stride 0x58, count +0x58) taken from decompile; NiTransform::Multiply argument order not instruction-verified.
+
+
+================================================================================================
+## Verification corrections (apply these over the cluster text above)
+================================================================================================
+
+- **SetupAlphaBlendState (0x14131F440) opaque-branch pseudocode is wrong for `testEnable == false`.** The report claims the opaque path (`materialAlpha >= 1.0 && !blendEnable`) ends with `if (testEnable != alphaTestEnabled@F64) { F64 = testEnable; flags |= 0x100 }`. The actual code (disasm 0x14131F48E–0x14131F4FE) splits on `testEnable` (r10b): if **true**, it clears F58 (|=0x80 if changed) and sets F64 **to 1** (|=0x100) if not already 1; if **false**, it jumps to 0x14131F4D8 which **only clears F58 and returns — F64 is never touched**. So an opaque pass with test disabled leaves `alphaTestEnabled` stale (e.g. still true from a previous pass) instead of syncing it to false as the report states. The bidirectional sync exists only in the translucent tail (LABEL_39 @0x14131F601). This is load-bearing for exact replication: in the custom path `useAlphaTestBit` is hardcoded 1, so `testEnable=false` occurs for any geometry whose NiAlphaProperty lacks flag 0x200 (or is NULL), and a replica following the report would emit a spurious alpha-test disable + dirty 0x100 where the game leaves prior state in effect.
+- Minor (address label only, not behavior): the `test byte [rsi+109h], 8` instruction is at **0x1413084EF** (jz at 0x1413084F6, call at 0x1413084F8), not "at 0x1413084F6/0x1413084F8" as the report's call-site line reads. Operands and semantics are as claimed.
+
+Everything else re-derived and confirmed exactly: all cited addresses (0x141308440/B20/8C0/970/6C0, 0x141309F80, 0x141307160, 0x1412FD8A0, 0x14131F440/F2A0, 0x1412CCE20, ctors 0x140C79F70/9BB0/95C0/9CA0, clearers in 0x140C711A0/0x140C71A80/0x140C80AA0/0x140C80B80), all struct offsets (pass +0/+8/+0x10/+0x18/+0x1E; geom +0x108/+0x109/+0x120/+0x130/+0x148/+0x150; shaderProp +0x30/+0x78; alphaProp +0x30/+0x32), all globals (0x143283BA4/BA8, 0x141E0DF8C, 0x143490BB0, 0x143027EB0/F58/F64/F68, 0x143497408 TLS +0x768 marker 26, 0x14302C8E5, 0x1432336C0), dirty bits 0x80/0x100/0x200 (bts 7/8 + or 0x200), vtbl slots +0x10/+0x18/+0x20/+0x30/+0x38, register-level facts of the custom body (rdx clobber @0x141308B35, r8d live into vfunc+0x30, r9b=1, tail jmp [rax+38h]), call order, all translucent blend-mode mappings, ShaderSetup gates ((RenderFlags&4), passEnum 0x5C000058..0x5C00005B via `[rcx+18h]`, sky singleton), and the delta-vs-standard claims (no TLS in custom, order inversion, AlphaTest ignored, gates skipped).
+
+- **Blend-state index formula, last term address is off by 4.** The report writes `deviceBlock[384 + 52*[0x143027F58] + 26*[0x143027F5C] + 2*writeMode_143027F60 + dw_143028484]` (cited both in the SetupGeometry flush paragraph and in the CAVEATS). The actual instruction at 0x140d708fa is `mov eax, cs:flt_143028470+10h`, i.e. the term is the dword at **0x143028480** (`flt_143028470[4]`), not 0x143028484. Corrected formula: `deviceBlock_1430261B0[384 + 52*[0x143027F58] + 26*[0x143027F5C] + 2*[0x143027F60] + dword[0x143028480]]`, applied via vtbl+0x118 (OMSetBlendState) with blendFactor &0x141E07168 and sample mask 0xFFFFFFFF at 0x140d70913. Everything else in that formula (coefficients, base 384, factor/mask, call site) verified correct.
+
+All other load-bearing claims were re-derived from the binary and confirmed exactly: FUN_140d6fcf0 semantics (guarded Release via vtbl+0x10 + null of field +8; sole code caller 0x14130f3a5; idempotent; no null PSSetShader), vtable slot roles (base 0x1418685b0: slot2=0x14130DF90 Setup, slot3=0x14130DD80 RestoreTechnique, slot6=0x14130EC70 SetupGeometry, slot7=0x141310300 RestoreGeometry), the entire 0x1200 SetupGeometry branch (gate 0x14130f318, {1,0xFF} packed qword at 0x143027F40 with dirty|8, writeMode→0 with dirty|0x80, depthMode→0 with prev-compare bit 4 vs 0x143027F3C, VS b2 write of dword_141E0E014 at constantOffsets[7]=vs+0x57, release at 0x14130f3a5), the full D3D11 call order (Map vs+0x38 / ps+0x30 DISCARD at 0x14130ecdf/0x14130ed26; matrix transpose 0x14130ef1f skipped when F&4; alpha gate at 0x14130f74e/0x14130f764 with (F&0x80)==0 && (F&0x14000)!=0x10000; tail Unmap/Unmap/VSSetConstantBuffers(2,1)/PSSetConstantBuffers(2,1) at 0x14130f8a6..0x14130f90b), RestoreTechnique's 0x1200 undo at 0x14130def2 ({0,0xFF}, writeMode→1) + empty EndTechnique 0x14131fce0, RestoreGeometry's exclusion gate at 0x14131037e ((F&0x1200)!=0x1200 && pass+0x1C==10) and sentinel-13 stash at 0x141E10660 (static value 13, xrefs only 0x14130f292 + RestoreGeometry), the depth-mode leak (neither restore touches 0x143027F38 for pure 0x1200), SetupTechnique's F=passEnum−43, exact v6 expression, F stored at this+0x90/0x94 at 0x14130e0e4, nothing written to PerTechnique for pure 0x1200, b0 binds at 0x14130e6f4/0x14130e70a, both reducers (0x141334900: F&0xF7E5FF9F with the 0xDFFFE1E4 collapse gated exactly as claimed; 0x141334970: early 0x2000 collapse gate + F&0xFFFFFB83; shadow overrides never set bits 9|12 so the psid entry is exclusive), BeginTechnique table walks (VS buckets +0x50/size +0x34, PS +0x80/+0x64, returns 0 on miss), SetShader/SetPixelShader (stores to 0x1430281F8/0x143028200 = dword_143028070[98]/[100], immediate VSSetShader vtbl+88 / PSSetShader vtbl+72, dirty|0x400, no refcounting), DSS flush deviceBlock[40*depthMode+stencilMode] with ref 0x143027F44 at 0x140d707c9, dword_141E0E014 static 0 and FUN_1404c5660's clamp01 water-blend computation (bools +0xB8/+0xB9, float +0xC0, 1.0 branch at 0x1404c5932), and both statics' xref sets.
+
+- No load-bearing errors found. Every cited address, struct offset, vtable index, D3D11 call order, and branch gate was re-derived from the binary and matches: the 13-case switch on byte geom+0x150−1 at 0x141307160; both static leaves (0x140d6bfe0 / 0x140d6c0e0 differing only in IB source); the ring allocator 0x140d6c8a0 (>0x400000 wrap, End idx 28, GetData idx 29, Map idx 14 mode 5, ring of 3, query slots [74+i]/flags [77+i]); ca10/d5d0 writing the offset to desc+0x18 with the r9 arg ignored; cab0/d620 two-stream binds with offsets {0, desc[0x18]}; the byte compares `cmp byte ptr [rcx+1Ch], 0Ch` at 0x1413074c3 and 0x141307559; the LOD helpers (lodSize@+0x160, pair array@+0x1D8, lod byte@+0x108 bit7, exact sum/3x formulas); case 7's ascending vs case 8's descending i=n−1..1 loop (segment 0 never drawn, geom[0x171]→nothing drawn), the bit 5→0 SRV demotion into qword_143027FF0[bit]/[bit+7] with dirty bits in 0x143027EB4; case 9's cb selection (a4==7 → 0x143027E90 = 0x1430261B0[924], else ring [779..782]/counter [778]), Map DISCARD, VSSetConstantBuffers(7,1) idx 7, DrawIndexedInstanced idx 20; the input-layout descriptors of ce60 (fmt 6@0/12/24, fmt 28@36, stride 40) and cbe0 (fmt 2@0/16, fmt 6@32, fmt 32@44 semidx 1, stride 48, DrawIndexed 6*(n>>2)); the layout cache 0x141E07140/44/60 + CRC sub_140C06570 over (curVertexDesc & VS+0x48); the static quad desc 0x14302AE50 (VB=0x143025F40, IB=0x143025F38, vertexDesc 0x0840200004000051); frame counter inc at 0x140d6a300 in FUN_140d6a2b0; 0x1434963C8 having exactly one xref (the case-8 read, no writer); and the SetDirtyStates PS-SRV flush region (0x143027EB4 read @0x140d70bec, qword_143027FF0 lea @0x140d70c07, PSSetShaderResources call @0x140d70c27).
+- Two immaterial nuances, already covered by the report's caveats: (1) FUN_1404b35e0 both sets AND clears 0x1430243B0 (dl-dependent), and FUN_1408e8830/FUN_1408e89e0 also reference the flag — "set in 35e0 / cleared in 2960" is a simplification; (2) in case 8 the null-guard in the SRV fallback chain is on *(tex+0x48) (the rendererTexture), not on the 0x14302C8E8 texture pointer itself as the report's ternary implies (a null 0x14302C8E8 would fault).
+
