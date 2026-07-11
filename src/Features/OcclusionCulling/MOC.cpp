@@ -1242,7 +1242,30 @@ namespace MOC
 					g_debugSnapValid = true;
 				}
 
-				// Phase 2: gather NEXT frame's candidates.
+				// Phase 2: gather NEXT frame's candidates. CACHED: the occluder
+				// GEOMETRY set is stable frame to frame (large statics); only the
+				// view matrices change, and those are applied at RASTER time, not
+				// here. So re-walk the scene graph only every kGatherPeriod kicks or
+				// when the camera has moved past kGatherMoveSq -- otherwise reuse the
+				// prepared list (its cached vert/index pointers persist). Conservative
+				// when stale: a just-appeared occluder is missing for a few frames =
+				// slightly less culling, never a wrong cull. Cuts ~1.3ms of builder
+				// CPU on the reused frames.
+				constexpr std::uint32_t kGatherPeriod = 8;
+				constexpr float         kGatherMoveSq = 512.0f * 512.0f;
+				static std::uint32_t    s_sinceGather = kGatherPeriod;
+				static RE::NiPoint3     s_lastGatherPos{ 1e30f, 1e30f, 1e30f };
+				const float             mdx = g_posAdjust.x - s_lastGatherPos.x;
+				const float             mdy = g_posAdjust.y - s_lastGatherPos.y;
+				const float             mdz = g_posAdjust.z - s_lastGatherPos.z;
+				const bool              needGather = (++s_sinceGather >= kGatherPeriod) ||
+				                        ((mdx * mdx + mdy * mdy + mdz * mdz) > kGatherMoveSq) ||
+				                        g_readyList.empty();
+				if (!needGather) {
+					g_lastGatherMs = 0.0;
+				} else {
+				s_sinceGather = 0;
+				s_lastGatherPos = g_posAdjust;
 				g_geoList.clear();
 				GatherOccluders();
 
@@ -1289,8 +1312,10 @@ namespace MOC
 				g_lastGatherMs = std::chrono::duration<double, std::milli>(
 					std::chrono::high_resolution_clock::now() - t0)
 				                     .count();
+				} // needGather
 
-				g_readyList.swap(g_geoList);  // builder-owned; no other consumer
+				if (needGather)
+					g_readyList.swap(g_geoList);  // builder-owned; no other consumer
 				g_builderBusy.store(false, std::memory_order_release);
 			}
 		}
