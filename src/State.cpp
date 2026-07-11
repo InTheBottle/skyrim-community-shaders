@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "ParallelShaderSetup.h"
+#include "ShadowDeferred.h"
 #include "UtilityPassReplica.h"
 #include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
@@ -268,6 +269,10 @@ void State::Setup()
 	// Utility-pass RE replica (baseline reverse engineering). Inert unless
 	// CS_UTIL_RE_MODE=1/2; see src/UtilityPassReplica.h.
 	UtilityPassReplica::GetSingleton()->Setup();
+
+	// Shadow-map commands on a deferred context (Stage D). Inert unless
+	// CS_SHADOW_DEFERRED=1; see src/ShadowDeferred.h.
+	ShadowDeferred::GetSingleton()->Setup();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();
