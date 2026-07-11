@@ -1,6 +1,7 @@
 // RenderDoc feature implementation providing in-application graphics debugging capabilities
 #include "Features/RenderDoc.h"
 
+#include "DxvkLoader.h"
 #include "Globals.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
@@ -127,12 +128,52 @@ void RenderDoc::Load()
 		logger::warn("[RenderDoc] Failed to prepare capture directory/template: {}", e.what());
 	}
 
+	// DXVK/Vulkan captures need every live resource serialized: DXVK recycles
+	// descriptors and dynamic-buffer memory in ways RenderDoc's frame-usage tracking
+	// cannot see, and a default capture replays with VK_ERROR_DEVICE_LOST at load.
+	// Costs capture size (all live resources are included). CS_RENDERDOC_REF_ALL=0
+	// opts out for size-sensitive captures on plain D3D11.
+	char refAllBuf[8] = {};
+	const bool refAll = !(GetEnvironmentVariableA("CS_RENDERDOC_REF_ALL", refAllBuf, sizeof(refAllBuf)) && refAllBuf[0] == '0');
+	renderDocApi->SetCaptureOptionU32(eRENDERDOC_Option_RefAllResources, refAll ? 1 : 0);
+	// Record D3D11 deferred command lists from application start so lists recorded
+	// before the capture frame (and reused) are still serialized.
+	renderDocApi->SetCaptureOptionU32(eRENDERDOC_Option_CaptureAllCmdLists, 1);
+	logger::info("[RenderDoc] Capture options: RefAllResources={}, CaptureAllCmdLists=1", refAll ? 1 : 0);
+
 	renderDocApi->MaskOverlayBits(eRENDERDOC_Overlay_None, eRENDERDOC_Overlay_None);
 	// Menu input owns capture hotkeys so they respect the configured frame count.
 	renderDocApi->SetCaptureKeys(nullptr, 0);
 
 	// Initialize capture count tracking
 	lastCaptureCount = renderDocApi->GetNumCaptures();
+
+	// DXVK captures replay only on the classic descriptor-set path: RenderDoc hides
+	// VK_EXT_descriptor_heap (unsupported), DXVK then falls back to
+	// VK_EXT_descriptor_buffer, and RenderDoc's replay of that model (plus its
+	// buffer-device-address-tagged memory) device-losts at capture load on NVIDIA.
+	// Also un-relax the baked SkyrimSE barrier profile -- barriers omitted live are
+	// tolerated by the driver but can fault under replay's different timing -- and
+	// drop pipeline libraries / unified layouts to shrink the replay surface.
+	// This runs at plugin load, before DXVK creates its device, and DXVK reads these
+	// through Win32 GetEnvironmentVariable, so the values are picked up. Applied only
+	// when capture is enabled, so normal runs keep the faster binding models. An
+	// existing DXVK_CONFIG is respected so it can be overridden per-run.
+	if (!DxvkLoader::NativeModeRequested()) {
+		if (GetEnvironmentVariableA("DXVK_CONFIG", nullptr, 0) == 0) {
+			SetEnvironmentVariableA("DXVK_CONFIG",
+				"dxvk.enableDescriptorBuffer = False; dxvk.enableDescriptorHeap = False; "
+				"dxvk.enableGraphicsPipelineLibrary = False; dxvk.enableUnifiedImageLayouts = False; "
+				"d3d11.relaxedBarriers = False; d3d11.relaxedGraphicsBarriers = False");
+			logger::info("[RenderDoc] Applied DXVK capture config (legacy descriptor sets, strict barriers)");
+		} else {
+			logger::info("[RenderDoc] DXVK_CONFIG already set; leaving it untouched");
+		}
+		// Named D3D11 objects flow into the Vulkan capture as debug names.
+		if (GetEnvironmentVariableA("DXVK_DEBUG", nullptr, 0) == 0) {
+			SetEnvironmentVariableA("DXVK_DEBUG", "markers");
+		}
+	}
 
 	logger::info("[RenderDoc] Successfully initialized");
 }
@@ -537,19 +578,59 @@ std::filesystem::path RenderDoc::GetCapturesPath() const
 	return Util::PathHelpers::GetCommunityShaderPath() / "Captures";
 }
 
+// Locate the renderdoc.dll belonging to the REGISTERED Vulkan implicit capture layer,
+// if one exists. The layer json ("...\renderdoc.json") is registered as a value name
+// under SOFTWARE\Khronos\Vulkan\ImplicitLayers, and the RenderDoc installer always
+// places renderdoc.dll next to it.
+static std::filesystem::path FindRegisteredRenderDocLayerDll()
+{
+	constexpr const wchar_t* kLayerKey = L"SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers";
+	for (HKEY hive : { HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER }) {
+		HKEY key = nullptr;
+		if (RegOpenKeyExW(hive, kLayerKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+			continue;
+		}
+		for (DWORD i = 0;; ++i) {
+			wchar_t valueName[MAX_PATH]{};
+			DWORD nameLen = MAX_PATH;
+			if (RegEnumValueW(key, i, valueName, &nameLen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
+				break;
+			}
+			std::filesystem::path jsonPath(valueName);
+			auto filename = jsonPath.filename().wstring();
+			std::transform(filename.begin(), filename.end(), filename.begin(), ::towlower);
+			if (filename == L"renderdoc.json") {
+				auto dllPath = jsonPath.parent_path() / L"renderdoc.dll";
+				std::error_code ec;
+				if (std::filesystem::exists(dllPath, ec)) {
+					RegCloseKey(key);
+					return dllPath;
+				}
+			}
+		}
+		RegCloseKey(key);
+	}
+	return {};
+}
+
 std::filesystem::path RenderDoc::GetRenderDocDllPath() const
 {
-	// CS_RENDERDOC_DLL overrides the default location. When capturing Vulkan (DXVK mode),
-	// point it at the SAME file the registered Vulkan implicit layer references
-	// (e.g. C:\Program Files\RenderDoc\renderdoc.dll): the Windows loader keys modules by
-	// full path, so loading a different copy in-app puts TWO RenderDoc instances in the
-	// process (in-app + layer) that fight over the Vulkan dispatch chain and hang
-	// instance creation.
+	// CS_RENDERDOC_DLL overrides the default location.
 	wchar_t overridePath[MAX_PATH]{};
 	if (GetEnvironmentVariableW(L"CS_RENDERDOC_DLL", overridePath, MAX_PATH) && overridePath[0]) {
 		return std::filesystem::path(overridePath);
 	}
-	// RenderDoc DLL should be in Data/Renderdoc/
+
+	// Prefer the DLL of the registered Vulkan implicit layer: under DXVK the Vulkan
+	// loader maps that exact file at instance creation, and the in-app API must bind
+	// the SAME file — the Windows loader keys modules by full path, so loading a
+	// different copy puts TWO RenderDoc instances in the process (in-app + layer)
+	// that fight over the Vulkan dispatch chain and hang instance creation.
+	if (auto layerDll = FindRegisteredRenderDocLayerDll(); !layerDll.empty()) {
+		return layerDll;
+	}
+
+	// Bundled fallback (no layer registered, so a second instance cannot appear).
 	return Util::PathHelpers::GetDataPath() / "Renderdoc" / "renderdoc.dll";
 }
 
