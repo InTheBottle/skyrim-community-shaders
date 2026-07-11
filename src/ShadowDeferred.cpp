@@ -159,7 +159,12 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	// and CS-UAV dirty words are NOT forced -- their caches hold null/garbage for stages the
 	// shadow path doesn't use, which crashes the bind. The end-of-scope restore undoes this.
 	auto* const sflags = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
-	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags
+	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags. NOTE: the deferred output is
+	                          // byte-for-byte identical whether this is 0xFFFFFFFF or has the
+	                          // depth-stencil bits cleared -- so render STATE is not the cause
+	                          // of the missing shadows; the recorded draws produce no usable
+	                          // depth (likely wrong per-draw transform CBs across the DXVK
+	                          // deferred-context boundary). See the file-header STATUS note.
 
 	callOriginal();
 
