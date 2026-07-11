@@ -3,6 +3,8 @@
 #include "Globals.h"
 #include "State.h"
 
+#include <winrt/base.h>
+
 #include <RE/B/BSRenderPass.h>
 #include <RE/B/BSShader.h>
 #include <RE/B/BSUtilityShader.h>
@@ -26,6 +28,27 @@ namespace
 		std::uint32_t   size = 0;
 	};
 	std::array<OpenMap, 8> g_openMaps{};
+
+	// CommunityShaders.dll address range. The baseline captures only GAME-ENGINE-originated
+	// D3D11 calls: CS features hook the engine's draw leaves and inject their own CBs/binds
+	// (e.g. a per-object 64B CB from CommunityShaders.dll+0xAD56F). Those are CS overlays,
+	// not the engine command stream we're replicating, so a call whose return address lands
+	// inside our own module is not recorded. Set once at Setup.
+	std::uintptr_t g_csBase = 0;
+	std::uintptr_t g_csEnd = 0;
+
+	// Set only while the ENGINE window records: drop D3D11 calls a CS feature injects on
+	// the engine's draw leaf (return address inside our own module). The REPLICA window
+	// is never filtered -- it hand-codes the draw leaf (so no CS injection) and reaches
+	// the engine setup functions by direct call, whose tail-called binds legitimately
+	// report a CS return address that must NOT be dropped.
+	bool g_filterCs = false;
+
+	inline bool EngineCaller(const void* a_ret)
+	{
+		const auto a = reinterpret_cast<std::uintptr_t>(a_ret);
+		return a < g_csBase || a >= g_csEnd;  // true = not inside CommunityShaders.dll
+	}
 
 	inline void Record(Kind a_kind, std::uint16_t a_slot, std::uint64_t a_a, std::uint64_t a_b = 0, std::uint64_t a_c = 0)
 	{
@@ -60,7 +83,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
 		{
-			Record(Kind::kVSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kVSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
 			func(ctx, slot, n, bufs);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -70,8 +94,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
 		{
-			Record(Kind::kPSSetShaderResources, static_cast<std::uint16_t>(slot), n,
-				HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kPSSetShaderResources, static_cast<std::uint16_t>(slot), n,
+					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, views);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -81,7 +106,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11PixelShader* ps, ID3D11ClassInstance* const* inst, UINT n)
 		{
-			Record(Kind::kPSSetShader, 0, reinterpret_cast<std::uint64_t>(ps));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kPSSetShader, 0, reinterpret_cast<std::uint64_t>(ps));
 			func(ctx, ps, inst, n);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -91,8 +117,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
 		{
-			Record(Kind::kPSSetSamplers, static_cast<std::uint16_t>(slot), n,
-				HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kPSSetSamplers, static_cast<std::uint16_t>(slot), n,
+					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, samplers);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -102,7 +129,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11VertexShader* vs, ID3D11ClassInstance* const* inst, UINT n)
 		{
-			Record(Kind::kVSSetShader, 0, reinterpret_cast<std::uint64_t>(vs));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kVSSetShader, 0, reinterpret_cast<std::uint64_t>(vs));
 			func(ctx, vs, inst, n);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -112,7 +140,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT indexCount, UINT startIndex, INT baseVertex)
 		{
-			Record(Kind::kDrawIndexed, 0, indexCount, startIndex, static_cast<std::uint64_t>(static_cast<std::int64_t>(baseVertex)));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kDrawIndexed, 0, indexCount, startIndex, static_cast<std::uint64_t>(static_cast<std::int64_t>(baseVertex)));
 			func(ctx, indexCount, startIndex, baseVertex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -125,10 +154,20 @@ namespace
 			const HRESULT hr = func(ctx, res, sub, mapType, flags, mapped);
 			if (g_sink && SUCCEEDED(hr) && mapped && mapped->pData &&
 				(mapType == D3D11_MAP_WRITE_DISCARD || mapType == D3D11_MAP_WRITE_NO_OVERWRITE)) {
-				for (auto& slotEntry : g_openMaps) {
-					if (!slotEntry.resource) {
-						slotEntry = OpenMap{ res, mapped->pData, mapped->RowPitch };
-						break;
+				// Zero the mapped window (cap = hash window) so UNWRITTEN bytes hash
+				// identically in both windows. The engine leaves flag-gated constants
+				// unwritten in freshly renamed DISCARD memory -- stale ring garbage that
+				// differs between the engine and replica maps and false-diffs the content
+				// hash. The GPU-visible change is benign: those constants were undefined
+				// garbage anyway (the shader permutation doesn't read them).
+				if (mapType == D3D11_MAP_WRITE_DISCARD && mapped->RowPitch && mapped->RowPitch <= 4096)
+					std::memset(mapped->pData, 0, mapped->RowPitch);
+				if (!g_filterCs || EngineCaller(_ReturnAddress())) {
+					for (auto& slotEntry : g_openMaps) {
+						if (!slotEntry.resource) {
+							slotEntry = OpenMap{ res, mapped->pData, mapped->RowPitch };
+							break;
+						}
 					}
 				}
 			}
@@ -150,7 +189,8 @@ namespace
 						// cheap; CBs are <= 4 KB, dynamic VB chunks can be larger but
 						// their leading bytes diverge immediately when wrong.
 						const std::uint32_t n = std::min<std::uint32_t>(slotEntry.size ? slotEntry.size : 256u, 4096u);
-						Record(Kind::kMapDiscardData, 0, reinterpret_cast<std::uint64_t>(res), n, HashBytes(slotEntry.data, n));
+						if (!g_filterCs || EngineCaller(_ReturnAddress()))
+							Record(Kind::kMapDiscardData, 0, reinterpret_cast<std::uint64_t>(res), n, HashBytes(slotEntry.data, n));
 						slotEntry = OpenMap{};
 						break;
 					}
@@ -165,7 +205,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
 		{
-			Record(Kind::kPSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kPSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
 			func(ctx, slot, n, bufs);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -175,7 +216,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11InputLayout* layout)
 		{
-			Record(Kind::kIASetInputLayout, 0, reinterpret_cast<std::uint64_t>(layout));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kIASetInputLayout, 0, reinterpret_cast<std::uint64_t>(layout));
 			func(ctx, layout);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -185,8 +227,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs, const UINT* strides, const UINT* offsets)
 		{
-			Record(Kind::kIASetVertexBuffers, static_cast<std::uint16_t>(slot), HashPointers(bufs, n),
-				HashBytes(strides, n * 4u), HashBytes(offsets, n * 4u));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kIASetVertexBuffers, static_cast<std::uint16_t>(slot), HashPointers(bufs, n),
+					HashBytes(strides, n * 4u), HashBytes(offsets, n * 4u));
 			func(ctx, slot, n, bufs, strides, offsets);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -196,7 +239,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, DXGI_FORMAT fmt, UINT offset)
 		{
-			Record(Kind::kIASetIndexBuffer, 0, reinterpret_cast<std::uint64_t>(buf), fmt, offset);
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kIASetIndexBuffer, 0, reinterpret_cast<std::uint64_t>(buf), fmt, offset);
 			func(ctx, buf, fmt, offset);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -206,7 +250,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, D3D11_PRIMITIVE_TOPOLOGY topo)
 		{
-			Record(Kind::kIASetPrimitiveTopology, 0, topo);
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kIASetPrimitiveTopology, 0, topo);
 			func(ctx, topo);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -216,8 +261,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
 		{
-			Record(Kind::kVSSetShaderResources, static_cast<std::uint16_t>(slot), n,
-				HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kVSSetShaderResources, static_cast<std::uint16_t>(slot), n,
+					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, views);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -227,8 +273,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
 		{
-			Record(Kind::kVSSetSamplers, static_cast<std::uint16_t>(slot), n,
-				HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kVSSetSamplers, static_cast<std::uint16_t>(slot), n,
+					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, samplers);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -238,8 +285,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv)
 		{
-			Record(Kind::kOMSetRenderTargets, 0, n,
-				HashBytes(rtvs, static_cast<std::uint32_t>(n * sizeof(void*))), reinterpret_cast<std::uint64_t>(dsv));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kOMSetRenderTargets, 0, n,
+					HashBytes(rtvs, static_cast<std::uint32_t>(n * sizeof(void*))), reinterpret_cast<std::uint64_t>(dsv));
 			func(ctx, n, rtvs, dsv);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -249,8 +297,9 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11BlendState* state, const FLOAT blendFactor[4], UINT sampleMask)
 		{
-			Record(Kind::kOMSetBlendState, 0, reinterpret_cast<std::uint64_t>(state),
-				blendFactor ? HashBytes(blendFactor, 16) : 0, sampleMask);
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kOMSetBlendState, 0, reinterpret_cast<std::uint64_t>(state),
+					blendFactor ? HashBytes(blendFactor, 16) : 0, sampleMask);
 			func(ctx, state, blendFactor, sampleMask);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -260,7 +309,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, UINT stencilRef)
 		{
-			Record(Kind::kOMSetDepthStencilState, 0, reinterpret_cast<std::uint64_t>(state), stencilRef);
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kOMSetDepthStencilState, 0, reinterpret_cast<std::uint64_t>(state), stencilRef);
 			func(ctx, state, stencilRef);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -270,7 +320,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11RasterizerState* state)
 		{
-			Record(Kind::kRSSetState, 0, reinterpret_cast<std::uint64_t>(state));
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kRSSetState, 0, reinterpret_cast<std::uint64_t>(state));
 			func(ctx, state);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -280,7 +331,8 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, const D3D11_VIEWPORT* viewports)
 		{
-			Record(Kind::kRSSetViewports, 0, n, viewports ? HashBytes(viewports, n * sizeof(D3D11_VIEWPORT)) : 0);
+			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+				Record(Kind::kRSSetViewports, 0, n, viewports ? HashBytes(viewports, n * sizeof(D3D11_VIEWPORT)) : 0);
 			func(ctx, n, viewports);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -356,6 +408,13 @@ namespace engine
 	inline REL::Relocation<std::uint8_t*> S_base{ REL::Offset(0x3027EB0) };
 	constexpr std::uint32_t               kSnapshotBytes = 0x5D8;
 
+	// Cross-pass shadow token written by SetupGeometry (0x14130EC70) and read+reset by
+	// RestoreTechnique (0x141310300) to decide the alpha-blend dirty bit. It lives well
+	// outside the RendererShadowState span, so the compare harness must snapshot it
+	// separately or the replica's RestoreTechnique reads the engine window's leftover
+	// value and sets a spurious OMSetBlendState.
+	inline REL::Relocation<std::uint32_t*> g_shadowGeomToken{ REL::Offset(0x1E10660) };
+
 	// Engine helpers still called in Stage A (replaced in later stages).
 	using SetDirtyStates_t = void (*)(bool);
 	inline REL::Relocation<SetDirtyStates_t> SetDirtyStates{ REL::Offset(0xD705B0) };
@@ -387,6 +446,19 @@ void UtilityPassReplica::Setup()
 	}
 	if (!IsActive())
 		return;
+
+	// Establish our own module range so the recorder can exclude CS-originated calls.
+	{
+		HMODULE mod = nullptr;
+		if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&EngineCaller), &mod) &&
+			mod) {
+			g_csBase = reinterpret_cast<std::uintptr_t>(mod);
+			const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(mod);
+			const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_csBase + dos->e_lfanew);
+			g_csEnd = g_csBase + nt->OptionalHeader.SizeOfImage;
+		}
+	}
 
 	engineWindow.reserve(64);
 	replicaWindow.reserve(64);
@@ -499,10 +571,30 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		auto* const savedShader = *engine::g_currentShader;
 		auto* const savedMaterial = *engine::g_currentMaterial;
 
-		// Ground truth first: the engine renders and we record its command window.
+		// The engine window's SetupTechnique overwrites the current technique flag stored on
+		// the shader object (BSShader+0x90). RestoreTechnique/SetupMaterial read that flag,
+		// and the replica's RestoreTechnique reads it BEFORE its own SetupTechnique rewrites
+		// it -- so it must see the pre-engine value, not the one the engine window left. This
+		// field lives on the shader object, outside the RendererShadowState span, so snapshot
+		// the outgoing and incoming shaders' flags explicitly.
+		auto flagAt = [](void* s) -> std::uint32_t* {
+			return s ? reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(s) + 0x90) : nullptr;
+		};
+		auto* const     outFlag = flagAt(savedShader);
+		auto* const     inFlag = flagAt(a_pass->shader);
+		const std::uint32_t savedOutFlag = outFlag ? *outFlag : 0u;
+		const std::uint32_t savedInFlag = inFlag ? *inFlag : 0u;
+		const std::uint32_t savedShadowGeomToken = *engine::g_shadowGeomToken;
+
+		// Ground truth first: the engine renders and we record its command window. Filter
+		// on: CS features that hook the engine's draw leaf inject their own binds/CBs on the
+		// real render; those are overlays, not the engine command stream we replicate, so a
+		// call whose return address lands in our own module is dropped from this window.
+		g_filterCs = true;
 		BeginWindow(engineWindow);
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
+		g_filterCs = false;
 
 		// Restore pre-engine state, then the replica issues its own window from the
 		// same starting point. Depth-only work is idempotent, so the double render is
@@ -511,7 +603,15 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		*engine::g_currentTechnique = savedTechnique;
 		*engine::g_currentShader = savedShader;
 		*engine::g_currentMaterial = savedMaterial;
+		if (outFlag)
+			*outFlag = savedOutFlag;
+		if (inFlag)
+			*inFlag = savedInFlag;
+		*engine::g_shadowGeomToken = savedShadowGeomToken;
 
+		// Replica window: NEVER filtered. It hand-codes the draw leaf (so no CS injection)
+		// and calls the engine setup functions directly; their tail-called binds report a
+		// CS return address that is legitimate and must be recorded.
 		BeginWindow(replicaWindow);
 		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
@@ -585,6 +685,7 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		*engine::g_currentMaterial = material;
 	}
 
+
 	// ucCurrentMeshLODLevel: the walk stamps the pass's LOD index onto the geometry.
 	auto* geomBytes = reinterpret_cast<std::uint8_t*>(geom);
 	geomBytes[0x108] = static_cast<std::uint8_t>(a_pass->LODMode.index);
@@ -631,6 +732,17 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 
 void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_technique)
 {
+	// KNOWN RESIDUAL (~5% of passes, all in the force-all-dirty state where S->flags,
+	// EB4 and EB8 read 0xFFFFFFFF/0xFFFF at the pass): the replica emits one extra
+	// OMSetBlendState the engine window omits. Verified (topology reads 4, so the address
+	// base is right) that S->flags stays 0xFFFFFFFF through the replica's entire setup --
+	// no engine setup call clears the alpha-blend dirty bit (0x80). The engine window
+	// reaches DrawTriShape with 0x80 already clear, which only a CS feature hooking the
+	// engine's draw leaf (the same one injecting the filtered 64B CB) can be doing -- it
+	// touches blend state on the real render, and the hand-coded DrawTriShape bypasses it.
+	// The replica therefore reproduces the PURE engine command stream; the "extra" call is
+	// a correct, redundant re-application of the already-correct blend state. Left as-is:
+	// closing it means replicating the CS draw-leaf hook, which belongs to REPLACE mode.
 	++passesCompared;
 	// Coverage/di­vergence heartbeat so long runs report progress without a debugger.
 	if ((passesCompared & 0x3FFF) == 0)
@@ -662,7 +774,7 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 		static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
 		sameSize ? std::to_string(firstDiff) : "size-mismatch");
 	const std::size_t n = std::max(engineWindow.size(), replicaWindow.size());
-	for (std::size_t i = 0; i < n && i < 48; ++i) {
+	for (std::size_t i = 0; i < n && i < 64; ++i) {
 		const auto* e = i < engineWindow.size() ? &engineWindow[i] : nullptr;
 		const auto* r = i < replicaWindow.size() ? &replicaWindow[i] : nullptr;
 		const bool  same = e && r && e->kind == r->kind && e->slot == r->slot && e->a == r->a && e->b == r->b && e->c == r->c;
