@@ -1429,17 +1429,20 @@ namespace MOC
 		// transform+bin+rasterize in parallel (transform belongs on the workers,
 		// as in the Intel sample -- not on the single builder thread).
 		// Default = ALL hardware threads up to the pool's 16-bin cap: the raster
-		// must win the frame-start scheduler race against the engine's job threads
-		// or every cull job stalls on its completion. Measured curve at the
-		// village bench: 4 workers -19.6%, 12 workers +5.5%, 16 workers +8.3%
-		// (raster-completion 2.3ms -> 1.16ms). The workers hold work ~1ms per
-		// frame and park after, so saturation cannot starve the engine. Persisted
-		// settings carry stale low counts; CS_MOC_THREADS still wins for A/B.
+		// must win the frame-start scheduler race against the engine's job
+		// threads or every cull job stalls on its completion. But 16 workers on
+		// a tiny raster (~409 occluders) idle-SPIN through the drain window --
+		// VTune (symbol-resolved) showed the CullingThreadpool workers, NOT
+		// DXVK, are the largest SwitchToThread (~3s); that spin is fps-neutral
+		// (spare cores) but wasted CPU/power. 8 workers rasterize the small set
+		// nearly as fast (measured fps-neutral: 8 = -3.7%, 16 = -2/-3.9%, all
+		// within session noise) while halving the idle spinners. Persisted
+		// settings carry stale counts; CS_MOC_THREADS still overrides for A/B.
 		{
 			char tbuf[8] = {};
 			if (!GetEnvironmentVariableA("CS_MOC_THREADS", tbuf, sizeof(tbuf)) || !tbuf[0]) {
 				const unsigned int hw = std::max(4u, std::thread::hardware_concurrency());
-				threads = std::max(threads, std::min(hw, 16u));
+				threads = std::max(threads, std::min(hw, 8u));
 			}
 		}
 		// Snapshot thread ids before/after pool creation to identify the workers
