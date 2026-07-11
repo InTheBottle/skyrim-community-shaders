@@ -45,6 +45,7 @@ namespace MOC
 	extern bool          CullTreeLODGroups;          // occlusion-test distant-tree LOD instance groups
 	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
 	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
+	extern bool          CullSunShadows;             // sun-view occlusion of shadow casters (all cascades)
 
 	/** @brief Create the global MOC instance (1280x720). Safe to call once; no-op if already initialized. */
 	void Init();
@@ -110,6 +111,12 @@ namespace MOC
 	 *        (accumulation already decided the pass lists).
 	 */
 	bool IsSceneListCamera(const RE::NiCamera* a_camera);
+
+	/** @brief True for the sun's shadow-gather camera (stage-1 caster pre-gather). */
+	bool IsSunGatherCamera(const RE::NiCamera* a_camera);
+
+	/** @brief Sun-view occlusion test for a shadow caster (world-bound cube vs the sun buffer). */
+	bool TestObjectSunView(RE::NiAVObject* a_object);
 
 	/**
 	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a

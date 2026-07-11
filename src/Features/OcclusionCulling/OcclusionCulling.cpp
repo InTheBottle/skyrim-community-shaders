@@ -75,6 +75,23 @@ namespace
 			return;  // occluded -> do not accumulate / recurse
 		}
 
+		// SUN SHADOW CASTER culling: the stage-1 caster pre-gather runs through
+		// this same body with the dir light's gather camera; a rejection here
+		// removes the caster from EVERY cascade (no cross-frame caching -- the
+		// lists rebuild each frame). Guards mirror the engine's testable subset
+		// (IDA 2026-07-11): zero-radius and kAlwaysDraw(0x800)/0x1000-shortcut
+		// objects are never tested, nor are actors (skinned-bounds lesson).
+		if (!bracketed && a_object && MOC::IsSunGatherCamera(a_self->camera)) {
+			const auto fl = a_object->GetFlags().underlying();
+			if (a_object->worldBound.radius > 0.0f && !(fl & 0x800) && !(fl & 0x1000)) {
+				auto* ref = a_object->GetUserData();
+				if ((!ref || ref->formType != RE::FormType::ActorCharacter) && !MOC::TestObjectSunView(a_object)) {
+					MarkCulledLikeEngine(a_self, a_object);
+					return;  // occluded from the sun -> not a caster this frame
+				}
+			}
+		}
+
 		if (g_validateMode && bracketed && a_object) {
 			auto* bsp = static_cast<RE::BSCullingProcess*>(a_self);
 			if (bsp->recurseToGeometry && a_self->updateAccumulateFlag) {
@@ -335,6 +352,9 @@ void OcclusionCulling::PostPostLoad()
 	// CS_MOC_TREE_OCCLUDERS=0/1: opaque tree parts as occluders, override for A/B runs.
 	if (GetEnvironmentVariableA("CS_MOC_TREE_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.TreeOccluders = buf[0] == '1';
+	// CS_MOC_SUN=0/1: sun-view shadow-caster culling override for A/B runs.
+	if (GetEnvironmentVariableA("CS_MOC_SUN", buf, sizeof(buf)) && buf[0])
+		settings.CullSunShadows = buf[0] == '1';
 	// CS_MOC_ALPHA_OCCLUDERS=0/1: alpha-TESTED geometry as solid occluders (A/B).
 	if (GetEnvironmentVariableA("CS_MOC_ALPHA_OCCLUDERS", buf, sizeof(buf)) && buf[0])
 		settings.AlphaTestedOccluders = buf[0] == '1';
@@ -440,6 +460,7 @@ void OcclusionCulling::SyncSettingsToMOC()
 	MOC::CullTreeLODGroups = settings.CullTreeLOD;
 	MOC::TreeOccluders = settings.TreeOccluders;
 	MOC::AlphaTestedOccluders = settings.AlphaTestedOccluders;
+	MOC::CullSunShadows = settings.CullSunShadows;
 	MOC::DiagForceCullPercent = diagForceCullPercent;  // env-only diagnostic, not persisted
 }
 

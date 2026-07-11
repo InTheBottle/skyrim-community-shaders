@@ -83,6 +83,7 @@ namespace MOC
 	bool CullTreeLODGroups = true;
 	bool TreeOccluders = true;
 	bool AlphaTestedOccluders = false;
+	bool CullSunShadows = true;
 
 	namespace
 	{
@@ -102,6 +103,25 @@ namespace MOC
 		// walk of the frame computes identical verdicts -- no verdict caches,
 		// no temporal hysteresis, no flicker by construction.
 		MaskedOcclusionCulling* g_moc = nullptr;
+
+		// SUN-SHADOW occlusion (the +30% pool: utility/shadow = 52% of draws).
+		// A second buffer rasterized from the sun's shadow-gather view; the
+		// engine's stage-1 caster pre-gather (camera = dirLight+0x578, IDA
+		// 2026-07-11) dispatches through the SAME Process1 body we detour, so
+		// casters provably occluded from the sun are rejected for ALL cascades
+		// at once. The gather camera is hysteresis-stabilized by the engine, so
+		// a buffer built at kick time is valid for the whole frame. The ortho
+		// sun volume is approximated by a pushed-back narrow-FOV perspective
+		// camera so all existing (perspective, 1/w) machinery applies.
+		MaskedOcclusionCulling*          g_sunMoc = nullptr;
+		XMMATRIX                         g_sunView = XMMatrixIdentity();
+		XMMATRIX                         g_sunViewProj = XMMatrixIdentity();
+		XMVECTOR                         g_sunPosAdjustV = _mm_setzero_ps();
+		RE::NiPoint3                     g_sunPosAdjust{};
+		std::atomic<std::uint32_t>       g_sunRasterFrame{ 0xFFFFFFFFu };
+		std::atomic<const RE::NiCamera*> g_sunGatherCam{ nullptr };
+		std::atomic<std::uint64_t>       g_sunTested{ 0 };
+		std::atomic<std::uint64_t>       g_sunCulled{ 0 };
 		CullingThreadpool*      g_pool = nullptr;
 		bool                    g_init = false;
 
@@ -477,6 +497,54 @@ namespace MOC
 		// via posAdjust), the projection from the camera's NiFrustum. Only valid on a
 		// camera with a REAL (aspect-correct) frustum -- i.e. the RENDER camera. The
 		// frozen cull camera's frustum is normalized to (-1,1,1,-1) and yields garbage.
+		// Build the sun-view matrices from the engine's shadow-gather camera
+		// (dirLight+0x578; ortho volume, sun-dir hysteresis keeps it stable).
+		// The ortho volume is approximated by a pushed-back narrow-FOV
+		// perspective camera so the 1/w raster/test machinery applies
+		// unchanged; the 15% extent margin plus the conservative occluders
+		// keeps errors on the visible side.
+		void BuildSunMatrices(const RE::NiCamera* a_cam)
+		{
+			const RE::NiMatrix3& R = a_cam->world.rotate;
+			const RE::NiPoint3   dir{ R.entry[0][0], R.entry[1][0], R.entry[2][0] };
+			const RE::NiPoint3   up{ R.entry[0][1], R.entry[1][1], R.entry[2][1] };
+			const RE::NiPoint3   right{ R.entry[0][2], R.entry[1][2], R.entry[2][2] };
+			const RE::NiFrustum& fr = const_cast<RE::NiCamera*>(a_cam)->GetRuntimeData2().viewFrustum;
+
+			const float extent = std::max(std::max(std::abs(fr.fLeft), std::abs(fr.fRight)),
+									 std::max(std::abs(fr.fTop), std::abs(fr.fBottom))) *
+			                     1.15f;
+			const float push = std::max(extent * 4.0f, 1024.0f);
+
+			g_sunPosAdjust = RE::NiPoint3{
+				a_cam->world.translate.x - dir.x * push,
+				a_cam->world.translate.y - dir.y * push,
+				a_cam->world.translate.z - dir.z * push
+			};
+			g_sunPosAdjustV = _mm_setr_ps(g_sunPosAdjust.x, g_sunPosAdjust.y, g_sunPosAdjust.z, 0.0f);
+
+			g_sunView.r[0] = XMVectorSet(right.x, up.x, dir.x, 0.0f);
+			g_sunView.r[1] = XMVectorSet(right.y, up.y, dir.y, 0.0f);
+			g_sunView.r[2] = XMVectorSet(right.z, up.z, dir.z, 0.0f);
+			g_sunView.r[3] = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+
+			const float tanHalf = extent / push;
+			const float n = push * 0.25f;
+			const float f = push + std::max(fr.fFar, extent) * 1.5f;
+			XMMATRIX    proj;
+			proj.r[0] = _mm_setzero_ps();
+			proj.r[1] = _mm_setzero_ps();
+			proj.r[2] = _mm_setzero_ps();
+			proj.r[3] = _mm_setzero_ps();
+			proj.r[0].m128_f32[0] = 1.0f / tanHalf;
+			proj.r[1].m128_f32[1] = 1.0f / tanHalf;
+			proj.r[2].m128_f32[2] = f / (f - n);
+			proj.r[2].m128_f32[3] = 1.0f;
+			proj.r[3].m128_f32[2] = -((n * f) / (f - n));
+
+			g_sunViewProj = XMMatrixMultiply(g_sunView, proj);
+		}
+
 		void CalculateViewProjection(RE::NiCamera* a_camera, XMMATRIX& a_view, XMMATRIX& a_proj, XMMATRIX& a_viewProj)
 		{
 			const RE::NiMatrix3& R = a_camera->world.rotate;
@@ -1029,7 +1097,54 @@ namespace MOC
 		}
 
 		bool GetCachedGeometry(RE::BSGeometry* a_geom, IndexPair& a_outIndices, float*& a_outVerts);
-		std::uint32_t RasterizeOccluder(RE::BSGeometry* a_geom);
+		std::uint32_t RasterizeOccluder(RE::BSGeometry* a_geom, const XMMATRIX& a_viewProj, const RE::NiPoint3& a_posAdjust);
+
+		// Submit the prepared occluder set (statics with LOD selection + land)
+		// under an arbitrary view-projection -- used for the main camera and the
+		// sun shadow-gather view. Builder thread only.
+		std::uint32_t SubmitOccluderPass(const XMMATRIX& a_viewProj, const RE::NiPoint3& a_posAdjust)
+		{
+			std::uint32_t enqueued = 0;
+			// px-per-world-unit at unit distance: proj[1][1] = cot(fovY/2).
+			const float pxScale = g_proj.r[1].m128_f32[1] * (static_cast<float>(MOC_HEIGHT) * 0.5f);
+			for (auto& e : g_readyList) {
+				if (!e.verts || !e.idxData || !e.geometry)
+					continue;
+				const float          dist = std::sqrt(std::max(e.distanceSquared, 1.0f));
+				const std::uint32_t* idxSel = e.idxData;
+				std::uint32_t        cntSel = e.idxCount;
+				if (e.lod2Data && (e.lod2ErrAbs * pxScale) / dist < 0.5f) {
+					idxSel = e.lod2Data;
+					cntSel = e.lod2Count;
+				} else if (e.lod1Data && (e.lod1ErrAbs * pxScale) / dist < 0.5f) {
+					idxSel = e.lod1Data;
+					cntSel = e.lod1Count;
+				}
+				const XMMATRIX worldRel = GetXMFromNiPosAdjust(e.geometry->world, a_posAdjust);
+				const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, a_viewProj);
+				g_pool->SetMatrix(reinterpret_cast<const float*>(&worldViewProj));
+				g_pool->RenderTriangles(
+					e.verts, idxSel,
+					static_cast<int>(cntSel / 3),
+					e.twoSided ? MaskedOcclusionCulling::BACKFACE_NONE : MaskedOcclusionCulling::BACKFACE_CW,
+					MaskedOcclusionCulling::CLIP_PLANE_ALL);
+				++enqueued;
+			}
+			if (!g_landReady.empty()) {
+				const XMMATRIX rel = XMMatrixTranslation(-a_posAdjust.x, -a_posAdjust.y, -a_posAdjust.z);
+				const XMMATRIX mvp = XMMatrixMultiply(rel, a_viewProj);
+				g_pool->SetMatrix(reinterpret_cast<const float*>(&mvp));
+				for (const auto* lm : g_landReady) {
+					g_pool->RenderTriangles(
+						lm->verts.data(), lm->indices.data(),
+						static_cast<int>(lm->indices.size() / 3u),
+						MaskedOcclusionCulling::BACKFACE_NONE,
+						MaskedOcclusionCulling::CLIP_PLANE_ALL);
+					++enqueued;
+				}
+			}
+			return enqueued;
+		}
 
 		// Builder-thread main: the pool's SINGLE PRODUCER. Each kick: (1) rasterize the
 		// list prepared last kick using the CURRENT frame's matrices (published by the
@@ -1064,50 +1179,7 @@ namespace MOC
 					// waits. A complete buffer (no missing floors/walls) culls strictly
 					// better; partial fills mid-frame are conservative by contract.
 					std::uint32_t enqueued = 0;
-					// px-per-world-unit at unit distance: proj[1][1] = cot(fovY/2).
-					const float pxScale = g_proj.r[1].m128_f32[1] * (static_cast<float>(MOC_HEIGHT) * 0.5f);
-					for (auto& e : g_readyList) {
-						if (!e.verts || !e.idxData || !e.geometry)
-							continue;
-						// Coarsest LOD whose silhouette error projects below half a
-						// buffer pixel at this distance (user's LOD design).
-						const float          dist = std::sqrt(std::max(e.distanceSquared, 1.0f));
-						const std::uint32_t* idxSel = e.idxData;
-						std::uint32_t        cntSel = e.idxCount;
-						if (e.lod2Data && (e.lod2ErrAbs * pxScale) / dist < 0.5f) {
-							idxSel = e.lod2Data;
-							cntSel = e.lod2Count;
-						} else if (e.lod1Data && (e.lod1ErrAbs * pxScale) / dist < 0.5f) {
-							idxSel = e.lod1Data;
-							cntSel = e.lod1Count;
-						}
-						const XMMATRIX worldRel = GetXMFromNiPosAdjust(e.geometry->world, g_posAdjust);
-						const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, g_viewProj);
-						g_pool->SetMatrix(reinterpret_cast<const float*>(&worldViewProj));
-						g_pool->RenderTriangles(
-							e.verts, idxSel,
-							static_cast<int>(cntSel / 3),
-							e.twoSided ? MaskedOcclusionCulling::BACKFACE_NONE : MaskedOcclusionCulling::BACKFACE_CW,
-							MaskedOcclusionCulling::CLIP_PLANE_ALL);
-						++enqueued;
-					}
-					// Terrain heightmap meshes: world-space verts, so camera-relative
-					// is a pure translation. BACKFACE_NONE = winding-proof; near clip
-					// required (the camera stands ON these triangles).
-					if (!g_landReady.empty()) {
-						const XMMATRIX rel = XMMatrixTranslation(-g_posAdjust.x, -g_posAdjust.y, -g_posAdjust.z);
-						const XMMATRIX mvp = XMMatrixMultiply(rel, g_viewProj);
-						g_pool->SetMatrix(reinterpret_cast<const float*>(&mvp));
-						for (const auto* lm : g_landReady) {
-							g_pool->RenderTriangles(
-								lm->verts.data(), lm->indices.data(),
-								static_cast<int>(lm->indices.size() / 3u),
-								MaskedOcclusionCulling::BACKFACE_NONE,
-								MaskedOcclusionCulling::CLIP_PLANE_ALL);
-							++enqueued;
-						}
-					}
-					g_lastEnqueueMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - rasterT0).count();
+					enqueued = SubmitOccluderPass(g_viewProj, g_posAdjust);
 					g_lastOccluderCount = enqueued;
 				} else {
 					g_lastOccluderCount = 0;
@@ -1121,11 +1193,45 @@ namespace MOC
 				// raster timing measured enqueue only. Flush waits for pipeline-empty
 				// with the workers awake, then the park + publish are both safe.
 				g_pool->Flush();
+				g_lastRasterMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - rasterT0).count();
+				// MAIN raster complete: release the waiting main-view tests BEFORE
+				// the sun pass runs (publishing after it made every main test wait
+				// for both rasters -- measured -10pts).
+				g_rasterFrame.store(g_kickFrame.load(std::memory_order_acquire), std::memory_order_release);
+
+				// SUN PASS: re-rasterize the same occluder set from the sun's
+				// shadow-gather view (workers still awake). ADAPTIVE: at high light
+				// angles almost nothing is light-occluded (measured 2% at the
+				// village night moon), so when the rolling yield is poor the pass
+				// self-disables and re-probes periodically.
+				if (CullSunShadows && g_sunMoc && g_sunGatherCam.load(std::memory_order_relaxed)) {
+					static std::uint64_t s_lastTested = 0, s_lastCulled = 0;
+					static std::uint32_t s_cooldown = 0, s_window = 0;
+					bool                 runSun = true;
+					if (s_cooldown > 0) {
+						--s_cooldown;
+						runSun = (s_cooldown == 0);  // re-probe on expiry
+					} else if (++s_window >= 300) {
+						const std::uint64_t t = g_sunTested.load(std::memory_order_relaxed);
+						const std::uint64_t c = g_sunCulled.load(std::memory_order_relaxed);
+						const std::uint64_t dT = t - s_lastTested, dC = c - s_lastCulled;
+						s_lastTested = t;
+						s_lastCulled = c;
+						s_window = 0;
+						if (dT > 1000 && dC * 20 < dT)  // yield < 5% -> pause 300 kicks
+							s_cooldown = 300;
+					}
+					if (runSun) {
+						g_pool->SetBuffer(g_sunMoc);
+						g_pool->ClearBuffer();
+						SubmitOccluderPass(g_sunViewProj, g_sunPosAdjust);
+						g_pool->Flush();
+						g_pool->SetBuffer(g_moc);
+						g_sunRasterFrame.store(g_kickFrame.load(std::memory_order_acquire), std::memory_order_release);
+					}
+				}
 				if (!g_hotWorkers)
 					g_pool->SuspendThreads();
-				g_lastRasterMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - rasterT0).count();
-				// Raster complete for this kick's frame: release the waiting tests.
-				g_rasterFrame.store(g_kickFrame.load(std::memory_order_acquire), std::memory_order_release);
 
 				// Publish a debug-view snapshot of the now-complete buffer (menu open).
 				if (g_debugViewFrames.load(std::memory_order_relaxed) > 0) {
@@ -1189,7 +1295,7 @@ namespace MOC
 			}
 		}
 
-		std::uint32_t RasterizeOccluder(RE::BSGeometry* a_geom)
+		std::uint32_t RasterizeOccluder(RE::BSGeometry* a_geom, const XMMATRIX& a_viewProj, const RE::NiPoint3& a_posAdjust)
 		{
 			IndexPair indices;
 			float*    verts = nullptr;
@@ -1199,8 +1305,8 @@ namespace MOC
 			auto*      sp = a_geom->lightingShaderProp_cast();
 			const bool twoSided = sp && sp->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kTwoSided);
 
-			const XMMATRIX worldRel = GetXMFromNiPosAdjust(a_geom->world, g_posAdjust);
-			const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, g_viewProj);
+			const XMMATRIX worldRel = GetXMFromNiPosAdjust(a_geom->world, a_posAdjust);
+			const XMMATRIX worldViewProj = XMMatrixMultiply(worldRel, a_viewProj);
 
 			// Per-mesh submission, transform on the WORKERS (SetMatrix copies into
 			// per-job state; cached verts/indices are persistent = keep-alive safe).
@@ -1276,6 +1382,11 @@ namespace MOC
 		}
 		g_moc->SetResolution(MOC_WIDTH, MOC_HEIGHT);
 		g_moc->ClearBuffer();
+		g_sunMoc = MaskedOcclusionCulling::Create(simd);
+		if (g_sunMoc) {
+			g_sunMoc->SetResolution(MOC_WIDTH, MOC_HEIGHT);
+			g_sunMoc->ClearBuffer();
+		}
 
 		// Intel's CullingThreadpool: occluder rasterization is queued by the (single)
 		// build thread and executed by worker threads binning the screen. Bins must be
@@ -1542,6 +1653,10 @@ namespace MOC
 		delete g_pool;
 		g_pool = nullptr;
 
+		if (g_sunMoc) {
+			MaskedOcclusionCulling::Destroy(g_sunMoc);
+			g_sunMoc = nullptr;
+		}
 		if (g_moc) {
 			MaskedOcclusionCulling::Destroy(g_moc);
 			g_moc = nullptr;
@@ -1676,6 +1791,23 @@ namespace MOC
 		// all our tests feed camera-relative centers (posAdjust already subtracted).
 		g_frustum.CreateFromViewProjMatrix(g_viewProj);
 
+		// Sun shadow-gather camera (dirLight = ShadowSceneNode+0x210, gather cam
+		// +0x578; IDA 2026-07-11). Read per frame; matrices for the builder's
+		// sun pass and the sun-view caster tests.
+		if (CullSunShadows) {
+			static REL::Relocation<std::uint8_t**> ssnGlobal{ REL::ID(513211) };
+			const RE::NiCamera*                    sunCam = nullptr;
+			if (auto* ssn = *ssnGlobal) {
+				if (auto* dirLight = *reinterpret_cast<std::uint8_t**>(ssn + 0x210))
+					sunCam = *reinterpret_cast<const RE::NiCamera**>(dirLight + 0x578);
+			}
+			if (sunCam)
+				BuildSunMatrices(sunCam);
+			g_sunGatherCam.store(sunCam, std::memory_order_release);
+		} else {
+			g_sunGatherCam.store(nullptr, std::memory_order_release);
+		}
+
 		const float          fov = atanf(1.0f / g_proj.r[0].m128_f32[0]) * 2.0f * (180.0f / 3.14159265359f);
 		const float          aspect = g_proj.r[1].m128_f32[1] / g_proj.r[0].m128_f32[0];
 		const float          mynear = g_proj.r[2].m128_f32[3] / (g_proj.r[2].m128_f32[2] - 1.0f);
@@ -1710,6 +1842,8 @@ namespace MOC
 				g_culledAABB.load(), g_testedAABB.load(), g_culledSphere.load(), g_testedSphere.load(),
 				g_treeCulled.load(), g_treeTested.load(),
 				g_waitNs.exchange(0, std::memory_order_relaxed) / 1e6, g_waitCount.exchange(0, std::memory_order_relaxed));
+			logger::info("[MOC][sun] tested={} culled={}",
+				g_sunTested.load(std::memory_order_relaxed), g_sunCulled.load(std::memory_order_relaxed));
 
 		}
 		g_buildDone.store(frame, std::memory_order_release);
@@ -1950,6 +2084,73 @@ namespace MOC
 	bool IsSceneListCamera(const RE::NiCamera* a_camera)
 	{
 		return a_camera && a_camera == GetMainCamera();
+	}
+
+	bool IsSunGatherCamera(const RE::NiCamera* a_camera)
+	{
+		return a_camera && a_camera == g_sunGatherCam.load(std::memory_order_acquire);
+	}
+
+	bool TestObjectSunView(RE::NiAVObject* a_object)
+	{
+		if (!g_init || !g_sunMoc || !a_object)
+			return true;
+		// Sun buffer must be complete for this frame (built right after the main
+		// raster; the caster gather runs later in the frame, so this is normally
+		// already true -- if not, keep the caster: conservative).
+		{
+			auto* gfx = RE::BSGraphics::State::GetSingleton();
+			if (!gfx || g_sunRasterFrame.load(std::memory_order_acquire) != gfx->frameCount)
+				return true;
+		}
+		const auto& b = a_object->worldBound;
+		if (b.radius <= 0.0f)
+			return true;
+		// Conservative world-space cube around the bound sphere, projected with
+		// the sun pseudo-perspective; any near-plane straddle keeps the caster.
+		const __m128 vCenter = _mm_sub_ps(_mm_setr_ps(b.center.x, b.center.y, b.center.z, 0.0f), g_sunPosAdjustV);
+		const __m128 vHalf = _mm_set1_ps(b.radius);
+		const __m128 vMin = _mm_sub_ps(vCenter, vHalf);
+		const __m128 vMax = _mm_add_ps(vCenter, vHalf);
+
+		__m128 xRow[2], yRow[2], zRow[2];
+		xRow[0] = _mm_mul_ps(_mm_shuffle_ps(vMin, vMin, 0x00), g_sunViewProj.r[0]);
+		xRow[1] = _mm_mul_ps(_mm_shuffle_ps(vMax, vMax, 0x00), g_sunViewProj.r[0]);
+		yRow[0] = _mm_mul_ps(_mm_shuffle_ps(vMin, vMin, 0x55), g_sunViewProj.r[1]);
+		yRow[1] = _mm_mul_ps(_mm_shuffle_ps(vMax, vMax, 0x55), g_sunViewProj.r[1]);
+		zRow[0] = _mm_mul_ps(_mm_shuffle_ps(vMin, vMin, 0xaa), g_sunViewProj.r[2]);
+		zRow[1] = _mm_mul_ps(_mm_shuffle_ps(vMax, vMax, 0xaa), g_sunViewProj.r[2]);
+
+		const __m128 minVert = _mm_add_ps(g_sunViewProj.r[3],
+			_mm_add_ps(_mm_add_ps(_mm_min_ps(xRow[0], xRow[1]), _mm_min_ps(yRow[0], yRow[1])), _mm_min_ps(zRow[0], zRow[1])));
+		const float minW = minVert.m128_f32[3];
+		if (minW < 0.00000001f)
+			return true;
+
+		static const std::uint32_t sBBxInd[8] = { 1, 0, 0, 1, 1, 1, 0, 0 };
+		static const std::uint32_t sBByInd[8] = { 1, 1, 1, 1, 0, 0, 0, 0 };
+		static const std::uint32_t sBBzInd[8] = { 1, 1, 0, 0, 0, 1, 1, 0 };
+
+		__m128       screenMin = _mm_set1_ps(FLT_MAX);
+		__m128       screenMax = _mm_set1_ps(-FLT_MAX);
+		const __m128 baseVert = g_sunViewProj.r[3];
+		for (std::uint32_t i = 0; i < 8; i++) {
+			__m128 vert = baseVert;
+			vert = _mm_add_ps(vert, xRow[sBBxInd[i]]);
+			vert = _mm_add_ps(vert, yRow[sBByInd[i]]);
+			vert = _mm_add_ps(vert, zRow[sBBzInd[i]]);
+			const __m128 vertW = _mm_shuffle_ps(vert, vert, 0xff);
+			const __m128 xformedPos = _mm_div_ps(vert, vertW);
+			screenMin = _mm_min_ps(screenMin, xformedPos);
+			screenMax = _mm_max_ps(screenMax, xformedPos);
+		}
+
+		const bool visible = g_sunMoc->TestRect(screenMin.m128_f32[0], screenMin.m128_f32[1],
+								 screenMax.m128_f32[0], screenMax.m128_f32[1], minW) == MaskedOcclusionCulling::VISIBLE;
+		g_sunTested.fetch_add(1, std::memory_order_relaxed);
+		if (!visible)
+			g_sunCulled.fetch_add(1, std::memory_order_relaxed);
+		return visible;
 	}
 
 	bool TestInstanceGroup(RE::BSMultiBoundAABB* a_aabb)

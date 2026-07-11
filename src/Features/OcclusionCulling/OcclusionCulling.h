@@ -45,6 +45,7 @@ struct OcclusionCulling : public Feature
 		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
 		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
 		bool AlphaTestedOccluders = false;
+		bool CullSunShadows = false;  // venue/time-conditional: high sun angles occlude ~2% of casters; experimental
 		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
 		float OccluderMinLeafSize = 100.0f;
 	};
