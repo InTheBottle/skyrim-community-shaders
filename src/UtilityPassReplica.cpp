@@ -44,6 +44,10 @@ namespace
 	// report a CS return address that must NOT be dropped.
 	bool g_filterCs = false;
 
+	// Unsupported-reason tally (diagnostic): which CanReplicate gate sends a pass to the
+	// engine fallback. [0]=no-geom [1]=skinned [2]=custom [3]=non-trishape [4]=no-rd [5]=stencil.
+	std::atomic<std::uint64_t> g_unsupReason[6]{};
+
 	inline bool EngineCaller(const void* a_ret)
 	{
 		const auto a = reinterpret_cast<std::uintptr_t>(a_ret);
@@ -630,22 +634,34 @@ bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 	// Stage A coverage: unskinned, non-custom-render, plain TRISHAPE geometry. Anything
 	// else takes the engine path whole-pass (never mid-pass) and is tallied for coverage.
 	auto* geom = a_pass->geometry;
-	if (!geom)
+	if (!geom) {
+		g_unsupReason[0].fetch_add(1, std::memory_order_relaxed);
 		return false;
+	}
 	const auto* geomBytes = reinterpret_cast<const std::uint8_t*>(geom);
-	if (*reinterpret_cast<void* const*>(geomBytes + 0x130))  // skin instance
+	if (*reinterpret_cast<void* const*>(geomBytes + 0x130)) {  // skin instance
+		g_unsupReason[1].fetch_add(1, std::memory_order_relaxed);
 		return false;
-	if (geomBytes[0x109] & 8)  // needs-custom-render
+	}
+	if (geomBytes[0x109] & 8) {  // needs-custom-render
+		g_unsupReason[2].fetch_add(1, std::memory_order_relaxed);
 		return false;
-	if (geomBytes[0x150] != 3)  // GeometryType TRISHAPE
+	}
+	if (geomBytes[0x150] != 3) {  // GeometryType TRISHAPE
+		g_unsupReason[3].fetch_add(1, std::memory_order_relaxed);
 		return false;
-	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138))  // rendererData
+	}
+	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138)) {  // rendererData
+		g_unsupReason[4].fetch_add(1, std::memory_order_relaxed);
 		return false;
+	}
 	// STENCIL_ABOVE_WATER releases the bound PS on first use -- running it twice in
 	// compare mode would double-Release. Excluded until the replica owns that path.
 	const std::uint32_t f = a_pass->passEnum - 0x2B;
-	if ((f & 0x1200) == 0x1200)
+	if ((f & 0x1200) == 0x1200) {
+		g_unsupReason[5].fetch_add(1, std::memory_order_relaxed);
 		return false;
+	}
 	return true;
 }
 
@@ -746,8 +762,11 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 	++passesCompared;
 	// Coverage/di­vergence heartbeat so long runs report progress without a debugger.
 	if ((passesCompared & 0x3FFF) == 0)
-		logger::info("[UtilityPassReplica] compared={} diverged={} unsupported={}",
-			passesCompared, passesDiverged, passesUnsupported);
+		logger::info("[UtilityPassReplica] compared={} diverged={} unsupported={} (noGeom={} skin={} custom={} nonTri={} noRD={} stencil={})",
+			passesCompared, passesDiverged, passesUnsupported,
+			g_unsupReason[0].load(std::memory_order_relaxed), g_unsupReason[1].load(std::memory_order_relaxed),
+			g_unsupReason[2].load(std::memory_order_relaxed), g_unsupReason[3].load(std::memory_order_relaxed),
+			g_unsupReason[4].load(std::memory_order_relaxed), g_unsupReason[5].load(std::memory_order_relaxed));
 	const bool sameSize = engineWindow.size() == replicaWindow.size();
 	bool identical = sameSize;
 	std::size_t firstDiff = 0;
