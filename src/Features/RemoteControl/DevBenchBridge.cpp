@@ -655,7 +655,43 @@ namespace
 				return json{ { "error", "hooks not installed -- launch with CS_UTIL_RE_MODE set" } };
 			return json{ { "action", "set" }, { "mode", m } };
 		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
+		// Rerunnable vanilla-parity validation gate: `reset` zeroes the compare counters so
+		// a fresh run starts clean; `stats` reads back the structural-divergence report with
+		// the first-diverging-pass pinpoint (class + technique + call index + field). A gate
+		// script (tools/shadow-parity.ps1) does: set mode 1 -> reset -> run N frames in
+		// motion -> stats -> assert diverged==0, and on failure the pinpoint names the pass.
+		if (action == "reset") {
+			replica->ResetValidation();
+			return json{ { "action", "reset" }, { "mode", static_cast<std::uint32_t>(replica->GetMode()) } };
+		}
+		if (action == "stats") {
+			const auto r = replica->GetValidationReport();
+			static constexpr const char* kClassNames[3] = { "trishape", "subindex", "skinned" };
+			static constexpr const char* kFieldNames[5] = { "kind", "slot", "a", "b", "c" };
+			json out{
+				{ "mode", static_cast<std::uint32_t>(replica->GetMode()) },
+				{ "compared", r.compared },
+				{ "diverged", r.diverged },
+				{ "divergedTrishape", r.divergedTrishape },
+				{ "divergedSubIndex", r.divergedSubIndex },
+				{ "divergedSkinned", r.divergedSkinned },
+				{ "unsupported", r.unsupported },
+				{ "parity", r.diverged == 0 },
+			};
+			if (r.haveFirstDiverge) {
+				out["firstDivergingPass"] = json{
+					{ "class", r.firstClass < 3 ? kClassNames[r.firstClass] : "?" },
+					{ "technique", fmt::format("0x{:X}", r.firstTechnique) },
+					{ "engineCalls", r.firstEngineCalls },
+					{ "replicaCalls", r.firstReplicaCalls },
+					{ "sizeMismatch", r.firstSizeMismatch },
+					{ "diffIndex", r.firstDiffIndex },
+					{ "diffField", r.firstDiffField < 5 ? kFieldNames[r.firstDiffField] : "?" },
+				};
+			}
+			return out;
+		}
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "reset", "stats" }) } };
 	}
 
 	void UtilReToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -740,7 +776,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("communityshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
 
 		static constexpr const char* utilreDesc =
-			R"({"description":"Runtime mode switch for the UtilityPassReplica RE baseline (utility-pass replica). Requires launching the game with CS_UTIL_RE_MODE set (hooks install at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1|2 (0=off/engine, 1=compare/double-render, 2=replace/replica) -- takes effect on the next pass, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
+			R"({"description":"Runtime control + rerunnable vanilla-parity validation for the UtilityPassReplica (the utility passes ARE the shadow passes). Requires CS_UTIL_RE_MODE set at boot. get: { mode, hooksInstalled }. set: params mode 0|1|2 (0=off/engine, 1=compare/double-render+diff, 2=replace/replica) -- next-pass, safe mid-session. reset: zero the compare counters for a fresh run. stats: structural-divergence report { compared, diverged, divergedTrishape/SubIndex/Skinned, unsupported, parity, firstDivergingPass{class,technique,diffIndex,diffField,...} } -- the gate reads parity==true. Validation flow: set mode 1 -> reset -> advance N frames in motion -> stats.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set","reset","stats"]},"mode":{"type":"integer"}}}})";
 		dvb->RegisterTool("communityshaders.utilre", utilreDesc, &UtilReToolHandler, nullptr);
 
 		static constexpr const char* shadowDeferredDesc =

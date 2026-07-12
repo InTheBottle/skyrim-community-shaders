@@ -145,7 +145,7 @@ namespace
 
 	// ---------------------------------------------------------------------------
 	// Immediate-context vtable detours. Indices are the standard ID3D11DeviceContext
-	// layout (Map=14/Unmap=15 already proven safe by ParallelShaderSetup's hooks).
+	// layout (Map=14/Unmap=15).
 	// Every thunk records iff a window is armed, then forwards.
 	// ---------------------------------------------------------------------------
 
@@ -1027,6 +1027,7 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 	const bool sameSize = engineWindow.size() == replicaWindow.size();
 	bool identical = sameSize;
 	std::size_t firstDiff = 0;
+	std::uint32_t firstField = 0;  // 0=kind 1=slot 2=a 3=b 4=c
 	if (sameSize) {
 		for (std::size_t i = 0; i < engineWindow.size(); ++i) {
 			const auto& e = engineWindow[i];
@@ -1034,6 +1035,10 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 			if (e.kind != r.kind || e.slot != r.slot || e.a != r.a || e.b != r.b || e.c != r.c) {
 				identical = false;
 				firstDiff = i;
+				firstField = e.kind != r.kind ? 0 : e.slot != r.slot ? 1 :
+				             e.a != r.a          ? 2 :
+				             e.b != r.b          ? 3 :
+				                                   4;
 				break;
 			}
 		}
@@ -1047,6 +1052,19 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 	const auto* gb = reinterpret_cast<const std::uint8_t*>(a_pass->geometry);
 	const int   cls = *reinterpret_cast<void* const*>(gb + 0x130) ? 2 : (gb[0x150] == 8 ? 1 : 0);
 	++divergedByClass[cls];
+
+	// Pinpoint the FIRST divergence since the last reset for the rerunnable parity gate
+	// (the log dump budget can run out; this single record always survives to be queried).
+	if (!firstDivergeCaptured) {
+		firstDivergeCaptured = true;
+		firstDivergeClass = static_cast<std::uint32_t>(cls);
+		firstDivergeTechnique = a_technique;
+		firstDivergeEngineCalls = engineWindow.size();
+		firstDivergeReplicaCalls = replicaWindow.size();
+		firstDivergeSizeMismatch = !sameSize;
+		firstDivergeIndex = firstDiff;
+		firstDivergeField = firstField;
+	}
 	if (dumpBudgetByClass[cls] == 0)
 		return;
 	--dumpBudgetByClass[cls];
@@ -1065,4 +1083,43 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 			e ? KindName(e->kind) : "-", e ? e->slot : 0, e ? e->a : 0, e ? e->b : 0, e ? e->c : 0,
 			r ? KindName(r->kind) : "-", r ? r->slot : 0, r ? r->a : 0, r ? r->b : 0, r ? r->c : 0);
 	}
+}
+
+UtilityPassReplica::ValidationReport UtilityPassReplica::GetValidationReport() const
+{
+	ValidationReport rep;
+	rep.compared = passesCompared;
+	rep.diverged = passesDiverged;
+	rep.divergedTrishape = divergedByClass[0];
+	rep.divergedSubIndex = divergedByClass[1];
+	rep.divergedSkinned = divergedByClass[2];
+	rep.unsupported = passesUnsupported;
+	rep.haveFirstDiverge = firstDivergeCaptured;
+	rep.firstClass = firstDivergeClass;
+	rep.firstTechnique = firstDivergeTechnique;
+	rep.firstEngineCalls = firstDivergeEngineCalls;
+	rep.firstReplicaCalls = firstDivergeReplicaCalls;
+	rep.firstSizeMismatch = firstDivergeSizeMismatch;
+	rep.firstDiffIndex = firstDivergeIndex;
+	rep.firstDiffField = firstDivergeField;
+	return rep;
+}
+
+void UtilityPassReplica::ResetValidation()
+{
+	passesCompared = 0;
+	passesDiverged = 0;
+	divergedByClass[0] = divergedByClass[1] = divergedByClass[2] = 0;
+	dumpBudgetByClass[0] = 8;
+	dumpBudgetByClass[1] = 24;
+	dumpBudgetByClass[2] = 24;
+	passesUnsupported = 0;
+	firstDivergeCaptured = false;
+	firstDivergeClass = 0;
+	firstDivergeTechnique = 0;
+	firstDivergeEngineCalls = 0;
+	firstDivergeReplicaCalls = 0;
+	firstDivergeSizeMismatch = false;
+	firstDivergeIndex = 0;
+	firstDivergeField = 0;
 }

@@ -117,6 +117,37 @@ public:
 	 *         State::Setup (device ready). Inert at mode 0. */
 	void Setup();
 
+	/** @brief A queryable snapshot of the structural-compare validation state. This is the
+	 *  rerunnable vanilla-parity gate: reset the counters, run N frames in compare mode,
+	 *  then read this back and assert diverged==0. `firstDivergingPass` pinpoints the
+	 *  deviation (class + technique + the exact call index/field that first differed). */
+	struct ValidationReport
+	{
+		std::uint64_t compared = 0;
+		std::uint64_t diverged = 0;
+		std::uint64_t divergedTrishape = 0;
+		std::uint64_t divergedSubIndex = 0;
+		std::uint64_t divergedSkinned = 0;
+		std::uint64_t unsupported = 0;
+		bool          haveFirstDiverge = false;
+		// Populated on the first divergence since the last reset.
+		std::uint32_t firstClass = 0;       ///< 0=trishape 1=subindex 2=skinned
+		std::uint32_t firstTechnique = 0;
+		std::uint64_t firstEngineCalls = 0;
+		std::uint64_t firstReplicaCalls = 0;
+		bool          firstSizeMismatch = false;
+		std::uint64_t firstDiffIndex = 0;   ///< meaningful when !firstSizeMismatch
+		std::uint32_t firstDiffField = 0;   ///< 0=kind 1=slot 2=a 3=b 4=c (the field that differed)
+	};
+
+	/** @brief Read the current validation counters (render-thread writes are plain; a torn
+	 *  read is harmless for a monitoring snapshot). */
+	[[nodiscard]] ValidationReport GetValidationReport() const;
+
+	/** @brief Zero the compare counters + firstDivergingPass + refill the dump budgets, so
+	 *  a fresh parity run starts clean. Safe to call from the tool thread. */
+	void ResetValidation();
+
 	/** @brief RenderPassImmediately detour body. Routes utility passes per mode;
 	 *         forwards everything else to the engine untouched. */
 	void OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
@@ -166,4 +197,15 @@ private:
 	std::uint64_t divergedByClass[3] = {};   ///< [0]=trishape [1]=subindex [2]=skinned
 	std::uint32_t dumpBudgetByClass[3] = { 8, 24, 24 };  ///< per-class full-dump budgets
 	std::uint64_t passesUnsupported = 0;     ///< outside replica coverage -> engine fallback
+
+	// First divergence since the last ResetValidation() -- the pinpoint the parity gate
+	// reports. Written once (guarded by firstDivergeCaptured) on the render thread.
+	bool          firstDivergeCaptured = false;
+	std::uint32_t firstDivergeClass = 0;
+	std::uint32_t firstDivergeTechnique = 0;
+	std::uint64_t firstDivergeEngineCalls = 0;
+	std::uint64_t firstDivergeReplicaCalls = 0;
+	bool          firstDivergeSizeMismatch = false;
+	std::uint64_t firstDivergeIndex = 0;
+	std::uint32_t firstDivergeField = 0;
 };
