@@ -595,6 +595,35 @@ namespace engine
 	};
 }
 
+namespace
+{
+	// Per-worker private render state for the multithreaded shadow recorder. A worker
+	// thread records one shadow map from ITS OWN state; each field points at a private
+	// buffer/cache/context. At N=1 (single-threaded validation) t_worker is null and the
+	// accessors below fall through to the engine globals, so the parity gate stays green
+	// while the plumbing is proven. Set t_worker for the duration of a worker's map record.
+	struct ShadowWorkerState
+	{
+		std::uint8_t*        block = nullptr;      // 0x5D8 render-state block (FlushDirtyStates)
+		ID3D11DeviceContext* ctx = nullptr;        // deferred context to record into
+		std::uint32_t*       technique = nullptr;  // g_currentTechnique cache
+		RE::BSShader**       shader = nullptr;     // g_currentShader cache
+		void**               material = nullptr;   // g_currentMaterial cache
+	};
+	thread_local ShadowWorkerState* t_worker = nullptr;
+
+	// Accessors: return the worker's private state when a worker is active, else the engine
+	// global (identical object at N=1). The replica render path reads/writes through these
+	// so the exact same code drives the render-thread compare and a worker's private record.
+	// (Skinned passes' bone-CB / dyn-VB rings are NOT yet worker-private -- static-TRISHAPE
+	// maps thread first; skinned stays on the serial remainder until those rings are split.)
+	inline std::uint8_t*        WsBlock() { return t_worker ? t_worker->block : reinterpret_cast<std::uint8_t*>(engine::S_base.address()); }
+	inline ID3D11DeviceContext* WsCtx() { return t_worker ? t_worker->ctx : globals::d3d::context; }
+	inline std::uint32_t&       WsTechnique() { return t_worker ? *t_worker->technique : *engine::g_currentTechnique; }
+	inline RE::BSShader*&       WsShader() { return t_worker ? *t_worker->shader : *engine::g_currentShader; }
+	inline void*&               WsMaterial() { return t_worker ? *t_worker->material : *reinterpret_cast<void**>(engine::g_currentMaterial.address()); }
+}
+
 void UtilityPassReplica::Setup()
 {
 	char buf[8] = {};
@@ -843,33 +872,35 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 	auto* geom = a_pass->geometry;
 
 	// Technique cache: BeginPass only when the technique or shader changed. 0x5C006076
-	// never caches (the engine forces re-setup for that sentinel technique).
-	const bool cached = *engine::g_currentTechnique == a_technique &&
+	// never caches (the engine forces re-setup for that sentinel technique). The caches
+	// are per-worker (BeginPass zeroes them) -- read/write through the worker accessors so
+	// a worker uses its OWN caches; at N=1 these alias the engine globals.
+	const bool cached = WsTechnique() == a_technique &&
 	                    a_technique != 0x5C006076 &&
-	                    shader == *engine::g_currentShader;
+	                    shader == WsShader();
 	if (!cached) {
 		*engine::g_debugTechnique = a_technique;
 		// BeginPass (0x1413086C0): RestoreTechnique on the outgoing shader, clear the
 		// caches, SetupTechnique on the incoming one, then re-stamp the caches.
-		if (auto* prev = *engine::g_currentShader)
-			EngineCallV<3, void>(prev, *engine::g_currentTechnique);  // RestoreTechnique
-		*engine::g_currentShader = nullptr;
-		*engine::g_currentTechnique = 0;
-		*engine::g_currentMaterial = nullptr;
+		if (auto* prev = WsShader())
+			EngineCallV<3, void>(prev, WsTechnique());  // RestoreTechnique
+		WsShader() = nullptr;
+		WsTechnique() = 0;
+		WsMaterial() = nullptr;
 		if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
 			return;  // engine bails the whole pass on setup failure
-		*engine::g_currentShader = shader;
-		*engine::g_currentTechnique = a_technique;
+		WsShader() = shader;
+		WsTechnique() = a_technique;
 	}
 
 	// Material change detection (cache at 0x143490BB0).
 	void* material = a_pass->shaderProperty ? *reinterpret_cast<void* const*>(
 												  reinterpret_cast<const std::uint8_t*>(a_pass->shaderProperty) + 0x78) :
 	                                          nullptr;
-	if (material != *engine::g_currentMaterial) {
+	if (material != WsMaterial()) {
 		if (material)
 			EngineCallV<4, void>(shader, material);  // SetupMaterial
-		*engine::g_currentMaterial = material;
+		WsMaterial() = material;
 	}
 
 
@@ -1184,17 +1215,23 @@ void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t
 	// and topology change detection into the dirty word, state flush, then unconditional
 	// IB/VB binds and the indexed draw (the engine does NOT cache the IB/VB binds here).
 	auto* rd = static_cast<engine::TriShapeData*>(a_rendererData);
-	if (*engine::S_vertexDesc != rd->vertexDesc) {
-		*engine::S_vertexDesc = rd->vertexDesc;
-		*engine::S_stateUpdateFlags |= 0x400;  // DIRTY_VERTEX_DESC
+	// vertexDesc (S+0x340), state flags (S+0), topology (S+0x358) live in the worker's
+	// render-state block; at N=1 WsBlock() is the engine global block.
+	auto* const   S = WsBlock();
+	auto&         vertexDesc = *reinterpret_cast<std::uint64_t*>(S + 0x340);
+	auto&         stateFlags = *reinterpret_cast<std::uint32_t*>(S + 0);
+	auto&         topology = *reinterpret_cast<std::uint32_t*>(S + 0x358);
+	if (vertexDesc != rd->vertexDesc) {
+		vertexDesc = rd->vertexDesc;
+		stateFlags |= 0x400;  // DIRTY_VERTEX_DESC
 	}
-	if (*engine::S_topology != 4 /*D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST*/) {
-		*engine::S_topology = 4;
-		*engine::S_stateUpdateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
+	if (topology != 4 /*D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST*/) {
+		topology = 4;
+		stateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
 	}
-	auto* ctx = globals::d3d::context;
+	auto* ctx = WsCtx();
 	if (CsFlushRequested())
-		FlushDirtyStatesReplica(reinterpret_cast<std::uint8_t*>(engine::S_base.address()), ctx, false);
+		FlushDirtyStatesReplica(S, ctx, false);
 	else
 		EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
 
