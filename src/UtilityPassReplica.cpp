@@ -168,7 +168,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kVSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
 			func(ctx, slot, n, bufs);
 		}
@@ -179,7 +179,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kPSSetShaderResources, static_cast<std::uint16_t>(slot), n,
 					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, views);
@@ -191,7 +191,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11PixelShader* ps, ID3D11ClassInstance* const* inst, UINT n)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kPSSetShader, 0, reinterpret_cast<std::uint64_t>(ps));
 			func(ctx, ps, inst, n);
 		}
@@ -202,7 +202,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kPSSetSamplers, static_cast<std::uint16_t>(slot), n,
 					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, samplers);
@@ -214,7 +214,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11VertexShader* vs, ID3D11ClassInstance* const* inst, UINT n)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kVSSetShader, 0, reinterpret_cast<std::uint64_t>(vs));
 			func(ctx, vs, inst, n);
 		}
@@ -225,7 +225,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT indexCount, UINT startIndex, INT baseVertex)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kDrawIndexed, 0, indexCount, startIndex, static_cast<std::uint64_t>(static_cast<std::int64_t>(baseVertex)));
 			func(ctx, indexCount, startIndex, baseVertex);
 		}
@@ -247,7 +247,7 @@ namespace
 				// garbage anyway (the shader permutation doesn't read them).
 				if (mapType == D3D11_MAP_WRITE_DISCARD && mapped->RowPitch && mapped->RowPitch <= 4096)
 					std::memset(mapped->pData, 0, mapped->RowPitch);
-				if (!g_filterCs || EngineCaller(_ReturnAddress())) {
+				if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress()))) {
 					for (auto& slotEntry : g_openMaps) {
 						if (!slotEntry.resource) {
 							slotEntry = OpenMap{ res, mapped->pData, mapped->RowPitch };
@@ -274,7 +274,7 @@ namespace
 						// cheap; CBs are <= 4 KB, dynamic VB chunks can be larger but
 						// their leading bytes diverge immediately when wrong.
 						const std::uint32_t n = std::min<std::uint32_t>(slotEntry.size ? slotEntry.size : 256u, 4096u);
-						if (!g_filterCs || EngineCaller(_ReturnAddress())) {
+						if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress()))) {
 							Record(Kind::kMapDiscardData, 0, reinterpret_cast<std::uint64_t>(res), n, HashBytes(slotEntry.data, n));
 							// When dumping is enabled, snapshot the written dwords onto the record so
 							// DiffWindows can pinpoint the exact diverging dword for any diverging Map.
@@ -297,7 +297,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kPSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
 			func(ctx, slot, n, bufs);
 		}
@@ -308,7 +308,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11InputLayout* layout)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kIASetInputLayout, 0, reinterpret_cast<std::uint64_t>(layout));
 			func(ctx, layout);
 		}
@@ -319,7 +319,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs, const UINT* strides, const UINT* offsets)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kIASetVertexBuffers, static_cast<std::uint16_t>(slot), HashPointers(bufs, n),
 					HashBytes(strides, n * 4u), HashBytes(offsets, n * 4u));
 			func(ctx, slot, n, bufs, strides, offsets);
@@ -331,7 +331,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, DXGI_FORMAT fmt, UINT offset)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kIASetIndexBuffer, 0, reinterpret_cast<std::uint64_t>(buf), fmt, offset);
 			func(ctx, buf, fmt, offset);
 		}
@@ -342,7 +342,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, D3D11_PRIMITIVE_TOPOLOGY topo)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kIASetPrimitiveTopology, 0, topo);
 			func(ctx, topo);
 		}
@@ -353,7 +353,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kVSSetShaderResources, static_cast<std::uint16_t>(slot), n,
 					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, views);
@@ -365,7 +365,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kVSSetSamplers, static_cast<std::uint16_t>(slot), n,
 					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
 			func(ctx, slot, n, samplers);
@@ -377,7 +377,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kOMSetRenderTargets, 0, n,
 					HashBytes(rtvs, static_cast<std::uint32_t>(n * sizeof(void*))), reinterpret_cast<std::uint64_t>(dsv));
 			func(ctx, n, rtvs, dsv);
@@ -389,7 +389,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11BlendState* state, const FLOAT blendFactor[4], UINT sampleMask)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kOMSetBlendState, 0, reinterpret_cast<std::uint64_t>(state),
 					blendFactor ? HashBytes(blendFactor, 16) : 0, sampleMask);
 			func(ctx, state, blendFactor, sampleMask);
@@ -401,7 +401,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, UINT stencilRef)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kOMSetDepthStencilState, 0, reinterpret_cast<std::uint64_t>(state), stencilRef);
 			func(ctx, state, stencilRef);
 		}
@@ -412,7 +412,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11RasterizerState* state)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kRSSetState, 0, reinterpret_cast<std::uint64_t>(state));
 			func(ctx, state);
 		}
@@ -423,7 +423,7 @@ namespace
 	{
 		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, const D3D11_VIEWPORT* viewports)
 		{
-			if (!g_filterCs || EngineCaller(_ReturnAddress()))
+			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kRSSetViewports, 0, n, viewports ? HashBytes(viewports, n * sizeof(D3D11_VIEWPORT)) : 0);
 			func(ctx, n, viewports);
 		}
@@ -1005,6 +1005,11 @@ namespace
 	void FlushSetupMaterialReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, std::uint8_t*, std::uint8_t*);
 	bool FlushSetupTechniqueReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, std::int32_t);
 	void FlushSetupGeometryReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, RE::BSRenderPass*);
+	// Block-only helpers (no context/CB): reimplement the two engine alpha-state functions against
+	// a caller-supplied block S. They hardcode the global block (0x143027EB0), so a worker needs
+	// its OWN copy. Wired behind CsSetupMask bit 8; validated byte-exact via the parity gate at N=1.
+	void SetupGeomAlphaBlendReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3, bool a4);
+	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3);
 }
 
 void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
@@ -1084,15 +1089,26 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 
 	const bool alphaTest = a_alphaTest || *engine::g_useEarlyZ != 0;
 
-	// ShaderSetup (0x141309F80): alpha-blend + alpha-test-ref setup, then SetupGeometry.
+	// ShaderSetup (0x141309F80): alpha-blend + alpha-test-ref setup, then SetupGeometry. The two
+	// alpha helpers hardcode the global block; bit 8 routes them through the block-parameterized
+	// reimplementations (WsBlock) so a worker mutates its OWN block.
+	const bool alphaReimpl = (CsSetupMask() & 8) != 0;
 	if (shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
-		if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), a_pass->passEnum))
-			EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
-				EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass),
-				a_pass->shaderProperty, alphaTest);
+		if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), a_pass->passEnum)) {
+			auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass);
+			if (alphaReimpl)
+				SetupGeomAlphaBlendReplica(WsBlock(), alphaProp, a_pass->shaderProperty, alphaTest);
+			else
+				EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
+					alphaProp, a_pass->shaderProperty, alphaTest);
+		}
 		if (alphaTest) {
-			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass))
-				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
+			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass)) {
+				if (alphaReimpl)
+					SetAlphaTestRefReplica(WsBlock(), alphaProp, a_pass->shaderProperty);
+				else
+					EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
+			}
 		}
 	}
 	if (CsSetupMask() & 4) {
@@ -1388,6 +1404,138 @@ namespace
 			return GetEnvironmentVariableA("CS_UTIL_RE_CSSETUP", buf, sizeof(buf)) ? atoi(buf) : 0;
 		}();
 		return s_mask;
+	}
+
+	// BSEffectShader::SetupGeometryAlphaBlending (1.5.97 0x14131F440) reimplemented against a
+	// caller-supplied block S. Selects a blend-state index from the NiAlphaProperty flags and
+	// stamps the block's blend dirty bits + change-detection caches (S+0 main word, S+0xA8 mode
+	// cache, S+0xB4 flag cache). Byte-exact transcription; engine writes 0x143027EB0/F58/F64.
+	void SetupGeomAlphaBlendReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3, bool a4)
+	{
+		auto& main = *reinterpret_cast<std::uint32_t*>(S + 0x00);       // MEMORY[0x143027EB0]
+		auto& modeCache = *reinterpret_cast<std::uint32_t*>(S + 0xA8);  // unk_143027F58
+		auto& flagCache = *reinterpret_cast<std::uint32_t*>(S + 0xB4);  // unk_143027F64
+
+		bool v4 = false, v5 = false, v6 = false;
+		if (a2) {
+			if (a4)
+				v6 = (a2->alphaFlags & 0x200) != 0;
+			if (a2->alphaFlags & 1) {
+				v4 = true;
+				v5 = true;
+			}
+		}
+		if (a3 && a3->alpha >= 1.0f && !v4) {
+			if (v6) {
+				std::uint32_t v7 = main;
+				if (modeCache) {
+					v7 = main | 0x80;
+					modeCache = 0;
+					main |= 0x80;
+				}
+				if (flagCache != 1) {
+					flagCache = 1;
+					main = v7 | 0x100;
+				}
+			} else if (modeCache) {
+				modeCache = 0;
+				main |= 0x80;
+			}
+			return;
+		}
+
+		std::uint32_t v10 = 0;
+		const auto label37 = [&] {  // set mode dirty (|0x80), fall through to label39
+			v10 = main | 0x80;
+			main |= 0x80;
+		};
+		const auto label39 = [&] {
+			if (flagCache != static_cast<std::uint32_t>(v6)) {
+				flagCache = static_cast<std::uint32_t>(v6);
+				main = v10 | 0x100;
+			}
+		};
+		bool did37 = false;
+
+		if (!v5) {
+			if (modeCache != 1) {
+				modeCache = 1;
+				label37();
+				did37 = true;
+			}
+			// else: fall to label38 (v10 = main)
+		} else {
+			const std::uint16_t v8 = a2->alphaFlags;
+			const std::uint16_t v9 = (v8 >> 1) & 0xF;  // src blend factor
+			int target = -1;                           // which modeCache value / label to apply
+			bool toL31 = false, toL18 = false;
+			if (v9 == 6) {
+				if ((v8 & 0x1E0) == 0xE0)
+					toL18 = true;
+				else if ((v8 & 0x1E0) == 0)
+					toL31 = true;
+			}
+			if (!toL18 && !toL31) {
+				if (!v9 && (v8 & 0x1E0) == 0) {
+					toL31 = true;
+				} else if ((v9 != 1 || (v8 & 0x1E0) != 0x40) && (v9 != 4 || (v8 & 0x1E0) != 0x20)) {
+					if (v9 != 6 || (v8 & 0x1E0) != 0x120) {
+						if (v9 == 4 && (v8 & 0x1E0) == 0xE0)
+							target = 3;
+						// else label38
+					} else {
+						toL31 = true;
+					}
+				} else {
+					target = 4;
+				}
+			}
+			if (toL18) {
+				if (modeCache != 1) {
+					modeCache = 1;
+					label37();
+					did37 = true;
+				}
+			} else if (toL31) {
+				if (modeCache != 2) {
+					modeCache = 2;
+					label37();
+					did37 = true;
+				}
+			} else if (target == 3) {
+				if (modeCache != 3) {
+					modeCache = 3;
+					label37();
+					did37 = true;
+				}
+			} else if (target == 4) {
+				if (modeCache != 4) {
+					modeCache = 4;
+					label37();
+					did37 = true;
+				}
+			}
+		}
+		if (!did37)
+			v10 = main;  // label38
+		label39();
+	}
+
+	// BSEffectShader::SetAlphaTestRef (1.5.97 0x14131F2A0) reimplemented against a caller-supplied
+	// block S. Computes the alpha-test reference (threshold * material-alpha / 255) and, when it
+	// changed, raises the alpha-CB dirty bit (0x200) + updates the cache (S+0xB8). Byte-exact.
+	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3)
+	{
+		auto& main = *reinterpret_cast<std::uint32_t*>(S + 0x00);   // MEMORY[0x143027EB0]
+		auto& refCache = *reinterpret_cast<double*>(S + 0xB8);      // unk_143027F68 (8-byte double)
+		const int    v4 = static_cast<int>(static_cast<float>(a2->alphaThreshold) * (a3 ? a3->alpha : 1.0f));
+		// unk_143027F68 is a DOUBLE: the engine stores the exact product and compares double-to-double,
+		// so the alpha-CB dirty bit (0x200) is raised only when the reference actually changes.
+		const double prod = v4 * 0.0039215689;
+		if (refCache != prod) {
+			main |= 0x200;
+			refCache = prod;
+		}
 	}
 
 	// BSUtilityShader::SetupMaterial (vf4, 1.5.97 0x14130E890) reimplemented against a caller-
@@ -2352,6 +2500,13 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 	logger::warn("[UtilityPassReplica][DIFF] class={} pass={} technique=0x{:X} engineCalls={} replicaCalls={} firstDiff={}",
 		kClassNames[cls], static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
 		sameSize ? std::to_string(firstDiff) : "size-mismatch");
+	if (sameSize && firstDiff < engineWindow.size()) {
+		const auto& ec = engineWindow[firstDiff];
+		const auto& rc = replicaWindow[firstDiff];
+		logger::warn("[UtilityPassReplica][DIFF-CALL] field={} E(kind={} slot={} a={:X} b={:X} c={:X}) R(kind={} slot={} a={:X} b={:X} c={:X})",
+			firstField, static_cast<int>(ec.kind), ec.slot, ec.a, ec.b, ec.c,
+			static_cast<int>(rc.kind), rc.slot, rc.a, rc.b, rc.c);
+	}
 	// If the first diverging call is a Map with snapshotted dwords (dump enabled), report the
 	// exact diverging dword offsets and engine-vs-replica values -- the precise field to fix.
 	if (sameSize && firstDiff < engineWindow.size()) {

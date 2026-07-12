@@ -42,6 +42,84 @@ namespace
 		inline REL::Relocation<std::uint32_t*>        g_shadowGeomToken{ REL::Offset(0x1E10660) };
 		inline REL::Relocation<ID3D11Buffer**>        g_perFrameCameraCB{ REL::Offset(0x3027E88) };  // VS/PS b12
 		inline REL::Relocation<ID3D11Buffer**>        g_psB11CB{ REL::Offset(0x3027A28) };            // PS b11
+		// RT pool base: the depth SRV for render-target index i is at +152*i+0x2040 (validated by
+		// the byte-exact FlushSetupTechniqueReplica). The shadow atlas is target 4 (all maps).
+		inline REL::Relocation<std::uint8_t*>         g_renderer{ REL::Offset(0x3028490) };
+	}
+
+	// LEVEL-2 output validator: FNV-hash the shadow depth atlas (target 4). Comparing this hash
+	// across runs on a FROZEN scene -- vanilla (mode 1, engine renders inline) vs serial replay
+	// (mode 2) -- proves the replayed shadow depth is bit-identical to vanilla. The CopyResource+Map
+	// is a GPU sync point (validate-only, throttled to once per log window). Returns 0 on failure.
+	// Validation-only, opt-in via CS_SHADOW_HASH (default off). The depth atlas is a Texture2DArray
+	// whose staging Map under DXVK does not guarantee RowPitch >= Width*4 for the packed depth layout,
+	// so the per-row read is clamped to RowPitch to stay in-bounds. Cross-run comparison is only valid
+	// on a frozen scene (sgtm 0 + no animating casters); on a live scene the sun/skinned casters move
+	// the atlas every frame, so this is a within-run liveness probe, not a cross-run equality gate.
+	bool ShadowHashEnabled()
+	{
+		static const bool on = [] {
+			char buf[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_HASH", buf, sizeof(buf)) && buf[0] && buf[0] != '0';
+		}();
+		return on;
+	}
+
+	std::uint64_t HashShadowAtlas(int a_target)
+	{
+		if (!ShadowHashEnabled())
+			return 0;
+		auto* rtPool = reinterpret_cast<std::uint8_t*>(engine::g_renderer.address());
+		auto* srv = *reinterpret_cast<ID3D11ShaderResourceView**>(rtPool + 152 * a_target + 0x2040);
+		if (!srv || !globals::d3d::device)
+			return 0;
+		winrt::com_ptr<ID3D11Resource> res;
+		srv->GetResource(res.put());
+		winrt::com_ptr<ID3D11Texture2D> tex;
+		if (!res || FAILED(res->QueryInterface(IID_PPV_ARGS(tex.put()))))
+			return 0;
+		D3D11_TEXTURE2D_DESC desc{};
+		tex->GetDesc(&desc);
+
+		static winrt::com_ptr<ID3D11Texture2D> s_staging;
+		static D3D11_TEXTURE2D_DESC            s_desc{};
+		if (!s_staging || std::memcmp(&s_desc, &desc, sizeof(desc)) != 0) {
+			D3D11_TEXTURE2D_DESC sd = desc;
+			sd.Usage = D3D11_USAGE_STAGING;
+			sd.BindFlags = 0;
+			sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			sd.MiscFlags = 0;
+			s_staging = nullptr;
+			if (FAILED(globals::d3d::device->CreateTexture2D(&sd, nullptr, s_staging.put())))
+				return 0;
+			s_desc = desc;
+		}
+
+		auto* ctx = *engine::g_immediateContext;
+		ctx->CopyResource(s_staging.get(), tex.get());
+
+		std::uint64_t h = 0xcbf29ce484222325ull;
+		for (UINT slice = 0; slice < desc.ArraySize; ++slice) {
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			const UINT               sub = D3D11CalcSubresource(0, slice, desc.MipLevels);
+			if (!mapped.pData && FAILED(ctx->Map(s_staging.get(), sub, D3D11_MAP_READ, 0, &mapped)))
+				continue;
+			if (!mapped.pData || !mapped.RowPitch)
+				continue;
+			// Read at most RowPitch bytes/row: the mapped region is RowPitch*Height, and the packed
+			// depth pitch can be < Width*4, so Width*4 would run off the row (observed AV).
+			const UINT  bytesPerRow = std::min<UINT>(desc.Width * 4u, mapped.RowPitch);
+			const auto* base = static_cast<const std::uint8_t*>(mapped.pData);
+			for (UINT row = 0; row < desc.Height; ++row) {
+				const auto* r = base + static_cast<std::size_t>(row) * mapped.RowPitch;
+				for (UINT b = 0; b < bytesPerRow; ++b) {
+					h ^= r[b];
+					h *= 0x100000001b3ull;
+				}
+			}
+			ctx->Unmap(s_staging.get(), sub);
+		}
+		return h;
 	}
 
 	// Re-establish the frame-persistent CBs a fresh deferred context lacks (per-frame camera CB in
@@ -191,8 +269,9 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		if ((++frames & 0x3F) == 1) {
 			std::uint64_t tot = 0, uns = 0;
 			for (auto& mw : g_mapWorkList) { tot += mw.passes.size(); uns += mw.unsupported; }
-			logger::info("[ShadowThreaded][M2] frame {}: maps={} passes={} unsupported={}",
-				frames, g_mapWorkList.size(), tot, uns);
+			// VANILLA ground-truth atlas hash (engine rendered inline this mode).
+			logger::info("[ShadowThreaded][vanilla] frame {}: maps={} passes={} unsupported={} atlasHash={:016X}",
+				frames, g_mapWorkList.size(), tot, uns, HashShadowAtlas(4));
 		}
 		return;
 	}
@@ -281,8 +360,10 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	if ((++frames & 0x3F) == 1) {
 		std::uint64_t tot = 0;
 		for (auto& mw : g_mapWorkList) tot += mw.passes.size();
-		logger::info("[ShadowThreaded][serial] frame {}: maps={} replayed={} deferredDraws={}",
-			frames, g_mapWorkList.size(), tot, drawsThisFrame);
+		// SERIAL-REPLAY atlas hash: on a frozen scene this must equal the vanilla hash for the same
+		// spot, proving the deferred replay's shadow depth is bit-identical to the engine's.
+		logger::info("[ShadowThreaded][serial] frame {}: maps={} replayed={} deferredDraws={} atlasHash={:016X}",
+			frames, g_mapWorkList.size(), tot, drawsThisFrame, HashShadowAtlas(4));
 	}
 	g_claiming = false;
 }
