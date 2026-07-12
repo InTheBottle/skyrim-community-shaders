@@ -396,7 +396,17 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	                          // dirty system) missing -- persistent bindings are mirrored above,
 	                          // while this force covers only the dirty-tracked state.
 
+	// Time the shadow RECORDING (the engine walk that generates all shadow draws + state
+	// binds + CB maps) -- this is the render-thread cost a worker pool would offload. If it
+	// is a small slice of frame time, threading cannot help (measure before building it).
+	LARGE_INTEGER qpcFreq{}, tRec0{}, tRec1{};
+	QueryPerformanceFrequency(&qpcFreq);
+	QueryPerformanceCounter(&tRec0);
+
 	callOriginal();
+
+	QueryPerformanceCounter(&tRec1);
+	const double recordMs = 1000.0 * static_cast<double>(tRec1.QuadPart - tRec0.QuadPart) / static_cast<double>(qpcFreq.QuadPart);
 
 	if (globals::state->frameAnnotations)
 		globals::state->EndPerfEvent();
@@ -421,15 +431,47 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	// the (restored) mirror caches. The command list is released immediately after
 	// execution (com_ptr scope) so its resources drop early, also per the guidelines.
 	const auto drawsThisScope = g_deferredDraws.exchange(0, std::memory_order_relaxed);
+	double     executeMs = 0.0;
 	{
 		winrt::com_ptr<ID3D11CommandList> commandList;
 		if (SUCCEEDED(deferred->FinishCommandList(FALSE, commandList.put())) && commandList) {
+			LARGE_INTEGER tExe0{}, tExe1{};
+			QueryPerformanceCounter(&tExe0);
 			immediate->ExecuteCommandList(commandList.get(), FALSE);
+			QueryPerformanceCounter(&tExe1);
+			executeMs = 1000.0 * static_cast<double>(tExe1.QuadPart - tExe0.QuadPart) / static_cast<double>(qpcFreq.QuadPart);
 			++framesDeferred;
 			if ((framesDeferred & 0x3F) == 1)
 				logger::info("[ShadowDeferred] frame {}: recorded {} DrawIndexed on the deferred context", framesDeferred, drawsThisScope);
 		} else {
 			logger::error("[ShadowDeferred] FinishCommandList failed; shadows this frame are lost");
+		}
+	}
+
+	// Rolling average of the render-thread shadow-recording cost (the threading candidate)
+	// vs the replay cost, plus the whole frame time (this loop runs once per frame, so the
+	// gap between successive records IS the frame time) -- so record/frame tells us the
+	// fraction a worker pool could offload, and whether it can move FPS at all.
+	{
+		static double        s_recSum = 0.0;
+		static double        s_exeSum = 0.0;
+		static double        s_frameSum = 0.0;
+		static LARGE_INTEGER s_prev{};
+		static int           s_n = 0;
+		if (s_prev.QuadPart != 0)
+			s_frameSum += 1000.0 * static_cast<double>(tRec0.QuadPart - s_prev.QuadPart) / static_cast<double>(qpcFreq.QuadPart);
+		s_prev = tRec0;
+		s_recSum += recordMs;
+		s_exeSum += executeMs;
+		if (++s_n >= 64) {
+			const double frameMs = s_frameSum / s_n;
+			logger::info("[ShadowDeferred][perf] avg/{} frames: record={:.3f}ms execute={:.3f}ms frame={:.3f}ms ({:.0f}fps, record={:.0f}% of frame, draws={})",
+				s_n, s_recSum / s_n, s_exeSum / s_n, frameMs, frameMs > 0 ? 1000.0 / frameMs : 0.0,
+				frameMs > 0 ? 100.0 * (s_recSum / s_n) / frameMs : 0.0, drawsThisScope);
+			s_recSum = 0.0;
+			s_exeSum = 0.0;
+			s_frameSum = 0.0;
+			s_n = 0;
 		}
 	}
 
