@@ -29,11 +29,10 @@ namespace
 	// hook below is a single-branch passthrough).
 	std::vector<Recorded>* g_sink = nullptr;
 
-	// DEBUG: dump raw CB bytes for Map records of a target size (CS_UTIL_RE_DUMP=<hex size>), tagged
-	// by window (1=engine, 2=replica), so a content-hash divergence can be traced to the exact dword.
-	int          g_windowTag = 0;
+	// DIAGNOSTIC: when CS_UTIL_RE_DUMP is set (to any non-zero value), snapshot each recorded CB
+	// Map's written dwords onto the RecordedCall so DiffWindows can report the exact engine-vs-
+	// replica dword for a content-hash divergence -- the rerunnable "find the deviating field" tool.
 	std::uint32_t g_dumpMapSize = 0;
-	int          g_dumpCount = 0;
 
 	// WRITE_DISCARD maps opened inside the current window: mapped pointer + size, so the
 	// matching Unmap can hash the bytes the caller wrote. The utility window maps at most
@@ -786,7 +785,6 @@ void UtilityPassReplica::BeginWindow(std::vector<RecordedCall>& a_sink)
 	a_sink.clear();
 	g_openMaps.fill({});
 	g_sink = &a_sink;
-	g_windowTag = (&a_sink == &engineWindow) ? 1 : 2;
 	g_filterCs = true;
 	static const bool s_dumpInit = [] {
 		char buf[16] = {};
