@@ -552,6 +552,31 @@ namespace engine
 	// Engine helpers still called in Stage A (replaced in later stages).
 	using SetDirtyStates_t = void (*)(bool);
 	inline REL::Relocation<SetDirtyStates_t> SetDirtyStates{ REL::Offset(0xD705B0) };
+
+	// --- SetDirtyStates reimplementation support (FlushDirtyStatesReplica) ---
+	// The state-object pool is the qword array AT 0x1430261B0 (ctx = pool[926], alpha CB =
+	// pool[783]); the RT/DSV pool base is the pointer STORED AT 0x143025F00 (disasm-
+	// verified). Both are read-only shared. The 0x5D8 render-state block is passed in.
+	inline REL::Relocation<std::uint8_t*> g_statePool{ REL::Offset(0x30261B0) };   // qword array base
+	inline REL::Relocation<std::uint8_t*> g_rtPoolPtr{ REL::Offset(0x3025F00) };   // *(u8**) = RT pool base
+	inline REL::Relocation<float*>        g_slopeBiasTable{ REL::Offset(0x3026180) };  // unk_143026180
+	inline REL::Relocation<const void*>   g_blendFactor{ REL::Offset(0x1E07168) };  // unk_141E07168 (4 floats)
+	// Input-layout cache (BSTScatterTable at 0x141E07140; node stride 24: key@0, IL*@+8,
+	// next@+16). Read walk is lock-free + thread-safe while nobody inserts/grows. In
+	// compare mode the engine window pre-warms this SAME pass, so the replica walk hits;
+	// the create/insert fallback (engine helpers) is faithful for the rare standalone miss.
+	inline REL::Relocation<std::uint8_t*>  g_ilTable{ REL::Offset(0x1E07140) };     // table struct
+	inline REL::Relocation<std::uint32_t*> g_ilCapacity{ REL::Offset(0x1E07144) };  // +4; mask = cap-1
+	inline REL::Relocation<std::uintptr_t*> g_ilBase{ REL::Offset(0x1E07160) };     // +0x20 bucket base
+	inline REL::Relocation<std::uintptr_t> g_ilSentinel{ REL::Offset(0x1E07150) };  // +0x10 end-of-chain
+	using ILHash_t = void (*)(std::uint64_t*, std::uint64_t);
+	inline REL::Relocation<ILHash_t> ILHash{ REL::Offset(0xC06570) };               // pure CRC hash
+	using ILCreate_t = void* (*)(std::uint64_t);
+	inline REL::Relocation<ILCreate_t> ILCreate{ REL::Offset(0xD70F90) };           // create ID3D11InputLayout
+	using ILInsert_t = bool (*)(void*, std::uintptr_t, std::uint32_t, std::uint64_t*, void**);
+	inline REL::Relocation<ILInsert_t> ILInsert{ REL::Offset(0xD730E0) };           // scatter-table insert
+	using ILGrow_t = void (*)(void*);
+	inline REL::Relocation<ILGrow_t> ILGrow{ REL::Offset(0xD73F70) };               // grow/rehash
 	using GetNiProperty_t = RE::NiAlphaProperty* (*)(RE::BSRenderPass*);
 	inline REL::Relocation<GetNiProperty_t> GetNiProperty{ REL::Offset(0x12FD8A0) };
 	using GrassShadowBlacklist_t = bool (*)(std::uint32_t);
@@ -914,6 +939,245 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 	*tlsTag = savedTlsTag;
 }
 
+// BSGraphics::SetDirtyStates 0x140D705B0 reimplemented against a caller-supplied render-
+// state block (S = the 0x5D8 block, 0x143027EB0 for N=1) + context. A worker thread needs
+// this to flush its PRIVATE state to its OWN deferred context; the engine's version hard-
+// codes the global block + global context (*(0x143027EA0)), which cannot be shared across
+// threads. Byte-exact transcription (see docs/development/shadow-keystone-re.md): the
+// state-object pool (array @0x1430261B0), RT pool (*(0x143025F00)), slope-bias table, blend
+// factor and input-layout cache are read-only shared globals; context calls route through
+// the out-of-module stub (EngineCallV) so the compare recorder captures them exactly as it
+// captures the engine's. Main-word branches emit in the engine's order
+// RT -> DS -> raster(+bias) -> viewport -> blend -> alphaCB -> IL -> topology (viewport
+// AFTER raster because the bias branch re-raises the viewport bit), then the five per-stage
+// mask loops. Validated by CS_UTIL_RE_CSFLUSH=1 + the parity gate showing 0 divergence.
+namespace
+{
+	void FlushDirtyStatesReplica(std::uint8_t* S, ID3D11DeviceContext* ctx, bool a1)
+	{
+		const auto u16 = [&](std::size_t o) { return *reinterpret_cast<std::uint16_t*>(S + o); };
+		const auto u32 = [&](std::size_t o) { return *reinterpret_cast<std::uint32_t*>(S + o); };
+		const auto i32 = [&](std::size_t o) { return *reinterpret_cast<std::int32_t*>(S + o); };
+		const auto f32 = [&](std::size_t o) { return *reinterpret_cast<float*>(S + o); };
+		const auto u64 = [&](std::size_t o) { return *reinterpret_cast<std::uint64_t*>(S + o); };
+		const auto setU32 = [&](std::size_t o, std::uint32_t v) { *reinterpret_cast<std::uint32_t*>(S + o) = v; };
+		// dword_143027EBC[N] lives at S + 0x0C + 4N.
+		const auto ebc = [&](int n) { return static_cast<std::size_t>(0x0C + 4 * n); };
+
+		auto* pool = reinterpret_cast<std::uintptr_t*>(engine::g_statePool.address());  // qword array
+		auto* rtBase = *reinterpret_cast<std::uint8_t**>(engine::g_rtPoolPtr.address());
+
+		std::uint16_t dirty = u16(0);
+		if (dirty == 0)
+			goto perStage;
+
+		// -- bit0 0x0001 render targets / DSV --
+		if (dirty & 1) {
+			std::uint32_t numViews = 0;
+			std::uintptr_t rtvs[8] = {};
+			if (i32(ebc(13)) == -1) {  // MRT
+				for (numViews = 0; numViews < 8; ++numViews) {
+					const std::int32_t idx = i32(0x18 + 4 * numViews);  // RT index[i]
+					if (idx == -1)
+						break;
+					const std::uintptr_t rtv = *reinterpret_cast<std::uintptr_t*>(rtBase + 48 * idx + 0xA58);
+					rtvs[numViews] = rtv;
+					if (u32(0x48 + 4 * numViews) == 0) {  // clear-flag[i]
+						EngineCallV<50, void>(ctx, reinterpret_cast<void*>(rtv), rtBase + 0x2768);  // ClearRTV
+						setU32(0x48 + 4 * numViews, 4);
+					}
+				}
+			} else {  // single DSV
+				numViews = 1;
+				const std::uintptr_t rtv = *reinterpret_cast<std::uintptr_t*>(
+					rtBase + 8 * (static_cast<std::size_t>(i32(ebc(14))) + 8 * static_cast<std::size_t>(i32(ebc(13)))) + 0x26D0);
+				rtvs[0] = rtv;
+				if (u32(ebc(24)) == 0) {
+					EngineCallV<50, void>(ctx, reinterpret_cast<void*>(rtv), rtBase + 0x2768);  // ClearRTV
+					setU32(ebc(24), 4);
+				}
+			}
+			// DSV clear (flag [23]); depth = [12]; stencil 0. rtBase+0x22 is the DSV byte.
+			const std::uint32_t clearMode = u32(ebc(23));
+			if (clearMode <= 2 || clearMode == 6)
+				*reinterpret_cast<std::uint8_t*>(rtBase + 0x22) = 0;
+			std::uintptr_t dsv = 0;
+			if (i32(ebc(11)) != -1) {
+				const std::size_t dsIdx = static_cast<std::size_t>(i32(ebc(12))) + 19 * static_cast<std::size_t>(i32(ebc(11)));
+				dsv = *reinterpret_cast<std::uint8_t*>(rtBase + 0x22) ?
+				          *reinterpret_cast<std::uintptr_t*>(rtBase + 8 * dsIdx + 0x1FF0) :
+				          *reinterpret_cast<std::uintptr_t*>(rtBase + 8 * dsIdx + 0x1FB0);
+				if (dsv) {
+					std::int32_t flags = -1;
+					switch (clearMode) {
+					case 0: case 6: flags = 3; break;
+					case 2: flags = 2; break;
+					case 1: flags = 1; break;
+					default: flags = -1; break;
+					}
+					if (flags != -1) {
+						EngineCallV<53, void>(ctx, reinterpret_cast<void*>(dsv), flags, i32(ebc(12)), 0);  // ClearDSV
+						setU32(ebc(23), 4);
+					}
+				}
+			}
+			EngineCallV<33, void>(ctx, numViews, rtvs, reinterpret_cast<void*>(dsv));  // OMSetRenderTargets
+			dirty = u16(0);
+		}
+
+		// -- bits2,3 0x000C depth-stencil state --
+		if (dirty & 0xC) {
+			EngineCallV<36, void>(ctx,
+				reinterpret_cast<void*>(pool[40 * u32(0x88) + u32(0x90)]),  // 40*F38 + F40
+				u32(0x94));                                                  // ref F44
+			dirty = u16(0);
+		}
+
+		// -- bits4,5,6,12 0x1070 rasterizer (+ depth bias) --
+		if (dirty & 0x1070) {
+			EngineCallV<43, void>(ctx,
+				reinterpret_cast<void*>(pool[72 * u32(0x98) + 240 + 24 * u32(0x9C) + 2 * u32(0xA0) + u32(0xA4)]));  // RSSetState
+			dirty = u16(0);
+			if (dirty & 0x40) {
+				// Target bias is flt_143028470[0]/[1] = S+0x5C0/0x5C4 (in-block); the slope
+				// subtraction uses the shared table unk_143026180 (g_slopeBiasTable).
+				float v14 = f32(0x84);  // [30]
+				if (f32(0x80) != f32(0x5C0) || f32(0x84) != f32(0x5C4)) {
+					v14 = f32(0x5C4);
+					*reinterpret_cast<float*>(S + 0x80) = f32(0x5C0);
+					*reinterpret_cast<float*>(S + 0x84) = f32(0x5C4);
+					setU32(0, u32(0) | 2);
+					dirty = u16(0);
+				}
+				const std::uint32_t slopeIdx = u32(0xA0);  // dword_143027F50
+				if (slopeIdx != 0) {
+					v14 = v14 - engine::g_slopeBiasTable.get()[slopeIdx];
+					*reinterpret_cast<float*>(S + 0x84) = v14;
+					setU32(0, u32(0) | 2);
+					dirty = u16(0);
+				}
+			}
+		}
+
+		// -- bit1 0x0002 viewport (AFTER raster) --
+		if (dirty & 2) {
+			EngineCallV<44, void>(ctx, 1u, S + 0x70);  // RSSetViewports (&[25])
+			dirty = u16(0);
+		}
+
+		// -- bit7 0x0080 blend --
+		if (dirty & 0x80) {
+			EngineCallV<35, void>(ctx,
+				reinterpret_cast<void*>(pool[52 * u32(0xA8) + 384 + 26 * u32(0xAC) + 2 * u32(0xB0) + static_cast<std::int32_t>(f32(0x5D0))]),
+				engine::g_blendFactor.get(), 0xFFFFFFFFu);  // OMSetBlendState
+			dirty = u16(0);
+		}
+
+		// -- bits8,9 0x0300 alpha CB --
+		if (dirty & 0x300) {
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			auto* alphaCB = reinterpret_cast<ID3D11Resource*>(pool[783]);
+			EngineCallV<14, HRESULT>(ctx, alphaCB, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map
+			if (mapped.pData)
+				*reinterpret_cast<float*>(mapped.pData) = u32(0xB4) /*F64*/ ? f32(0xB8) /*F68*/ : 0.0f;
+			EngineCallV<15, void>(ctx, alphaCB, 0u);  // Unmap
+			dirty = u16(0);
+		}
+
+		// -- bit10 0x0400 input layout (only if a1==0) --
+		if (!a1 && (dirty & 0x400)) {
+			const std::uint64_t key = u64(0x340) & *reinterpret_cast<std::uint64_t*>(u64(0x348) + 72);
+			std::uint64_t       hash = 0;
+			engine::ILHash(&hash, key);
+			void*                il = nullptr;
+			const std::uintptr_t base = *engine::g_ilBase;
+			bool                 found = false;
+			if (base) {
+				std::uintptr_t node = base + 24 * (hash & (*engine::g_ilCapacity - 1));
+				if (*reinterpret_cast<std::uintptr_t*>(node + 16)) {  // occupied
+					while (*reinterpret_cast<std::uint64_t*>(node) != key) {
+						node = *reinterpret_cast<std::uintptr_t*>(node + 16);
+						if (node == engine::g_ilSentinel.address())
+							goto ilMiss;
+					}
+					il = *reinterpret_cast<void**>(node + 8);
+					found = true;
+				}
+			}
+		ilMiss:
+			if (!found) {
+				// Faithful engine fallback (only hit on a genuine standalone miss; in compare
+				// mode the engine window pre-warmed this key). NOTE: mutates the shared cache
+				// -- for threading, pre-warm so this path is never taken.
+				il = engine::ILCreate(key);
+				if (il || key != 0x300000000407ull) {
+					std::uint64_t h2 = 0;
+					engine::ILHash(&h2, key);
+					std::uint64_t k2 = key;
+					while (!engine::ILInsert(engine::g_ilTable.get(), *engine::g_ilBase, static_cast<std::uint32_t>(h2), &k2, &il))
+						engine::ILGrow(engine::g_ilTable.get());
+				}
+			}
+			EngineCallV<17, void>(ctx, il);  // IASetInputLayout
+			dirty = u16(0);
+		}
+
+		// -- bit11 0x0800 topology --
+		if (dirty & 0x800) {
+			EngineCallV<24, void>(ctx, u32(0x358));  // IASetPrimitiveTopology (dword_143028070[102])
+			dirty = u16(0);
+		}
+
+		// main-word writeback: keep only IL bit if a1, else clear.
+		setU32(0, a1 ? (u32(0) & 0x400) : 0);
+
+	perStage:
+		// CS UAV (block+0x14), PS SAMP (+0x08), PS SRV (+0x04), CS SAMP (+0x10), CS SRV (+0x0C).
+		for (std::uint32_t m = u32(0x14); m; m = u32(0x14)) {
+			unsigned long b;
+			_BitScanForward(&b, m);
+			setU32(0x14, m & ~(1u << b));
+			EngineCallV<68, void>(ctx, b, 1u, S + 0x1C0 + 4 * (2 * b + 80), reinterpret_cast<const std::uint32_t*>(nullptr));  // CSSetUAV
+		}
+		for (std::uint32_t m = u32(0x08); m; m = u32(0x08)) {
+			unsigned long b;
+			_BitScanForward(&b, m);
+			setU32(0x08, m & ~(1u << b));
+			EngineCallV<10, void>(ctx, b, 1u, &pool[5 * u32(0xBC + 4 * b) + 748 + u32(0xFC + 4 * b)]);  // PSSetSamplers
+		}
+		for (std::uint32_t m = u32(0x04); m; m = u32(0x04)) {
+			unsigned long b;
+			_BitScanForward(&b, m);
+			setU32(0x04, m & ~(1u << b));
+			EngineCallV<8, void>(ctx, b, 1u, reinterpret_cast<void*>(S + 0x140 + 8 * b));  // PSSetShaderResources (qword_143027FF0)
+		}
+		for (std::uint32_t m = u32(0x10); m; m = u32(0x10)) {
+			unsigned long b;
+			_BitScanForward(&b, m);
+			setU32(0x10, m & ~(1u << b));
+			EngineCallV<70, void>(ctx, b, 1u, &pool[5 * u32(0x1C0 + 4 * b) + 748 + u32(0x1C0 + 4 * (b + 16))]);  // CSSetSamplers
+		}
+		for (std::uint32_t m = u32(0x0C); m; m = u32(0x0C)) {
+			unsigned long b;
+			_BitScanForward(&b, m);
+			setU32(0x0C, m & ~(1u << b));
+			EngineCallV<67, void>(ctx, b, 1u, S + 0x1C0 + 4 * (2 * b + 32));  // CSSetShaderResources
+		}
+	}
+
+	// CS_UTIL_RE_CSFLUSH=1 routes the replica's state flush through the CS reimplementation
+	// (FlushDirtyStatesReplica) instead of the engine's SetDirtyStates, so the parity gate
+	// can prove them byte-identical before the reimpl backs the multithreaded per-map driver.
+	bool CsFlushRequested()
+	{
+		static const bool s_on = [] {
+			char buf[8] = {};
+			return GetEnvironmentVariableA("CS_UTIL_RE_CSFLUSH", buf, sizeof(buf)) && buf[0] == '1';
+		}();
+		return s_on;
+	}
+}
+
 void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t a_startIndex, std::uint32_t a_triCount)
 {
 	// BSGraphics::Renderer::DrawTriShape (0x140D6BFE0), replicated exactly: vertex-desc
@@ -928,9 +1192,12 @@ void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t
 		*engine::S_topology = 4;
 		*engine::S_stateUpdateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
 	}
-	EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
+	auto* ctx = globals::d3d::context;
+	if (CsFlushRequested())
+		FlushDirtyStatesReplica(reinterpret_cast<std::uint8_t*>(engine::S_base.address()), ctx, false);
+	else
+		EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
 
-	auto*      ctx = globals::d3d::context;
 	const UINT stride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
 	const UINT offset = 0;
 	EngineCallV<19, void>(ctx, rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0u);   // IASetIndexBuffer
