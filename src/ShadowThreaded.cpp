@@ -1,6 +1,8 @@
 #include "ShadowThreaded.h"
 
+#include <algorithm>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "Globals.h"
@@ -217,6 +219,8 @@ namespace
 	};
 
 	winrt::com_ptr<ID3D11DeviceContext> g_deferred;
+	// Concurrent fan-out: one deferred context per worker thread (index 0 aliases g_deferred).
+	std::vector<winrt::com_ptr<ID3D11DeviceContext>> g_deferredPool;
 }
 
 std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
@@ -256,10 +260,10 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	g_mapWorkList.clear();
 	g_mapWorkList.reserve(24);
 	g_curMap = nullptr;
-	g_claiming = (m == Mode::kSerial);
+	g_claiming = (m != Mode::kCapture);  // capture observes; every replay mode claims the covered passes
 	replica->SetShadowCaptureHook(&CaptureHook);
 
-	callOriginal();  // per-map interceptor brackets each map; covered passes stored (+claimed if serial)
+	callOriginal();  // per-map interceptor brackets each map; covered passes stored (+claimed if replaying)
 
 	replica->SetShadowCaptureHook(nullptr);
 
@@ -276,7 +280,18 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		return;
 	}
 
-	// ---- Phase 0: serial deferred replay of the claimed passes, in map order ----
+	if (m == Mode::kWorkerSerial) {
+		ReplayWorkerSerial();
+		g_claiming = false;
+		return;
+	}
+	if (m == Mode::kConcurrent) {
+		ReplayConcurrent();
+		g_claiming = false;
+		return;
+	}
+
+	// ---- Phase 0 (kSerial): serial deferred replay of the claimed passes, in map order ----
 	// Snapshot the pre-shadow render-state so the immediate context (which the walk mutated) and
 	// the mirror are restored after the scope, exactly as ShadowDeferred does for its single scope.
 	static std::vector<std::uint8_t> s_snapshot(engine::kBlockBytes);
@@ -368,25 +383,240 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	g_claiming = false;
 }
 
+namespace
+{
+	// Snapshot/restore the pre-shadow global render-state around a replay scope. ExecuteCommandList
+	// (RestoreContextState=FALSE) clears the immediate context, so after the replay the engine's
+	// block is forced fully dirty and the persistent bindings + viewport are re-established, exactly
+	// as the kSerial path does. The worker paths never write the global block themselves, but the
+	// walk did and the execute cleared the GPU context, so the same restore is required.
+	struct GlobalStateGuard
+	{
+		std::vector<std::uint8_t> block;
+		std::uint32_t             technique;
+		void*                     shader;
+		void*                     material;
+		std::uint32_t             boneCursor;
+		std::uint64_t             dynVB;
+		std::uint32_t             shadowToken;
+		ID3D11DeviceContext*      immediate;
+		UINT                      vpCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_VIEWPORT            vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT                      scCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_RECT                scs[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+
+		explicit GlobalStateGuard(ID3D11DeviceContext* a_immediate) :
+			block(engine::kBlockBytes), immediate(a_immediate)
+		{
+			std::memcpy(block.data(), reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+			technique = *engine::g_currentTechnique;
+			shader = *engine::g_currentShader;
+			material = *engine::g_currentMaterial;
+			boneCursor = *engine::g_boneCBRingCursor;
+			dynVB = *engine::g_dynVBRingState;
+			shadowToken = *engine::g_shadowGeomToken;
+			immediate->RSGetViewports(&vpCount, vps);
+			immediate->RSGetScissorRects(&scCount, scs);
+		}
+
+		void Restore()
+		{
+			BindPersistentStandalone(immediate);
+			if (vpCount)
+				immediate->RSSetViewports(vpCount, vps);
+			if (scCount)
+				immediate->RSSetScissorRects(scCount, scs);
+			std::memcpy(reinterpret_cast<void*>(engine::S_base.address()), block.data(), engine::kBlockBytes);
+			*engine::g_currentTechnique = technique;
+			*engine::g_currentShader = shader;
+			*engine::g_currentMaterial = material;
+			*engine::g_boneCBRingCursor = boneCursor;
+			*engine::g_dynVBRingState = dynVB;
+			*engine::g_shadowGeomToken = shadowToken;
+			*reinterpret_cast<std::uint32_t*>(engine::S_base.address()) = 0xFFFFFFFFu;  // force re-bind
+		}
+	};
+
+	// Seed a wide viewport/scissor on a fresh deferred context; each map's block restore + forced
+	// dirty overrides the viewport per map, but a fresh context needs a non-empty starting rect.
+	void SeedWideViewport(ID3D11DeviceContext* a_ctx)
+	{
+		const D3D11_VIEWPORT vp{ 0.0f, 0.0f, 16384.0f, 16384.0f, 0.0f, 1.0f };
+		const D3D11_RECT     sc{ 0, 0, 16384, 16384 };
+		a_ctx->RSSetViewports(1, &vp);
+		a_ctx->RSSetScissorRects(1, &sc);
+	}
+}
+
+void ShadowThreaded::ReplayWorkerSerial()
+{
+	// Phase 1a: replay every map through ONE ShadowWorker (private block+caches+context) on the
+	// render thread. No global-context redirection: the replica's Ws* accessors resolve to the
+	// worker, so the global block is untouched -- this proves the private-block path renders the
+	// same shadows before threads are introduced.
+	auto* replica = UtilityPassReplica::GetSingleton();
+	auto* immediate = *engine::g_immediateContext;
+	auto* deferred = g_deferred.get();
+
+	GlobalStateGuard guard(immediate);
+
+	auto* worker = UtilityPassReplica::MakeShadowWorker(deferred, guard.shadowToken);
+	UtilityPassReplica::WorkerBeginScope(worker);
+	BindPersistentStandalone(deferred);
+	SeedWideViewport(deferred);
+
+	g_deferredDraws.store(0, std::memory_order_relaxed);
+	for (auto& mw : g_mapWorkList) {
+		if (mw.passes.empty())
+			continue;
+		UtilityPassReplica::WorkerSeedMap(worker, mw.block);
+		for (const auto& cp : mw.passes)
+			replica->ReplicaRenderPassImmediately(cp.pass, cp.technique, cp.alphaTest, cp.renderFlags);
+	}
+	UtilityPassReplica::WorkerEndScope();
+
+	const std::uint64_t draws = g_deferredDraws.load(std::memory_order_relaxed);
+	{
+		winrt::com_ptr<ID3D11CommandList> cl;
+		if (SUCCEEDED(deferred->FinishCommandList(FALSE, cl.put())) && cl)
+			immediate->ExecuteCommandList(cl.get(), FALSE);
+		else
+			logger::error("[ShadowThreaded] worker-serial FinishCommandList failed; shadows lost");
+	}
+	UtilityPassReplica::FreeShadowWorker(worker);
+
+	guard.Restore();
+
+	if ((++frames & 0x3F) == 1) {
+		std::uint64_t tot = 0;
+		for (auto& mw : g_mapWorkList) tot += mw.passes.size();
+		logger::info("[ShadowThreaded][worker-serial] frame {}: maps={} replayed={} deferredDraws={} atlasHash={:016X}",
+			frames, g_mapWorkList.size(), tot, draws, HashShadowAtlas(4));
+	}
+}
+
+void ShadowThreaded::ReplayConcurrent()
+{
+	// Phase 1b (EXPERIMENTAL -- CS_SHADOW_MT=4, off by default): fan the maps out across workerCount
+	// threads, each recording its maps onto its OWN deferred context with its OWN ShadowWorker
+	// (private block+caches). Maps render to independent atlas slices, so command lists may execute
+	// in any order. Skinned passes stay on the serial remainder (their bone-CB/dyn-VB rings are
+	// still global).
+	//
+	// KNOWN BLOCKER (worker-serial mode 3 is correct; this races): the byte-exact setup path still
+	// mutates SHARED state that must be worker-localized before this is safe --
+	//   1. FlushSetupTechniqueReplica calls the engine BeginTechnique, which writes the GLOBAL block
+	//      +0x348/0x350 (current VS/PS shader objects) and VS/PS-binds; concurrent workers race, and
+	//      a worker then reads its OWN block+0x348 (stale, not what BeginTechnique wrote).
+	//   2. The setup stashes each stage's mapped-CB pointer + the per-pass technique flags IN the
+	//      SHARED singleton BSUtilityShader object (vs+0x20, ps+0x18, VS+0x40, a1+0x90/0x94, ...),
+	//      used as pass-local scratch -- shared across threads.
+	//   3. The PerTechnique/Material/Geometry CBs are owned by that shared shader object; concurrent
+	//      Map(WRITE_DISCARD) of the same buffer from multiple deferred contexts is unsafe.
+	// Fixing needs: BeginTechnique output copied to the worker block under a mutex; the CB-pointer +
+	// technique-flag scratch moved to worker-local cells; and per-worker CB buffers. See
+	// docs/development/mt-shadow-plan.md. Until then mode 4 is a diagnostic that WILL crash under
+	// load; mode 3 (worker-serial) is the correct, validated private-block replay.
+	logger::warn("[ShadowThreaded] kConcurrent is EXPERIMENTAL: shared shader-object scratch is not "
+				 "yet worker-local -- expect corruption. Use CS_SHADOW_MT=3 for the correct path.");
+	auto* replica = UtilityPassReplica::GetSingleton();
+	auto* immediate = *engine::g_immediateContext;
+
+	const std::uint32_t n = std::min<std::uint32_t>(workerCount, static_cast<std::uint32_t>(g_deferredPool.size()));
+	if (n == 0) {
+		logger::error("[ShadowThreaded] no worker contexts; concurrent replay skipped");
+		return;
+	}
+
+	GlobalStateGuard guard(immediate);
+
+	// Partition the non-empty maps round-robin across the workers.
+	std::vector<std::vector<MapWork*>> assign(n);
+	{
+		std::uint32_t next = 0;
+		for (auto& mw : g_mapWorkList) {
+			if (mw.passes.empty())
+				continue;
+			assign[next % n].push_back(&mw);
+			++next;
+		}
+	}
+
+	g_deferredDraws.store(0, std::memory_order_relaxed);
+	std::vector<winrt::com_ptr<ID3D11CommandList>> lists(n);
+
+	const auto recordWorker = [&](std::uint32_t i) {
+		auto* ctx = g_deferredPool[i].get();
+		auto* worker = UtilityPassReplica::MakeShadowWorker(ctx, guard.shadowToken);
+		UtilityPassReplica::WorkerBeginScope(worker);
+		BindPersistentStandalone(ctx);
+		SeedWideViewport(ctx);
+		for (MapWork* mw : assign[i]) {
+			UtilityPassReplica::WorkerSeedMap(worker, mw->block);
+			for (const auto& cp : mw->passes)
+				replica->ReplicaRenderPassImmediately(cp.pass, cp.technique, cp.alphaTest, cp.renderFlags);
+		}
+		UtilityPassReplica::WorkerEndScope();
+		if (FAILED(ctx->FinishCommandList(FALSE, lists[i].put())))
+			logger::error("[ShadowThreaded] concurrent FinishCommandList failed (worker {})", i);
+		UtilityPassReplica::FreeShadowWorker(worker);
+	};
+
+	// Worker 0 records inline on this thread; the rest on worker threads. Join before executing.
+	std::vector<std::thread> pool;
+	pool.reserve(n - 1);
+	for (std::uint32_t i = 1; i < n; ++i)
+		pool.emplace_back(recordWorker, i);
+	recordWorker(0);
+	for (auto& t : pool)
+		t.join();
+
+	for (std::uint32_t i = 0; i < n; ++i)
+		if (lists[i])
+			immediate->ExecuteCommandList(lists[i].get(), FALSE);
+
+	guard.Restore();
+
+	if ((++frames & 0x3F) == 1) {
+		std::uint64_t tot = 0;
+		for (auto& mw : g_mapWorkList) tot += mw.passes.size();
+		logger::info("[ShadowThreaded][concurrent] frame {}: workers={} maps={} replayed={} deferredDraws={} atlasHash={:016X}",
+			frames, n, g_mapWorkList.size(), tot, g_deferredDraws.load(std::memory_order_relaxed), HashShadowAtlas(4));
+	}
+}
+
 void ShadowThreaded::InstallHooks()
 {
 	if (hooksInstalled)
 		return;
 
 	auto* device = globals::d3d::device;
-	if (device && SUCCEEDED(device->CreateDeferredContext(0, g_deferred.put())) && g_deferred) {
-		Util::SetResourceName(g_deferred.get(), "ShadowThreaded::DeferredContext");
-		// Count DrawIndexed on the deferred context (vtbl idx 12) for the replay log.
-		auto** vtbl = *reinterpret_cast<void***>(g_deferred.get());
-		g_origDeferredDrawIndexed = reinterpret_cast<DrawIndexed_t>(vtbl[12]);
-		DWORD old = 0;
-		if (VirtualProtect(&vtbl[12], sizeof(void*), PAGE_READWRITE, &old)) {
-			vtbl[12] = reinterpret_cast<void*>(&DrawIndexedCounter);
-			VirtualProtect(&vtbl[12], sizeof(void*), old, &old);
+	// One deferred context per worker (kConcurrent uses workerCount; serial modes use index 0). The
+	// DrawIndexed vtable slot (idx 12) is patched once -- the deferred-context vtable is shared, so
+	// the counter fires for every pool context. Count is best-effort/log-only, so a benign data race
+	// on g_deferredDraws across worker threads is acceptable (relaxed atomic).
+	const std::uint32_t poolSize = std::max<std::uint32_t>(1, workerCount);
+	g_deferredPool.resize(poolSize);
+	bool anyCtx = false;
+	for (std::uint32_t i = 0; i < poolSize; ++i) {
+		if (SUCCEEDED(device->CreateDeferredContext(0, g_deferredPool[i].put())) && g_deferredPool[i]) {
+			Util::SetResourceName(g_deferredPool[i].get(), "ShadowThreaded::DeferredContext");
+			if (!anyCtx) {
+				anyCtx = true;
+				auto** vtbl = *reinterpret_cast<void***>(g_deferredPool[i].get());
+				g_origDeferredDrawIndexed = reinterpret_cast<DrawIndexed_t>(vtbl[12]);
+				DWORD old = 0;
+				if (VirtualProtect(&vtbl[12], sizeof(void*), PAGE_READWRITE, &old)) {
+					vtbl[12] = reinterpret_cast<void*>(&DrawIndexedCounter);
+					VirtualProtect(&vtbl[12], sizeof(void*), old, &old);
+				}
+			}
 		}
-	} else {
-		logger::error("[ShadowThreaded] CreateDeferredContext failed; serial replay disabled");
 	}
+	if (anyCtx)
+		g_deferred = g_deferredPool[0];
+	else
+		logger::error("[ShadowThreaded] CreateDeferredContext failed; replay disabled");
 
 	stl::detour_thunk<RenderShadowmapsHook>(REL::RelocationID(100420, 0));
 	stl::detour_thunk<RenderShadowmapHook>(REL::RelocationID(100820, 0));
@@ -400,8 +630,13 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if (v >= 0 && v <= 2)
+		if (v >= 0 && v <= 4)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
+	}
+	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
+		const int n = atoi(wc);
+		if (n >= 1 && n <= 8)
+			workerCount = static_cast<std::uint32_t>(n);
 	}
 	if (!IsActive())
 		return;

@@ -1408,7 +1408,7 @@ namespace
 			char buf[8] = {};
 			return GetEnvironmentVariableA("CS_UTIL_RE_CSFLUSH", buf, sizeof(buf)) && buf[0] == '1';
 		}();
-		return s_on;
+		return s_on || t_worker != nullptr;  // a bound worker MUST flush onto its own context
 	}
 
 	// CS_UTIL_RE_CSSETUP bitmask: 1=SetupMaterial, 2=SetupTechnique, 4=SetupGeometry route
@@ -1420,7 +1420,7 @@ namespace
 			char buf[16] = {};
 			return GetEnvironmentVariableA("CS_UTIL_RE_CSSETUP", buf, sizeof(buf)) ? atoi(buf) : 0;
 		}();
-		return s_mask;
+		return t_worker ? 31 : s_mask;  // a bound worker MUST use every block-parameterized reimpl
 	}
 
 	// BSEffectShader::SetupGeometryAlphaBlending (1.5.97 0x14131F440) reimplemented against a
@@ -1856,9 +1856,14 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 	if (!v59)
 		return false;
 
-	// Current VS/PS shader objects, set by BeginTechnique (block+0x348 / block+0x350).
-	auto* vs = *reinterpret_cast<std::uint8_t**>(S + 0x348);  // *0x1430281F8
-	auto* ps = *reinterpret_cast<std::uint8_t**>(S + 0x350);  // *0x143028200
+	// BeginTechnique writes the current VS/PS shader objects to the GLOBAL block (0x1430281F8 /
+	// 0x143028200), NOT the caller's block. Propagate them into S so a worker with a PRIVATE block
+	// sees BeginTechnique's output instead of the map-seeded (stale) value; at N=1 S aliases the
+	// global block, so this is a no-op copy (byte-exact-preserving).
+	auto* vs = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x348);
+	auto* ps = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x350);
+	*reinterpret_cast<std::uint8_t**>(S + 0x348) = vs;
+	*reinterpret_cast<std::uint8_t**>(S + 0x350) = ps;
 
 	// PerTechnique CBs to Map/fill/bind: passed private copies, or the shader-owned CBs at N=1.
 	ID3D11Buffer*            vsBuf = vsCB ? vsCB : *reinterpret_cast<ID3D11Buffer**>(vs + 0x18);
@@ -2721,4 +2726,64 @@ void UtilityPassReplica::ResetValidation()
 	firstDivergeSizeMismatch = false;
 	firstDivergeIndex = 0;
 	firstDivergeField = 0;
+}
+
+// ============================================================================================
+// Concurrent shadow fan-out worker binding.
+//
+// A ShadowWorker owns a PRIVATE 0x5D8 render-state block + technique/material/shadow-token cache
+// cells. When bound as the calling thread's t_worker, the byte-exact setup pipeline (forced to
+// CS_UTIL_RE_CSSETUP=31 + flush reimpl via CsSetupMask/CsFlushRequested) reads/writes ONLY this
+// worker's state and records onto its deferred context -- no shared mutable state across threads
+// (skinned passes, whose bone-CB/dyn-VB rings are still global, stay on the serial remainder).
+// ============================================================================================
+class UtilityPassReplica::ShadowWorker
+{
+public:
+	ShadowWorkerState               state;
+	alignas(16) std::uint8_t        block[engine::kSnapshotBytes]{};
+	std::uint32_t                   technique = 0;
+	RE::BSShader*                   shader = nullptr;
+	void*                           material = nullptr;
+	std::uint32_t                   shadowToken = 0;
+};
+
+UtilityPassReplica::ShadowWorker* UtilityPassReplica::MakeShadowWorker(ID3D11DeviceContext* a_ctx, std::uint32_t a_initToken)
+{
+	auto* w = new ShadowWorker();
+	w->shadowToken = a_initToken;
+	w->state.block = w->block;
+	w->state.ctx = a_ctx;
+	w->state.technique = &w->technique;
+	w->state.shader = &w->shader;
+	w->state.material = &w->material;
+	w->state.shadowToken = &w->shadowToken;
+	return w;
+}
+
+void UtilityPassReplica::FreeShadowWorker(ShadowWorker* a_worker)
+{
+	delete a_worker;
+}
+
+void UtilityPassReplica::WorkerSeedMap(ShadowWorker* a_worker, const std::uint8_t* a_mapBlock)
+{
+	// Seed the map's clean RT/viewport/depth block, then force a full re-bind on the first pass and
+	// reset the technique/material change-detection caches so the first replayed pass runs a full
+	// BeginPass/SetupTechnique (a stale cache-hit would skip setup and bind a stale VS/PS pointer).
+	std::memcpy(a_worker->block, a_mapBlock, engine::kSnapshotBytes);
+	*reinterpret_cast<std::uint32_t*>(a_worker->block) = 0xFFFFFFFFu;  // force all main-word dirty bits
+	a_worker->technique = 0;
+	a_worker->shader = nullptr;
+	a_worker->material = nullptr;
+}
+
+void UtilityPassReplica::WorkerBeginScope(ShadowWorker* a_worker)
+{
+	t_worker = &a_worker->state;
+}
+
+void UtilityPassReplica::WorkerEndScope()
+{
+	t_worker = nullptr;
 }

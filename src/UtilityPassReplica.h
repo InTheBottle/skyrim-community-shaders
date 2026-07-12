@@ -181,6 +181,29 @@ public:
 	using ShadowCaptureHook = bool (*)(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags, bool a_canReplicate);
 	void SetShadowCaptureHook(ShadowCaptureHook a_hook) { shadowCaptureHook.store(a_hook, std::memory_order_release); }
 
+	// --- Concurrent shadow fan-out (ShadowThreaded) -------------------------------------------
+	// A ShadowWorker owns a PRIVATE 0x5D8 render-state block + technique/material/shadow-token
+	// caches, so a worker thread can run the byte-exact setup pipeline (all CS_UTIL_RE_CSSETUP
+	// reimpls, forced on when a worker is bound) on its OWN deferred context with zero shared
+	// mutable state -- the precondition for recording shadow-map passes across threads. The
+	// render-thread walk captures the covered passes per map; each worker replays a subset onto
+	// its private context; the command lists execute on the immediate context afterwards.
+	class ShadowWorker;  ///< opaque per-thread worker binding (block + caches + deferred context)
+
+	/// Allocate a worker bound to @p a_ctx (a deferred context). @p a_initToken seeds the private
+	/// shadow-geom-token cache from the global's pre-fan-out value.
+	static ShadowWorker* MakeShadowWorker(ID3D11DeviceContext* a_ctx, std::uint32_t a_initToken);
+	static void          FreeShadowWorker(ShadowWorker* a_worker);
+
+	/// Seed one map's clean render-state block into the worker and reset the per-pass change-
+	/// detection caches so the next flush re-binds the full RT/viewport/depth state.
+	static void WorkerSeedMap(ShadowWorker* a_worker, const std::uint8_t* a_mapBlock);
+
+	/// Bind/clear the worker as the calling thread's active private state (thread_local). Between
+	/// Begin and End, ReplicaRenderPassImmediately reads/writes the worker's block/ctx/caches.
+	static void WorkerBeginScope(ShadowWorker* a_worker);
+	static void WorkerEndScope();
+
 private:
 	UtilityPassReplica() = default;
 

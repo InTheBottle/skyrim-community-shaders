@@ -41,9 +41,14 @@ public:
 	enum class Mode : std::uint32_t
 	{
 		kOff = 0,
-		kCapture = 1,  // M1/M2: observe + log the per-map partition (inline render unchanged).
-		kSerial = 2,   // Phase 0: claim the covered passes, replay them from the mapWorkList on
-		               //          ONE deferred context in map order, ExecuteCommandList in place.
+		kCapture = 1,       // M1/M2: observe + log the per-map partition (inline render unchanged).
+		kSerial = 2,        // Phase 0: claim the covered passes, replay them from the mapWorkList on
+		                    //          ONE deferred context via global-context redirection.
+		kWorkerSerial = 3,  // Phase 1a: replay via a single ShadowWorker (PRIVATE block+caches, no
+		                    //           global redirection) on the render thread -- proves the
+		                    //           worker-block path renders correct shadows before threading.
+		kConcurrent = 4,    // Phase 1b: N worker threads, each recording a subset of the maps onto
+		                    //           its own deferred context; command lists execute in place.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }
@@ -77,7 +82,12 @@ private:
 
 	void InstallHooks();
 
+	// Concurrent replay of the claimed passes across the maps.
+	void ReplayWorkerSerial();  // kWorkerSerial: one ShadowWorker, render thread.
+	void ReplayConcurrent();    // kConcurrent: workerCount threads, one deferred context each.
+
 	std::atomic<Mode> mode{ Mode::kOff };
 	bool              hooksInstalled = false;
 	std::uint64_t     frames = 0;
+	std::uint32_t     workerCount = 2;  // CS_SHADOW_MT_WORKERS (kConcurrent)
 };
