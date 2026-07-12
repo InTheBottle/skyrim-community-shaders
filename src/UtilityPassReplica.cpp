@@ -617,6 +617,9 @@ namespace engine
 	inline REL::Relocation<std::uint8_t*>  g_mainRTDesc{ REL::Offset(0x302BB20) };
 	inline REL::Relocation<float*>         g_utilDepthConst{ REL::Offset(0x1E0DF04) };
 	inline REL::Relocation<std::uint8_t*>  g_dsvDirty{ REL::Offset(0x30284C2) };          // OUT of 0x5D8 block
+	// DS-target table base (unk_14302A4D0 = g_renderer+0x2040); entry i (the depth resource ptr of
+	// target i) is at +152*i. RestoreTechnique compares the bound-RTV cache (S+0x150) against it.
+	inline REL::Relocation<std::uint8_t*>  g_dsTargetTable{ REL::Offset(0x302A4D0) };
 	inline REL::Relocation<std::uint8_t*>  g_focusShadowEnable{ REL::Offset(0x1E0DE43) };
 	inline REL::Relocation<std::uint32_t*> g_focusShadowCount{ REL::Offset(0x31D0FB8) };
 	inline REL::Relocation<std::uint8_t**> g_viewCamera{ REL::Offset(0x31D0E68) };
@@ -690,6 +693,7 @@ namespace
 		std::uint32_t*       technique = nullptr;  // g_currentTechnique cache
 		RE::BSShader**       shader = nullptr;     // g_currentShader cache
 		void**               material = nullptr;   // g_currentMaterial cache
+		std::uint32_t*       shadowToken = nullptr;  // g_shadowGeomToken (dword_141E10660) cache
 	};
 	thread_local ShadowWorkerState* t_worker = nullptr;
 
@@ -703,6 +707,7 @@ namespace
 	inline std::uint32_t&       WsTechnique() { return t_worker ? *t_worker->technique : *engine::g_currentTechnique; }
 	inline RE::BSShader*&       WsShader() { return t_worker ? *t_worker->shader : *engine::g_currentShader; }
 	inline void*&               WsMaterial() { return t_worker ? *t_worker->material : *reinterpret_cast<void**>(engine::g_currentMaterial.address()); }
+	inline std::uint32_t&       WsShadowToken() { return t_worker ? *t_worker->shadowToken : *engine::g_shadowGeomToken; }
 }
 
 void UtilityPassReplica::Setup()
@@ -1010,6 +1015,11 @@ namespace
 	// its OWN copy. Wired behind CsSetupMask bit 8; validated byte-exact via the parity gate at N=1.
 	void SetupGeomAlphaBlendReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3, bool a4);
 	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3);
+	// Block-only reimpls of the two engine restore vfuncs (wired behind CsSetupMask bit 16). They
+	// hardcode the global block + g_shadowGeomToken; a worker restores its OWN block/token cache so
+	// per-pass change detection stays private. Validated byte-exact via the parity gate at N=1.
+	void RestoreTechniqueReplica(std::uint8_t* S, std::uint8_t* shader, std::uint32_t a_technique);
+	void RestoreGeometryReplica(std::uint8_t* S, std::uint8_t* shader, RE::BSRenderPass* a_pass);
 }
 
 void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
@@ -1029,8 +1039,12 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		*engine::g_debugTechnique = a_technique;
 		// BeginPass (0x1413086C0): RestoreTechnique on the outgoing shader, clear the
 		// caches, SetupTechnique on the incoming one, then re-stamp the caches.
-		if (auto* prev = WsShader())
-			EngineCallV<3, void>(prev, WsTechnique());  // RestoreTechnique
+		if (auto* prev = WsShader()) {
+			if (CsSetupMask() & 16)
+				RestoreTechniqueReplica(WsBlock(), reinterpret_cast<std::uint8_t*>(prev), WsTechnique());
+			else
+				EngineCallV<3, void>(prev, WsTechnique());  // RestoreTechnique
+		}
 		WsShader() = nullptr;
 		WsTechnique() = 0;
 		WsMaterial() = nullptr;
@@ -1152,7 +1166,10 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		break;
 	}
 
-	EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
+	if (CsSetupMask() & 16)
+		RestoreGeometryReplica(WsBlock(), reinterpret_cast<std::uint8_t*>(shader), a_pass);
+	else
+		EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
 	*tlsTag = savedTlsTag;
 }
 
@@ -1541,6 +1558,130 @@ namespace
 		if (refCache != newRef) {
 			main |= 0x200;
 			refCache = newRef;
+		}
+	}
+
+	// BSUtilityShader::RestoreGeometry (vf7, 1.5.97 0x141310300) reimplemented against a caller-
+	// supplied block S + the worker's shadow-geom-token cache. Resets the per-pass geometry dirty
+	// caches so the next pass's SetupGeometry re-emits from a clean baseline. Byte-exact.
+	void RestoreGeometryReplica(std::uint8_t* S, std::uint8_t* shader, RE::BSRenderPass* a_pass)
+	{
+		const auto u32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
+		auto&               main = u32(0x00);
+		const std::uint32_t v2 = *reinterpret_cast<std::uint32_t*>(shader + 0x90);
+		std::uint32_t       v3 = main;
+		if (v2 & 0x100000) {
+			if (u32(0xA0)) {
+				v3 = main | 0x40;
+				u32(0xA0) = 0;
+				main |= 0x40;
+			}
+			if (u32(0x88) != 3) {
+				u32(0x88) = 3;
+				const std::uint32_t v4 = v3 | 4;
+				v3 &= ~4u;
+				if (u32(0x8C) != 3)
+					v3 = v4;
+				main = v3;
+			}
+		}
+		if ((v2 & 0x1200) != 0x1200 && a_pass->accumulationHint == 10 &&
+			*reinterpret_cast<std::uint64_t*>(S + 0x90) != 0xFF00000000ull) {
+			v3 |= 8u;
+			*reinterpret_cast<std::uint64_t*>(S + 0x90) = 0xFF00000000ull;
+			main = v3;
+		}
+		std::uint32_t&      token = WsShadowToken();
+		const std::uint32_t t = token;
+		if (t != 13) {
+			if (u32(0xB0) != t) {
+				u32(0xB0) = t;
+				main = v3 | 0x80;
+			}
+			token = 13;
+		}
+	}
+
+	// BSUtilityShader::RestoreTechnique (vf3, 1.5.97 0x14130DD80) reimplemented against a caller-
+	// supplied block S. Resets the RT/DS-binding dirty caches (S+4, S+0x150..0x170) and the raster
+	// caches when the technique's flag bits require it. Byte-exact; tail FUN_14131FCE0 is a no-op.
+	void RestoreTechniqueReplica(std::uint8_t* S, std::uint8_t* shader, std::uint32_t a_technique)
+	{
+		const auto u32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
+		const auto u64 = [&](std::size_t o) -> std::uint64_t& { return *reinterpret_cast<std::uint64_t*>(S + o); };
+		auto&      main = u32(0x00);
+		auto&      dirty4 = u32(0x04);  // unk_143027EB4
+		std::uint32_t v4;
+		if ((a_technique & 0x1E00000) != 0) {
+			std::uint32_t v3 = dirty4;
+			if (u64(0x150)) {  // unk_143028000 (RTV cache 0)
+				v3 = dirty4 | 4;
+				u64(0x150) = 0;
+				dirty4 |= 4u;
+			}
+			if (u64(0x158)) {  // unk_143028008
+				v3 |= 8u;
+				u64(0x158) = 0;
+				dirty4 = v3;
+			}
+			if (u64(0x160)) {  // unk_143028010
+				v3 |= 0x10u;
+				u64(0x160) = 0;
+				dirty4 = v3;
+			}
+			if (u64(0x170)) {  // unk_143028020
+				u64(0x170) = 0;
+				dirty4 = v3 | 0x40;
+			}
+			v4 = main;
+			if (u32(0xA4)) {  // unk_143027F54
+				v4 = main | 0x1000;
+				u32(0xA4) = 0;
+				main |= 0x1000;
+			}
+			if (((a_technique - 43) & 0x2000) != 0) {
+				if (u32(0xB4)) {  // unk_143027F64
+					u32(0xB4) = 0;
+					main = v4 | 0x100;
+				}
+				const std::int32_t dsIdx = EngineCall<std::int32_t>(reinterpret_cast<void*>(engine::GetDepthStencilTargetMain.address()));
+				v4 = main;
+				const std::uint64_t tgt = *reinterpret_cast<std::uint64_t*>(
+					engine::g_dsTargetTable.address() + 152 * static_cast<std::size_t>(dsIdx));
+				if (u64(0x150) == tgt) {
+					dirty4 |= 4u;
+					v4 = main | 1;
+					u64(0x150) = 0;
+					main |= 1;
+					*engine::g_dsvDirty = 0;  // unk_1430284C2 (OUT-of-block DSV dirty byte)
+				}
+				if (u32(0x88) != 3) {  // unk_143027F38
+					u32(0x88) = 3;
+					const std::uint32_t v6 = v4 | 4;
+					v4 &= ~4u;
+					if (u32(0x8C) != 3)  // unk_143027F3C
+						v4 = v6;
+					main = v4;
+				}
+				if (u32(0xA0)) {  // dword_143027F50
+					v4 |= 0x40u;
+					u32(0xA0) = 0;
+					main = v4;
+				}
+			}
+		} else {
+			v4 = main;
+		}
+		if ((*reinterpret_cast<std::uint32_t*>(shader + 0x90) & 0x1200) == 0x1200) {
+			if (u64(0x90) != 0xFF00000000ull) {  // unk_143027F40
+				v4 |= 8u;
+				u64(0x90) = 0xFF00000000ull;
+				main = v4;
+			}
+			if (u32(0xB0) != 1) {  // unk_143027F60
+				u32(0xB0) = 1;
+				main = v4 | 0x80;
+			}
 		}
 	}
 
@@ -2144,7 +2285,7 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 					DW = (U(S, 0x8C) != 3) ? with4 : without4;
 				}
 				const u32 tok = U(S, 0xB0);                                   // unk_143027F60
-				*engine::g_shadowGeomToken = tok;                            // dword_141E10660 (shared cross-pass)
+				WsShadowToken() = tok;                                        // dword_141E10660 (worker-private cache)
 				if (tok) { DW |= 0x80; *reinterpret_cast<u32*>(S + 0xB0) = 0; }
 			}
 		}
