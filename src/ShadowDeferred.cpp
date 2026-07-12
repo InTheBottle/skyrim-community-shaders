@@ -49,6 +49,20 @@ namespace
 		// AV at ~0x109xxx). The unmap FUN_140D6C9E0 (id 75485) already reads the redirected
 		// context and unmaps buffers[currentIndex], so it needs no change.
 		inline REL::Relocation<void* const*>   g_dynVBBuffers{ REL::Offset(0x3025F18) };  // [idx] = ID3D11Buffer*
+
+		// Frame-persistent constant buffers the engine binds ONCE per frame outside the
+		// per-pass dirty-state system (BSGraphics::Renderer::SetPerFrameBuffers 0x140D70290
+		// + Renderer::Begin 0x140D6A0C0, both before the shadow loop) and assumes persist.
+		// A fresh deferred context starts default-state, so we re-bind them ourselves from
+		// the SAME engine globals the engine binds from -- a standalone re-establish, not a
+		// read of the live immediate context (which would data-race once threaded).
+		// RE (AddrLib 524768 / 524754, verified via SetPerFrameBuffers disasm):
+		//   base[923] @ 0x143027E88 = the PerFrame camera CB (FrameBuffer.hlsli 'PerFrame',
+		//     register b12) -> bound to VS b12 AND PS b12.
+		//   base[783] @ 0x143027A28 = a 16-byte engine per-frame CB -> bound to PS b11 only
+		//     (SetPerFrameBuffers is its ONLY binder; SetDirtyStates only updates content).
+		inline REL::Relocation<ID3D11Buffer**> g_perFrameCameraCB{ REL::Offset(0x3027E88) };  // base[923], VS/PS b12
+		inline REL::Relocation<ID3D11Buffer**> g_psB11CB{ REL::Offset(0x3027A28) };            // base[783], PS b11
 	}
 
 	// --- diagnostic: count DrawIndexed calls recorded on the deferred context ---
@@ -194,6 +208,67 @@ namespace
 			}
 		}
 	};
+
+	// STANDALONE re-establishment of the frame-persistent constant-buffer bindings, read
+	// from the engine's own globals + Community Shaders' own buffers -- NOT from a live
+	// context. This is the multithread-ready replacement for PersistentBindings (which
+	// reads the live immediate context and would data-race once workers exist). The exact
+	// set is RE-verified (see the g_perFrameCameraCB/g_psB11CB relocations and the
+	// binding-inventory: VS b12; PS b4 b5 b6 b11 b12; CS b5 b6):
+	//   VS b12       = engine PerFrame camera CB   (base[923])
+	//   PS b11       = engine 16-byte per-frame CB (base[783])
+	//   PS b12       = engine PerFrame camera CB   (base[923])
+	//   PS b4/b5/b6  = CS permutation / shared / feature CB
+	//   CS b5/b6     = CS shared / feature CB
+	// The engine binds VS/PS b12 + PS b11 in SetPerFrameBuffers; CS binds b4/b5/b6 + CS
+	// b5/b6 in Deferred::Renderer_ResetState -- both once per frame before the shadow loop.
+	void BindPersistentStandalone(ID3D11DeviceContext* a_ctx)
+	{
+		// The relocations are always valid addresses post-load; the ID3D11Buffer* stored
+		// there is created at renderer init, long before any shadow scope runs.
+		ID3D11Buffer* const perFrame = *engine::g_perFrameCameraCB;
+		ID3D11Buffer* const psB11 = *engine::g_psB11CB;
+
+		auto* const state = globals::state;
+		ID3D11Buffer* const permutation = (state && state->permutationCB) ? state->permutationCB->CB() : nullptr;
+		ID3D11Buffer* const shared = (state && state->sharedDataCB) ? state->sharedDataCB->CB() : nullptr;
+		ID3D11Buffer* const feature = (state && state->featureDataCB) ? state->featureDataCB->CB() : nullptr;
+
+		// One-shot: log the pointers the standalone path resolved, so they can be diffed
+		// against the mirror's pre-scope inventory (must be identical for provable parity).
+		static bool s_logged = false;
+		if (!s_logged) {
+			s_logged = true;
+			logger::info("[ShadowDeferred] standalone bind sources: VS/PS b12={:p} PS b11={:p} "
+						 "PS/CS b4={:p} b5={:p} b6={:p}",
+				static_cast<void*>(perFrame), static_cast<void*>(psB11),
+				static_cast<void*>(permutation), static_cast<void*>(shared), static_cast<void*>(feature));
+		}
+
+		// VS b12
+		a_ctx->VSSetConstantBuffers(12, 1, &perFrame);
+		// PS b4/b5/b6 (contiguous), then b11, then b12
+		ID3D11Buffer* psSharedRange[3] = { permutation, shared, feature };
+		a_ctx->PSSetConstantBuffers(4, 3, psSharedRange);
+		a_ctx->PSSetConstantBuffers(11, 1, &psB11);
+		a_ctx->PSSetConstantBuffers(12, 1, &perFrame);
+		// CS b5/b6 (contiguous)
+		ID3D11Buffer* csSharedRange[2] = { shared, feature };
+		a_ctx->CSSetConstantBuffers(5, 2, csSharedRange);
+	}
+
+	// A/B fallback: CS_SHADOW_MIRROR_BINDINGS=1 uses the old live-context mirror instead of
+	// the standalone bind, so a scene that regresses can be diffed against the known-good
+	// path. Standalone is the default (multithread-ready); remove the fallback once the
+	// validation layer has confirmed parity across venues.
+	bool MirrorBindingsRequested()
+	{
+		static const bool s_mirror = [] {
+			char buf[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_MIRROR_BINDINGS", buf, sizeof(buf)) && buf[0] == '1';
+		}();
+		return s_mirror;
+	}
 }
 
 void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
@@ -288,16 +363,23 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 			deferred->RSSetScissorRects(savedScissorCount, savedScissors);
 	}
 
-	// Carry over the frame-persistent bindings (per-frame camera CB in VS b12 et al.) that
-	// the engine bound on the immediate context before this scope and never re-binds per
-	// pass. Kept alive past ExecuteCommandList so the immediate context can be
-	// re-established without a full (expensive) RestoreContextState. One-shot inventory
-	// log feeds the follow-up RE. See PersistentBindings for the capture evidence.
+	// Establish the frame-persistent constant-buffer bindings (per-frame camera CB in VS
+	// b12 et al.) that the engine binds on the immediate context before this scope and
+	// never re-binds per pass. Default path is STANDALONE (read from the engine/CS globals,
+	// no live-context read -- multithread-ready). CS_SHADOW_MIRROR_BINDINGS=1 falls back to
+	// the diagnostic live-context mirror for A/B. The mirror also captured the one-shot
+	// inventory that drove this RE; keep it on frame 0 for continued verification.
 	PersistentBindings persistentBindings;
-	persistentBindings.Capture(immediate);
-	persistentBindings.Apply(deferred);
-	if (framesDeferred == 0)
-		persistentBindings.LogInventory();
+	const bool          mirrorBindings = MirrorBindingsRequested();
+	if (mirrorBindings || framesDeferred == 0) {
+		persistentBindings.Capture(immediate);
+		if (framesDeferred == 0)
+			persistentBindings.LogInventory();
+	}
+	if (mirrorBindings)
+		persistentBindings.Apply(deferred);
+	else
+		BindPersistentStandalone(deferred);
 
 	// Retarget the perf-annotation interface at the deferred context for the scope so the
 	// engine's frame-annotation hooks ("Directional Light Shadowmaps" etc.) record their
@@ -353,8 +435,11 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 
 	// Re-establish the immediate context after the state-clearing execute: the
 	// frame-persistent bindings and the pre-scope viewport/scissor captured at entry.
-	persistentBindings.Apply(immediate);
-	persistentBindings.Release();
+	if (mirrorBindings)
+		persistentBindings.Apply(immediate);
+	else
+		BindPersistentStandalone(immediate);
+	persistentBindings.Release();  // no-op when nothing was captured
 	if (savedViewportCount)
 		immediate->RSSetViewports(savedViewportCount, savedViewports);
 	if (savedScissorCount)
