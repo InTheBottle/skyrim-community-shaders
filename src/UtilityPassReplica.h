@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace RE
@@ -95,6 +96,9 @@ public:
 		std::uint64_t a;      ///< normalized arg 1 (pointer value, enum, count...)
 		std::uint64_t b;      ///< normalized arg 2
 		std::uint64_t c;      ///< normalized arg 3 / data hash
+		/// DEBUG (only populated when CS_UTIL_RE_DUMP is set): the written CB dwords for a
+		/// kMapDiscardData record, so DiffWindows can report the exact diverging dword.
+		std::shared_ptr<std::vector<std::uint32_t>> mapData;
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

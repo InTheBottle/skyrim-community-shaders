@@ -3,12 +3,22 @@
 #include "Globals.h"
 #include "State.h"
 
+#include <chrono>
 #include <intrin.h>
 #include <winrt/base.h>
 
 #include <RE/B/BSRenderPass.h>
 #include <RE/B/BSShader.h>
 #include <RE/B/BSUtilityShader.h>
+
+// The replicated setup functions transcribe float math (alpha-test refs, split distances, world-
+// matrix transforms) that Skyrim's 2021 SSE2 build computes as SEPARATE mul then add (two IEEE
+// roundings). This project compiles with /arch:AVX2, under which MSVC contracts `a*b+c` into a
+// single-rounded FMA -- which diverges from the engine by 1 ULP and false-fails the byte-exact
+// parity gate (observed on the SetupGeometry alpha-test ref: engine 0x3E34B4B2 vs FMA 0x3E34B4B3).
+// Disabling FP contraction for this TU makes every replicated multiply-add round exactly like the
+// engine, so the recorded constant-buffer bytes match bit-for-bit.
+#pragma fp_contract(off)
 
 namespace
 {
@@ -18,6 +28,12 @@ namespace
 	// Active recording sink (render thread only; null = recorder disarmed and every
 	// hook below is a single-branch passthrough).
 	std::vector<Recorded>* g_sink = nullptr;
+
+	// DEBUG: dump raw CB bytes for Map records of a target size (CS_UTIL_RE_DUMP=<hex size>), tagged
+	// by window (1=engine, 2=replica), so a content-hash divergence can be traced to the exact dword.
+	int          g_windowTag = 0;
+	std::uint32_t g_dumpMapSize = 0;
+	int          g_dumpCount = 0;
 
 	// WRITE_DISCARD maps opened inside the current window: mapped pointer + size, so the
 	// matching Unmap can hash the bytes the caller wrote. The utility window maps at most
@@ -259,8 +275,15 @@ namespace
 						// cheap; CBs are <= 4 KB, dynamic VB chunks can be larger but
 						// their leading bytes diverge immediately when wrong.
 						const std::uint32_t n = std::min<std::uint32_t>(slotEntry.size ? slotEntry.size : 256u, 4096u);
-						if (!g_filterCs || EngineCaller(_ReturnAddress()))
+						if (!g_filterCs || EngineCaller(_ReturnAddress())) {
 							Record(Kind::kMapDiscardData, 0, reinterpret_cast<std::uint64_t>(res), n, HashBytes(slotEntry.data, n));
+							// When dumping is enabled, snapshot the written dwords onto the record so
+							// DiffWindows can pinpoint the exact diverging dword for any diverging Map.
+							if (g_dumpMapSize && g_sink && !g_sink->empty()) {
+								const auto* p = static_cast<const std::uint32_t*>(slotEntry.data);
+								g_sink->back().mapData = std::make_shared<std::vector<std::uint32_t>>(p, p + n / 4);
+							}
+						}
 						slotEntry = OpenMap{};
 						break;
 					}
@@ -596,8 +619,8 @@ namespace engine
 	inline REL::Relocation<float*>         g_utilDepthConst{ REL::Offset(0x1E0DF04) };
 	inline REL::Relocation<std::uint8_t*>  g_dsvDirty{ REL::Offset(0x30284C2) };          // OUT of 0x5D8 block
 	inline REL::Relocation<std::uint8_t*>  g_focusShadowEnable{ REL::Offset(0x1E0DE43) };
-	inline REL::Relocation<std::uint32_t*> g_focusShadowCount{ REL::Offset(0x1D0FB8) };
-	inline REL::Relocation<std::uint8_t**> g_viewCamera{ REL::Offset(0x1D0E68) };
+	inline REL::Relocation<std::uint32_t*> g_focusShadowCount{ REL::Offset(0x31D0FB8) };
+	inline REL::Relocation<std::uint8_t**> g_viewCamera{ REL::Offset(0x31D0E68) };
 	inline REL::Relocation<std::uint8_t**> g_shadowSceneNode{ REL::Offset(0x1E0DED0) };
 	inline REL::Relocation<std::uint32_t*> g_shadowFixedCount{ REL::Offset(0x1867188) };
 	inline REL::Relocation<std::uint8_t*>  g_copySplitToVS{ REL::Offset(0x1E0DE4C) };
@@ -606,7 +629,7 @@ namespace engine
 	inline REL::Relocation<float*>         g_poissonRadiusScale{ REL::Offset(0x1E10670) };
 	inline REL::Relocation<float*>         g_fixedSplit{ REL::Offset(0x3283B78) };
 	inline REL::Relocation<float*>         g_maxFocusDist{ REL::Offset(0x1E106B8) };
-	inline REL::Relocation<float**>        g_focusShadowData{ REL::Offset(0x1D0FA8) };
+	inline REL::Relocation<float**>        g_focusShadowData{ REL::Offset(0x31D0FA8) };
 	inline REL::Relocation<float*>         g_fadeFracStart{ REL::Offset(0x1E106A0) };
 	inline REL::Relocation<float*>         g_shadowRadius{ REL::Offset(0x1E10B78) };
 	inline REL::Relocation<float*>         g_shadowSign{ REL::Offset(0x1E10B7C) };
@@ -621,10 +644,10 @@ namespace engine
 	inline REL::Relocation<void*> SG_ScissorApply{ REL::Offset(0xD6FCF0) };
 	inline REL::Relocation<void*> SG_WorldToView{ REL::Offset(0xD42C50) };
 	inline REL::Relocation<void*> SG_GetAccumulator{ REL::Offset(0x12966A0) };
-	inline REL::Relocation<std::uintptr_t> SG_pCamNode{ REL::Offset(0x1D0F88) };
-	inline REL::Relocation<std::uintptr_t> SG_pViewFrustumObj{ REL::Offset(0x1D0E68) };
-	inline REL::Relocation<std::uintptr_t> SG_pFadeExclude{ REL::Offset(0x1D0DA8) };
-	inline REL::Relocation<std::uintptr_t> SG_mode1D0E28{ REL::Offset(0x1D0E28) };
+	inline REL::Relocation<std::uintptr_t> SG_pCamNode{ REL::Offset(0x31D0F88) };
+	inline REL::Relocation<std::uintptr_t> SG_pViewFrustumObj{ REL::Offset(0x31D0E68) };
+	inline REL::Relocation<std::uintptr_t> SG_pFadeExclude{ REL::Offset(0x31D0DA8) };
+	inline REL::Relocation<std::uintptr_t> SG_mode1D0E28{ REL::Offset(0x31D0E28) };
 	inline REL::Relocation<std::uintptr_t> SG_flagDE4C{ REL::Offset(0x1E0DE4C) };
 	inline REL::Relocation<std::uintptr_t> SG_modeDF94{ REL::Offset(0x1E0DF94) };
 	inline REL::Relocation<std::uintptr_t> SG_windFadeMin{ REL::Offset(0x1E0DF70) };
@@ -763,7 +786,15 @@ void UtilityPassReplica::BeginWindow(std::vector<RecordedCall>& a_sink)
 	a_sink.clear();
 	g_openMaps.fill({});
 	g_sink = &a_sink;
+	g_windowTag = (&a_sink == &engineWindow) ? 1 : 2;
 	g_filterCs = true;
+	static const bool s_dumpInit = [] {
+		char buf[16] = {};
+		if (GetEnvironmentVariableA("CS_UTIL_RE_DUMP", buf, sizeof(buf)))
+			g_dumpMapSize = static_cast<std::uint32_t>(strtoul(buf, nullptr, 16));
+		return true;
+	}();
+	(void)s_dumpInit;
 }
 
 void UtilityPassReplica::EndWindow()
@@ -778,6 +809,42 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 	const bool isUtility = a_pass && a_pass->shader &&
 	                       a_pass->shader->shaderType.get() == RE::BSShader::Type::Utility;
 	if (!isUtility || GetMode() == Mode::kOff) {
+		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		return;
+	}
+
+	// Only replicate in fully-SETTLED in-world rendering. Load-screen / main-menu 3D renders (the
+	// rotating loading-screen model, the main-menu preview) AND the world-init window right after a
+	// save load drive utility shadow passes with transiently-uninitialized shadow state -- the
+	// focus-shadow array, the shadow camera node (*0x1431D0F88), the scene light list, and
+	// per-shader constant buffers are all mid-init. Worse, the load->gameplay transition renders
+	// utility passes from TWO threads (the loading-screen renderer vs the main render thread, see
+	// the ownership note below): the loading-screen thread tears down/rebuilds the shadow camera
+	// while the main-thread replica is mid-compare, so the camera/light pointers flip to garbage
+	// BETWEEN the engine and replica windows. The engine tolerates all this by rendering each pass
+	// once; the double-rendering replica re-reads the raced transient and faults. No instantaneous
+	// flag is race-proof, so gate on the standard CS "in world" signal (player + parent cell + no
+	// main/loading menu) AND require it to have held continuously for a short settle window, so the
+	// transition race is fully past before the replica runs. Outside that, the engine draws as-is.
+	auto* const player = RE::PlayerCharacter::GetSingleton();
+	const bool  rawInWorld = player && player->GetParentCell() &&
+	                     globals::state && !globals::state->IsMainOrLoadingMenuOpen();
+	// s_everUnsettled makes the latch fail CLOSED: the replica stays off until at least one
+	// unsettled pass has been observed (always true at boot/menu/load), so an auto-load that
+	// jumps straight to an in-world pass cannot bypass the settle window with a stale timestamp.
+	static std::atomic<bool>         s_everUnsettled{ false };
+	static std::atomic<std::int64_t> s_lastUnsettledMs{ 0 };
+	const std::int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                               std::chrono::steady_clock::now().time_since_epoch())
+	                               .count();
+	if (!rawInWorld) {
+		s_everUnsettled.store(true, std::memory_order_relaxed);
+		s_lastUnsettledMs.store(nowMs, std::memory_order_relaxed);
+	}
+	constexpr std::int64_t kSettleMs = 750;
+	const bool settled = rawInWorld && s_everUnsettled.load(std::memory_order_relaxed) &&
+	                     (nowMs - s_lastUnsettledMs.load(std::memory_order_relaxed)) >= kSettleMs;
+	if (!settled) {
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
@@ -956,8 +1023,15 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		WsShader() = nullptr;
 		WsTechnique() = 0;
 		WsMaterial() = nullptr;
-		if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
-			return;  // engine bails the whole pass on setup failure
+		if (CsSetupMask() & 2) {
+			// PerTechnique CBs resolved inside (block+0x348/0x350 are only set by BeginTechnique).
+			if (!FlushSetupTechniqueReplica(WsCtx(), nullptr, nullptr, WsBlock(),
+					shader, static_cast<std::int32_t>(a_technique)))
+				return;  // engine bails the whole pass on setup failure
+		} else {
+			if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
+				return;  // engine bails the whole pass on setup failure
+		}
 		WsShader() = shader;
 		WsTechnique() = a_technique;
 	}
@@ -1015,7 +1089,17 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
 		}
 	}
-	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
+	if (CsSetupMask() & 4) {
+		auto* Sg = WsBlock();
+		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
+		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
+		FlushSetupGeometryReplica(WsCtx(),
+			vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
+			psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
+			Sg, shader, a_pass);
+	} else {
+		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
+	}
 
 	// ---- Draw dispatch (0x141307160) on GeometryType (geom+0x150) ----
 	auto* rd = *reinterpret_cast<engine::TriShapeData**>(geomBytes + 0x138);
@@ -1403,7 +1487,686 @@ namespace
 			EngineCallV<7, void>(ctx, 1u, 1u, &vsCB);
 		}
 	}
+
+// The anonymous namespace opened above stays open through the next two definitions; it closes
+// after FlushSetupGeometryReplica, before the UtilityPassReplica class-method definitions.
+
+// Load-screen transient guard. During load-screen shadow rendering (a BSShadowParabolicLight
+// pass under the MistMenu) some shader PerTechnique/PerGeometry CBs are momentarily unmapped
+// (their buffer pointer is null) while the pass still runs. The engine tolerates this because it
+// renders each pass exactly once; the compare/replace replica re-renders the pass and can read
+// the transient. Routing a CB write to a per-thread scratch when the mapped pointer is null keeps
+// the replica from faulting. In steady in-world rendering every CB the replica fills IS mapped
+// (non-null), so the scratch is never used and the parity gate stays byte-exact. Sized for the
+// largest register offset (4 * 255 + a 16-byte movups tail).
+inline std::uint8_t* CbOrScratch(std::uint8_t* mapped)
+{
+	alignas(16) static thread_local std::uint8_t s_scratch[1088];
+	return mapped ? mapped : s_scratch;
 }
+
+// Canonical user-space pointer test. The in-world settle latch keeps the replica off during load,
+// but the load->gameplay boundary still leaves some shadow objects reachable-yet-uninitialized for
+// a pass or two -- e.g. a valid shadow light (v30) whose light._ptr is momentarily a garbage,
+// non-canonical value. Guarding an object deref on this test skips only those transient reads; in
+// established gameplay every such pointer is a real heap object, so the guard never fires and the
+// parity gate stays byte-exact.
+inline bool IsCanonicalPtr(const void* p)
+{
+	const auto v = reinterpret_cast<std::uintptr_t>(p);
+	return v >= 0x10000 && v < 0x0000800000000000ull;
+}
+
+// BSUtilityShader::SetupTechnique (vf2, 1.5.97 0x14130DF90) reimplemented against a caller-
+// supplied context + the two PerTechnique constant buffers + the 0x5D8 state block S. Runs the
+// technique->VS/PS index lookups + BeginTechnique (which VS/PS-binds, routed via EngineCall so
+// the recorder captures it), maps/fills/binds the PerTechnique CBs (slot 0) with the shadow /
+// depth / split / poisson / focus constants at the shader-declared byte offsets. At N=1 vsCB/psCB
+// are null and the shader-owned CBs (vs+0x18 / ps+0x10) are resolved internally, so it is
+// byte-identical. Returns BeginTechnique's result; the caller must bail the whole pass on false.
+bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3D11Buffer* psCB,
+                                std::uint8_t* S, RE::BSShader* a1, std::int32_t a2)
+{
+	// ---- 0x5D8 render-state block accessors (S = 0x143027EB0 at N=1) ----
+	const auto u32    = [&](std::size_t o) { return *reinterpret_cast<std::uint32_t*>(S + o); };
+	const auto setU32 = [&](std::size_t o, std::uint32_t v) { *reinterpret_cast<std::uint32_t*>(S + o) = v; };
+	const auto orU32  = [&](std::size_t o, std::uint32_t v) { *reinterpret_cast<std::uint32_t*>(S + o) |= v; };
+	const auto u8b    = [&](std::size_t o) { return *reinterpret_cast<std::uint8_t*>(S + o); };
+	const auto setU8  = [&](std::size_t o, std::uint8_t v) { *reinterpret_cast<std::uint8_t*>(S + o) = v; };
+	const auto f32S   = [&](std::size_t o) { return *reinterpret_cast<float*>(S + o); };
+	const auto qw     = [&](std::size_t o) { return *reinterpret_cast<std::uint64_t*>(S + o); };
+	const auto setQw  = [&](std::size_t o, std::uint64_t v) { *reinterpret_cast<std::uint64_t*>(S + o) = v; };
+	const auto wf     = [](std::uint8_t* base, std::size_t byteOff, float v) { *reinterpret_cast<float*>(base + byteOff) = v; };
+
+	const std::int32_t v2 = a2 - 0x2B;
+
+	// Technique -> VS/PS shader-index lookups (pure CPU, no context calls) then BeginTechnique
+	// (0x14131FBD0) which internally VSSetShader/PSSetShader-binds -- routed via EngineCall so
+	// its (possibly tail-called) binds carry the out-of-module return address and are captured.
+	const std::uint32_t vsIndex = EngineCall<std::uint32_t>(reinterpret_cast<void*>(engine::UtilVSIndex.address()), static_cast<std::uint32_t>(v2));   // FUN_141334900
+	const std::uint32_t psIndex = EngineCall<std::uint32_t>(reinterpret_cast<void*>(engine::UtilPSIndex.address()), static_cast<std::uint32_t>(v2));   // FUN_141334970
+
+	const bool v6 = ((v2 & 0x14000) == 0x14000) ||
+	                (((v2 & 0x20004000) != 0x4000) && ((v2 & 0x1E02000) != 0x2000)) ||
+	                ((v2 & 0x80) != 0) ||
+	                ((v2 & 0x14000) == 0x10000);
+
+	const bool v59 = EngineCall<bool>(reinterpret_cast<void*>(engine::BeginTechnique.address()), a1, vsIndex, psIndex, !v6);
+	if (!v59)
+		return false;
+
+	// Current VS/PS shader objects, set by BeginTechnique (block+0x348 / block+0x350).
+	auto* vs = *reinterpret_cast<std::uint8_t**>(S + 0x348);  // *0x1430281F8
+	auto* ps = *reinterpret_cast<std::uint8_t**>(S + 0x350);  // *0x143028200
+
+	// PerTechnique CBs to Map/fill/bind: passed private copies, or the shader-owned CBs at N=1.
+	ID3D11Buffer*            vsBuf = vsCB ? vsCB : *reinterpret_cast<ID3D11Buffer**>(vs + 0x18);
+	D3D11_MAPPED_SUBRESOURCE mapped{};  // == var_C8 (reused as the powf scratch far below)
+
+	if (vsBuf) {
+		EngineCallV<14, HRESULT>(ctx, vsBuf, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map VS CB
+		*reinterpret_cast<void**>(vs + 0x20) = mapped.pData;                              // shader+0x20 = pData
+	}
+	ID3D11Buffer* psBuf = nullptr;
+	if (v6) {
+		psBuf = psCB ? psCB : *reinterpret_cast<ID3D11Buffer**>(ps + 0x10);
+		if (psBuf) {
+			EngineCallV<14, HRESULT>(ctx, psBuf, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map PS CB
+			*reinterpret_cast<void**>(ps + 0x18) = mapped.pData;                              // shader+0x18 = pData
+		}
+	}
+
+	// Technique flags on the shader object (BSShader+0x90 / +0x94).
+	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x90) = static_cast<std::uint32_t>(v2);
+	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x94) = static_cast<std::uint32_t>(v2 & 0x7F);
+
+	// The engine reloads [shader+0x20]/[shader+0x18] lazily at each fill site; hoisting here is
+	// equivalent because pDataVS is consumed only in VS fills (vs always present) and pDataPS
+	// only in PS fills (ps present). A vertex-only technique (v6 false) leaves ps null, so the
+	// deref must be guarded. CbOrScratch also absorbs the load-screen transient where the CB is
+	// momentarily unmapped (see the note above); in steady state both are the mapped pointers.
+	auto* pDataVS = CbOrScratch(vs ? *reinterpret_cast<std::uint8_t**>(vs + 0x20) : nullptr);
+	auto* pDataPS = CbOrScratch(ps ? *reinterpret_cast<std::uint8_t**>(ps + 0x18) : nullptr);
+
+	// -- Block 1: VS PerTechnique depth constants (offset vs[0x53]) --
+	if ((v2 & 0x1E00100) == 0x100) {
+		const std::size_t o = 4u * vs[0x53];
+		const float*      c = engine::g_utilDepthConst.get();  // xmmword_141E0DF04 (4 floats)
+		wf(pDataVS, o + 0, c[0] - f32S(0x35C));                // - unk_14302820C (block-local)
+		wf(pDataVS, o + 4, c[1] - f32S(0x360));                // - qword_143028210 (block-local, dword)
+		wf(pDataVS, o + 8, c[2] - 15.0f);                      // - dword_1415E29B4
+		wf(pDataVS, o + 12, c[3] - 15.0f);
+	}
+
+	if (v2 & 0x1E00000) {
+		// ---- shadow-cascade setup (writes PS CB + block dirty bits) ----
+		std::uint8_t  v16 = u8b(0xB4);   // unk_143027F64 (byte)
+		std::uint32_t flags = u32(0x00); // dword_143027EB0 (cached, threaded exactly as the asm)
+		if (v16) {
+			v16 = 0;
+			flags |= 0x100;
+			setU8(0xB4, 0);
+			setU32(0x00, flags);
+		}
+
+		const std::uint8_t off47 = ps[0x47];  // ShadowSampleParam base (PS CB)
+
+		if (v2 & 0x2000) {
+			if (v16) {
+				flags |= 0x100;
+				setU8(0xB4, 0);
+				setU32(0x00, flags);
+			}
+			if (v2 & 0x200000) {
+				if (u32(0x88) != 0) {  // unk_143027F38
+					const std::uint32_t alt = flags | 4u;
+					std::uint32_t       nf = flags & ~4u;
+					if (u32(0x8C) != 0)  // unk_143027F3C
+						nf = alt;
+					setU32(0x88, 0);
+					setU32(0x00, nf);
+				}
+			} else {
+				if (u32(0x88) != 5) {
+					const bool eq = (u32(0x8C) == 5);
+					setU32(0x88, 5);
+					flags = eq ? (flags & ~4u) : (flags | 4u);
+					setU32(0x00, flags);
+				}
+			}
+
+			// 1/width, 1/height into PS CB at ps[0x4A]; .z/.w = 0.
+			auto* const         rtDesc = reinterpret_cast<void*>(engine::g_mainRTDesc.get());  // &unk_14302BB20
+			const std::size_t   o4A = 4u * ps[0x4A];
+			const std::uint32_t w = EngineCall<std::uint32_t>(reinterpret_cast<void*>(engine::RTGetWidth.address()), rtDesc);   // FUN_140D74C20
+			wf(pDataPS, o4A + 0, 1.0f / static_cast<float>(w));
+			const std::uint32_t h = EngineCall<std::uint32_t>(reinterpret_cast<void*>(engine::RTGetHeight.address()), rtDesc);  // FUN_140D74C60
+			*reinterpret_cast<std::uint64_t*>(pDataPS + o4A + 8) = 0;
+			wf(pDataPS, o4A + 4, 1.0f / static_cast<float>(h));
+
+			// Depth-target SRV cache -> RT dirty (bit0) + PS-SRV masks. rtPool base = &g_renderer.
+			auto* const        rtPool = reinterpret_cast<std::uint8_t*>(engine::g_renderer.address());  // 0x143028490
+			const std::int32_t dsIdx = EngineCall<std::int32_t>(reinterpret_cast<void*>(engine::GetDepthStencilTargetMain.address()));
+			const std::uint64_t depthSRV = dsIdx == -1 ? 0ull :
+				*reinterpret_cast<std::uint64_t*>(rtPool + 152u * static_cast<std::size_t>(dsIdx) + 0x2040);
+			if (qw(0x150) != depthSRV) {  // unk_143028000
+				orU32(0x04, 4);           // unk_143027EB4
+				orU32(0x00, 1);
+				setQw(0x150, depthSRV);
+				*engine::g_dsvDirty = 1;  // unk_1430284C2 (OUT of block)
+			}
+			std::uint32_t v27 = u32(0x08);  // unk_143027EB8
+			if (u32(0xC4) != 0) {           // unk_143027F74
+				v27 |= 4;
+				setU32(0xC4, 0);
+				setU32(0x08, v27);
+			}
+			if (u32(0x104) != 0) {  // unk_143027FB4
+				setU32(0x104, 0);
+				setU32(0x08, v27 | 4);
+			}
+			if (*engine::g_focusShadowEnable /*byte_141E0DE43*/ && *engine::g_focusShadowCount != 0) {
+				const std::int32_t  dsIdx2 = EngineCall<std::int32_t>(reinterpret_cast<void*>(engine::GetDepthStencilTargetMain.address()));
+				const std::uint64_t stencilSRV = dsIdx2 == -1 ? 0ull :
+					*reinterpret_cast<std::uint64_t*>(rtPool + 152u * static_cast<std::size_t>(dsIdx2) + 0x2048);
+				if (qw(0x168) != stencilSRV) {  // unk_143028018
+					orU32(0x04, 0x20);
+					orU32(0x00, 1);
+					setQw(0x168, stencilSRV);
+					*engine::g_dsvDirty = 1;
+				}
+			}
+			if (u32(0xA0) != 1) {  // dword_143027F50 -> raster dirty (bit6)
+				orU32(0x00, 0x40);
+				setU32(0xA0, 1);
+			}
+		}
+
+		// ---- camera-relative split distances into PS CB ----
+		auto* const cam = *engine::g_viewCamera;  // unk_1431D0E68
+		const float camNear = *reinterpret_cast<float*>(cam + 0x160);
+		const float camFar = *reinterpret_cast<float*>(cam + 0x164);
+
+		if (v2 & 0x200000) {
+			auto* const        ssn = *engine::g_shadowSceneNode;                     // shadowSceneNode
+			auto* const        sunDL = *reinterpret_cast<std::uint8_t**>(ssn + 0x210);  // sunShadowDirLight
+			auto* const        endArr = pDataPS + 4u * ps[0x4B];                     // EndSplitDistances
+			auto* const        startArr = pDataPS + 4u * ps[0x4C];                   // StartSplitDistances
+			const std::int32_t count = *reinterpret_cast<std::int32_t*>(sunDL + 0x140);  // shadowMapCount
+			const float        farNear = camFar * camNear;                          // hoisted (matches asm)
+			const float        farMinusNear = camFar - camNear;
+			for (std::int32_t i = 0; i < count; ++i) {
+				const float end = *reinterpret_cast<float*>(sunDL + 4 * i + 0x5A4);
+				wf(endArr, 4u * i, (end * camFar - farNear) / (farMinusNear * end));
+				const float start = *reinterpret_cast<float*>(sunDL + 4 * i + 0x598);
+				wf(startArr, 4u * i, (start * camFar - farNear) / (start * farMinusNear));
+			}
+			const std::int32_t lastIdx = count - 1;
+			*reinterpret_cast<std::uint32_t*>(endArr + 8) = *reinterpret_cast<std::uint32_t*>(endArr + 4 * lastIdx);
+			wf(endArr, 12, static_cast<float>(count));
+			wf(startArr, 12, static_cast<float>(*engine::g_shadowFixedCount));  // dword_141867188
+			if (*engine::g_copySplitToVS /*byte_141E0DE4C*/) {
+				const std::size_t ov = 4u * vs[0x53];
+				*reinterpret_cast<std::uint32_t*>(pDataVS + ov + 0) = *reinterpret_cast<std::uint32_t*>(endArr + 0);
+				*reinterpret_cast<std::uint32_t*>(pDataVS + ov + 4) = *reinterpret_cast<std::uint32_t*>(endArr + 4);
+				*reinterpret_cast<std::uint32_t*>(pDataVS + ov + 8) = *reinterpret_cast<std::uint32_t*>(endArr + 8);
+				*reinterpret_cast<std::uint32_t*>(pDataVS + ov + 12) = 0;
+			}
+			if (static_cast<std::uint32_t>(*engine::g_shadowMode - 2u) <= 1u) {  // dword_141E0DE34
+				const float denom = static_cast<float>(*engine::g_poissonDenom);  // unk_143283B90
+				const float poisson = *engine::g_poissonRadiusScale;              // fPoissonRadiusScale_141E10670
+				wf(pDataPS, 4u * off47 + 8, poisson / denom);
+				wf(pDataPS, 4u * off47 + 12, poisson / denom);
+			}
+		} else {
+			wf(pDataPS, 4u * ps[0x4B], *engine::g_fixedSplit);                                 // unk_143283B78
+			wf(pDataPS, 4u * ps[0x4B] + 4, static_cast<float>(*engine::g_shadowFixedCount));   // dword_141867188
+			wf(pDataPS, 4u * ps[0x4C] + 12, static_cast<float>(*engine::g_shadowFixedCount));
+			if (u32(0xA4) != 1) {  // unk_143027F54 -> bit12
+				orU32(0x00, 0x1000);
+				setU32(0xA4, 1);
+			}
+			if (static_cast<std::uint32_t>(*engine::g_shadowMode - 2u) <= 1u) {
+				const float denom = static_cast<float>(*engine::g_poissonDenom);
+				const float poisson = *engine::g_poissonRadiusScale;
+				const float v42 = poisson / denom;
+				wf(pDataPS, 4u * off47 + 8, v42);
+				wf(pDataPS, 4u * off47 + 12, poisson * v42);
+			}
+		}
+
+		// ---- focus-shadow fade weights into PS CB (offset ps[0x4D]) ----
+		auto* const focusArr = pDataPS + 4u * ps[0x4D];
+		const std::uint32_t n = *engine::g_focusShadowCount;                                    // unk_1431D0FB8 (._used)
+		const float*        fdata = *engine::g_focusShadowData;                                 // *(unk_1431D0FA8) heap array (stride 16B)
+		// The engine reads fdata guarded only by (focusArr && n>0), relying on the invariant
+		// n>0 => fdata valid. That holds in steady state but is transiently violated during
+		// load-screen shadow rendering (a BSShadowParabolicLight pass sees n>0 with fdata a
+		// non-canonical pointer, mid-init). Guard on a canonical user-space pointer so the load
+		// transient is skipped; in steady state fdata is always a valid heap pointer, so this
+		// never changes behavior and stays byte-exact under the parity gate.
+		const bool fdataValid = fdata && reinterpret_cast<std::uintptr_t>(fdata) < 0x0000800000000000ull;
+		if (focusArr && fdataValid) {
+			const float        maxDistSq = (*engine::g_maxFocusDist) * (*engine::g_maxFocusDist);  // fMaxFocusShadowMapDistance
+			for (std::uint32_t i = 0; i < n; ++i) {
+				const float thresh = *engine::g_fadeFracStart * maxDistSq;  // fFadingFracStart_141E106A0
+				const float d = fdata[4 * i];
+				const float wv = (d >= thresh) ? (maxDistSq - d) / (maxDistSq - thresh) : 1.0f;
+				wf(focusArr, 4u * i, wv);
+			}
+		}
+	} else {
+		// (v2 & 0x1E00000)==0: only the biased-depth PS constants (powf-interpolated pair).
+		if ((v2 & 0x40000) && v6) {
+			float*      scratch = reinterpret_cast<float*>(&mapped);  // reuses var_C8 (D3D11_MAPPED_SUBRESOURCE)
+			const float base = *engine::g_biasBase;                   // MEMORY[0x143283B7C]
+			const float v53 = base * 0.2f;
+			const float v54 = base - 5.0f;
+			for (int i = 0; i < 2; ++i) {
+				const float t = (static_cast<float>(i) + 1.0f) * 0.5f;
+				const float p = EngineCall<float>(reinterpret_cast<void*>(engine::PowF.address()), v53, t);  // thunk_powf_14134BEAC
+				scratch[i] = (p * 5.0f * 0.5f) + ((v54 * t + 5.0f) * 0.5f);
+			}
+			std::memcpy(pDataPS + 4u * ps[0x4B], &mapped, 16);  // movups: 2 computed + 2 map-struct tail bytes
+		}
+	}
+
+	// ---- tail: blend enable + shadow-radius (VS CB) + alpha-CB dirty ----
+	if ((v2 & 0x20004000) == 0x4000) {
+		if (u32(0xA8) != 0) {  // unk_143027F58 -> blend dirty (bit7)
+			orU32(0x00, 0x80);
+			setU32(0xA8, 0);
+		}
+		if (v2 & 0x10000) {
+			const std::size_t o = 4u * vs[0x54];
+			wf(pDataVS, o + 0, 1.0f / *engine::g_shadowRadius);  // ShadowRadiusMaybe_141E10B78
+			wf(pDataVS, o + 4, *engine::g_shadowSign);           // ShadowSign_141E10B7C
+		}
+	}
+	if (v2 & 0x100000) {
+		if (u8b(0xB4) != 0) {  // unk_143027F64 -> alpha-CB dirty (bit8)
+			orU32(0x00, 0x100);
+			setU8(0xB4, 0);
+		}
+	}
+
+	// ---- Unmap + bind the PerTechnique CBs to slot 0 ----
+	if (vsBuf)
+		EngineCallV<15, void>(ctx, vsBuf, 0u);  // Unmap VS CB
+	if (v6) {
+		if (psBuf)
+			EngineCallV<15, void>(ctx, psBuf, 0u);   // Unmap PS CB
+		EngineCallV<7, void>(ctx, 0u, 1u, &vsBuf);   // VSSetConstantBuffers(slot0, 1, &vsBuf)
+		EngineCallV<16, void>(ctx, 0u, 1u, &psBuf);  // PSSetConstantBuffers(slot0, 1, &psBuf)
+	} else {
+		EngineCallV<7, void>(ctx, 0u, 1u, &vsBuf);   // VSSetConstantBuffers(slot0, 1, &vsBuf)
+	}
+
+	return v59;
+}
+
+// BSUtilityShader::SetupGeometry (vf6, 1.5.97 0x14130EC70) reimplemented against a caller-supplied
+// context + the two PerGeometry constant buffers + the 0x5D8 state block S. Fills the PerGeometry
+// VS CB (slot 2) and PS CB (slot 2) from the pass geometry / shader-property / shadow-light data.
+// The register indices come from the shared VS/PS shader objects (block+0x348 / +0x350); only the
+// buffers are private. Every D3D11 call routes through EngineCallV so the compare recorder captures
+// it identically; the pure-CPU engine helpers (matrix build/transpose, shadow fill, scissor mutate,
+// accumulator/property accessors) are EngineCall'd and issue no context call. At N=1 vsCB/psCB are
+// the shader-owned CBs (VS+0x38 / PS+0x30) so the fill is byte-identical.
+void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3D11Buffer* psCB,
+                               std::uint8_t* S, RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
+{
+	using u8v = std::uint8_t;
+	using u32 = std::uint32_t;
+	using i32 = std::int32_t;
+
+	auto* shader = reinterpret_cast<u8v*>(a_shader);
+	auto* pass   = reinterpret_cast<u8v*>(a_pass);
+
+	const auto F  = [](u8v* p, std::size_t o) -> float { return *reinterpret_cast<float*>(p + o); };
+	const auto U  = [](u8v* p, std::size_t o) -> u32 { return *reinterpret_cast<u32*>(p + o); };
+	const auto PP = [](u8v* p, std::size_t o) -> u8v* { return *reinterpret_cast<u8v**>(p + o); };
+	const auto RELf = [](std::uintptr_t a) -> float { return *reinterpret_cast<float*>(a); };
+
+	// Current VS/PS shader objects (the register-index source), from the state block.
+	u8v* VS = *reinterpret_cast<u8v**>(S + 0x348);   // *0x1430281F8
+	u8v* PS = *reinterpret_cast<u8v**>(S + 0x350);   // *0x143028200
+
+	u8v* v9 = PS ? PS + 0x30 : nullptr;              // PS CB slot object (SetupShadowLightParameters arg3)
+
+	// ---- Map the two PerGeometry CBs (WRITE_DISCARD, subresource 0). ----
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	u8v* vsMapped = nullptr;
+	u8v* psMapped = nullptr;
+	if (vsCB) {
+		EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map
+		vsMapped = reinterpret_cast<u8v*>(mapped.pData);
+		if (VS)
+			*reinterpret_cast<void**>(VS + 0x40) = vsMapped;  // engine v6[1]: store map ptr on the shader
+	}
+	if (PS && psCB) {
+		EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map
+		psMapped = reinterpret_cast<u8v*>(mapped.pData);
+		// BSRenderPass::SetupShadowLightParameters (and other EngineCall'd fill helpers) write the
+		// PS PerGeometry CB via *(ps+0x38) -- the map pointer the engine stashes on the shader object
+		// (v9->_refCount). The replica maps its OWN buffer, so it must store the map pointer here or
+		// the helper writes the stale engine-window buffer (missing the shadow-light matrix + bias).
+		*reinterpret_cast<void**>(PS + 0x38) = psMapped;
+	}
+
+	// CB destinations: mapped + 4 * (register-index byte on the shader object). CbOrScratch
+	// absorbs the load-screen transient where a CB is momentarily unmapped (null base); in
+	// steady state vsMapped/psMapped are the real mapped pointers so this is byte-exact.
+	const auto vcb = [&](std::size_t shOff) -> u8v* { return CbOrScratch(vsMapped) + 4u * static_cast<std::size_t>(VS[shOff]); };
+	const auto pcb = [&](std::size_t shOff) -> u8v* { return CbOrScratch(psMapped) + 4u * static_cast<std::size_t>(PS[shOff]); };
+
+	auto& DW = *reinterpret_cast<u32*>(S + 0);       // dirty word (MEMORY[0x143027EB0], block+0)
+
+	u8v* geom           = *reinterpret_cast<u8v**>(pass + 0x10);  // a2->geometry
+	u8v* shaderProperty = *reinterpret_cast<u8v**>(pass + 0x08);  // a2->shaderProperty
+	u8v* v88            = nullptr;                                 // effect-shader data (alpha-test-ref source)
+
+	const u32 tech = *reinterpret_cast<u32*>(shader + 0x90);       // technique flag (a1->_pad_20[112])
+
+	// ================= world matrix -> VS CB[VS+0x50] (unless tech & 4) =================
+	if ((tech & 4) == 0) {
+		alignas(16) float m44[16];
+		if (EngineCallV<16, void*>(geom)) {          // AsParticlesGeom (geom vfunc 16)
+			// Modified NiTransform: same rotate/scale, translate = world * modelBound.center.
+			alignas(16) float mt[16];
+			u8v*  gw = geom + 0x7C;                    // world (NiTransform)
+			float r[9]; std::memcpy(r, gw, 36);        // rotate 3x3
+			std::memcpy(mt, r, 36);
+			const float sc = F(gw, 0x30);              // world.scale (geom+0xAC)
+			const float cx = F(geom, 0x110), cy = F(geom, 0x114), cz = F(geom, 0x118);  // modelBound.center
+			mt[9]  = F(gw, 0x24) + sc * (r[0] * cx + r[1] * cy + r[2] * cz);  // translate.x + s*(rot*center)
+			mt[10] = F(gw, 0x28) + sc * (r[3] * cx + r[4] * cy + r[5] * cz);
+			mt[11] = F(gw, 0x2C) + sc * (r[6] * cx + r[7] * cy + r[8] * cz);
+			mt[12] = sc;
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(mt));   // FUN_1412c3440
+		} else {
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(geom + 0x7C));  // FUN_1412c3440(&world)
+		}
+		EngineCall<void>(reinterpret_cast<void*>(engine::SG_MatrixTranspose.address()), static_cast<void*>(vcb(0x50)), static_cast<const void*>(m44));  // D3DXMatrixTranspose
+	}
+
+	if (tech & 0x1E00000) {
+		// ============================ SHADOW PATH ============================
+		u8v** sceneLights = pass[0x1F] ? *reinterpret_cast<u8v***>(pass + 0x38) : nullptr;  // numLights ? a2->sceneLights : 0
+		u8v*  v30 = *sceneLights;                                                           // first shadow light
+
+		EngineCall<void>(reinterpret_cast<void*>(engine::SG_ShadowFill.address()), static_cast<void*>(pass), 0);                 // FUN_14130f960 (pure CPU)
+		EngineCall<void>(reinterpret_cast<void*>(engine::SG_SetupShadowLightParams.address()), static_cast<void*>(pass), 0, static_cast<void*>(v9));  // 0x14130fbe0 (pure CPU)
+
+		// lodFade constant -> VS CB[VS+0x55].x and PS CB[PS+0x48].z (raw dword copy)
+		const u32 v32 = v30[0x63] ? *reinterpret_cast<u32*>(engine::SG_c283B88.address()) : 1287568416u;  // dword_141667CD0
+		*reinterpret_cast<u32*>(vcb(0x55))       = v32;
+		*reinterpret_cast<u32*>(pcb(0x48) + 8)   = v32;
+
+		// falloff -> PS CB[PS+0x48].x
+		if (tech & 0x1800000) {
+			u8v* lgtR = PP(v30, 0x48);
+			if (IsCanonicalPtr(lgtR))
+				*reinterpret_cast<u32*>(pcb(0x48)) = U(lgtR, 0x128);   // v30->light->radius.x
+		} else if (tech & 0x400000) {
+			*reinterpret_cast<u32*>(pcb(0x48)) = U(v30, 0x568);            // v30->falloff
+		}
+
+		if (!(tech & 0x200000)) {
+			// spot/point sub-branch. NOTE: FUN_140d70100 MUTATES the renderer scissor global
+			// (0x143028490); the pure directional cascade (tech & 0x200000) skips it.
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorFromBBox.address()),
+				reinterpret_cast<void*>(engine::g_renderer.address()),
+				U(v30, 0x544), U(v30, 0x550), U(v30, 0x548), U(v30, 0x54C));   // FUN_140d70100(scissor,left,bottom,right,top)
+
+			// camera-relative view-depth falloff -> VS CB[VS+0x55].z. cam (*0x1431D0F88), the light
+			// (v30->light._ptr) and the view frustum (*0x1431D0E68) are all engine objects that can
+			// be momentarily non-canonical at the load boundary; skip the read when any is.
+			u8v* cam = *reinterpret_cast<u8v**>(engine::SG_pCamNode.address());        // *0x1431D0F88
+			u8v* lgt = PP(v30, 0x48);
+			u8v* vf  = *reinterpret_cast<u8v**>(engine::SG_pViewFrustumObj.address());  // *0x1431D0E68
+			if (IsCanonicalPtr(cam) && IsCanonicalPtr(lgt) && IsCanonicalPtr(vf)) {
+				// Bit-exact SSE-scalar transcription of the falloff at 0x14130F02A-F0F7. Plain C
+				// diverged by 1 ULP because MSVC auto-vectorizes/reassociates the dot product; the
+				// _ss intrinsics pin each op to the engine's exact subss/mulss/addss/divss sequence.
+				const auto    ld = [](float f) { return _mm_set_ss(f); };
+				const __m128  dx = _mm_sub_ss(ld(F(lgt, 0xA0)), ld(F(cam, 0xA0)));
+				const __m128  dy = _mm_sub_ss(ld(F(lgt, 0xA4)), ld(F(cam, 0xA4)));
+				const __m128  dz = _mm_sub_ss(ld(F(lgt, 0xA8)), ld(F(cam, 0xA8)));
+				__m128        distv = _mm_mul_ss(ld(F(cam, 0x88)), dy);                  // Data[3]*dy
+				distv = _mm_add_ss(distv, _mm_mul_ss(ld(F(cam, 0x7C)), dx));             // + Data[0]*dx
+				distv = _mm_add_ss(distv, _mm_mul_ss(ld(F(cam, 0x94)), dz));             // + Data[6]*dz
+				distv = _mm_add_ss(distv, ld(F(lgt, 0x128)));                            // + light->radius.x
+				__m128        v36 = ld(v30[0x63] ? RELf(engine::SG_c283B7C.address()) : 10000.0f);
+				if (_mm_comige_ss(v36, distv))                                           // v36 >= distv ? distv : v36
+					v36 = distv;
+				const __m128  farv = ld(F(vf, 0x164));
+				const __m128  nearv = ld(F(vf, 0x160));
+				const __m128  invr = _mm_div_ss(_mm_set_ss(1.0f), _mm_sub_ss(farv, nearv));  // 1/(Far-Near)
+				const __m128  t1 = _mm_mul_ss(_mm_mul_ss(farv, v36), invr);
+				const __m128  t2 = _mm_mul_ss(_mm_mul_ss(farv, nearv), invr);
+				float         v37 = _mm_cvtss_f32(_mm_div_ss(_mm_sub_ss(t1, t2), v36));
+				v37 = (v37 <= 1.0f) ? ((v37 < 0.0f) ? 0.0f : v37) : 1.0f;
+				*reinterpret_cast<float*>(vcb(0x55) + 8) = v37;
+			}
+		}
+
+		if (pass[0x1C] == 10) {  // accumulationHint == 10: paired fade token S+0x90/0x94
+			u8v* fn = PP(shaderProperty, 0x60);
+			const float fade = (pass[0x1E] & 0x80) ? F(fn, 0x14C) : F(fn, 0x130);
+			const u8v   kb   = static_cast<u8v>(static_cast<i32>(fade * 31.0f));  // cvttss2si (truncate) -> low byte
+			if (U(S, 0x90) != 11u || U(S, 0x94) != static_cast<u32>(kb)) {
+				DW |= 8;
+				*reinterpret_cast<u32*>(S + 0x90) = 11;
+				*reinterpret_cast<u32*>(S + 0x94) = kb;
+			}
+		}
+	} else if ((tech & 0x20004000) != 0x4000) {
+		// ======================= MATERIAL / EFFECT PATH =======================
+		if (tech & 0x100000) {
+			v88 = PP(shaderProperty, 0x68);            // effectData
+			u8v* blockOut = v88 ? PP(v88, 0x20) : nullptr;
+			if (v88 && blockOut) {
+				u8v* rd = PP(blockOut, 0x48);
+				std::uintptr_t srv = rd ? *reinterpret_cast<std::uintptr_t*>(rd + 0x10) : 0;  // texture SRV
+				if (*reinterpret_cast<std::uintptr_t*>(S + 0x140) != srv) {   // qword_143027FF0
+					*reinterpret_cast<u32*>(S + 4) |= 1;                      // unk_143027EB4
+					*reinterpret_cast<std::uintptr_t*>(S + 0x140) = srv;
+				}
+				// sampler/addressing state (S+8 accumulator; S+0xBC,0xFC address modes)
+				u32 eb8 = U(S, 8);                                            // unk_143027EB8
+				if (U(S, 0xBC) != 3) { eb8 |= 1; *reinterpret_cast<u32*>(S + 0xBC) = 3; *reinterpret_cast<u32*>(S + 8) = eb8; }
+				if (U(S, 0xFC) != 3) { eb8 |= 1; *reinterpret_cast<u32*>(S + 0xFC) = 3; *reinterpret_cast<u32*>(S + 8) = eb8; }
+				if (U(S, 0xA0) != 1) { DW |= 0x40; *reinterpret_cast<u32*>(S + 0xA0) = 1; }   // dword_143027F50
+				if (U(S, 0x88) != 3) {                                        // unk_143027F38 (+ cmov on S+0x8C)
+					*reinterpret_cast<u32*>(S + 0x88) = 3;
+					const u32 with4 = DW | 4, without4 = DW & ~4u;
+					DW = (U(S, 0x8C) != 3) ? with4 : without4;
+				}
+				const u32 tok = U(S, 0xB0);                                   // unk_143027F60
+				*engine::g_shadowGeomToken = tok;                            // dword_141E10660 (shared cross-pass)
+				if (tok) { DW |= 0x80; *reinterpret_cast<u32*>(S + 0xB0) = 0; }
+			}
+		}
+
+		if ((tech & 0x1E00100) == 0x100) {                                   // world matrix -> VS CB[VS+0x50]
+			alignas(16) float m44b[16];
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44b), static_cast<const void*>(geom + 0x7C));  // FUN_1412c3440
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_MatrixTranspose.address()), static_cast<void*>(vcb(0x50)), static_cast<const void*>(m44b));  // transpose
+		}
+
+		if ((tech & 0x1200) == 0x1200) {
+			// stencil sub-branch. NOTE: FUN_140d6fcf0 MUTATES the renderer scissor global (0x143028490).
+			if (U(S, 0x90) != 1u || U(S, 0x94) != 0xFFu) { DW |= 8; *reinterpret_cast<u32*>(S + 0x90) = 1; *reinterpret_cast<u32*>(S + 0x94) = 0xFF; }
+			if (U(S, 0xB0)) { DW |= 0x80; *reinterpret_cast<u32*>(S + 0xB0) = 0; }
+			if (U(S, 0x88) != 0) {
+				*reinterpret_cast<u32*>(S + 0x88) = 0;
+				const u32 with4 = DW | 4, without4 = DW & ~4u;
+				DW = (U(S, 0x8C) != 0) ? with4 : without4;
+			}
+			*reinterpret_cast<u32*>(vcb(0x57)) = *reinterpret_cast<u32*>(engine::SG_stencilVal014.address());  // dword_141E0E014 -> VS CB[VS+0x57]
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorApply.address()),
+				reinterpret_cast<void*>(engine::g_renderer.address()), static_cast<void*>(PS));  // FUN_140d6fcf0(scissor, PS)
+		} else {
+			if (tech & 0x200) {
+				u8v* d52 = vcb(0x52);
+				if (tech & 0x400) {
+					alignas(16) float mvw[16];
+					EngineCall<void>(reinterpret_cast<void*>(engine::SG_WorldToView.address()), static_cast<void*>(geom + 0x7C), 0, static_cast<void*>(mvw));  // FUN_140d42c50
+					u8v* accum = reinterpret_cast<u8v*>(EngineCall<void*>(reinterpret_cast<void*>(engine::SG_GetAccumulator.address())));                       // GetCurrentAccumulator
+					EngineCall<void>(reinterpret_cast<void*>(engine::SG_Vec3TransformCoord.address()), static_cast<void*>(d52), static_cast<const void*>(accum + 0x16C), static_cast<const void*>(mvw));  // D3DXVec3TransformCoord
+				}
+				*reinterpret_cast<u32*>(d52 + 0xC) = U(shaderProperty, 0x104);
+			}
+
+			if (PS) {
+				if (tech & 0x20000) {
+					// S+0xB0 conditional clear (spatial-fade gate)
+					if (*reinterpret_cast<u8v*>(engine::SG_flagDE4C.address()) &&
+						static_cast<u32>(*reinterpret_cast<u32*>(engine::SG_mode1D0E28.address()) - 16u) <= 1u &&
+						U(S, 0xB0)) {
+						DW |= 0x80; *reinterpret_cast<u32*>(S + 0xB0) = 0;
+					}
+					float extraParam = static_cast<float>(static_cast<u32>(pass[0x1D]));
+					if (*reinterpret_cast<i32*>(engine::SG_modeDF94.address()) == 10) {   // decal-alpha hash lookup
+						u8v* fadeNode = PP(shaderProperty, 0x60);
+						u8v* accum    = reinterpret_cast<u8v*>(EngineCall<void*>(reinterpret_cast<void*>(engine::SG_GetAccumulator.address())));
+						u8v* map      = accum + 0xD0;
+						const u32 idx = EngineCallV<1, u32>(map, static_cast<void*>(fadeNode));         // (map)->vtbl[1](map, fadeNode)
+						u8v* node     = *reinterpret_cast<u8v**>(*reinterpret_cast<std::uintptr_t*>(map + 0x10) + 8ull * idx);
+						i32  found    = 0;
+						while (node) {
+							if (EngineCallV<2, bool>(map, static_cast<void*>(fadeNode), *reinterpret_cast<void**>(node + 8))) {  // (map)->vtbl[2](map, fadeNode, key)
+								found = *reinterpret_cast<i32*>(node + 0x10);
+								break;
+							}
+							node = *reinterpret_cast<u8v**>(node);
+						}
+						extraParam = (static_cast<float>(static_cast<u32>(found)) * 255.0f) / static_cast<float>(U(accum, 0xF0));
+					}
+					const float B = 0.0078125f;                          // 1/128
+					float v61 = (128.0f - extraParam) * B; v61 = (v61 <= 1.0f) ? ((v61 < 0.0f) ? 0.0f : v61) : 1.0f;
+					const float v62 = extraParam - 128.0f;
+					float v63 = (128.0f - std::fabs(v62)) * B; v63 = (v63 <= 1.0f) ? ((v63 < 0.0f) ? 0.0f : v63) : 1.0f;
+					float v64 = v62 * RELf(engine::SG_recip127.address()); v64 = (v64 <= 1.0f) ? ((v64 < 0.0f) ? 0.0f : v64) : 1.0f;
+					u8v* d42 = pcb(0x42);
+					*reinterpret_cast<float*>(d42 + 0)   = v64;
+					*reinterpret_cast<float*>(d42 + 4)   = v61;
+					*reinterpret_cast<float*>(d42 + 8)   = v63;
+					*reinterpret_cast<u32*>(d42 + 0xC)   = 0x3F800000u;   // 1.0
+				} else if (tech & 0x80000) {
+					u8v* accum = reinterpret_cast<u8v*>(EngineCall<void*>(reinterpret_cast<void*>(engine::SG_GetAccumulator.address())));
+					u8v* d42 = pcb(0x42);
+					*reinterpret_cast<u32*>(d42 + 0xC) = 0x3F800000u;     // 1.0
+					*reinterpret_cast<u32*>(d42 + 0)   = U(accum, 0x118); // color.r
+					*reinterpret_cast<u32*>(d42 + 8)   = U(accum, 0x120); // color.b
+					*reinterpret_cast<u32*>(d42 + 4)   = U(accum, 0x11C); // color.g
+				}
+			}
+		}
+	}
+
+	// =========================== wind branch (tech & 0x4000000) ===========================
+	if (tech & 0x4000000) {
+		u8v* d56 = vcb(0x56);
+		u8v* fadeNode = PP(shaderProperty, 0x60);
+		u8v* leaf = nullptr;
+		float v74 = 0.0f;
+		if (fadeNode != *reinterpret_cast<u8v**>(engine::SG_pFadeExclude.address()) && fadeNode) {
+			leaf = reinterpret_cast<u8v*>(EngineCallV<63, void*>(fadeNode));  // AsLeafAnimNode (vfunc 63)
+			if (leaf)
+				v74 = F(leaf, 0x164) * 6.0f;
+		}
+		*reinterpret_cast<float*>(d56 + 0) = v74;
+		*reinterpret_cast<u32*>(d56 + 4)   = U(*reinterpret_cast<u8v**>(engine::g_shadowSceneNode.address()), 0x304);  // windMagnitude
+		float v75 = 0.0f;
+		if (leaf) {
+			float x = F(leaf, 0x158);
+			i32   i = *reinterpret_cast<i32*>(&x);
+			i = 0x5F3759DF - (i >> 1);
+			float y = *reinterpret_cast<float*>(&i);
+			v75 = (1.5f - (x * 0.5f) * y * y) * y * x;   // x * rsqrt(x)
+		}
+		const float wmin = RELf(engine::SG_windFadeMin.address());
+		const float wmax = RELf(engine::SG_windFadeMax.address());
+		float v76 = leaf ? F(leaf, 0x15C) : 1.0f;
+		const float t = (v75 - wmin) / (wmax - wmin);
+		const float w = (1.0f - t) * v76;
+		const float v27 = (w >= 0.0f) ? w : 0.0f;
+		if (!(v76 < v27))
+			v76 = v27;
+		*reinterpret_cast<float*>(d56 + 8) = v76;
+		*reinterpret_cast<u32*>(d56 + 0xC) = leaf ? U(leaf, 0x160) : 0x3F800000u;  // 1.0 default
+	}
+
+	// ================= alpha / fade PS-CB fill + unmap + bind =================
+	u8v* niProp = reinterpret_cast<u8v*>(EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass));  // BSRenderPass::GetNiProperty
+
+	if (PS) {
+		bool doFill;
+		if (niProp && (*reinterpret_cast<u8v*>(niProp + 0x30) & 1))     doFill = true;
+		else if (tech & 0x80)                                          doFill = true;
+		else if ((tech & 0x14000) != 0x10000)                          doFill = false;  // -> straight to bind
+		else                                                           doFill = true;
+
+		if (doFill) {
+			u8v* d40 = pcb(0x40);
+			if (tech & 0x20000000) {                                    // shaderProperty color -> PS CB[PS+0x44]
+				u8v* col = PP(shaderProperty, 0x88);
+				u8v* d44 = pcb(0x44);
+				if (col) {
+					*reinterpret_cast<u32*>(d44 + 0) = U(col, 0);
+					*reinterpret_cast<u32*>(d44 + 4) = U(col, 4);
+					*reinterpret_cast<u32*>(d44 + 8) = U(col, 8);
+				} else {
+					*reinterpret_cast<u32*>(d44 + 0) = 0x3F800000u;
+					*reinterpret_cast<u32*>(d44 + 4) = 0x3F800000u;
+					*reinterpret_cast<u32*>(d44 + 8) = 0x3F800000u;
+				}
+				*reinterpret_cast<u32*>(d44 + 0xC) = U(shaderProperty, 0x30);  // alpha
+			}
+			// alpha-test ref -> PS CB[PS+0x40].x
+			if (v88) {
+				*reinterpret_cast<float*>(d40) = static_cast<float>(static_cast<u32>(v88[0x7C])) * RELf(engine::SG_recip255.address());
+			} else if (niProp) {
+				if (*reinterpret_cast<u8v*>(niProp + 0x30) & 1) {
+					*reinterpret_cast<u32*>(d40) = 0x3F7EFEFFu;
+				} else {
+					const u8v mode = niProp[0x32];
+					const float v85 = static_cast<float>(static_cast<u32>(mode)) * RELf(engine::SG_recip255.address()) + RELf(engine::SG_alphaBias.address());
+					*reinterpret_cast<float*>(d40) = v85;
+					if (mode == 4)
+						*reinterpret_cast<float*>(d40) = v85 + RELf(engine::SG_recip255.address());
+				}
+			}
+			// fade -> PS CB[PS+0x40].w
+			if ((tech & 0x14000) == 0x10000) {
+				const std::uint64_t impl = *reinterpret_cast<std::uint64_t*>(shaderProperty + 0x38);
+				if ((impl & 0x4000ull) || (impl & 0x400000000000ull)) {
+					*reinterpret_cast<u32*>(d40 + 0xC) = U(shaderProperty, 0x108);
+				} else {
+					u8v* fn = PP(shaderProperty, 0x60);
+					*reinterpret_cast<float*>(d40 + 0xC) = F(fn, 0x130) * F(shaderProperty, 0x30);  // currentFade * alpha
+				}
+				if (pass[0x1E] & 0x80) {
+					u8v* fn = PP(shaderProperty, 0x60);
+					*reinterpret_cast<float*>(d40 + 0xC) = F(fn, 0x14C) * F(d40, 0xC);
+				}
+			}
+		}
+
+		if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);  // Unmap VS CB
+		if (psCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u);  // Unmap PS CB
+		ID3D11Buffer* vb = vsCB; EngineCallV<7,  void>(ctx, 2u, 1u, &vb);   // VSSetConstantBuffers slot 2
+		ID3D11Buffer* pb = psCB; EngineCallV<16, void>(ctx, 2u, 1u, &pb);   // PSSetConstantBuffers slot 2
+		return;
+	}
+
+	// ---- no pixel shader: unmap + bind VS only ----
+	if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);  // Unmap VS CB
+	{ ID3D11Buffer* vb = vsCB; EngineCallV<7, void>(ctx, 2u, 1u, &vb); }                 // VSSetConstantBuffers slot 2
+}
+}  // anonymous namespace (opened before CsFlushRequested; spans the three setup reimpls)
 
 void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t a_startIndex, std::uint32_t a_triCount)
 {
@@ -1466,7 +2229,17 @@ void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_a
 				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
 		}
 	}
-	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
+	if (CsSetupMask() & 4) {
+		auto* Sg = WsBlock();
+		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
+		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
+		FlushSetupGeometryReplica(WsCtx(),
+			vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
+			psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
+			Sg, shader, a_pass);
+	} else {
+		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
+	}
 
 	// Draw-struct layout verified against the dispatcher disasm at 0x141308A05.
 	const auto lodByte = reinterpret_cast<const std::uint8_t*>(a_pass)[0x1E];
@@ -1573,6 +2346,24 @@ void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_t
 	logger::warn("[UtilityPassReplica][DIFF] class={} pass={} technique=0x{:X} engineCalls={} replicaCalls={} firstDiff={}",
 		kClassNames[cls], static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
 		sameSize ? std::to_string(firstDiff) : "size-mismatch");
+	// If the first diverging call is a Map with snapshotted dwords (dump enabled), report the
+	// exact diverging dword offsets and engine-vs-replica values -- the precise field to fix.
+	if (sameSize && firstDiff < engineWindow.size()) {
+		const auto& e = engineWindow[firstDiff];
+		const auto& r = replicaWindow[firstDiff];
+		if (e.kind == Kind::kMapDiscardData && e.mapData && r.mapData) {
+			const auto& ev = *e.mapData;
+			const auto& rv = *r.mapData;
+			std::string s;
+			for (std::size_t k = 0; k < std::max(ev.size(), rv.size()); ++k) {
+				const std::uint32_t evk = k < ev.size() ? ev[k] : 0;
+				const std::uint32_t rvk = k < rv.size() ? rv[k] : 0;
+				if (evk != rvk)
+					s += fmt::format(" dw{}: E={:08X} R={:08X};", k, evk, rvk);
+			}
+			logger::warn("[UtilityPassReplica][DIFF-DWORDS]{}", s);
+		}
+	}
 	const std::size_t n = std::max(engineWindow.size(), replicaWindow.size());
 	for (std::size_t i = 0; i < n && i < 64; ++i) {
 		const auto* e = i < engineWindow.size() ? &engineWindow[i] : nullptr;
