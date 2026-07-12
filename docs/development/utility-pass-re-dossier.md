@@ -3488,3 +3488,963 @@ All other load-bearing claims were re-derived from the binary and confirmed exac
 - No load-bearing errors found. Every cited address, struct offset, vtable index, D3D11 call order, and branch gate was re-derived from the binary and matches: the 13-case switch on byte geom+0x150−1 at 0x141307160; both static leaves (0x140d6bfe0 / 0x140d6c0e0 differing only in IB source); the ring allocator 0x140d6c8a0 (>0x400000 wrap, End idx 28, GetData idx 29, Map idx 14 mode 5, ring of 3, query slots [74+i]/flags [77+i]); ca10/d5d0 writing the offset to desc+0x18 with the r9 arg ignored; cab0/d620 two-stream binds with offsets {0, desc[0x18]}; the byte compares `cmp byte ptr [rcx+1Ch], 0Ch` at 0x1413074c3 and 0x141307559; the LOD helpers (lodSize@+0x160, pair array@+0x1D8, lod byte@+0x108 bit7, exact sum/3x formulas); case 7's ascending vs case 8's descending i=n−1..1 loop (segment 0 never drawn, geom[0x171]→nothing drawn), the bit 5→0 SRV demotion into qword_143027FF0[bit]/[bit+7] with dirty bits in 0x143027EB4; case 9's cb selection (a4==7 → 0x143027E90 = 0x1430261B0[924], else ring [779..782]/counter [778]), Map DISCARD, VSSetConstantBuffers(7,1) idx 7, DrawIndexedInstanced idx 20; the input-layout descriptors of ce60 (fmt 6@0/12/24, fmt 28@36, stride 40) and cbe0 (fmt 2@0/16, fmt 6@32, fmt 32@44 semidx 1, stride 48, DrawIndexed 6*(n>>2)); the layout cache 0x141E07140/44/60 + CRC sub_140C06570 over (curVertexDesc & VS+0x48); the static quad desc 0x14302AE50 (VB=0x143025F40, IB=0x143025F38, vertexDesc 0x0840200004000051); frame counter inc at 0x140d6a300 in FUN_140d6a2b0; 0x1434963C8 having exactly one xref (the case-8 read, no writer); and the SetDirtyStates PS-SRV flush region (0x143027EB4 read @0x140d70bec, qword_143027FF0 lea @0x140d70c07, PSSetShaderResources call @0x140d70c27).
 - Two immaterial nuances, already covered by the report's caveats: (1) FUN_1404b35e0 both sets AND clears 0x1430243B0 (dl-dependent), and FUN_1408e8830/FUN_1408e89e0 also reference the flag — "set in 35e0 / cleared in 2960" is a simplification; (2) in case 8 the null-guard in the SRV fallback chain is on *(tex+0x48) (the rendererTexture), not on the 0x14302C8E8 texture pointer itself as the report's ternary implies (a null 0x14302C8E8 would fault).
 
+
+
+================================================================================================
+# PART III: shadow-map render loop → deferred context (Stage D)
+# Own IDA analysis, adversarially cross-verified. APPLY the corrections block at the end over the reports.
+================================================================================================
+
+
+================================================================================================
+## Shadow cluster 1
+================================================================================================
+
+# Shadow-map RT / viewport / depth-clear setup — SkyrimSE 1.5.97 (unpacked, base 0x140000000)
+
+## Call chain (context — where the per-shadow-map D3D11 setup lives)
+
+```
+Main::DrawWorld 0x1405B1860
+ ├─ NiCamera::CalculateAndDrawShadowCasterLights 0x1412E2660   (cull/accumulate ONLY, no D3D:
+ │    ├─ per-list accumulation jobs 0x1412E2C50 / 0x1412E2DE0 on job threads
+ │    └─ CalculateActiveShadowCasterLights 0x1412E2F60         (picks ≤4 lights/frame, calls light vfunc +0x48
+ │                                                              = calc matrices; sets light+0x548 flags, unk_1432334D0=count)
+ ├─ DrawWorld::MainAccum 0x1412E2A60
+ │    └─ 0x1412e2ba6 → ShadowSceneNode_RenderAllShadowmaps 0x1412E3480   ★ THE SHADOW-MAP D3D LOOP (render thread)
+ │         for each entry from ShadowSceneNode::GetShadowCasterLightArrayEntry 0x1412BC7D0:
+ │             light->vfunc[+0x50] (RenderShadowmaps)          (TLS+1896 memory tag saved/set to 29 around loop)
+ │               BSShadowDirectionalLight::Func10 0x141324C30  (cascade loop)
+ │               BSShadowFrustumLight::Func10     0x14132D040
+ │               BSShadowParabolicLight::Func10   0x14132E4E0  (2 paraboloid halves; ShadowSign 0x141E10B7C = ±1.0f,
+ │                                                              ShadowRadius 0x141E10B78 = light->Radius)
+ │                 └─ ALL call the shared per-map body BSShadowLight::RenderShadowmap 0x141305610
+ ├─ Main::RenderDepth 0x1412E3520        (z-prepass: DS target 0 mode 0, then CopyResource depth→copy)
+ └─ Main::RenderShadowmasks 0x1412E3AC0 → 0x1412E3B80 (mask passes into RT 18, BSUtilityShader 0x143495D50
+                                                       via RenderPassImmediately 0x141308440 — reads the maps)
+```
+
+`Main::Swap 0x1405B1020` separately runs the precipitation-occlusion queue via `FUN_1405b29f0 0x1405B29F0` (same RT/DSV pattern, DS target **5**, ortho camera).
+
+## Per-shadow-map body — BSShadowLight::RenderShadowmap 0x141305610
+
+Args: `(this, shadowMapDesc a2, counter a3, renderFlags a4)`. `a2` = 240-byte shadow-map descriptor
+(directional: array at `this+0x148`, count `this+0x140`; focus-shadow descriptors embedded at `this+0x160`, stride 240).
+Descriptor fields used here: `+64` NiCamera*, `+72` BSShaderAccumulator*, `+84` (int) depth-stencil target index,
+`+88` (int) slice, `+208/+212/+216/+220` sub-rect floats, `+232` byte "bind depth target" flag, `+233` byte.
+
+```c
+// 0x1413056c5: lazy slot allocation for point/spot lights
+if (*(a2+84) == -1) {
+    *(a2+84) = 4;                              // DS target 4 = the shadow-map slice pool
+    if (dword_141E10538) {                     // free-slice bitmask @0x141E10538
+        for (i=1, v9=0; (i & dword_141E10538)==0; ++v9) i*=2;
+        dword_141E10538 &= ~i;
+    }
+    *(a2+88) = v9;                             // slice = lowest free bit
+}
+BSGraphics_Renderer_SetClearColors_140d6a6d0(0x143028490, ..., 1.0f,1.0f,1.0f,1.0f); // 0x141305711
+if (*(a2+232)) {                                                        // 0x14130571d
+    RenderTargetManager::SetDepthStencilRenderTarget(0x14302BB20, *(a2+84), 1 /*SRTM_CLEAR_DEPTH*/, *(a2+88)); // 0x14130573b
+    RenderTargetManager::SetRenderTarget(0x14302BB20, 0, -1, 3 /*SRTM_RESTORE*/, 1 /*updateViewport*/);        // 0x141305754
+    FUN_140d6a330(0x143028490, 0);             // 0x141305762 = Renderer::FlushOMAndClear (immediate flush, see below)
+}
+NiCamera::Render_1412C15C0(*(a2+64), *(a2+72), a4 | 0x400);             // 0x141305777 — draws the geometry
+BSGraphics__Renderer_SetClearColorFromArray(0x143028490);               // 0x141305783 restore clear color
+// ...then frustum/sub-rect math (+208..220 vs DS dims) feeding FUN_140d7bbc0(&0x14302C890, cam+160, rotCols, frustum, port)
+// = BSGraphics::State shadow-camera data used later by the shadow-MASK projection (NOT by the map render itself)
+```
+
+Per-map-type target selection (writers of desc+84/+88 before calling 0x141305610):
+
+- **BSShadowDirectionalLight::Func10 0x141324C30** — sun cascades:
+  ```c
+  if (dword_141E0E2E8 == 2)                    // volumetric-lighting quality (console TVL toggles it)
+      for (i=0; i<cascadeCount; ++i) { desc[i]+84 = 3; desc[i]+88 = i; RenderShadowmap(this, desc[i], &local0, 0x100); }
+  for (j=0; j<cascadeCount; ++j)     { desc[j]+84 = 2; desc[j]+88 = j; RenderShadowmap(this, desc[j], a2, 0); }
+  if (this+0x550 byte)                          // focus shadows
+      for (k=0; k<unk_1431D0FB8._used; ++k) { fdesc[k]+84 = 4; fdesc[k]+232 = 1; fdesc[k]+88 = k+4; RenderShadowmap(this, fdesc[k], &local0, 0); }
+  ```
+  So: cascade = **slice of DS target 2** (one full slice per cascade, NO atlas sub-rect); VL pre-pass = slices of DS target 3; focus shadows = DS target 4 slices 4+.
+- **Frustum light 0x14132D040**: main desc (idx already set / lazily allocated to 4), plus focus descs (`word +232 = 0x0101`, idx 4, slice k+4).
+- **Parabolic 0x14132E4E0**: two halves, same desc each time (idx 4 + pool slice).
+- **Precipitation occlusion (FUN_1405b29f0 @0x1405b2ca2)**: `SetDepthStencilRenderTarget(5, mode 0-or-3, 0)`, RT0=-1.
+- Z-prepass (`Main::RenderDepth` @0x1412e358f): `SetDepthStencilRenderTarget(GetDepthStencilTarget_MAIN()=0, 0 /*SRTM_CLEAR*/, 0)`.
+  `GetDepthStencilTarget_MAIN 0x140D74E50` is literally `xor eax,eax; ret`.
+
+## RT set
+
+**RenderTargetManager::SetDepthStencilRenderTarget 0x140D74D10** `(mgr, targetIdx, mode, slice)` — pure S-block write:
+```c
+if (S.depthStencil != idx || S.setDepthStencilMode != mode || mode != 3 || S.depthStencilSlice != slice) {
+    *(DWORD*)0x143027EB0 |= 1;            // stateUpdateFlags: DIRTY_RENDERTARGET
+    S.depthStencil      = idx;            // 0x143027EE8
+    S.depthStencilSlice = slice;          // 0x143027EEC
+    S.setDepthStencilMode = mode;         // 0x143027F18
+}
+```
+(Note: any mode != 3 re-dirties even if unchanged — guarantees the pending clear fires.)
+
+**BSGraphics::Renderer::SetRenderTarget 0x140D74EC0** `(this=0x143028490, slot, targetIdx, mode, updateViewport)`
+(thin wrapper `RenderTargetManager::SetRenderTarget 0x140D74CF0` forwards):
+```c
+if (mode == 5 /*SRTM_FORCE_COPY_RESTORE*/) { mode = 3;
+    ctx->CopyResource(*(this+48*idx+2656), *(this+48*idx+2648)); }   // vfunc +0x178
+if (S.renderTargets[slot] != idx || S.setRenderTargetMode[slot] != mode || mode != 3) {
+    S.renderTargets[slot]       = idx;    // 0x143027EC8 + 4*slot
+    S.cubeMapRenderTarget       = -1;     // 0x143027EF0
+    S.setRenderTargetMode[slot] = mode;   // 0x143027EF8 + 4*slot
+    *(DWORD*)0x143027EB0 |= 1;
+}
+if (updateViewport) Renderer::UpdateViewPort(this, 0, 0, 0);
+```
+The shadow body sets **RT0 = -1** (no color target); OMSetRenderTargets is then issued with **NumViews=0** and only the DSV.
+
+**Actual OM bind + pending clears** happen in either flush:
+- **FUN_140d6a330 0x140D6A330** (`Renderer::FlushOMAndClear(this, onlyRenderTarget)`) — called explicitly at 0x141305762 with a2=0, so it flushes OM **and** depth-stencil state, raster state, viewport, blend, immediately, on the immediate context `*(ID3D11DeviceContext**)0x143027EA0`;
+- **BSGraphics::SetDirtyStates 0x140D705B0** — same logic, run before every subsequent draw of the accumulated passes.
+
+The shared bit-1 (render target) logic, with `data = *(void**)0x143025F00` (= 0x1430284A0 = Renderer+0x10):
+```c
+if (S.stateUpdateFlags & 1) {
+  if (S.cubeMapRenderTarget == -1) {
+    for (i = 0; i < 8; ++i) {
+      idx = S.renderTargets[i]; if (idx == -1) break;
+      rtv[i] = *(data + 48*idx + 2648);                       // RTV array
+      if (S.setRenderTargetMode[i] == 0 /*SRTM_CLEAR*/) {
+        ctx->ClearRenderTargetView(rtv[i], data+10088);       // vfunc +0x190; clear color @0x14302AC08
+        S.setRenderTargetMode[i] = 4; } }
+  } else { i = 1; rtv[0] = *(data + 8*(S.cubeMapRenderTargetView + 8*S.cubeMapRenderTarget) + 9936); ... }
+  if (S.setDepthStencilMode <= 2 || == 6) *(byte*)(data+34) = 0;   // clear the "read-only depth" flag
+  dsv = 0;
+  if (S.depthStencil != -1) {
+    rec = S.depthStencilSlice + 19*S.depthStencil;
+    dsv = *(byte*)(data+34) ? *(data + 8*rec + 8176)          // read-only DSV
+                            : *(data + 8*rec + 8112);         // normal DSV  (abs: 0x14302A450 + 8*rec)
+    if (dsv) switch (S.setDepthStencilMode) {
+      case 0: case 6: flags = 3; goto clear;                  // DEPTH|STENCIL
+      case 1:         flags = 1; goto clear;                  // DEPTH
+      case 2:         flags = 2; goto clear;                  // STENCIL
+      clear: ctx->ClearDepthStencilView(dsv, flags, 1.0f, 0); // vfunc +0x1A8 — see ## Depth clear
+             S.setDepthStencilMode = 4; } }
+  ctx->OMSetRenderTargets(i, rtv, dsv);                       // vfunc +0x108
+}
+```
+
+## Viewport set
+
+**Renderer::UpdateViewPort 0x140D69D00** `(this, width, height, ForceMatchRenderTarget)` — the ONLY writer of the S viewport (write @0x140d69de4):
+```c
+sx = sy = 1.0f;
+if (width) { W = width; H = height; }
+else {
+  if (!ForceMatchRenderTarget && !*(byte*)0x14302C9A0)      // dynamic-resolution enabled
+      { sx = *(float*)0x14302C98C; sy = *(float*)0x14302C990; }   // DRS width/height scale
+  if (S.cubeMapRenderTarget == -1) { W = GetCurrentRTWidth(); H = GetCurrentRTHeight(); }   // 0x140D74C20/0x140D74C60
+  else { W/H from cubemap target (0x140D74CB0/0x140D74CD0); }
+}
+*(DWORD*)0x143027EB0 |= 2;                                   // DIRTY_VIEWPORT
+S.vp.TopLeftX = port.x0 * W;                                 // 0x143027F20 = [0x143028460] * W
+S.vp.TopLeftY = (1.0f - port.y1) * H;                        // 0x143027F24 = (1 - [0x143028468]) * H
+S.vp.Width    = (port.x1 - port.x0) * W * sx;                // 0x143027F28
+S.vp.Height   = (port.y1 - port.y0) * H * sy;                // 0x143027F2C  ([0x143028468]-[0x14302846C])
+```
+Dimension source (**this is how the shadow map size gets in**), `FUN_140d74c20/0x140D74C60`:
+```c
+if (S.renderTargets[0] != -1) return *(mgr + 28*S.renderTargets[0] + 0 /*or +4*/);       // RT props, 28B/rec @0x14302BB20
+if (S.depthStencil > 12) return 0;
+return *(mgr + 16*S.depthStencil + 3192 /*or +3196*/);       // DS target props, 16B/rec @0x14302C798: {width,height,...}
+```
+Since the shadow body sets RT0 = -1, the viewport becomes the **full depth-target slice**: `(0, 0, W, H)` for the default full port `{0,1,1,0}`. There is **no per-cascade TopLeftX/Y offset** — cascade/face selection is entirely via the **DSV slice index** (`S.depthStencilSlice → dsv = data + 8*(slice + 19*idx) + 8112`).
+
+Two viewport recomputations happen per shadow map:
+1. inside `SetRenderTarget(0,-1,3,1)` → `UpdateViewPort(0,0,force=0)` — **DRS scale applied**, immediately flushed by FUN_140d6a330's bit-2 branch (`ctx->RSSetViewports(1, &S.vp @0x143027F20)`, vfunc +0x160, @0x140d6a63f);
+2. inside `NiCamera::Render 0x1412C15C0 → sub_1412C1600 0x1412C1600`: `SetCameraData(0x14302C890, cam, flags)` then, because the shadow path passes `flags|0x400`, `UpdateViewPort(0x143028490, 0, 0, ForceMatchRenderTarget=1)` — **no DRS scale**; flushed by SetDirtyStates before the first accumulated draw (`RSSetViewports` @0x140d708bc).
+
+So a deferred replica must set: `D3D11_VIEWPORT{0, 0, dsWidth, dsHeight, MinDepth, MaxDepth}` per map (dims from mgr+3192 table), where **MinDepth/MaxDepth** come from the camera depth-range globals: in both flush paths (raster branch, bits 0x1070 incl 0x40) `S.vp.MinDepth(0x143027F30) = [0x143028470]`, `S.vp.MaxDepth(0x143027F34) = [0x143028474]`, then if `S.depthBiasMode(0x143027F50) != 0`: `MaxDepth -= *(float*)(0x143026180 + 4*mode)` (per-mode depth-bias table) and dirty|=2. `BSGraphics::Renderer::SetMinandMaxViewportDepth 0x140D69E50` does the same copy standalone. The port rect + depth range live in the Renderer camera-state block **0x143028230 (0x250 bytes)** at +0x230..+0x244; they are rewritten per camera by `State::SetCameraData 0x140D7BAB0 → FUN_140d7d430 0x140D7D430 → FUN_140d7bef0 0x140D7BEF0` (copies `NiCamera::Port_174` into block+0x230 via `FUN_140d7d8c0` compare-and-update).
+
+## Depth clear
+
+There is **no direct engine wrapper call** for the shadow clear — it is a *pending-clear* encoded in `setDepthStencilMode` and executed by the next flush:
+- `SetDepthStencilRenderTarget(idx, **1**, slice)` = SRTM_CLEAR_DEPTH → on flush: `ctx->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH(1), **1.0f**, **0**)` then mode←4 (consumed).
+- Verified args at the callsites (vfunc **+0x1A8** = index 53):
+  - FUN_140d6a330 @**0x140d6a4b4**: `rdx=dsv, r8d=flags(3/1/2 from mode 0|6 /1 /2), xmm3 = dword[0x1415232D8] = 0x3F800000 (1.0f), stack arg5 = 0` (disasm 0x140d6a4a4-0x140d6a4b1).
+  - SetDirtyStates @**0x140d70765**: identical (`movss xmm3, cs:0x1415232D8; mov byte [rsp+a5], r15b(=0)`).
+- For the shadow maps the clear is issued **inside RenderShadowmap by the explicit `FUN_140d6a330(0x143028490, 0)` call at 0x141305762** (i.e., before NiCamera::Render), together with `OMSetRenderTargets(0, {}, dsv)`, `OMSetDepthStencilState` (+0x120), `RSSetState` (+0x158), `RSSetViewports` (+0x160), `OMSetBlendState` (+0x118).
+- The white `SetClearColors(1,1,1,1)` @0x141305711 (writes data+10088 = 0x14302AC08, saving old to 0x143025EF0..FC; restored by `SetClearColorFromArray 0x140D6A740`) only matters if a color RT with SRTM_CLEAR were bound — none is for shadow maps.
+- Z-prepass uses mode 0 → flags 3 (DEPTH|STENCIL), same 1.0f/0 values.
+
+## State globals (offsets)
+
+S-block = RendererShadowState dirty region, base **S = 0x143027EB0**:
+| Abs addr | S ofs | Field |
+|---|---|---|
+| 0x143027EB0 | +0x00 | stateUpdateFlags (bit0 RT/DSV+pending clears, bit1 viewport, bits2-3 depth-stencil state, bit4 (0x10) depth-enable part of DSS, bit5 (0x20) cull, bit6 (0x40) depth-bias→viewport, bit7 (0x80) blend, 0x100/0x200 alpha-test CB, 0x400 VS/IL, 0x800 topology, 0x1000 raster) |
+| 0x143027EB4 | +0x04 | PSResourceModifiedBits (PSSetShaderResources, srvs @0x143027FF0[16]) |
+| 0x143027EB8 | +0x08 | PSSamplerModifiedBits (indices 0x143027F6C[16]/0x143027FAC[16]) |
+| 0x143027EBC..C4 | +0x0C..+0x14 | CS resource/sampler/UAV modified bits |
+| 0x143027EC8 | +0x18 | renderTargets[8] (int, -1 = none) |
+| 0x143027EE8 | +0x38 | **depthStencil** (DS target index) |
+| 0x143027EEC | +0x3C | **depthStencilSlice** |
+| 0x143027EF0 / F4 | +0x40/+0x44 | cubeMapRenderTarget / cubeMapRenderTargetView |
+| 0x143027EF8 | +0x48 | setRenderTargetMode[8] (0=CLEAR,1=CLEAR_DEPTH,2=CLEAR_STENCIL,3=RESTORE,4=NO_CLEAR/consumed,5=FORCE_COPY_RESTORE,6=INIT) |
+| 0x143027F18 | +0x68 | **setDepthStencilMode** |
+| 0x143027F1C | +0x6C | setCubeMapRenderTargetMode |
+| 0x143027F20 | +0x70 | D3D11_VIEWPORT {X, Y @+0x74, W @+0x78, H @+0x7C, MinDepth @+0x80, MaxDepth @+0x84} |
+| 0x143027F38/3C/40/44 | +0x88.. | depth-stencil-state indices (a/b/stencilRef) |
+| 0x143027F48/4C/50/54 | +0x98.. | raster indices: scissor?, cullMode, **depthBiasMode** (0x143027F50, also offsets vp.MaxDepth), fillMode |
+| 0x143027F58/5C/60 | +0xA8.. | blend indices (alphaBlendMode/AlphaBlendModeExtra/WriteMode; 0x143027F60 heavily toggled around shadow/mask passes) |
+
+Renderer / data globals:
+- Renderer singleton `this` = **0x143028490**; RendererData pointer `*(void**)0x143025F00` = **0x1430284A0** (= this+0x10).
+- Immediate context: `*(ID3D11DeviceContext**)0x143027EA0` (== qword index 926 of 0x1430261B0).
+- RT records: stride 48, for idx: texture `data+2632+48i`, copy-texture `data+2640+48i`, **RTV `data+2648+48i`** (abs 0x143028F38+48i); clear color float4 @ `data+10088` = **0x14302AC08** (saved copy 0x143025EF0).
+- **Depth-stencil records**: base `data+8104` = **0x14302A448**, stride 152 (19 qwords): `+0` ID3D11Texture2D*, `+8` **DSV[slice 0..7]** (abs 0x14302A450 + 152*idx + 8*slice), `+72` read-only DSV[0..7], remainder SRVs. Read-only selector byte `data+34`.
+- Cubemap RTVs: `data + 9936 + 8*(view + 8*idx)` (abs 0x14302AB70).
+- RenderTargetManager = **0x14302BB20**: RT props 28 B/rec at +0 {width,height,...}; **DS target props 16 B/rec at +3192** (abs 0x14302C798): {width, height, ...}, max index 12.
+- Camera-state block **0x143028230** (0x250 B): port rect `+0x230` = 0x143028460 (x0), 0x143028464 (x1), 0x143028468 (y1/top), 0x14302846C (y0/bottom); depth range `+0x240/0x244` = **0x143028470 / 0x143028474** (→ vp.MinDepth/MaxDepth). Depth-bias table (floats, indexed by 0x143027F50): **0x143026180**.
+- DRS: scale x/y **0x14302C98C/0x14302C990**, disable flag byte **0x14302C9A0** (`flags&0x400` shadow path bypasses DRS via ForceMatchRenderTarget anyway).
+- Shadow slice pool free-mask (DS target 4): **dword_141E10538**; focus-shadow set: unk_1431D0FB8 (+enable byte 0x141E0DE43); VL quality driving the target-3 pre-pass: **dword_141E0E2E8** (==2); active-caster count 0x1432334D0; per-frame single-caster flags 0x1432334E1/E2, last light 0x143283B80; parabolic globals ShadowRadius 0x141E10B78 / ShadowSign 0x141E10B7C; mask-slice global 0x143283B78 (written in the mask pass from desc+88).
+
+Key vfunc offsets on the context (for the deferred replica): OMSetRenderTargets +0x108, OMSetBlendState +0x118, OMSetDepthStencilState +0x120, RSSetState +0x158, RSSetViewports +0x160, ClearRenderTargetView +0x190, ClearDepthStencilView +0x1A8, CopyResource +0x178.
+
+Deferred-replica contract per shadow map/cascade: `OMSetRenderTargets(0, nullptr, DSV(idx,slice))` → `ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, 1.0f, 0)` (only when desc+232 set; mode-1 semantics) → `RSSetViewports(1, {0,0,dsW,dsH, minD=[0x143028470], maxD=[0x143028474]−biasTable[depthBiasMode]})` → depth-stencil/raster/blend states per S indices → then the accumulated pass walk (BeginPass 0x141308030 → RenderPassImmediately 0x141308440) with SetDirtyStates-equivalent per-pass flushing. After the loop, nothing restores the DSV inside 0x1412E3480 — the next consumer (Main::RenderDepth) re-sets DS target 0 itself.
+
+## CAVEATS
+
+- `dword_141E0E2E8` is confirmed volumetric-lighting-related (console `FunctionToggleVolumetricLighting` and VolumetricLightingParams touch it), so the `==2` cascade pre-pass into DS target 3 is the VL half-res shadow copy — but I did not trace which INI setting feeds it, and the exact meaning of renderFlags 0x100 passed to those RenderShadowmap calls (it propagates into NiCamera::Render flags as 0x500) was not followed into the accumulator.
+- DS-target index names (2 = cascades/SHADOWMAPS_ESRAM-like, 3 = VL half-res, 4 = shadow-map slice pool, 5 = precipitation occlusion, 0 = main) are inferred from usage, not from strings; the CommonLib enum mapping was not re-verified against the target-creation site.
+- Descriptor fields +208..+220 (sub-rect floats) feed the post-render frustum-scaling math (0x1413057e6-0x141305898) and `FUN_140d7bbc0` (shadow camera data at 0x14302C890 for mask projection); they do NOT affect the RT/viewport of the map render. The gating virtual `Func7_38` (skips the adjust) and the exact semantics of `*(cam+336/352/360)` (NiCamera frustum fields) were not fully decoded.
+- The DS record tail (data+8104 record qwords 17-18, presumed depth/stencil SRVs) and the RT record fields beyond {tex, copyTex, RTV} were not individually verified.
+- Freeing of pool slices in dword_141E10538 (presumably light vfunc +0x60 called after the mask pass at 0x1412e3e0e) was not traced.
+- `flt_143028470[0]/[1]` (vp Min/MaxDepth source) read 0/0 statically; they are runtime-written via the camera-state update (block 0x143028230+0x240 path through FUN_140d7d8c0). I did not enumerate every writer; shadow passes rely on whatever SetCameraData installed for the shadow camera (normally 0.0/1.0).
+- Whether cascadeCount (`dirLight+0x140`) is 2 in practice (iShadowSplitCount) was not checked; the code loops generically.
+
+
+### Caveats
+- dword_141E0E2E8==2 pre-pass into DS target 3 is volumetric-lighting-related (console toggle + VL params reference it), but the feeding INI setting and the meaning of renderFlags 0x100 were not traced further.
+- DS-target index naming (2 cascades, 3 VL half-res, 4 slice pool, 5 precip occlusion, 0 main) inferred from usage, not verified at the target-creation site.
+- Descriptor fields +208..+220 affect only the post-render shadow-camera data (mask projection), not the map's RT/viewport; the gating virtual Func7_38 and NiCamera +336/352/360 fields were not fully decoded.
+- DS record qwords 17-18 (presumed depth/stencil SRVs) and RT record fields beyond tex/copyTex/RTV unverified.
+- Pool-slice freeing in dword_141E10538 (likely light vfunc +0x60 after the mask pass) not traced.
+- 0x143028470/74 (viewport depth range) are runtime-written through the camera-state block update; not every writer enumerated — shadow passes use whatever SetCameraData installed (normally 0.0/1.0).
+- Actual cascade count at dirLight+0x140 not checked against INI; code loops generically.
+
+================================================================================================
+## Shadow cluster 2
+================================================================================================
+
+# Shadow-map deferred-context integration surface — SkyrimSE 1.5.97 (base 0x140000000)
+
+## Detour point (addr, once-per-frame proof)
+
+**Detour target: `FUN_1412E3480` @ 0x1412E3480** — "render all shadow maps for this frame". Sole content is the shadow-caster-light loop:
+
+```c
+BSShadowParabolicLight *FUN_1412e3480()
+{
+  v0 = shadowSceneNode;                                   // qword ptr global 0x141E0DED0
+  v1 = (TLS[MEMORY[0x143497408]] + 1896);                 // memory-context tag
+  v2 = *v1; *v1 = 29;                                     // tag = 29 around the loop
+  a2 = 0;
+  for ( result = ShadowSceneNode::GetShadowCasterLightArrayEntry_1412BC7D0(v0, 0);
+        result;
+        result = ShadowSceneNode::GetShadowCasterLightArrayEntry_1412BC7D0(v0, a2) )
+  {
+    (result->vftable->Func10_50)(result, &a2);            // vfunc 0xA = BSShadowLight::RenderShadowmaps
+  }
+  *v1 = v2;
+  return result;
+}
+```
+
+`GetShadowCasterLightArrayEntry_1412BC7D0` is trivial: `return *(a1->shadowCasterLights.Data_0 + a2);` (BSTArray on the ShadowSceneNode; the per-light `RenderShadowmaps` advances `a2`).
+
+**vfunc 0xA (vtable +0x50) implementations** (resolved from vtables + AddressLibrary):
+- `BSShadowDirectionalLight::RenderShadowmaps` = **0x141324C30** (AddrLib id 101495; vtable 0x14186BBD8 entry 10). CS's ShadowmapCascadeRasterizerFix hooks its call at +0xC6 = 0x141324CF6.
+- `BSShadowFrustumLight::RenderShadowmaps` = **0x14132D040** (vtable 0x14186C690 entry 10).
+- `BSShadowParabolicLight::RenderShadowmaps` = **0x14132E4E0** (vtable 0x14186C7A0 entry 10).
+- None of the three has any code xref — vtable/data refs only. The loop's virtual dispatch is the only static call path.
+
+Directional body (0x141324C30): three sub-loops, all funneling into the shared per-shadowmap renderer `sub_141305610` @ 0x141305610:
+```c
+if ( dword_141E0E2E8 == 2 )                 // ESM mode: extra pre-pass, type 3, flags 256
+  for ( i = 0; i < numCascades /* +0x140 */; ++i ) sub_141305610(this, cascade_i, &tmp, 256);
+for ( j = 0; j < numCascades; ++j )         // main cascades: type 2, id j       <- CS hook +0xC6
+  sub_141305610(this, cascade_j /* 240B descriptors @ +0x148 */, a2, 0);
+if ( this->_pad_8[1360] )                   // focus shadows: type 4, count unk_1431D0FB8._used
+  for ( k ... ) sub_141305610(this, focus_k, &tmp, 0);
+```
+`sub_141305610` per shadow map: releases the light's pass-array refs, **allocates a depth-slice from the global bitmask `dword_141E10538`**, `Renderer::SetClearColors(0x143028490)`, `RenderTargetManager::SetDepthStencilRenderTarget(0x14302BB20, target=*(a2+84), 1, slice=*(a2+88))` + `SetRenderTarget(0, -1, 3, 1)` + clear, then **`NiCamera::RenderPreAndPostResolveDepth_1412C15C0(*(a2+64) /*shadow cam*/, *(a2+72) /*accum list*/, a4|0x400 /*RENDER_SHADOWMAP*/)`** — which walks batches through the known BeginPass 0x141308030 / RenderPassImmediately 0x141308440 machinery — then writes shadow camera data via `FUN_140D7BBC0(&0x14302C890, ...)` (eye-pos mirrors 0x143028260..0x1430282D0) and stores the ShadowMapProj matrix back into the cascade descriptor (`*a2..*(a2+48)`).
+
+**Once-per-frame proof (single-xref chain at every level):**
+- `FUN_1412E3480` ← one code xref: 0x1412E2BA6 inside `DrawWorld::MainAccum` 0x1412E2A60.
+- `MainAccum` ← one code xref: **0x1405B1B4C = `Main::Draw_1405B1860` + 0x2EC** (this is exactly CS's `Main_RenderShadowMaps` write_thunk_call site, RelocationID(35560)+0x2EC; AddrLib 35560 → 0x1405B1860 confirmed).
+- `Main::Draw_1405B1860` ← one code xref: 0x1405B182D in `Main::sub_1405B1710` (sets 0x1430243E0=1, caches camera, calls Draw).
+- `sub_1405B1710` ← two code xrefs, both inside the per-frame render entry `Main::Swap_1405B1020`: the normal in-game path at 0x1405B12FC, and the menu-world-snapshot path via `Main::sub_1405B1650` (0x1405B16C8), which is in the mutually-exclusive `if (menuMode)` branch and latched by byte 0x142F26B75 (runs the world draw once when a menu needs it). So the shadow loop runs **at most once per frame, always on the render thread**.
+
+**What surrounds it in `MainAccum` (0x1412E2A60):**
+- Before: main accumulator 0x143233400 gets flag+camera; two `BSAccumProcess::DoSceneListAccumRegisterJob_1412D6FB0` jobs queued on JobList 0x143233208 (accum 0x1432333F8 bucket 0, accum 0x143233400 bucket 1) and submitted. **The shadow loop then runs on the render thread concurrently with those accumulation jobs** (already-parallel by design; the per-light pass lists were built earlier by `NiCamera::CalculateAndDrawShadowCasterLights_1412E2660` = AddrLib 100414, one culling job per light).
+- After: `JobList::Finish(0x143233208)`, then an optional front-to-back z-prepass block gated by `bEnableFrontToBackPrepass:Display` (data byte 0x141E0E818, default 0; sole xref 0x1412E2BF0) calling `FUN_1412CD0E0(accum 0x1432333F8, 17)` and `(…, 9)`. Not shadow work.
+
+**What surrounds the `MainAccum` call in `Draw_1405B1860`:** before = `BSGraphics::State::SetCameraData(0x140D7BAB0)` at 0x1405B1B47; after = volumetric-lighting render (if 0x143232EF0), `Main::RenderDepth` 0x1412E3520, `Main::RenderShadowmasks` 0x1412E3AC0 (AddrLib 100422; consumes the shadow maps), `Precipitation::RenderOcclusion` thunk 0x1412E43F0.
+
+**Suppress/replace semantics:** detouring 0x1412E3480 removes all shadow-map D3D11 work (no other producer exists); its non-D3D side effects that downstream depends on are (a) the produced depth textures, (b) depth-slice allocations consumed from `dword_141E10538`, (c) ShadowMapProj matrices written into the cascade descriptors (read later by the shadow-mask constant setup), (d) per-light pass-array release. Re-running the original function with the context global redirected preserves all of these exactly.
+
+## Device + deferred-context feasibility
+
+Device creation: `FUN_140D718D0` (import thunk `D3D11CreateDeviceAndSwapChain` 0x14135BB22, .idata 0x14150A0A0):
+```c
+Flags v7 = 0;  if ( dword_141E072B8 /*debug ini*/ ) v7 = 2;   // D3D11_CREATE_DEVICE_DEBUG only
+D3D11CreateDeviceAndSwapChain(pAdapter, D3D_DRIVER_TYPE_UNKNOWN, 0, v7,
+    /*pFeatureLevels*/0, /*count*/0, /*SDK*/7, &scDesc, base+96, base+56, &pFeatureLevel, base+64);
+...
+MEMORY[0x143025F08]      = *(base+56);   // ID3D11Device*        @ 0x140D71CC8
+MEMORY[0x1430261B0][926] = *(base+64);   // ID3D11DeviceContext* @ 0x140D71CD8  (== 0x143027EA0)
+```
+`D3D11_CREATE_DEVICE_SINGLETHREADED` (0x1) is **never set** → `ID3D11Device::CreateDeferredContext` (device vfunc 27, +0xD8) is legal on this device. Feature levels default (11_0 first). `base` = the struct pointed to by 0x143025F00 (adapter also mirrored to 0x143027E98 = 0x1430261B0[925]; hwnd-block ptr to 0x143025F10). Under CS the d3d11 implementation is DXVK, which reports full command-list support (driver command lists native), so FinishCommandList/ExecuteCommandList are first-class; on stock runtimes they'd be emulated if the driver lacks support (correct, slower).
+
+## Immediate-context pointer storage (redirect target)
+
+The immediate context lives in exactly one engine global: **qword 0x143027EA0** (aka `MEMORY[0x1430261B0][926]`, i.e. 0x1430261B0+0x1CF0). 355 xrefs total; the only store is the init at **0x140D71CD8**, plus teardown-path refs in `Renderer::Shutdown` 0x140D69140 / `KillWindow` 0x140D696B0 / `WindowSizeChanged` 0x140D698A0. Every use site re-loads it fresh per call — verified pattern in `BSGraphics::SetDirtyStates` 0x140D705B0 and the query helpers:
+```asm
+mov rcx, cs:143027EA0h
+mov rax, [rcx]
+call qword ptr [rax+190h]   ; etc.
+```
+Therefore swapping the qword at 0x143027EA0 to a deferred context for the duration of the detoured shadow scope (render thread only) redirects **all** engine D3D11 calls issued inside that scope — SetDirtyStates, Renderer::SetVertexShader/SetPixelShader, Map/Unmap of the bone-CB ring 0x143027A00 and dynamic-VB ring 0x143025F30, RT/DS binds, clears, DrawIndexed — with no other engine-side cached copy observed. Restore the qword before `Main::RenderDepth`, then `ExecuteCommandList` on the immediate context. NOTE: CS's own `globals::d3d::context` is a separate cached pointer that stays immediate — see gate section.
+
+## ExecuteCommandList/FinishCommandList indices
+
+**The expected "133 / 0x428 and 134 / 0x430" is wrong for `ID3D11DeviceContext`** (those indices land inside the `ID3D11DeviceContext1` extension block; 133 = DiscardView1). The binary provably uses the canonical d3d11.h vtable: offsets observed in engine code map exactly to `ClearRenderTargetView` +0x190 (idx 50), `ClearDepthStencilView` +0x1A8 (53), `OMSetRenderTargets` +0x108 (33), `OMSetDepthStencilState` +0x120 (36), `RSSetState` +0x158 (43), `Begin` +0xD8 (27), `End` +0xE0 (28). Under that layout:
+- **`ExecuteCommandList` = vfunc 58, offset +0x1D0** (between ResolveSubresource 57 and HSSetShaderResources 59) — call on the immediate context.
+- **`FinishCommandList` = vfunc 114, offset +0x390** (last ID3D11DeviceContext method) — call on the deferred context.
+- `ID3D11Device::CreateDeferredContext` = vfunc 27, +0xD8.
+The engine itself never calls either (no deferred-context usage anywhere). CS code should just call the COM methods via headers; raw indices only matter if patching engine-side dispatch.
+
+## CS-substitution bypass gate
+
+Engine `BSShader::BeginTechnique` = **0x14131FBD0** (AddrLib 101341, confirmed). Body: looks up vertex shader (hash map at BSShader+0x50) and pixel shader (+0x80), then `Renderer::SetVertexShader(0x140D6F9B0)` at **+0xC3** (0x14131FC93) and `Renderer::SetPixelShader(0x140D6FD60)` at **+0xD7** (0x14131FCA7/B2). Both renderer setters read the context global 0x143027EA0 directly (xrefs 0x140D6F9BD, 0x140D6FD70) → the engine-original path is automatically redirect-safe.
+
+CS substitutes in exactly three thunks (src/Hooks.cpp):
+1. `Hooks::BSShader_BeginTechnique::thunk` (line 123; `stl::detour_thunk` on 101341, install line 1047) — on `!shaderFound` binds cache shaders via `globals::d3d::context->VS/PSSetShader`.
+2. `BSShader__BeginTechnique_SetVertexShader` (line 773; write_thunk_call at 101341+0xC3) — substitutes cache VS via `globals::d3d::context->VSSetShader`.
+3. `BSShader__BeginTechnique_SetPixelShader` (line 806; +0xD7) — same for PS.
+
+**Cleanest gate:** a new flag on `State` (make it `thread_local`-backed for the later multithreaded phase), e.g. `state->engineShaderPassthrough`, set/cleared by the shadow detour around its call into the original 0x1412E3480, and checked FIRST in all three thunks → fall through to `func(...)`/engine path untouched. Precedent for this exact pattern already exists: `state->settingCustomShader` short-circuits thunks 2/3. The gate is **mandatory for correctness, not just shader policy**: the thunks bind through CS's cached `globals::d3d::context` (immediate context), which would issue VS/PSSetShader on the wrong context while the engine global is redirected — the engine-original path instead re-reads 0x143027EA0 and records correctly on the deferred context. Bonus: bypassing substitution automatically yields engine-ORIGINAL shaders for every pass rendered inside the shadow scope (Utility/RENDER_SHADOWMAP techniques), as required.
+
+## CAVEATS
+
+- "No other producer of shadow-map D3D work" rests on single-xref chains plus zero direct xrefs to the three `RenderShadowmaps` implementations; another *virtual* dispatch of vfunc 0xA elsewhere cannot be 100% excluded statically. CS's FrameAnnotations already wraps vfunc 0xA on all three vtables — one instrumented session can verify the sole call site at runtime.
+- `Precipitation::RenderOcclusion` (0x1412E43F0, runs after RenderShadowmasks) and `BSCubeMapCamera` renders are separate utility/depth D3D work intentionally NOT covered by this detour; they are not shadow maps.
+- The 355 reads of 0x143027EA0 were pattern-verified on a sample (SetDirtyStates, query helpers, Renderer setters, shader code at 0x1412c–0x14133x), not exhaustively decompiled; no memory-stored copy was seen, but a full audit of all 355 sites was not performed. CS-side code that caches `globals::d3d::context` (and any feature hooks firing during shadow passes — grep `globals::d3d::context`) is a known separate surface that must be gated or redirected.
+- `ExecuteCommandList(RestoreContextState=FALSE)` resets the immediate context to defaults, and `FinishCommandList(FALSE)` resets the deferred one — the engine's shadow-state mirror at 0x143027EB0 will then disagree with actual pipeline state. After replay, either pass TRUE or force-set all dirty bits (the 0x143027EB0 dword) and re-issue lazily; the same applies to the deferred context at recording start (record from a known-clean state; the engine assumes state persistence across passes within the scope).
+- The dynamic rings Map with DISCARD/NO_OVERWRITE; on a deferred context NO_OVERWRITE for VB/IB/CB requires D3D11.1 behavior. DXVK (the actual runtime here) supports it; stock-driver deployments would need a `CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS)` guard.
+- The menu-snapshot path (`Main::sub_1405B1650`) runs the same full Draw once when entering certain menus — "once per frame" means at most once, via exactly one of two mutually exclusive branches in `Main::Swap_1405B1020`.
+- `sub_141305610` internals partially uninterpreted: first arg `v20` of `FUN_14044B4A0` decompiles as uninitialized (register-carried; likely the camera/state block), and the ESM (`dword_141E0E2E8==2`) pre-pass semantics (flags 256) were not traced further.
+- Address-library-derived addresses (101495/101498/101499, vtables) come from a self-written parser validated against three known ground-truth IDs (35560, 100422, 101341 all matched); residual parser-bug risk is negligible but nonzero.
+
+### Caveats
+- ExecuteCommandList/FinishCommandList are vfunc 58 (+0x1D0) / 114 (+0x390), NOT 133/134 as the task expected — 133/134 belong to the ID3D11DeviceContext1 extension block; binary-verified against seven engine call sites using the canonical layout
+- No-other-shadow-producer claim is static (single-xref chains + no direct xrefs to the three vfunc-0xA impls); a second virtual dispatch elsewhere can't be fully excluded — runtime-verify via CS FrameAnnotations vfunc wrappers
+- 355 reads of 0x143027EA0 sampled, not exhaustively audited; no memory-cached copy observed, but CS's own globals::d3d::context cache is a separate immediate-context copy that must be gated during redirect
+- ExecuteCommandList/FinishCommandList with RestoreContextState=FALSE reset pipeline state; the engine mirror at 0x143027EB0 must have all dirty bits forced (or pass TRUE) after replay and at recording start
+- Dynamic-ring Map(NO_OVERWRITE) on a deferred context needs D3D11.1 behavior — fine on DXVK (the actual runtime), needs a feature check on stock drivers
+- Precipitation occlusion and cubemap renders are separate depth/utility D3D work outside the detour by design
+- AddressLibrary-derived addresses come from a self-written v1 parser validated on 3 ground-truth IDs (35560, 100422, 101341 all matched)
+
+================================================================================================
+## Shadow cluster 3
+================================================================================================
+
+# Shadow-map D3D11 call surface — SkyrimSE 1.5.97 (base 0x140000000)
+
+## Context vs wrapper — THERE IS NO WRAPPER
+
+The two spellings in the decompiler are the **same 8 bytes**:
+
+- `MEMORY[0x1430261B0][926]` = `0x1430261B0 + 926*8` = `0x1430261B0 + 0x1CF0` = **`0x143027EA0`**.
+- `*(ID3D11DeviceContext**)0x143027EA0` and `MEMORY[0x1430261B0][926]` are one global slot; Hex-Rays renders the absolute-address load as the former and the base+index form as the latter. IDA resolves both as data xrefs to 0x143027EA0 (verified: the xref list for 0x143027EA0 contains both styles, e.g. `SetDirtyStates` 0x140d7062e uses the `[926]` form).
+- It holds the **genuine `ID3D11DeviceContext*` (immediate context)**, written once at device creation: `FUN_140d718d0+0x408` = **0x140d71cd8**: `mov cs:143027EA0h, rax`. Released/nulled in `Renderer::Shutdown` (0x140d69140) and `Renderer::WindowSizeChanged` (0x140d698a0).
+- All engine calls are direct COM vcalls: `(*(*ctx + OFFSET))(ctx, ...)` with OFFSET/8 = ID3D11DeviceContext vtable index (IUnknown 0–2, ID3D11DeviceChild 3–6, then VSSetConstantBuffers=7...). No BSGraphics-side vtable indirection exists on this path.
+- Neighbors in the renderer data block `0x1430261B0` (all `[i]` = 0x1430261B0+8i): `[922]`=0x143027E80 misc CB (0x240B, FUN_140d70050), `[923]`=0x143027E88 **PerFrame CB (b12)**, `[924]`=0x143027E90 grass per-instance CB (b7), `[926]`=0x143027EA0 **context**. Bone-CB ring: cursor `[778]`=0x143027A00, 4 CBs `[779..782]`=0x143027A08..0x143027A20, alpha/tint CB `[783]`=0x143027A28 (b11). Device `ID3D11Device*` = **0x143025F08**. RT/DSV/clear-color tables live behind the pointer at **0x143025F00** (points 16 below 0x143028490; RTVs at +2648/+2664, DSVs at +8112 (+8176 stencil-side / +0x2000 read-only variants), depth-slice DSVs at +9936, clear color at +10088/+10104). Dynamic-VB ring block **0x143025F18**: `[0..2]` 3 ring VBs (4 MB), `[3]` (=0x143025F30, matches known ground truth) packed cursor(lo)/offset(hi), event queries at `[74..76]`, ready flags after.
+
+**Redirect rule: swap the single pointer at `0x143027EA0` and every D3D11 call on the shadow path follows it — with the caveats below.**
+
+## Shadow-map loop structure (call chain)
+
+1. **`FUN_1412e3480` = Main::RenderShadowmaps (0x1412E3480)** — iterates `ShadowSceneNode::GetShadowCasterLightArrayEntry` (0x1412BC7D0) on `shadowSceneNode` (ptr at **0x141E0DED0**), calling each light's **vfunc Func10 (vtable +0x50)**, advancing by the per-light shadow-map count (`light+0x140` region). TLS memory-context tag (TLS idx dword 0x143497408, block +1896) set to 29 around the loop.
+2. **`BSShadowDirectionalLight::Func10_141324C30`** — per-cascade loop: if `dword_141E0E2E8 == 2` (VL shadows) first loop sets desc+84=3 (depth target idx) and calls the shared render with flags 0x100; then main loop sets desc+84=**2** (= sun shadowmap depth target), desc+88=cascade index (texture-array slice), calls shared render with caller flags; then focus shadow maps (`unk_1431D0FB8._used` count) with desc+84=4, slice k+4. Frustum/parabolic lights have their own Func10 (0x14132D040 / 0x14132E4E0) into the same shared body.
+3. **`BSShadowParabolicLight::sub_141305610` (0x141305610) = BSShadowLight::RenderShadowmap — the per-shadowmap body**:
+```c
+BSGraphics_Renderer_SetClearColors_140d6a6d0(&Renderer, ..., 1.0,1.0,1.0,1.0);
+if (*(a2+232)) {   // needsClear
+  RenderTargetManager::SetDepthStencilRenderTarget(0x14302BB20, *(a2+84)/*target*/, 1/*SRTM_CLEAR*/, *(a2+88)/*slice*/);  // 0x140d74d10
+  RenderTargetManager::SetRenderTarget(0x14302BB20, 0, -1, 3/*SRTM_NO_CLEAR*/, 1);                                        // 0x140d74cf0
+  FUN_140d6a330(&Renderer(0x143028490), 0);   // flush OM binds + issue ClearDepthStencilView NOW
+}
+NiCamera::RenderPreAndPostResolveDepth(*(a2+64)/*shadow cam*/, *(a2+72)/*shadow accumulator*/, a4|0x400);  // 0x1412C15C0
+BSGraphics__Renderer_SetClearColorFromArray(&Renderer);  // restore clear color
+FUN_140d7bbc0(&0x14302C890, cam+160, ...);   // BSGraphics::State camera-data update (CPU) + view/proj matrix block 0x143028260..0x143028417 swap
+```
+4. **`NiCamera::Render` 0x1412C15C0** → `sub_1412C1600` (cull/accumulate) → accumulator vfunc **Func43 (+0x158)** → for the shadow accumulator (render mode 13, set at ctor time `*(accum+336)=13`, created via `FUN_1412c9c90(mem, 0x63)`): **`BSShaderAccumulator::sub_1412CC3C0` = FinishAccumulating_ShadowMapOrMask (0x1412CC3C0)**:
+   - flags&0x100 (VL): group 15 only.
+   - else: `RenderBatches(0x2B, 0x4000002B)` (utility RenderDepth techniques), `RenderBatches(0x5C000030, 0x5C00005C)` (grass), group 1 (LOD, tech 0x5C006074), group 9 (LowAniso), `sub_1412CBCC0` (decals).
+5. **`BSShaderAccumulator::RenderBatches` 0x1412CCE40** → `BSBatchRenderer::sub_141307DD0` + **BeginPass walk 0x141308030** (ground truth) → **`RenderPassImmediately` 0x141308440** → `BeginPass(tech, shader)` 0x1413086C0 (current-technique globals **0x143283BA4** tech / **0x143283BA8** shader / dword_141E0DF8C; current material **0x143490BB0**) → shader vfuncs Func2/Func4/Func6 (BSUtilityShader = 0x14130DF90 / 0x14130E890 / 0x14130EC70) → geometry dispatch `BSRenderPass::FUN_141307160` (0x141307160, switch on `BSGeometry+0x150` type) → Renderer draw helpers.
+   - Skinned path: `RenderPassImmediately_Skinned` 0x1413088C0 / `_Standard` 0x141308970 → bone setter **`NiBoneMatrixSetterI::Func1` = 0x14131F630** (dedup via TLS+10752, reset by `FUN_14131f7c0`).
+6. Shadow **masks** (screen-space, for completeness): `Main::RenderShadowmasks` 0x1412E3AC0 → `FUN_1412e3b80` — binds RT 18, builds one `BSShader::MakeRenderPass` per light (utility shader 0x143495D50, techniques (flags|0x2002/0x200002)+0x2B) and calls `RenderPassImmediately` directly; `unk_143283B78` = shadowmap slice for the pass.
+
+## Full vfunc table (every distinct ID3D11DeviceContext call reachable on the shadow-map path)
+
+All are issued on the ONE context pointer 0x143027EA0 (both decompiler spellings). "SDS" = `BSGraphics::SetDirtyStates` 0x140D705B0; "ClearFlush" = `FUN_140d6a330` 0x140D6A330 (its clone: same OM/RS flush logic + immediate lazy clears; used by the shadow body for the DSV clear).
+
+| idx | offset | D3D11 name | Where issued (addresses) | Purpose on shadow path |
+|----|--------|-----------|--------------------------|------------------------|
+| 7 | 0x38 | VSSetConstantBuffers | BSUtilityShader Func2 0x14130e6f4/0x14130e861 (slot 0); Func4 0x14130ebfa/0x14130ec51 (slot 1); Func6 tail (slot 2); bone setter 0x14131f729 (slot 10, previous bones) / 0x14131f78b (slot 9, bones); grass instance 0x1412cecbc (slot 8); grass per-instance 0x14130786d (slot 7, CB=[924]); `ResetState` 0x140d702e3 (slot 12 = PerFrame b12) | per-technique/material/geometry CBs, bone ring, grass |
+| 8 | 0x40 | PSSetShaderResources | SDS 0x140d70c27 (loop over PS-SRV dirty bits `unk_143027EB4`, table `qword_143027FF0[16+]`) | texture binds (utility PS: diffuse for alpha-test @ slot 0) |
+| 9 | 0x48 | PSSetShader | `Renderer_SetPixelShader` 0x140d6fd60 (from `BSShader::BeginTechnique` 0x14131FBD0; stores current PS obj at 0x143028200 = dword_143028070[100]) | pixel shader (NULL for depth-only techniques) |
+| 10 | 0x50 | PSSetSamplers | SDS 0x140d70bde (dirty bits `unk_143027EB8`, sampler indices `dword_143027F6C[i]`/`dword_143027FAC[i]`, sampler objects in renderer block at `0x1430261B0[748 + 5*mode + addr]`) | samplers |
+| 11 | 0x58 | VSSetShader | `Renderer_SetShader` 0x140d6f9b0 (stores current VS obj at 0x1430281F8 = dword_143028070[98]; sets input-layout dirty 0x400) | vertex shader |
+| 12 | 0x60 | DrawIndexed | `DrawTriShape` FUN_140d6bfe0 @0x140d6c0ba; `DrawDynamicTriShape` FUN_140d6cab0 @0x140d6cbc7; custom-IB FUN_140d6c0e0 @0x140d6c1c1 | the draws (IndexCount = 3*tris) |
+| 14 | 0x70 | Map | shader Setup CB maps (WRITE_DISCARD=4): Func2 0x14130e085/0x14130e0d1, Func4 0x14130e8ee/0x14130e92f, Func6 head ×2, grass Func6 0x1412ce2a0; `GetID3D11Resource` 0x140d70031 (bone-ring/grass CBs; **static scratch `qword_14302AC58`!**); SDS alpha-test CB 0x140d70951 ([783]); PerFrame b12 upload `FUN_140d6b210` (Map [923], gated on `unk_14302C8E0`); FUN_140d70050 ([922]); dynamic-VB ring `FUN_140d6c8a0` @0x140d6c9a5 (**NO_OVERWRITE=5**) | all CB updates + dynamic vertex data |
+| 15 | 0x78 | Unmap | matching unmaps: 0x14130e6c6/0x14130e6de/0x14130e84b (Func2), 0x14130ebca/0x14130ebe2/0x14130ec32 (Func4), Func6 tail, 0x14131f70f/0x14131f771 (bones), 0x1412ceca0 (grass), 0x140d70987 (SDS), FUN_140d6c9e0 & FUN_140d6ca30 (dyn-VB ring), 0x141307854 (grass instance CB), FUN_140d6b210 tail | |
+| 16 | 0x80 | PSSetConstantBuffers | Func2 0x14130e70a (slot 0), Func4 0x14130ec19 (slot 1), Func6 tail (slot 2); `ResetState` 0x140d702c3 (slot 11 = [783]) / 0x140d702f8-ish (slot 12) | PS CBs (only when PS bound) |
+| 17 | 0x88 | IASetInputLayout | SDS 0x140d70ae2 (dirty 0x400; layout = hash(vertexdesc `dword_143028070[96]` & VS `[98]`->desc) via map `unk_141E07140`/`qword_141E07160`, miss → `FUN_140d70f90` device->CreateInputLayout, guarded by lock FUN_140d730e0/FUN_140d73f70) | input layout |
+| 18 | 0x90 | IASetVertexBuffers | 0x140d6c0a1 (slot 0, 1 VB, stride=(4*desc)&0x3C); 0x140d6cba3 (2 VBs: static + **dyn ring `qword_143025F18[cursor]`**); grass 0x140d6c2c3 (geom VB + instance VB); 0x140d6c1a5 | |
+| 19 | 0x98 | IASetIndexBuffer | 0x140d6c05d, 0x140d6cb25, 0x140d6c25b, 0x140d6c161 — format **57 = DXGI_FORMAT_R16_UINT**, offset 0 | |
+| 20 | 0xA0 | DrawIndexedInstanced | grass `fDrawGrass` 0x140d6c2ec (3*tris, instanceCount, startIndex, 0, 0) | grass (only if grass passes accumulated into shadow) |
+| 24 | 0xC0 | IASetPrimitiveTopology | SDS 0x140d70b14 (dirty 0x800; topo `dword_143028070[102]` @0x143028208, draws force 4=TRIANGLELIST) | |
+| 28 | 0xE0 | End | dyn-VB ring wrap `FUN_140d6c8a0` @0x140d6c8f9 (event query `qword_143025F18[74+i]` when >4 MB used) | ring fence |
+| 29 | 0xE8 | GetData | 0x140d6c944 spin-wait (flags 4=DONOTFLUSH first try, then 0 + Sleep(1)); also `FUN_140d701d0` (8-byte query, not shadow) | ring fence wait — **blocks; on a deferred ctx GetData is illegal → must be rerouted to immediate ctx or privatized** |
+| 33 | 0x108 | OMSetRenderTargets | SDS 0x140d70775; ClearFlush 0x140d6a4c4 | binds shadowmap DSV (per-slice DSV from data+9936 `[8*(slice + 8*targetIdx)]`), RTV=none |
+| 35 | 0x118 | OMSetBlendState | SDS 0x140d70913 (blendFactor const @0x141E07168); ClearFlush 0x140d6a698 (@0x141E07178) | blend (indices unk_143027F58/F5C/F60 + alpha-to-coverage flt_143028470[4]) |
+| 36 | 0x120 | OMSetDepthStencilState | SDS 0x140d707c9; ClearFlush 0x140d6a544 (state idx unk_143027F38 (depth) / unk_143027F44 stencilRef, table `0x1430261B0[40*a+...]`) | |
+| 43 | 0x158 | RSSetState | SDS 0x140d70823; ClearFlush 0x140d6a5a0 (indices unk_143027F48/F4C/dword_143027F50/F54; **F50=1 selects the depth-bias rasterizer for shadow render**, bias values dword_143027EBC[29..30] vs table 0x143026180) | |
+| 44 | 0x160 | RSSetViewports | SDS 0x140d708bc; ClearFlush 0x140d6a63f (1 viewport, float4 @dword_143027EBC[25..28], filled by `Renderer::UpdateViewPort` 0x140d69d00 — dirty-bit only, sized from RenderTargetManager 0x14302BB20; dyn-res scale 0x14302C98C skipped when depth-target bound) | shadowmap viewport |
+| 45 | 0x168 | RSSetScissorRects | `FUN_140d70100` @0x140d7013a (1 rect) — called from BSUtilityShader::Func6 non-directional branch with the light's projected bounding box | per-light scissor (frustum/omni shadow) |
+| 47 | 0x178 | CopyResource | `Renderer::SetRenderTarget` 0x140d74f0a (only mode a4==5 SRTM_RESTORE — copies RT texture; not hit with mode 3/1 used on shadow path); main-view depth copies 0x1412cb07e / Main::RenderDepth tail | not expected during shadowmaps, listed for completeness |
+| 50 | 0x190 | ClearRenderTargetView | SDS 0x140d706a1/0x140d7063f; ClearFlush 0x140d6a411/0x140d6a3b5 (lazy clear-on-bind: per-RT mode words `dword_143027EBC[15+i]`/[24], mode 0=clear→issues then sets 4) | shadow path: RT list empty → no-op |
+| 53 | 0x1A8 | ClearDepthStencilView | SDS 0x140d70765 (flags by depth mode word `dword_143027EBC[23]`: 0/6→3, 1→1, 2→2, depth=1.0 stencil=0 implied); ClearFlush 0x140d6a4b4 — **this is the shadow-map clear**, DSV chosen by `dword_143027EBC[11]` (target) `[12]` (slice) | |
+| 67 | 0x218 | CSSetShaderResources | SDS loop 0x140d70cc7 (bits dword_143027EBC[0]) | normally no-op on shadow path |
+| 68 | 0x220 | CSSetUnorderedAccessViews | SDS loop 0x140d70b7c (bits [2]) | no-op |
+| 70 | 0x230 | CSSetSamplers | SDS loop 0x140d70c7e (bits [1]) | no-op |
+
+Not used on the shadow path: Draw, DrawInstanced, Begin, UpdateSubresource, any GS/HS/DS setter, Dispatch, ResolveSubresource, ExecuteCommandList.
+
+Key body quotes (load-bearing):
+- Draw helper `FUN_140d6bfe0`: `SetDirtyStates(0); ctx->IASetIndexBuffer(*(a2+8),57); ctx->IASetVertexBuffers(0,1,a2,&stride,&0); ctx->DrawIndexed(3*a4, a3, 0);`
+- Bone setter 0x14131F630: `GetID3D11Resource(&renderer, 3*boneCount, &mapped, 10)` → memcpy 48B/bone ×2 → `Unmap; VSSetConstantBuffers(10,1,&cb); ... VSSetConstantBuffers(9,1,&cb2);`
+- `GetID3D11Resource` 0x140d6ffd0: `cb = (a4==7) ? [924] : [779 + cursor[778]++&3]; qword_14302AC58[0]=cb; ctx->Map(cb,0,DISCARD,0,&m); return &qword_14302AC58;` — **one static slot shared by bones/grass; not thread-safe, must be privatized.**
+- `ResetState` 0x140d70290: `RendererShadowState::InitFlags(0x143027EB0); PSSetConstantBuffers(11,1,&[783]); VSSetConstantBuffers(12,1,&[923]); PSSetConstantBuffers(12,1,&[923]);`
+
+## Redirect surface (what to swap / replicate)
+
+1. **The pointer**: `0x143027EA0` (== `0x1430261B0[926]`). Every listed call dereferences it fresh at call time — pointing it at a deferred context redirects 100% of the D3D calls above. There is no second cached copy on this path.
+2. **Blocking calls that are illegal/degenerate on a deferred context** — must NOT be recorded:
+   - `GetData` spin (idx 29) in the dyn-VB ring allocator `FUN_140d6c8a0` and its `End` (28). Either give the shadow thread a private VB ring (replicate `0x143025F18` block: 3 VBs + 3 event queries + cursor 0x143025F30) with fences issued on the immediate context, or pre-reserve.
+   - `Map(NO_OVERWRITE)` on the ring VB is legal on deferred contexts only on 11.1 hardware; `Map(DISCARD)` on the CBs is fine but each first-per-commandlist DISCARD is required. Bone ring `[778..782]`, alpha CB `[783]`, PerFrame `[923]`, grass `[924]`, per-VS-object CBs (VS obj+24/+40/+56, mapped ptrs +32/+48/+64) all get mapped through the swapped pointer — DISCARD semantics survive, but the **ring cursor 0x143027A00 and `qword_14302AC58` scratch are shared globals** → privatize for multithreading.
+3. **Deferred contexts start with clean state**: the engine assumes persistent bindings that are set elsewhere on the immediate context — re-issue at the start of every command list: `VS/PSSetConstantBuffers(12, &[923])`, `PSSetConstantBuffers(11, &[783])` (i.e. replay `ResetState` 0x140D70290), plus current VS/PS, topology, and the OM/RS state. Cheapest correct approach: memset the dirty word **0x143027EB0** to "everything dirty" and reset the cached-binding shadows (`dword_143028070[96..102]`, `qword_143027FF0[]`, `dword_143027F6C/FAC`, `unk_143028000/008/010/018/020/028`, `0x1430281F0/1F8/200/208`, `unk_1430284C2`, `dword_143027EBC[13]=-1`) so SDS/ClearFlush re-emit on first use — these caches otherwise suppress the D3D calls because they think state is already bound.
+4. **The whole mutable state block to replicate for a private (multithreaded) copy** is the RendererShadowState "S" block **0x143027EB0 .. ~0x143028488** (dirty word; CS dirty bits EBC[0..2]; RT/DSV selection EBC[11..24]; viewport EBC[25..28]; depth-bias EBC[29..30]; DS/raster/blend indices F38..F64; alpha-test F64/F68; PS sampler modes F6C[16]/FAC[16]; PS SRVs FF0[16+]; CS SRV/UAV/sampler tables 0x143028030..; vertexdesc/VS/PS/topology 0x1430281F0..0x143028208; pos-adjust 0x14302820C..220; view/proj matrix block 0x143028260..0x143028417; clear-color save flt_143028470[0..]; misc flags 0x1430284C2/C5) **plus** bone-ring cursor 0x143027A00, dyn-VB ring 0x143025F18/0x143025F30, `qword_14302AC58`, current-technique globals 0x143283BA4/0x143283BA8/0x141E0DF8C/0x143490BB0, `unk_143283B78` (shadowmap slice), camera block 0x14302C890 (+ dirty flag 0x14302C8E0, frame counter 0x14302C8DC) and TLS slots +1896/+10752.
+5. **`ExecuteCommandList` insertion point**: end of `FUN_1412e3480` (0x1412E3480) after the light loop, or per-light after each `Func10` return, on the real immediate context (keep a saved copy of the original pointer from 0x140d71cd8-time). Restore-state=FALSE and then mark the S block fully dirty (see #3) so the following engine pass rebinds.
+6. **Engine-original shaders**: shader binds go through the VS/PS objects' `+8` `ID3D11VertexShader*/ID3D11PixelShader*` (`Renderer_SetShader`/`_SetPixelShader`) — untouched by the redirect; input layouts come from the shared cache 0x141E07140/0x141E07160 whose **miss path creates layouts on the device (thread-safe) but under a renderer lock (FUN_140d730e0/FUN_140d73f70)** — safe to call from the recording thread.
+
+## CAVEATS
+
+- ID3D11DeviceContext vfunc indices are mapped from the standard Windows SDK vtable order; every offset seen was consistent with it (arg shapes verified for Map/Unmap/OMSetRenderTargets/ClearDepthStencilView/DrawIndexed/IASet*), but I did not diff against d3d11.h mechanically.
+- BSDistantTreeShader (Func2 0x1413014C0 / Func6 0x141301990) and BSGrassShader Func2 were not fully decompiled; their ctx xrefs (Map/Unmap/VS-PSSetConstantBuffers at 0x14130156f/5a9/917-955, 0x1413019d6/ad1/ae1) match the same Map→fill→Unmap→SetConstantBuffers quartet as BSUtilityShader, and trees render in shadow maps (LOD group / technique range). Slot numbers for distant-tree assumed 0/2 by pattern, not read.
+- `BSShaderAccumulator::sub_1412CC3C0` was identified as the mode-13 (shadowmap) FinishAccumulating by its technique ranges (0x2B..0x4000002B RenderDepth, grass, decals) and by the shadow accumulator ctor setting `*(accum+336)=13`; I did not decompile the Func43 dispatcher switch itself.
+- Decals in shadow (`sub_1412CBCC0` → `sub_1412CBB20`) were not decompiled; they route through the same RenderBatches/RenderPassImmediately machinery, so no new ctx vfuncs are expected, but per-decal state pokes were not enumerated.
+- The PerFrame b12 upload `FUN_140d6b210` is called from the main-scene finish; I did not find a call inside the shadow finish (0x1412CC3C0). Utility shaders compute WVP CPU-side into their slot-0/2 CBs, so shadow rendering likely never touches b12 — but if any pass reads b12, the deferred context must have it bound (see redirect #3). Unverified for every technique in 0x2B..0x4000002B.
+- `RenderPassImmediately_Custom` (0x141308B20, geometry flag &8 path) was not decompiled; on shadow paths it should be rare (custom shadow geometry), and it feeds the same helper set, but not verified.
+- Whether frustum/parabolic Func10 bodies (0x14132D040/0x14132E4E0) add calls beyond the shared `sub_141305610` body was not checked; the scissor-rect call (idx 45) is confirmed reachable via the utility shader's non-directional branch regardless.
+- dword_143027EBC[12] doubling as ClearDepthStencilView arg 4 in SDS (stencil value?) is odd in the decompile; the ClearFlush variant (0x140d6a4b4) passes only (dsv, flags) with depth/stencil in registers the decompiler dropped — actual values (1.0f, 0) inferred from calling convention, not read from disasm.
+
+### Caveats
+- Vfunc indices mapped from the standard d3d11.h vtable order; arg shapes verified per call but not mechanically diffed against the SDK header.
+- BSDistantTreeShader Func2/Func6 and grass Func2 not fully decompiled; their ctx xrefs match the Map/Unmap/SetConstantBuffers quartet, slots assumed by pattern.
+- sub_1412CC3C0 identified as the shadowmap FinishAccumulating by technique ranges and accumulator render-mode 13; the Func43 dispatcher switch itself was not decompiled.
+- Decal sub-path (sub_1412CBCC0/sub_1412CBB20) not decompiled; expected to reuse the same machinery, no new vfuncs verified.
+- PerFrame b12 upload (FUN_140d6b210) not observed inside the shadow finish; utility shaders appear to compute WVP CPU-side, but b12 dependence of every technique in 0x2B..0x4000002B is unverified — bind b12 on the deferred context anyway.
+- RenderPassImmediately_Custom (0x141308B20) not decompiled (rare custom-geometry path).
+- Frustum/parabolic light Func10 bodies (0x14132D040/0x14132E4E0) not decompiled; assumed to funnel into sub_141305610 like the directional light.
+- ClearDepthStencilView depth/stencil values (1.0f/0) inferred from calling convention; the decompiler dropped the float/int register args at both call sites.
+
+================================================================================================
+## Shadow cluster 4
+================================================================================================
+
+# Shadow render path — complete mutable-global-state inventory (SkyrimSE 1.5.97, base 0x140000000)
+
+Scope: everything between the per-frame driver `Main::RenderShadowmaps` **0x1412E3480** (called from `DrawWorld::MainAccum` **0x1412E2A60**) down through `BSShadowLight::RenderShadowmap` **0x141305610** → `NiCamera::Render` **0x1412C15C0** → accumulator batch walk (`0x141307930` / `0x141308030` / `0x1413094A0`) → `RenderPassImmediately` **0x141308440** → `SetDirtyStates` **0x140D705B0** → D3D11.
+
+Top-level loop (verified decompile of 0x1412E3480):
+```c
+v1 = TLS[0x143497408] + 1896; saved = *v1; *v1 = 29;      // per-thread memory-context tag
+for (light = ShadowSceneNode::GetShadowCasterLightArrayEntry(shadowSceneNode /*0x141E0DED0*/, 0);
+     light; light = ...(shadowSceneNode, cursor))
+    light->vtbl+0x50 /*RenderShadowmaps*/(light, &cursor);
+*v1 = saved;
+```
+Per-light `Func10` (directional **0x141324C30**, frustum **0x14132D040**, parabolic **0x14132E4E0**) loops the light's shadowmap-data array (stride **240** at light+320, count light+312), writing `+84 = depthStencilTarget` (2 = sun cascades, 3 = debug-mode-2, 4(+slice k+4) = focus maps, cube path uses stored idx) and `+88 = slice`, then calls **0x141305610** per view. `0x141305610` per view: releases the map's deferred-texture list (light+1312/+1328, refcounted), allocates a slice from bitmask **dword_141E10538** when `+84==-1` (freed by `BSShadowLight::sub_141304AF0` 0x141304AF0), sets clear color (1,1,1,1), sets DS render target via RenderTargetManager, renders the accumulator through `NiCamera::Render`, then recomputes the shadow view/proj from the shadow-state camera mirror and stores it back into the shadowmap-data struct (+0..63) — i.e. the *output* of a view render is read from global camera state.
+
+## Dirty-state block field map (RendererShadowState, base B = 0x143027EB0, size 0x5D8 → 0x143028488)
+
+All writers below are the batch-walk / shader Setup* functions on the render thread; the sole consumer is `SetDirtyStates` 0x140D705B0 (+ direct context calls noted). Defaults from `RendererShadowState::InitFlags` **0x140D73BD0** (called by `Renderer::ResetState` 0x140D70290).
+
+| Addr | B+ | Type | Meaning (verified use in SetDirtyStates / setters) |
+|---|---|---|---|
+| 0x143027EB0 | 0x00 | u32 | stateUpdateFlags. bit0=RT/DSV rebind+clears; bit1=viewport(RSSetViewports of B+0x70); bits2-3=OMSetDepthStencilState; bit4(0x10)+0x40+0x1000+0x20 (mask 0x1070)=RSSetState; bit6(0x40)=depth-bias→also rewrites viewport minZ/maxZ from 0x143028470 + bias table 0x143026180[biasMode]; bit7(0x80)=OMSetBlendState; bits8-9(0x300)=alpha-test CB Map/write(renderer[783]); bit10(0x400)=IASetInputLayout (hash `vertexDesc & VS->descMask(VS+0x48)`); bit11(0x800)=IASetPrimitiveTopology |
+| 0x143027EB4 | 0x04 | u32 | PSResourceModifiedBits → PSSetShaderResources(slot,1,&B+0x140[slot]) |
+| 0x143027EB8 | 0x08 | u32 | PSSamplerModifiedBits → PSSetSamplers(slot,1,&rendererData[5*filter[slot]+748+addr[slot]]) |
+| 0x143027EBC | 0x0C | u32 | CSResourceModifiedBits (CSSetShaderResources from B+0x240) |
+| 0x143027EC0 | 0x10 | u32 | CSSamplerModifiedBits (from B+0x1C0/0x200) |
+| 0x143027EC4 | 0x14 | u32 | CSUAVModifiedBits (CSSetUnorderedAccessViews from B+0x300) |
+| 0x143027EC8 | 0x18 | u32[8] | renderTargets[8] — index into renderer-instance RTV table (inst+2648, stride 48, RTV at +8) |
+| 0x143027EE8 | 0x38 | u32 | depthStencil index — DSV table inst+8112 (or +8176 when inst byte +34 "read-only depth" set), 19 views per depth target |
+| 0x143027EEC | 0x3C | u32 | depthStencilSlice (also ClearDepthStencilView arg) |
+| 0x143027EF0 | 0x40 | u32 | cubeMapRenderTarget (-1 = normal path; else RTV = inst + 8*(view + 8*idx) + 9936) |
+| 0x143027EF4 | 0x44 | u32 | cubeMapRenderTargetView (face) |
+| 0x143027EF8 | 0x48 | u32[8] | setRenderTargetMode[8] (0=CLEAR→ClearRenderTargetView(inst+10088 color) then 4) |
+| 0x143027F18 | 0x68 | u32 | setDepthStencilMode (≤2 or 6 → clear; clear-flags map 0/6→3, 2→2, 1→1; →4 after) |
+| 0x143027F1C | 0x6C | u32 | setCubeMapRenderTargetMode |
+| 0x143027F20 | 0x70 | f32[6] | D3D11_VIEWPORT x,y,w,h,minZ,maxZ. Written by `Renderer::UpdateViewPort` **0x140D69D00** from normalized rect 0x143028460-46C × RT dims (RT-manager getters; DRS scale 0x14302C98C/990 unless 0x14302C9A0) |
+| 0x143027F38 | 0x88 | u32 | depthStencilDepthMode (dirty 4) |
+| 0x143027F3C | 0x8C | u32 | depthStencilDepthModePrevious (default 6; dirty-bit cancel logic) |
+| 0x143027F40 | 0x90 | u32 | depthStencilStencilMode (written as u64 pair with stencilRef, e.g. 0xFF00000000) |
+| 0x143027F44 | 0x94 | u32 | stencilRef. DS state object = rendererData + 8*(40*depthMode+stencilMode) |
+| 0x143027F48 | 0x98 | u32 | rasterStateFillMode (×72) |
+| 0x143027F4C | 0x9C | u32 | rasterStateCullMode (×24; toggled per pass-type in batch BeginPass 0x141308030, dirty 0x20) |
+| 0x143027F50 | 0xA0 | u32 | rasterStateDepthBiasMode (×2; dirty 0x40; utility SetupTechnique forces 1 for shadowmaps) |
+| 0x143027F54 | 0xA4 | u32 | rasterStateScissorMode (+base 240 qwords into rendererData; dirty 0x1000) |
+| 0x143027F58 | 0xA8 | u32 | alphaBlendMode (×52, blend table at rendererData+0xC00) |
+| 0x143027F5C | 0xAC | u32 | alphaBlendAlphaToCoverage (×26; gated on global unk_1431D0E5D) |
+| 0x143027F60 | 0xB0 | u32 | alphaBlendWriteMode (×2; + last blend index = dword **0x143028480**, a global outside per-pass control) |
+| 0x143027F64 | 0xB4 | u32 | alphaTestEnabled (dirty 0x100) |
+| 0x143027F68 | 0xB8 | f32 | alphaTestRef → Map(WRITE_DISCARD) of CB renderer[783] @0x143027A28 (bound once PS b11 in ResetState) |
+| 0x143027F6C | 0xBC | u32[16] | PS sampler filter mode / slot |
+| 0x143027FAC | 0xFC | u32[16] | PS sampler address mode / slot (default 3) |
+| 0x143027FF0 | 0x140 | ptr[16] | PS SRV cache. Slot2 (0x143028000) = main depth SRV, slot5 (0x143028018) = focus-shadowmap depth SRV — set in utility SetupTechnique from inst qword [19*dsIdx+1032]/[1033]; also sets hazard byte **0x1430284C2** (inst+50, cleared in ResetState) |
+| 0x143028070 | 0x1C0 | u32[16] | CS sampler filter mode |
+| 0x1430280B0 | 0x200 | u32[16] | CS sampler address mode (default 3) |
+| 0x1430280F0 | 0x240 | ptr[16] | CS SRV cache |
+| 0x143028170 | 0x2C0 | 0x40 B | zero-initialized region (poss. CS SRV slots 16-23) |
+| 0x1430281B0 | 0x300 | ptr[8] | CS UAV cache |
+| 0x1430281F0 | 0x340 | u64 | vertexDesc (input-layout hash half; written by draw wrappers e.g. 0x140D6BFE0, dirty 0x400) |
+| 0x1430281F8 | 0x348 | ptr | current BSGraphics::VertexShader — written by `Renderer_SetShader` **0x140D6F9B0** which ALSO calls VSSetShader immediately |
+| 0x143028200 | 0x350 | ptr | current PixelShader — `Renderer_SetPixelShader` **0x140D6FD60**, immediate PSSetShader |
+| 0x143028208 | 0x358 | u32 | topology (dirty 0x800) |
+| 0x14302820C | 0x35C | f32[3] | currentPosAdjust |
+| 0x143028218 | 0x368 | f32[3] | previousPosAdjust |
+| 0x143028230 | 0x380 | 0x250 B | camera mirror, block-copied by **0x140D7D8C0**: ViewMat@0x143028260, ProjMat@0x1430282A0, ViewProjMat@0x1430282E0, +0x320 unk, ViewProjUnjittered@0x143028360, PrevViewProjUnjittered@0x1430283A0, ProjUnjittered@0x1430283E0, +0x420 unk, normalized viewport rect@**0x143028460**[4], camera depth range near/far@**0x143028470**[2]. Written per view by `State::SetCameraData` 0x140D7BAB0 / explicit variant 0x140D7BBC0 (→0x140D7D430→0x140D7BEF0) |
+| 0x143028480 | 0x5D0 | u32 | final blend-table index term (flt_143028470[4]); writer not found in render path — treat as quasi-static config |
+
+## Technique/material/geometry caches
+
+| Addr | Type | Meaning | Writers |
+|---|---|---|---|
+| 0x143283BA4 | u32 | current technique ID (skip-BeginPass dedup; 0x5C006076 never dedups) | RenderPassImmediately 0x141308440, BeginPass helper **0x1413086C0** (calls shader vfunc+0x10 SetupTechnique / +0x18 RestoreTechnique), ClearState **0x141308760**, batch walk 0x141307930/0x141308030/0x1413090C0, InitSDM 0x141308520 |
+| 0x143283BA8 | BSShader* | current shader (paired with above) | same |
+| 0x143490BB0 | ptr | current BSShaderMaterial (skip-SetupMaterial dedup, shader vfunc+0x20) | same |
+| 0x141E0DF8C | u32 | current technique (debug mirror, written unconditionally in 0x141308440) | RenderPassImmediately |
+| 0x141E10660 | u32 | BSUtilityShader saved alphaBlendWriteMode token (13 = empty); set in SetupGeometry 0x14130EC70, consumed/restored in RestoreTechnique 0x141310300 | utility shader only |
+| 0x143283BA0 | u32 | count of per-frame sorted pass array; reset each frame by 0x141308540 (Main::Swap), qsorted by 0x141308560 | BSBatchRenderer 0x141309280/0x1413093E0/0x1413094A0 |
+| 0x143490BD0 | 0x28-stride array | the sorted pass-group list itself | same |
+| 0x1431D0E20 | ptr | current BSShaderAccumulator (`SetCurrentAccumulator` 0x1412966B0 / `GetCurrentAccumulator` 0x1412966A0 — plain global, NOT TLS; read inside utility SetupGeometry) | NiCamera::Render per view |
+| 0x1431D0E68 | NiCamera* | current camera (read for depth calc in SetupGeometry/SetupTechnique) | NiCamera::sub_1412C1600 |
+| BSShader+0x90 / +0x94 | u32×2 | per-shader-OBJECT scratch: current technique descriptor / (desc & 0x7F). Written by SetupTechnique (e.g. BSUtilityShader::Func2 **0x14130DF90**), read by SetupGeometry 0x14130EC70 and RestoreTechnique 0x141310300 | shader object mutation |
+| VertexShader +0x18/+0x20, +0x38/+0x40; +0x48 desc-mask; +0x50.. offset bytes | ptr pairs | per-technique CB (b0) / mapped-ptr scratch; per-geometry CB (b2) / mapped-ptr scratch. Map(WRITE_DISCARD) on the **immediate context**, mapped pointer stored INTO the shared shader object, filled across SetupTechnique/SetupGeometry, Unmapped + VSSetConstantBuffers(0 or 2) at end | shader object mutation |
+| PixelShader +0x10/+0x18, +0x30/+0x38; +0x40.. offset words; +0x08 | ptr pairs | same for PS (b0/b2); PS+0x08 is a COM ptr released by 0x140D6FCF0 in the stencil-textured path | shader object mutation |
+| skin instance (+72/+80 arrays, per-frame stamp) | heap | `BSDismemberSkinInstance::sub_140D74F70` recomputes bone matrices once per frame per skin (reads frame counter 0x14302C8DC, stamps the instance) | bone path |
+| 0x143283BB0, 0x143477BB0 | scratch blocks | strip-particle geometry staging used by 0x140D76D80/0x140D6CE60 (RenderPassImmediately geometry case 1) | particle passes |
+| 0x141E07140/0x141E07144/0x141E07150/0x141E07160 | hashmap | input-layout cache keyed by `vertexDesc & VS->mask`; misses call **0x140D70F90** (device CreateInputLayout) and insert (0x140D730E0/grow 0x140D73F70) | SetDirtyStates bit 0x400 |
+
+## Ring/pool state
+
+| Addr | Meaning |
+|---|---|
+| 0x143027A00 | = rendererData[778]: bone-CB ring cursor, `cursor = (cursor+1) & 3`, advanced by `GetID3D11Resource` **0x140D6FFD0** on every bone upload (VS b9 previous-bones + b10 bones = 2 ring slots per skinned pass, `NiBoneMatrixSetterI::Func1` **0x14131F630**) |
+| 0x143027A08 | rendererData[779..782]: 4× ID3D11Buffer* 3840 B (created 0x140D720D0, Map WRITE_DISCARD on immediate context) |
+| 0x14302AC58 | global scratch qword: "currently mapped bone CB" handle returned by GetID3D11Resource (aliased into VSSetConstantBuffers by callers); [2] also reused as a QPC timestamp at present. Sits right after the renderer critical section |
+| 0x143025F18 | dynamic-VB ring block: [0..2] = 3× 4 MB vertex buffers; **0x143025F30** ([3]) = packed u64 {lo=ring index 0..2, hi=write offset}; +0x250 (0x143026168) = 3 event queries; byte flags ~0x143026164+i = query-signaled. Allocator **0x140D6C8A0**: overflow → End(query), rotate, GetData busy-wait (Sleep 1), Map NO_OVERWRITE — all on the immediate context |
+| 0x143025F00 | qword ptr → renderer instance 0x143028490 (RT/DSV/cubemap/clear-color tables) |
+| 0x143025F08 | ID3D11Device* |
+| 0x143025F10 | swapchain holder (present at frame end 0x140D6A2B0) |
+| 0x143027EA0 | ID3D11DeviceContext* (immediate) == rendererData[926]; **every** function in this path calls D3D through 0x143027EA0 or rendererData[926] |
+| 0x1430261B0 | rendererData base: DS states +0 (40×n), raster states +0x780 (72/24/2/1 dims), blend states +0xC00 (52/26/2 dims), sampler states +8×748, CB pools [779..924] (incl. [783] alpha-test 16 B @0x143027A28 → PS b11, [922] 576 B @0x143027E80, [923] 720 B PerFrame @0x143027E88 → VS+PS b12, [924] 16 B instance @0x143027E90 → VS b7 grass) |
+| 0x143028490 | renderer instance (`Renderer::QInstance`, = *0x143025F00): RTV entries +2648 (48 B), DSV tables +8112/+8176 (19/target; per-target SRVs at qword idx [19i+1032]/[1033]), cubemap RTVs +9936, clear color +10088, byte +34 = use-read-only-DSV flag (WRITTEN during clears), byte +50 (0x1430284C2) = depth-SRV-bound hazard flag, CRITICAL_SECTION +10128 (0x14302AC20, Renderer_Lock 0x140D6A080) |
+| 0x14302BB20 | RenderTargetManager (RT dims/props; width/height getters 0x140D74C20/C60, cube 0x140D74CB0/CD0; shadowmap dims read at dword [4×dsIdx+798/799] in 0x141305610) |
+| 0x141E10538 | shadowmap-slice allocator bitmask (alloc in 0x141305610, free in 0x141304AF0) |
+
+Per-frame CB upload `0x140D6B210` (runs on every camera change while flag **0x14302C8E0** set): Map(DISCARD) rendererData[923], writes 12 matrices + posAdjust + DRS constants from the S-block camera mirror and 0x14302C98C/990/994/998/9A0 + INI 0x141E073D8/0x141E07240.
+
+## Camera + TLS
+
+- **0x14302C890** = BSGraphics::State. Verified members touched per shadow view: frame counter +0x4C (0x14302C8DC, ++ at present 0x140D6A2B0), per-frame-CB flag +0x50 (0x14302C8E0, set at BeginFrame 0x140D6A0C0, cleared at present), default texture +0x58 (0x14302C8E8, stuffed into PS SRVs 0-5/7 on missing textures in 0x141307160), DRS scales 0x14302C98C/0x14302C990, previous 0x14302C994/0x14302C998, DRS-off flag 0x14302C9A0, fallback CameraStateData 0x14302C9B0, plus a per-camera CameraStateData cache that `SetCameraData` 0x140D7BAB0 looks up (0x140D7D7B0) and can **insert into** (0x140D7D130) — State is mutated per view.
+- `SetCameraData`/`0x140D7BBC0` → `0x140D7D430`: copies the selected CameraStateData into the S-block mirror (0x14302820C posAdjust, 0x143028218 prevPosAdjust, 0x143028230..0x143028480 matrices+viewport-rect+depth-range) then re-uploads PerFrame CB (0x140D6B210).
+- TLS: index dword **0x143497408**; block = `TEB->TLS[idx]`.
+  - **+1896**: memory-context tag. Saved/set/restored: =29 around the whole shadow-light loop (0x1412E3480), =26 inside bone upload (0x14131F630).
+  - **+10752 (0x2A00)**: last-uploaded-skin-instance pointer (dedup for bone-CB upload); cleared to 0 at the top of RenderPassImmediately_Standard by 0x14131F7C0. Already per-thread by construction.
+  - **+10760**: CRT `_Init_thread` epoch (magic-static guard in SetCameraData) — CRT, not engine.
+
+## Privatize vs share classification
+
+**Must be replicated per-thread (written during pass dispatch):**
+1. Whole RendererShadowState block 0x143027EB0..0x143028488 (incl. camera mirror + viewport rect/depth range tail; 0x5D8 bytes) — the natural unit: memcpy the live block into a private copy, run a private SetDirtyStates against the deferred context.
+2. Technique/material dedup trio 0x143283BA4/BA8 + 0x143490BB0, debug 0x141E0DF8C, utility blend token 0x141E10660.
+3. Bone-CB ring cursor 0x143027A00 + the 4 CBs 0x143027A08 and scratch 0x14302AC58 — Map(DISCARD) must move to the deferred context and the 4-deep ring must be per-thread (or per-thread CB sets).
+4. Dynamic-VB ring 0x143025F18/0x143025F30 — worse: uses Map(NO_OVERWRITE) + **event-query GetData busy-wait, which is illegal on a deferred context**; needs a per-thread VB or a lock-free suballocator. Only relevant if particles/dynamic tri-shapes render into shadowmaps (they can — geometry cases 0/1/3/10 of 0x141307160).
+5. Per-shader-object scratch: BSShader+0x90/+0x94; VS +0x20/+0x40 mapped pointers; PS +0x18/+0x38 mapped pointers (+0x08 released ptr). Shader objects are process-global singletons per (shader,permutation) — two threads in the same technique will clobber each other's mapped pointers. Options: per-thread shadow copies of the CB+scratch fields, or thread-indexed CB arrays.
+6. Current accumulator 0x1431D0E20 and current camera 0x1431D0E68 — per view; State 0x14302C890 camera mirror + PerFrame CB (b12): each thread needs its own PerFrame CB (contents differ per shadow view: ViewProj) or must pre-bake per-view CBs.
+7. Skin-instance per-frame bone matrices (sub_140D74F70 stamp) — race if two threads render the same skinned object; must lock per instance or pre-update.
+8. Particle staging 0x143283BB0/0x143477BB0 — per-thread if particle shadow passes are kept.
+9. Sorted-group bookkeeping 0x143283BA0/0x143490BD0 and the accumulator/batch-renderer pass-group tables (`*(v20+40)` bucket-bit clears in 0x141308030 when a1+100 set) — pass lists are per-accumulator (each shadow light view owns its accumulator at shadowmapData+72/+224), so they parallelize per-view naturally, but the sorted array 0x143490BD0 is a single global.
+10. Shadowmap slice bitmask 0x141E10538 + shadowmap-data structs (+84/+88 targets, +72 deferred-release list) — per-light mutation; serialize per light.
+
+**Shared, read-only during the pass (deferred context can read freely; cannot privatize, must not write):** device 0x143025F08; rendererData state-object/sampler/CB tables 0x1430261B0 (object handles immutable after init — only their *contents* are mapped); renderer instance RTV/DSV/cubemap tables + clear color at 0x143028490 (**except** mutable bytes +34 and +50=0x1430284C2 — treat as per-thread state); RenderTargetManager 0x14302BB20; ShadowSceneNode 0x141E0DED0 + sunShadowDirLight split distances (+0x598 area) + shadowCasterLights array; scene graph/geometry; config/INI globals (0x141E0DE34, 0x141E0DE43, 0x141E0DE4C, 0x141E10670, 0x141E106A0, 0x141E106B8, 0x141E10B78/7C, 0x141E0DF04, 0x141E0DF70/74, 0x1431D0E5D, 0x143283B78/B7C/B88/B90, depth-bias table 0x143026180, blend factor 0x141E07168, focus arrays 0x1431D0FA8/0x1431D0FB8, camera ptr 0x1431D0F88); frame counter 0x14302C8DC (read-only inside the frame).
+
+**Shared-mutable caches needing a lock or pre-warm:** input-layout hashmap 0x141E07140/44/50/60 (insert path calls device->CreateInputLayout — device methods are thread-safe, the map is not); State's per-camera CameraStateData cache (insert on first sight of a camera); the renderer critical section 0x14302AC20 (Main frame already holds it — a worker must NOT recursively depend on it).
+
+**Immediate-context calls that bypass the dirty system (each needs redirection to the deferred context in the detour):** VS/PSSetShader (0x140D6F9B0/0x140D6FD60); Map/Unmap of shader CBs, bone CBs, per-frame CB, alpha-test CB, dynamic VB; VS/PSSetConstantBuffers slots 0,2,7,9,10,11,12; RSSetScissorRects (0x140D70100, used by shadow-light passes from projectedBoundingBox); IASetIndexBuffer/IASetVertexBuffers/DrawIndexed (0x140D6BFE0 et al.); CopyResource (SetRenderTarget mode 5); Clear*/OMSetRenderTargets/RSSetState/OMSetBlendState/etc. inside SetDirtyStates; dynamic-VB event-query End/GetData (deferred-context-illegal, see above).
+
+## CAVEATS
+- `FUN_140D6A0C0` (BeginFrame), `FUN_140D6A330` (likely depth clear), `FUN_140D7C200` (camera math), `FUN_140D7D7B0/130` (camera cache internals), `FUN_140D6CE60/140D6CBE0` full bodies, `sub_141307DD0`/`Func3 0x141307930`/`sub_1413094A0` details (treated as ground truth), `GetDepthStencilTarget_MAIN 0x140D74E50`, and `FUN_14130F960`/`SetupShadowLightParameters 0x14130FBE0` were not fully decompiled; their global writes beyond what callers show are unverified.
+- Writer of the blend-index dword 0x143028480 not located (assumed init-time/output-mode config).
+- The 0x40-byte zero region B+0x2C0 (0x143028170) is unidentified (possibly CS SRV slots 16-23).
+- 0x14302C8E0 bit semantics (bit1 first-person, bit2 alpha-pass, bit7 CK per PerFrame CB field names) inferred from FUN_140D6B210's use; the decompile of the flag byte read there is mangled.
+- Sizes of particle scratch 0x143283BB0/0x143477BB0 not measured.
+- `FUN_1405B29F0`/queue 0x141EC4320 (Main::Swap loop, DS target 5, render mode 27) is a separate cached-shadowmap-style path outside the main shadow loop; identity ("unowned"/interface shadows) not confirmed.
+- Exact BSShadowLight/shadowmap-data struct layout beyond the observed offsets (+64 camera, +72 accumulator?, +84 dsTarget, +88 slice, +208..220 clip, +224 accumulator ref, +232 cube flag, +240 stride) is partial; +72 holds a refcounted object released per render, +224 compared against light->shaderAccumulator.
+- BSShader+0x90 verified for BSUtilityShader (the shadowmap shader); other BSShader subclasses were not checked for extra per-object scratch beyond the same pattern (BSLightingShader::Func4/Func6 reference the same VS/PS global pair heavily; assume same mechanism).
+
+### Caveats
+- FUN_140D6A0C0 (BeginFrame), FUN_140D6A330 (likely depth clear), camera-cache internals (0x140D7D7B0/0x140D7D130/0x140D7C200), FUN_140D6CE60/0x140D6CBE0 full bodies, sub_141307DD0/Func3/sub_1413094A0 internals, GetDepthStencilTarget_MAIN, and SetupShadowLightParameters (0x14130FBE0) were not fully decompiled — their additional global writes are unverified.
+- Writer of blend-index dword 0x143028480 not located; assumed init-time config.
+- 0x40-byte zeroed region at 0x143028170 (B+0x2C0) unidentified (possibly CS SRV slots 16-23).
+- 0x14302C8E0 bitfield semantics (first-person/alpha-pass/CK bits) inferred from PerFrame CB field usage; decompiler output there was mangled.
+- Particle staging buffers 0x143283BB0/0x143477BB0 sizes not measured.
+- FUN_1405B29F0 / queue 0x141EC4320 (DS target 5, render mode 27, states 3→4) is a separate shadow-like path in Main::Swap whose exact identity (cached/unowned shadowmaps) is unconfirmed.
+- BSShadowLight shadowmap-data struct layout is partial (verified offsets only: +0 viewMat, +64 camera, +72 released ref, +84 dsTarget, +88 slice, +208..220 clip, +224 accumulator, +232 cube flag, stride 240).
+- BSShader+0x90 scratch verified on BSUtilityShader only; other shader classes assumed to follow the same SetupTechnique-writes / SetupGeometry-reads pattern but not individually audited.
+
+================================================================================================
+## Shadow cluster 5
+================================================================================================
+
+# Sun-shadow cascade / shadow-map render loop — SkyrimSE 1.5.97 (base 0x140000000)
+
+## Loop entry (addr)
+
+**`0x1412E3480`** (`DrawWorld::RenderShadowmaps`, auto-named FUN_1412e3480) is the per-frame driver that renders **every queued shadow map (sun cascades, focus maps, spot, parabolic)**. It iterates the ShadowSceneNode's shadow-caster-light array and calls each light's virtual **`+0x50` (vtbl idx 10) = `BSShadowLight::RenderShadowmaps`**:
+
+```c
+BSShadowParabolicLight *__fastcall FUN_1412e3480()   // 0x1412E3480
+{
+  v0 = shadowSceneNode;                              // global 0x141E0DED0
+  tls[+1896] = 29;                                   // memory-context tag (TLS idx dword 0x143497408)
+  a2 = 0;                                            // cumulative shadow-map cursor
+  for ( result = ShadowSceneNode::GetShadowCasterLightArrayEntry_1412BC7D0(v0, 0);
+        result;
+        result = ShadowSceneNode::GetShadowCasterLightArrayEntry_1412BC7D0(v0, a2) )
+  {
+    (result->vft->Func10_50)(result, &a2);           // BSShadowLight::RenderShadowmaps(light, &cursor)
+  }
+}
+```
+
+It is called from **`DrawWorld::MainAccum` 0x1412E2A60** (at 0x1412e2ba6), *concurrently* with two `SceneListAccumRegister` jobs (job manager `0x143233208`, worker fn `BSAccumProcess::DoSceneListAccumRegisterJob` 0x1412D6FB0) that register the main-view scene lists into the z-prepass accumulator `unk_1432333F8` (renderMode 12) and the main accumulator `0x143233400`; `JobList::Finish` follows the loop. So on the vanilla frame, **shadow-map GPU submission overlaps main-view pass registration** — the engine already treats it as an independent work item.
+
+The directional (sun) light override of Func10 is **`BSShadowDirectionalLight::Func10_141324C30` = the cascade loop**; the per-map body shared by all light types is **`BSShadowLight::RenderShadowmap` = `0x141305610`** (auto-named BSShadowParabolicLight::sub_141305610 but sits in the BSShadowLight vtable region and is called by all three Func10 overrides).
+
+## Full decompile
+
+### Cascade loop — `BSShadowDirectionalLight::Func10_141324C30` (RenderShadowmaps, directional)
+
+```c
+int32 __fastcall BSShadowDirectionalLight::Func10(BSShadowDirectionalLight *a1, uint32 *a2 /*cursor*/)
+{
+  // (A) OPTIONAL volumetric-lighting shadow cascades (only when dword_141E0E2E8 == 2)
+  if ( dword_141E0E2E8 == 2 )
+    for ( i = 0; i < *(a1+320) /*numShadowmaps=cascade count*/; ++i ) {
+      v5 = 240*i;
+      *(*(a1+328) + v5 + 84) = 3;                 // depth-stencil target index 3 (VL shadowmaps)
+      *(*(a1+328) + v5 + 88) = i;                 // array slice = cascade index
+      a3 = 0;
+      RenderShadowmap_141305610(a1, *(a1+328)+v5, &a3, 0x100);  // flags 0x100 = VL branch
+    }
+  // (B) THE SUN CASCADES
+  for ( j = 0; j < *(a1+320); ++j ) {             // numShadowmaps (per fShadowDistance splits, set via Func11_141304BF0)
+    v9 = 240*j;
+    *(*(a1+328) + v9 + 84) = 2;                   // depth-stencil target index 2 (dir cascade array)
+    *(*(a1+328) + v9 + 88) = j;                   // slice = cascade index
+    RenderShadowmap_141305610(a1, v9 + *(a1+328), a2, 0);
+  }
+  // (C) FOCUS SHADOW MAPS (if a1+1368 flag; entries INLINE at light+352+240k)
+  if ( a1[1368] )
+    for ( k = 0; k < unk_1431D0FB8._used /*iNumFocusShadow*/; ++k ) {
+      v11 = &a1[240*k + 352];  a3 = 0;
+      *(v11+84) = 4;                              // depth-stencil target index 4
+      v11[232] = 1;                               // force clear
+      *(v11+88) = k + 4;                          // slice k+4
+      RenderShadowmap_141305610(a1, v11, &a3, 0);
+    }
+}
+```
+
+### Per-map body — `BSShadowLight::RenderShadowmap` `0x141305610` (shared: dir cascade, focus, spot, parabolic)
+
+```c
+int32 __fastcall RenderShadowmap(BSShadowLight *a1, ShadowMapData *a2, uint32 *a3, uint32 a4 /*flags*/)
+{
+  ... release stale focus-target refs (a1+1312 array) ...
+  ++*a3;                                                    // advance caster-array cursor
+  if ( *(a2+84) == -1 ) {                                   // local-light pool path (spot/parabolic)
+    *(a2+84) = 4;                                           // DS target 4 = shared local shadowmap array
+    for ( i = 1, v9 = 0; (i & dword_141E10538) == 0; ++v9 ) i *= 2;   // scan free-slice bitmask
+    dword_141E10538 &= ~i;  *(a2+88) = v9;                  // claim slice
+  }
+  BSGraphics_Renderer_SetClearColors_140d6a6d0(0x143028490, .., 1.f,1.f,1.f,1.f);
+  if ( *(a2+232) ) {                                        // clear/valid flag (default 0x100 -> byte+233=1; +232 forced for focus)
+    RenderTargetManager::SetDepthStencilRenderTarget(0x14302BB20, *(a2+84), 1 /*=clear DEPTH*/, *(a2+88));
+    RenderTargetManager::SetRenderTarget(0x14302BB20, 0, -1 /*no color RT*/, 3, 1 /*update viewport*/);
+    FUN_140d6a330(0x143028490, 0);                          // FLUSH: OMSetRenderTargets(0, [], dsv-slice) + ClearDepthStencilView(DEPTH)
+  }
+  NiCamera::RenderPreAndPostResolveDepth_1412C15C0(*(a2+64) /*camera*/, *(a2+72) /*accumulator*/, a4 | 0x400);
+  BSGraphics__Renderer_SetClearColorFromArray(0x143028490); // restore clear colors
+  // then: rebuild the ShadowMapProj matrix for the shadowmask pass:
+  v14 = *(a2+64);                                           // camera: world pos +160.., rotation cols +124..156
+  ... focus maps rescale near/far + x-extent by rendered-viewport/RT-dims (mgr 0x14302BB20 + 4*target + 798/799)
+      using a2+208..220 (shadowMapRect) ...
+  FUN_140d7bbc0(0x14302C890, v14+160, right, up, look, nearFar, port);  // compute view-proj into renderer scratch
+  // scratch matrices read from 0x143028260/270/280/290 (+ 0x1430282A0..D0 alt set),
+  // focus maps multiply in a 0.5-bias texture matrix (FUN_14044b4a0), translation row rebuilt from camera pos;
+  *(a2+0)  = row0; *(a2+16) = row1; *(a2+32) = row2; *(a2+48) = row3;   // ShadowMapData.shadowMapProj (used by RENDER_SHADOWMASK)
+}
+```
+
+### The flush into the batch renderer — `NiCamera::RenderPreAndPostResolveDepth` `0x1412C15C0` → `0x1412C1600` → accumulator vtbl idx 42
+
+```c
+void *NiCamera::Render_1412C15C0(NiCamera *cam, BSShaderAccumulator *accum, uint32 flags) {
+  NiCamera::sub_1412C1600(cam, accum, flags);
+  return (accum->vft->Func43_158)(accum, flags);       // 0x1412CAC90: if renderMode==0 -> sub_1412CB2E0 (main-scene path); then NiAccumulator::Func38 (accum+16=0)
+}
+int32 NiCamera::sub_1412C1600(NiCamera *a1, BSShaderAccumulator *a2, uint32 a3) {   // 0x1412C1600
+  BSGraphics::State::SetCameraData(0x14302C890, a1, a3);           // 0x140D7BAB0 (known)
+  if ( a3 & 0x400 )
+    Renderer::UpdateViewPort(0x143028490, 0, 0, 1 /*ForceMatchRenderTarget*/);      // 0x140D69D00: full-RT viewport, NO dynamic-resolution scale
+  MEMORY[0x1431D0E68] = a1;                                        // current camera global
+  BSShaderAccumulator::SetCurrentAccumulator_1412966B0(a2);        // MEMORY[0x1431D0E20] = a2
+  a2->vft->Func37_128(a2, a1);                                     // StartAccumulating
+  return (a2->vft->Func42_150)(a2, a3);                            // 0x1412CAC20: THE FLUSH DISPATCH
+}
+void BSShaderAccumulator::Func42_1412CAC20(BSShaderAccumulator *a1, uint32 a2) {
+  BSShaderManager::SetRenderMode(*(a1+0x150));       // 0x141295E90: 0x1431D0E28=mode; 0x1431D1C30/0x1431D1C38 = current register/flush fns from tables 0x1431D1B40 / 0x1431D1C40
+  v4 = *(a1+0x150);                                  // accumulator renderMode
+  if ( v4 ) { v5 = table_1431D1C40[v4]; (v5 ? v5 : table_1431D1C40[0])(a1, a2); }
+  else BSShaderAccumulator::FinishAccumulating(a1, a2);            // 0x1412CACD0
+}
+```
+
+**Shadow-map render modes: 13 = spot (BSShadowFrustumLight), 14 = dir cascades + focus, 15 = parabolic** (`mov dword ptr [accum+150h], 0Dh/0Eh/0Fh` at 0x14132d3a1 / 0x141305592 & 0x14132761d / 0x14132d988+0x14132db29). Table `0x1431D1C40` entries 12..17 all point at the **shadow/depth flush handler `BSShaderAccumulator::sub_1412CC3C0`**:
+
+```c
+void BSShaderAccumulator::sub_1412CC3C0(BSShaderAccumulator *a1, uint32 a2) {   // modes 12..17
+  if ( !*(a1+16) ) return;                            // nothing accumulated
+  v4 = ((a2 & 0x22) == 0x20);  if (v4) FUN_1412e1e80(a1);        // grass-shadow state bracket
+  if ( a2 & 0x100 ) {                                 // VL shadow map branch (flags 0x100)
+    if (unk_143027F4C) { dirty |= 0x20; unk_143027F4C = 0; }     // depth-bias/rasterizer dirty (S-block 0x143027EB0)
+    pass = *(*(a1+0x130) + 232);                                  // persistent VL pass list
+    if (pass & persistent) RenderPersistentPassList(pass, a2);    // 0x141306240
+    else RenderBatches(a1, 1, 0x5C000074, a2, 15);                // VL-specific group
+    goto done;
+  }
+  RenderBatches(a1, 0x2B,       0x4000002B, a2, -1);  // main opaque batch groups
+  RenderBatches(a1, 0x5C000030, 0x5C00005C, a2, -1);  // grass dir-only
+  ... blood-splatter group (idx1 window 0x5C006074), LowAniso (idx9), then Decals via sub_1412CBCC0 ...
+  if (v4) FUN_1412e1fe0();
+}
+```
+
+`RenderBatches` (= `BSShaderAccumulator::RenderGeometryGroup` **0x1412CCE40**) is the known ground-truth walker: sets current accumulator (0x1431D0E20), seeds group cursor via `BSBatchRenderer::sub_141307DD0`, then loops **`BSBatchRenderer::BeginPass 0x141308030`** (or alpha-walker 0x1413083B0 for groups 0x5C000058..5B) until exhausted, ending with `FUN_141308760` (end-technique: releases current shader/technique globals `0x143283BA4/0x143283BA8`, clears `0x143490BB0`). BeginPass bottoms out in **`RenderPassImmediately 0x141308440`** as established.
+
+### D3D11 primitives touched per map (the deferred-context inventory)
+
+- `RenderTargetManager::SetDepthStencilRenderTarget` **0x140D74D10**: pure state-cache write — `dword_143027EBC[11]=dsTarget, [12]=slice, [23]=depthMode(1=clear depth pending)`, dirty bit 1 on `0x143027EB0`. (dword_143027EBC = 0x143027EBC = S-block+0xC.)
+- `RenderTargetManager::SetRenderTarget` **0x140D74CF0** → `BSGraphics::Renderer::SetRenderTarget` **0x140D74EC0**: RT slot cache at `0x143027EC8+4*slot`, mode at `0x143027EF8+4*slot`, `dword_143027EBC[13] = -1` (viewport-source marker), dirty bit 1; `updateViewport` arg → `Renderer::UpdateViewPort 0x140D69D00`.
+- `Renderer::UpdateViewPort` **0x140D69D00**: writes viewport x/y/w/h to `dword_143027EBC[25..28]`, dirty bit 2; dims come from RT-manager getters (depth-target dims when RT slot0 == -1, i.e. shadow maps); `ForceMatchRenderTarget=1` (the 0x400 flag) **bypasses the dynamic-resolution scale** at `0x14302C98C` → full shadow-map viewport (`bDirShadowMapFullViewPort` behavior).
+- `FUN_140d6a330(0x143028490, 0)` **0x140D6A330** = *output-merger flush + pending clears*, all through the immediate context `MEMORY[0x1430261B0][926]` (== `*(ID3D11DeviceContext**)0x143027EA0`): `OMSetRenderTargets` (vtbl idx 33) with the DSV picked from renderer DSV arrays (`renderer + 8*(slice + 19*dsTarget) + 8128`, read-only variant at `+0x2000` when depth-readonly flag `renderer+400`); `ClearRenderTargetView` (idx 50, clear color at renderer+10104 set by `SetClearColors 0x140D6A6D0`); `ClearDepthStencilView` (idx 53; depthMode 0→DEPTH|STENCIL, 1→DEPTH, 2→STENCIL; marks `dword_143027EBC[23]=4` cleared); plus deferred `OMSetDepthStencilState`/`RSSetState`/`RSSetViewports`/`OMSetBlendState` from S-block dirty bits 0xC/0x1070/2/0x80.
+- The draws themselves then flow through `SetDirtyStates 0x140D705B0` inside `RenderPassImmediately` as already RE'd.
+
+## Per-cascade sequence (exact order, per shadow map)
+
+1. **DS-target select** (in Func10, before the call): `data+84 = 2` (cascades) / `3` (VL) / `4` (focus & pool lights), `data+88 = slice` (cascade index; focus k+4; pool = free bit of `dword_141E10538`).
+2. **Clear color set**: `SetClearColors(0x143028490, 1,1,1,1)` (shadowmaps cleared white where color RTs exist; here only depth is bound).
+3. **Bind + clear** (only if `data+232` valid/clear flag): `SetDepthStencilRenderTarget(mgr=0x14302BB20, target, mode=1, slice)`; `SetRenderTarget(slot0, -1, 3, updateViewport=1)`; `FUN_140d6a330(renderer, 0)` → `OMSetRenderTargets(0 RTVs, DSV slice)` + `ClearDepthStencilView(DEPTH, 1.0)`.
+4. **Camera + viewport**: `NiCamera::sub_1412C1600`: `SetCameraData(0x14302C890, shadowCam)` (VP constants), `UpdateViewPort(force=1)` because flags|0x400 (full-RT viewport, no DRS), current-camera `0x1431D0E68`, current-accumulator `0x1431D0E20`.
+5. **Batch flush**: `accum->Func42(flags)` → `SetRenderMode(13/14/15)` → `sub_1412CC3C0` → `RenderBatches` group windows → `BeginPass 0x141308030` → `RenderPassImmediately 0x141308440` per `m_PassGroupNext` pass. Then `Func43` → `NiAccumulator::Func38` (accum+16 = 0).
+6. **ShadowMapProj rebuild**: view-proj computed into renderer scratch `0x143028260..0x1430282DF` (`FUN_140d7bbc0`), focus/pool maps get viewport-ratio near/far correction + 0.5-bias texture matrix (`FUN_14044b4a0`), stored to `data+0..63` — consumed later by the shadowmask pass (`ShadowMapProj[n]` cbuffer values).
+
+**Camera & accumulator ownership (private state!)**: each 240-byte `ShadowMapData` owns `+64 NiPointer<NiCamera>` and `+72 NiPointer<BSShaderAccumulator>`; both are lazily created per cascade inside `BSShadowDirectionalLight::Func16_1413251C0` (cascade frustum update; `accum+0x148 = shadowSceneNode` @0x14132766a, `accum+0x150 = 14` @0x14132761d) and for focus maps in `BSShadowDirectionalLight::sub_1413054C0` (0x141305592). Accumulator fields: `+0x148` ShadowSceneNode*, `+0x150` renderMode, `+0x160` shadowmapIndex+1 (0xFFFF = main), `+0x164` shadowmask bit, `+0x168` split index, `+0x12E` byte flag (set 1 in Func9). So **each cascade already has its own accumulator + camera** — the pass lists are private per map; only the S-block/renderer/context state is shared.
+
+**ShadowMapData (240B) layout**: `+0..63` shadowMapProj (4x4), `+64` camera, `+72` accumulator, `+80/84` (-1/dsTarget), `+88` slice, `+92..187` 6×NiPlane cull planes, `+188/+192` plane masks (63), `+204` float (fade=1.0 on release), `+208..223` shadowMapRect L/R/B/T (focus), `+224` BSCullingProcess* (197112B, portal-graph entry at cullProc+197008), `+232` dword flags (init 0x100; byte+232=needsRender/clear, byte+233=accumulate).
+
+## Callers up to frame render
+
+```
+Main::Update_1405B2FF0 (0x1405B2FF0)                      // game frame
+ └─ 0x1405b35c2 → Main::Swap_1405B1020 (0x1405B1020)      // render frame body: Renderer Lock, per-frame buffers,
+    ├─ per-queued-request FUN_1405b29f0 (0x1405B29F0)     //   one-shot mode-27 accum renders (DS target 5, occl. query bracketed 0x140d70190/1b0 = ID3D11 Begin/End on ring 0x143025F18)
+    └─ Main::sub_1405B1710 (0x1405B1710)                  // sets shadowSceneNode->cameraPos, clear colors
+       └─ Main::Draw_1405B1860 (0x1405B1860)              // = DrawWorld/PreRender: the full frame
+          ├─ jobs: DrawWorld_BuildSceneLists_1405B7C80 (main-view + shadow-space culling seeds)
+          ├─ NiCamera::CalculateAndDrawShadowCasterLights_1412E2660   // CULL SIDE (see below)
+          ├─ DrawWorld::MainAccum (0x1412E2A60)
+          │   ├─ queue 2× DoSceneListAccumRegisterJob_1412D6FB0 (mgr 0x143233208)
+          │   └─ FUN_1412E3480  ◄── SHADOW-MAP RENDER LOOP (GPU submission)
+          ├─ Main::RenderDepth (0x1412E3520)              // z-prepass (accum unk_1432333F8, mode 12)
+          ├─ Main::RenderShadowmasks (0x1412E3AC0) → FUN_1412E3B80    // screen-space shadow MASK pass
+          ├─ Precipitation::RenderOcclusion (0x1403AE860)
+          └─ Main::RenderWorld (0x1412E3E70) ...
+```
+
+**Cull side (runs BEFORE the render loop, same frame)**: `NiCamera::CalculateAndDrawShadowCasterLights 0x1412E2660` queues per-shadow-space jobs `FirstListAccumulationJob 0x1412E2C50` / `ListAccumulationJob 0x1412E2DE0` (mgr `0x143233200` "SceneListAccumCulling", one worker per shadow space `MEMORY[0x143233438]`, spaces array `unk_143233470` of BSGeometryListCullingProcess), and on the calling thread runs `CalculateActiveShadowCasterLights 0x1412E2F60`: budget of **4 shadow-casting lights/frame** (dir light first via `shadowSceneNode->shadowDirLight` vfunc `+0x48` Func9); per light: `Func16_+0x80` (dir 0x1413251C0 = cascade frusta from `fShadowDistance 0x141E10978`/`fSunUpdateThreshold`, lazy accum/camera create) then `Func9_+0x48` (dir 0x141324B40) which per cascade tags the accumulator (+0x160/164/168) and calls `sub_141305240` → `FUN_1412d6bb0` → `BSCullingProcess` cull + `sub_140D51280` (registers every collected BSGeometry into the accumulator via the per-mode registration table `0x1431D1B40[mode]`, building the BSRenderPass groups that BeginPass later walks). Directional also has the job-parallel variant `FUN_141324e00` (per-space `DoSceneListAccumCullingJob 0x1412D6FA0` on the light's own culling-process array light+1408).
+
+## Shadow-map kinds
+
+| Kind | Loop | DS target / slice | renderMode | Flush handler |
+|---|---|---|---|---|
+| **Sun cascades** | `Func10_141324C30` loop B, count `light+320` (cascade count from `BSShadowLight::Func11_141304BF0`) | **2**, slice = cascade idx | **14** | `sub_1412CC3C0` full batch set |
+| **VL shadow cascades** | `Func10_141324C30` loop A, gated `dword_141E0E2E8 == 2` | **3**, slice = cascade idx | 14 (flags 0x100) | `sub_1412CC3C0` VL branch (group 0x5C000074 / persistent list) |
+| **Focus shadows** | `Func10` loop C, count `unk_1431D0FB8._used` (iNumFocusShadow), camera/viewport per `sub_141304DA0` (`focusShadowMapDoubleEveryXUnit 0x141E10560`, `iShadowMapResolution 0x141E10548`) | **4**, slice k+4, forced clear | **14** | same |
+| **Spot (BSShadowFrustumLight)** | `Func10_14132D040` → same `0x141305610` | **4**, slice = pool bit from `dword_141E10538` | **13** | same |
+| **Parabolic (omni)** | `Func10_14132E4E0` | 4, pool slice | **15** | same |
+| Shadow **mask** (screen space, not a map) | `Main::RenderShadowmasks 0x1412E3AC0` → `FUN_1412E3B80`: DS 3 mode 3 + RT 18, one `MakeRenderPass`+`RenderPassImmediately(0x141308440)` per caster with techniques RENDER_SHADOWMASK 0x200000 / SPOT 0x400000 / PB 0x800000 / DPB 0x1000000 | — | — | direct RenderPassImmediately |
+
+Slot release: `BSShadowLight::Func12_141304D30` returns pool slices to `dword_141E10538` (called per light after the mask render in `FUN_1412E3B80`).
+
+## Globals the loop touches (detour checklist)
+
+Render state: S-block `0x143027EB0` (dirty flags; `0x143027EE8/EEC/F18` DSV target/slice/mode; `0x143027EC8..` RT slots; `0x143027F14` viewport-source marker [13]; `0x143027F20..F2C` viewport; `0x143027F48/F4C/F50/F54/F58/F5C/F60` depth/raster/alpha state ids); immediate context `MEMORY[0x1430261B0][926]`; renderer `0x143028490` (clear colors +10104, RTV/DSV arrays, view-proj scratch `0x143028260..2DF`); RT manager `0x14302BB20` (RT/DS dims at `+4*idx+798/799` etc.); camera state `0x14302C890`; DRS scale `0x14302C98C` / flag `0x14302C9A0`. Shader-manager: current accumulator `0x1431D0E20`, render mode `0x1431D0E28`, current camera `0x1431D0E68`, registration table `0x1431D1B40[32]`, flush table `0x1431D1C40[30]`, current reg/flush fns `0x1431D1C30/0x1431D1C38`, current shader/technique `0x143283BA8/0x143283BA4`, current pass `0x143490BB0`. Shadow: shadowSceneNode `0x141E0DED0` (2nd SSN slot 0x141E0DED8), slice pool `0x141E10538`, shadow-space count `0x143233438` + array `0x143233470`, per-space clear-lists `0x143233440`, caster-light array via `unk_1432334C0`, active-count `0x1432334D0/D4`, focus array `0x1431D0FA8/0x1431D0FB8`, job managers `0x143233200/0x143233208`, TLS tag `TLS[0x143497408]+1896`.
+
+## CAVEATS
+
+- `BSShadowDirectionalLight::Func16_1413251C0` (cascade frustum/space update, ~54KB pseudocode) was not fully decompiled; the lazy per-cascade accumulator creation (mode-14 store at 0x14132761d, SSN store at 0x14132766a, ptr-compare/store at 0x14132755a/0x1413275f4) is verified from disassembly windows only. The per-cascade **camera** create/assign site inside Func16 is inferred from the identical focus-map pattern (`sub_141304DA0`), not read line-by-line.
+- `dword_141E0E2E8 == 2` (gate for the VL cascade pre-render into DS target 3) was identified as the value cell of `iEnableShadowCastingFlag:Display` (Setting object `0x141E0E2E0`) by adjacency; the setting's semantics were not verified in the settings-registration code.
+- Depth-stencil target index semantics (2 = dir cascade array, 3 = VL shadowmaps, 4 = focus/local pool with 19 slices max per `19*target` DSV stride) are derived from these code paths; the RT-manager creation tables (formats/dims/array sizes) were not dumped.
+- `sub_141305240`'s 5th arg `i + 11` lands in a cull-descriptor field (~+0x58); its consumer was not pinned down (suspected debug/event or scrap-arena tag, NOT the renderMode — renderMode 14 is set at accumulator creation). Decompiler stack layouts of the 0x68-byte descriptor differ slightly between callers; field map not finalized.
+- `DoSceneListAccumRegisterJob_1412D6FB0` / `DoSceneListAccumCullingJob_1412D6FA0` internals were not decompiled (assumed register/cull as named); ditto `FUN_1412e1e80/FUN_1412e1fe0` (grass-shadow state bracket, only taken when `(flags & 0x22) == 0x20`, never in the paths seen here).
+- The accumulator pool `0x1431D0E38` (count `0x1431D0E2C`, cursor `0x1431D0E30`, accessor chunk at 0x141296960) appears unreferenced/dead in 1.5.97 — shadow accumulators observed are heap-created per map instead.
+- Purposes of Main-ctor accumulators `unk_143233408` (mode 16), `unk_143233410` (22), `unk_143233420` (23) were not chased; `unk_1432333F8` (mode 12) = z-prepass/RenderDepth accumulator is inferred from `Main::RenderDepth` usage but its body (0x1412E3520) was not fully read.
+- `ClearDepthStencilView` depth/stencil clear values are dropped by the decompiler (float/imm args); assumed 1.0/0 defaults.
+
+
+### Caveats
+- Func16_1413251C0 (cascade frustum update) not fully decompiled; lazy accumulator create + mode-14 store verified from disasm windows (0x14132755a-0x141327680), per-cascade camera assignment inferred from the focus-map pattern
+- dword_141E0E2E8==2 VL-cascade gate identified as iEnableShadowCastingFlag:Display value cell by adjacency only; semantics unverified
+- DS-target index meanings (2=dir cascades, 3=VL, 4=focus/local pool, 19-slice DSV stride) derived from usage, RT-manager creation tables not dumped
+- sub_141305240 arg a5=i+11 consumer unresolved (descriptor field ~+0x58); it is NOT the renderMode
+- DoSceneListAccumRegisterJob/CullingJob (0x1412D6FB0/0x1412D6FA0) and FUN_1412e1e80/1fe0 internals not decompiled
+- accumulator pool 0x1431D0E38 (cursor 0x1431D0E30, accessor 0x141296960) appears dead in 1.5.97 - shadow accumulators are heap-created per map
+- modes 16/22/23 accumulators (unk_143233408/410/420) and Main::RenderDepth body not chased; unk_1432333F8 = z-prepass accumulator is inferred
+- ClearDepthStencilView clear values (assumed 1.0/0) dropped by decompiler
+
+
+================================================================================================
+## Shadow-cluster verification CORRECTIONS (authoritative — override report text)
+================================================================================================
+
+1) WRONG OFFSET — focus-shadow enable byte is this+0x558, not this+0x550. BSShadowDirectionalLight::Func10 0x141324d05: `cmp [rbx+558h], bpl` (rbx=this); same field (_pad_8[1360] = 8+1360 = 0x558) gates the focus loop in BSShadowFrustumLight::Func10 0x14132d05b. All other descriptor offsets in that section verified exact (count +0x140, array ptr +0x148, focus descs embedded at +0x160, stride 240, dword +84/+88, byte/word +232).
+
+2) WRONG STRUCTURAL CLAIM — parabolic light does NOT reuse "the same desc each time" for its two halves. BSShadowParabolicLight::Func10 0x14132E4E0 passes desc = *(this+0x148) + 240*i (i=0,1), i.e. two distinct 240-byte descriptors. On the second half (i==1) only the DS-target index is propagated: at 0x14132e50f `*(descBase+324) = *(descBase+84)` (desc[1]+84 ← desc[0]+84); the slice field +88 of desc[1] is NOT copied, so if desc[1]+84 is thus made != -1 the lazy slot alloc in 0x141305610 is skipped and desc[1]+88 keeps its own prior value — a deferred replica must treat the halves' target/slice independently, not as one shared descriptor. (ShadowSign 0x141E10B7C = +1.0 half0 / -1.0 half1 and ShadowRadius 0x141E10B78 = light->Radius confirmed.)
+
+3) MERGED-PSEUDOCODE INACCURACY (behavioral only for modes the shadow path never uses) — the report's "shared bit-1 logic" (read-only-depth flag cleared when mode <= 2 || == 6; clear-flags case 0|6 → 3) is exactly true only of SetDirtyStates 0x140D705B0 (verified at 0x140d706d9 / 0x140d7072f switch). In FUN_140d6a330 (the explicit flush RenderShadowmap actually calls at 0x141305762) the read-only flag byte (data+34, i.e. a1+0x32 at 0x140d6a43e) is cleared ONLY when mode == 0, and mode 6 does NOT issue a ClearDepthStencilView (only modes 0→3, 1→1, 2→2 clear; disasm 0x140d6a47e-0x140d6a497). For the shadow-map path (mode 1) the two flushes behave identically, so the replica contract is unaffected, but the merged presentation is wrong for modes 0 (RO-flag parity) and 6.
+
+4) MINOR/UNVERIFIED LABEL — stateUpdateFlags bit4 (0x10) is described as "depth-enable part of DSS", but in both flushes DSS is issued on mask 0xC only, while 0x10 is consumed solely by the raster-state mask 0x1070 (RSSetState). The 0x10 bit is a raster-group trigger; the "DSS" attribution is not supported by the flush code.
+
+Everything else re-derived and CONFIRMED at instruction level: RenderShadowmap 0x141305610 body and all six callsite addresses/args (SetClearColors(1,1,1,1) @0x141305711; SetDSRT(mgr,+84,1,+88) @0x14130573b; SetRenderTarget(mgr,0,-1,3,1) @0x141305754; FUN_140d6a330(0x143028490,0) @0x141305762; NiCamera render(+64,+72,a4|0x400) @0x141305777; restore @0x141305783); lazy pool alloc (+84==-1→4, lowest free bit of dword_141E10538, +88=slice); SetDepthStencilRenderTarget 0x140D74D10 writes 0x143027EE8/0x143027EEC/0x143027F18 + dirty bit 1 + mode!=3 re-dirty; SetRenderTarget 0x140D74EC0 (mode5→CopyResource vfunc +0x178 on ctx, slots 0x143027EC8+4s, modes 0x143027EF8+4s, cubemap reset 0x143027EF0, updateViewport→UpdateViewPort(a1,0,0,0)); wrapper 0x140D74CF0 forwards with this=0x143028490; flush bit-1: RTV=data+2648+48i (disasm [rbp+48i+0A68h], rbp=0x143028490), clear color 0x14302AC08 (lea r8,[rbp+2778h]), DSV=data+8*(slice+19*idx)+8112 (read-only +8176, selector byte data+34), OMSetRenderTargets vfunc +0x108 with NumViews=0 when RT0==-1, ClearDepthStencilView vfunc +0x1A8 with depth=1.0f (movss xmm3, cs:0x1415232D8 = 0x3F800000) and stencil=0 at BOTH 0x140d6a4b4 and 0x140d70765; OMSetDepthStencilState +0x120 (mask 0xC, indices 0x143027F38/F40/F44), RSSetState +0x158 (mask 0x1070, indices F48/F4C/F50/F54), RSSetViewports +0x160 (mask 2, &0x143027F20) at 0x140d6a63f and 0x140d708bc, OMSetBlendState +0x118 (mask 0x80, indices F58/F5C/F60); UpdateViewPort 0x140D69D00 exact math incl. port globals 0x143028460/464/468/46C, DRS 0x14302C98C/0x14302C990/byte 0x14302C9A0, ForceMatchRenderTarget bypass, cubemap branch on 0x143027EF0==-1, dims getters 0x140D74C20/0x140D74C60 (RT props 28B/rec at mgr+0; DS props 16B/rec at mgr+3192/3196 = 0x14302C798, idx>12→0; the +798/+799 dword reads in RenderShadowmap's frustum math = byte 3192/3196, same table); Min/MaxDepth 0x143027F30/F34 ← 0x143028470/0x143028474 with MaxDepth -= float table 0x143026180[4*depthBiasMode] (subss …[rbx+rax*4]) and dirty|=2; SetMinandMaxViewportDepth 0x140D69E50; directional Func10 0x141324C30 (dword_141E0E2E8==2 → target 3/slice i/flags 0x100; main → target 2/slice j/flags 0; focus → target 4/slice k+4/+232=1, count unk_1431D0FB8._used); frustum Func10 word +232=0x0101 (*(WORD*)(v5+232)=257), slice i+4; RenderAllShadowmaps 0x1412E3480 (TLS dword 0x143497408, +1896 tag save/29/restore, GetShadowCasterLightArrayEntry 0x1412BC7D0 loop, vfunc call [r8+50h]); sub_1412C1600 (SetCameraData 0x140D7BAB0 into 0x14302C890, then a3&0x400 → UpdateViewPort(0x143028490,0,0,1)); z-prepass 0x1412E3520 (GetDepthStencilTarget_MAIN 0x140D74E50 = xor eax,ret; SetDSRT(0, mode 0, 0) @0x1412e358f; RT0/1/2=-1 mode 3; final CopyResource(unk_14302A870, DS-record[19*main].texture @unk_14302A448) — also confirms DS record base 0x14302A448 and 19-qword stride); precip FUN_1405b29f0 @0x1405b2ca2 target = edi+6 with edi=-1 → 5, slice 0, mode = cmovnz ebx (0-or-3 plausible), called from Main::sub_1405B1020 @0x1405b10eb; SetClearColors 0x140D6A6D0 saves old to 0x143025EF0..EFC and writes 0x14302AC08..; RenderShadowmasks 0x1412E3AC0 → FUN_1412e3b80, uses 0x1432334D0 count and 0x1432334E1 flag; Main::Draw 0x1405B1860 callsites 0x1405b1a24 (0x1412E2660), 0x1405b1b4c (0x1412E2A60), 0x1405b1bf5 (0x1412E3520), 0x1405b1bfc (0x1412E3AC0); MainAccum→RenderAllShadowmaps @0x1412e2ba6; context identity 0x1430261B0+8*926 = 0x143027EA0; cubemap RTV data+9936+8*(view+8*idx); xrefs to 0x141305610 are exactly the three Func10s (directional ×3, frustum ×2, parabolic ×1-in-loop). The deferred-replica contract paragraph is correct as stated, subject to correction (2) for the parabolic halves.
+
+---
+
+SUBSTANTIVE ERROR (call-chain step 4, wrong vfunc + missing dispatch mechanism):
+
+1. The shadow FinishAccumulating (sub_1412CC3C0) is NOT reached via accumulator vfunc Func43 (+0x158). Verified in-binary:
+   - NiCamera::Render 0x1412C15C0 calls sub_1412C1600 then Func43(+0x158).
+   - sub_1412C1600 (0x1412C1600) calls SetCameraData(0x140D7BAB0, into 0x14302C890), Renderer::UpdateViewPort 0x140d69d00 when a3&0x400, sets current-camera global 0x1431D0E68, then calls Func37(+0x128) and **Func42 (+0x150)**.
+   - Func42 = BSShaderAccumulator::Func42_1412CAC20 (vtable 0x14185CF50+0x150 = 0x14185D0A0 → 0x1412CAC20): calls BSShaderManager::SetRenderMode(0x141295E90) with *(accum+336), then dispatches through a RUNTIME function-pointer table at **0x1431D1C40 indexed by render mode**: `(*(&unk_1431D1C40 + mode))(accum, flags)`; mode 0 → FinishAccumulating 0x1412CACD0.
+   - The table is populated at init by FUN_141294060 (0x1412947f7..0x141294939): entries [12..17] (0x1431D1CA0..0x1431D1CC8) all = **sub_1412CC3C0** (lea at 0x1412948de) — so mode 13 (shadowmap) AND mode 14 (focus shadow maps) both land there. Entry [0]/default at 0x1431D1C40 = sub_1412CABF0.
+   - Func43 (+0x158) = 0x1412CAC90 does the OPPOSITE of the report's claim: `if (mode==0) sub_1412CB2E0(...)` (the MAIN-scene finish: groups 10/11/12/7, RenderEffects, FUN_140d6b210 b12 uploads) then NiAccumulator::Func38_140C907D0 (just zeroes a field). For mode 13 it renders nothing.
+   - Consequence for the detour design: the shadow-loop D3D11 work is emitted under Func42's table dispatch, and 0x1431D1C40[13]/[14] is itself a clean, writable hook point (plain qword in .data, installed once). Also add 0x1431D0E68 (current-camera global set per NiCamera::Render) to the replicate list; SetCameraData runs inside sub_1412C1600 per shadowmap, not only via FUN_140d7bbc0.
+   - Related precision: render mode 13 is not set "at ctor time" by FUN_1412c9c90 — the ctor is mode-agnostic; the light's Func16 sets *(accum+336)=13 after construction (verified BSShadowFrustumLight::Func16 0x14132d3a1; alloc size 384, ctor arg 0x63 ✓), and the focus-map accumulators get *(accum+336)=**14** (BSShadowDirectionalLight::sub_1413054C0 @0x141305592) — same table target, but a mode-keyed hook must cover both 13 and 14.
+
+MINOR PRECISION (not address errors):
+
+2. RSSetViewports arg spans dword_143027EBC[25..30] (full D3D11_VIEWPORT, 6 floats), not a "float4 @ [25..28]"; [29..30] are the viewport MinDepth/MaxDepth (which is exactly where the depth-bias trick lives — SDS/ClearFlush subtract table 0x143026180[dword_143027F50] from [30] under dirty-bit 0x40). The report's privatization list already includes [29..30], so no practical impact.
+
+3. DSV table columns: SetDirtyStates uses base(=*0x143025F00, =0x143028480)+8112/+8176 selected by byte base+34; FUN_140d6a330 (ClearFlush) uses 0x143028490+8128/+0x2000 = base+8144/base+8208 selected by byte 0x1430284C2. So there are FOUR DSV columns (8112/8144/8176/8208 from base), not the three implied, and the two functions read DIFFERENT columns with DIFFERENT selector flags. Element index = EBC[12] + 19*EBC[11], stride 8 — as reported.
+
+4. Step-2 prose: the directional main-cascade loop calls sub_141305610(light, desc, &counter, 0) — a4 flags are 0, not "caller flags" (only the VL pre-loop passes 0x100). The counter (a2) is what advances the light iteration in FUN_1412e3480.
+
+5. The shadow-mask builder FUN_1412e3b80 iterates lights via a second SSN slot unk_1432334C0 (not 0x141E0DED0); techniques verified as ((useUnk?0x2100:0x2000)|0x200002)+0x2B and (v7|0x2002)+0x2B with v7 in {0x400000,0x400100,0x800000,0x1000000} — consistent with the report's "(flags|0x2002/0x200002)+0x2B" summary.
+
+VERIFIED CORRECT (re-derived from disasm/decompile, no changes needed): 0x1430261B0[926]==0x143027EA0 single context slot, written at 0x140d71cd8 in FUN_140d718d0 (right after D3D11CreateDeviceAndSwapChain, ppImmediateContext); every cited D3D11 vtable offset/index (7,8,9,10,11,12,14,15,16,17,18,19,20,24,28,29,33,35,36,43,44,45,50,53,67,68,70) matches the SDK order at the cited call sites in SetDirtyStates 0x140D705B0 / ClearFlush 0x140D6A330 / draw helpers; FUN_140d6bfe0 body (SetDirtyStates(0); IASetIndexBuffer fmt 57 @0x140d6c05d; IASetVertexBuffers stride (4*desc)&0x3C @0x140d6c0a1; DrawIndexed 3*tris @0x140d6c0ba); FUN_140d6cab0 (2 VBs static+ring @0x140d6cba3, ring VB qword_143025F18[cursor]); fDrawGrass DrawIndexedInstanced @0x140d6c2ec args (3*tris, inst, start, 0, 0); ring allocator FUN_140d6c8a0 (End @0x140d6c8f9, GetData spin flags 4→0 + Sleep(1) @0x140d6c944, Map NO_OVERWRITE=5 @0x140d6c9a5, 4MB wrap, cursor packed in qword_143025F18[3]=0x143025F30, queries [74..76]); GetID3D11Resource 0x140d6ffd0 ((a4==7)?[924]:[779+cursor++&3], static scratch qword_14302AC58, Map DISCARD); ResetState 0x140D70290 (InitFlags(0x143027EB0); PS b11=&0x143027A28; VS+PS b12=&0x143027E88); bone setter 0x14131F630 (TLS idx 0x143497408 block +10752 dedup, 48B/bone, Unmap+VSSetCB slot 10 @0x14131f729 / slot 9 @0x14131f78b); RenderShadowmaps FUN_1412e3480 (TLS+1896=29, GetShadowCasterLightArrayEntry 0x1412BC7D0 on shadowSceneNode 0x141E0DED0, Func10 at vtable+0x50); BSShadowDirectionalLight::Func10_141324C30 (dword_141E0E2E8==2 VL pre-loop desc+84=3 flags 0x100; main loop desc+84=2 slice j; focus loop desc+84=4 slice k+4, count unk_1431D0FB8._used, desc stride 240, count at light+0x140); sub_141305610 body exactly as quoted (SetClearColors 1.0×4, needsClear +232 → SetDepthStencilRenderTarget(0x14302BB20, +84, 1, +88) 0x140d74d10 + SetRenderTarget(0,-1,3,1) 0x140d74cf0 + FUN_140d6a330(0x143028490,0), NiCamera::Render(+64,+72,a4|0x400), SetClearColorFromArray, FUN_140d7bbc0(&0x14302C890, cam+160,...), view/proj block 0x143028260..2D0 swap); sub_1412CC3C0 technique ranges (0x100→group 15; else 0x2B..0x4000002B, 0x5C000030..0x5C00005C grass, group 1 tech 0x5C006074, group 9, decals sub_1412CBCC0); BSUtilityShader Func2/4/6 = 0x14130DF90/0x14130E890/0x14130EC70 with all cited Map/Unmap/CB-slot sites (Func2 slot 0 VS@0x14130e6f4/0x14130e861 PS@0x14130e70a, Maps @0x14130e085/0x14130e0d1, Unmaps @0x14130e6c6/6de/84b; Func4 slot 1 VS@0x14130ebfa/0x14130ec51 PS@0x14130ec19, Unmaps @0x14130ebe2/0x14130ec32); scissor FUN_140d70100 (RSSetScissorRects 1 rect @0x140d7013a) called from Func6 @0x14130f025; grass instance CB slot 8 @0x1412cecbc (BSGrassShader::sub_1412CEB90, Unmap @0x1412ceca0); grass per-instance CB=[924] slot 7 @0x14130786d, Unmap @0x141307854 (case 9 of BSRenderPass::FUN_141307160, switch on BSGeometry+0x150); BeginPass 0x1413086C0 (tech dword 0x143283BA4, shader ptr 0x143283BA8, material 0x143490BB0 cleared, shader Func2 vcall); SetShader 0x140d6f9b0 (VSSetShader obj+8, cache dword_143028070[98]=0x1430281F8, dirty 0x400) and SetPixelShader 0x140d6fd60 (PSSetShader obj+8, cache [100]=0x143028200); unk_143283B78 = shadowmap slice written in FUN_1412e3b80 @0x1412e3d2d and read in Func2 @0x14130e500; shadow-mask path Main::RenderShadowmasks 0x1412E3AC0 → FUN_1412e3b80 (RT 18 @0x1412e3bd4, utility shader singleton 0x143495D50, RenderPassImmediately 0x141308440 direct); input-layout cache 0x141E07140/0x141E07160 with miss→FUN_140d70f90 under locks FUN_140d730e0/FUN_140d73f70; sampler/SRV/CS dirty-bit loops and index tables (EBC[0..2], unk_143027EB4/EB8, dword_143027F6C/FAC, qword_143027FF0) all as tabulated; frustum/parabolic Func10 0x14132D040/0x14132E4E0 route into sub_141305610 (frustum adds focus-map sub-loop, no new ctx calls); alpha-test CB [783] Map/Unmap @0x140d70951/0x140d70987; blend factor consts 0x141E07168 (SDS) / 0x141E07178 (ClearFlush); RTV columns base+2648 (SDS) / +2664-from-0x143028490 (ClearFlush) consistent with *(0x143025F00)=0x143028490-16; device ptr 0x143025F08 (written in Renderer::Init 0x140d68dd0); ClearDepthStencilView flags mapping 0/6→3, 1→1, 2→2 (the SDS 5th-arg oddity is decompiler float-register confusion, as the report already caveats).
+
+---
+
+1) WRONG VFUNC INDEX: 0x141310300 is BSUtilityShader vfunc +0x38 (slot 7, RestoreGeometry), NOT "RestoreTechnique" (+0x18). Verified against the BSUtilityShader vtable at 0x1418685B0: +0x10=0x14130DF90 SetupTechnique, +0x18=0x14130DD80 (the actual RestoreTechnique), +0x20=0x14130E890 SetupMaterial, +0x28=0x14130EC60, +0x30=0x14130EC70 SetupGeometry, +0x38=0x141310300. The report's two rows ("utility blend token 0x141E10660 ... consumed/restored in RestoreTechnique 0x141310300" and "BSShader+0x90/+0x94 ... read by ... RestoreTechnique 0x141310300") should say RestoreGeometry. Semantic consequence for the detour: the 0x141E10660 blend-write-mode token round-trips PER GEOMETRY/PASS (set in SetupGeometry's stencil-textured branch, consumed in RestoreGeometry immediately after the draw), not on technique switches — it still must be privatized, but its lifetime is one pass, and BSUtilityShader's real RestoreTechnique is 0x14130DD80 (invoked from BeginPass-helper 0x1413086C0 via +0x18). All addresses/behavior otherwise correct.
+
+2) "0x141E0DF8C ... written unconditionally in 0x141308440" is wrong on the "unconditionally": decompile shows it is assigned only in the second arm of the dedup || (i.e., only when the technique/shader dedup check FAILS and BeginPass is about to run: `MEMORY[0x143283BA4]==Technique && Technique!=0x5C006076 && shader==MEMORY[0x143283BA8] || (dword_141E0DF8C = Technique, BeginPass(...))`). On dedup hits it is not touched. Same privatization verdict, but a replica must mirror the conditional order or its debug-mirror diverges.
+
+3) Internal inconsistency in the RTV-table row: SetDirtyStates 0x140D705B0 loads the RTV pointer at `*(inst + 48*idx + 2648)` (0x140d70680). "inst+2648, stride 48, RTV at +8" is self-contradictory — as observed it is either (table base 2648, RTV at entry +0) or (table base 2640, RTV at entry +8); the load-bearing fact is the effective address inst+2648+48*idx.
+
+Everything else re-derived and confirmed exactly: all function addresses; the entire 0x143027EB0 field map (offsets, dirty bits 1/2/0xC/0x1070/0x40/0x80/0x300/0x400/0x800, mask 0x1070 = 0x10|0x20|0x40|0x1000); D3D11 context vfunc offsets used (+64/+72/+80/+88/+112/+120/+128/+136/+192/+224/+232/+264/+280/+288/+344/+352/+360/+400/+424/+536/+544/+560); context == rendererData[926] == *(ID3D11DeviceContext**)0x143027EA0; DSV tables 8112/8176 with 19/target gated on inst byte+34 (also zeroed on clear), cube RTVs +9936, clear color +10088, DS state 8*(40*d+s), raster 72/24/2 (+240 qwords), blend 52/26/2 (+384 qwords = +0xC00) + final term dword 0x143028480 (= flt_143028470[4]); depth-bias table 0x143026180 rewriting viewport minZ/maxZ from 0x143028470 and ORing dirty bit 2; sampler 5*filter+748+addr; input-layout hashmap 0x141E07140/44/50/60 with miss->0x140D70F90 and insert/grow 0x140D730E0/0x140D73F70; hash = vertexDesc(B+0x340) & *(VS+0x48); alpha-test CB [783]@0x143027A28 (16 B, ResetState binds PS b11); PerFrame [923]@0x143027E88 720 B bound VS+PS b12 in ResetState 0x140D70290 (which also calls InitFlags and clears hazard byte inst+50=0x1430284C2); [922] 576 B, [924] 16 B (selected by GetID3D11Resource arg==7 -> b7); bone ring cursor rendererData[778]=0x143027A00 advancing (c+1)&3 over 4x3840 B CBs [779..782] created in 0x140D720D0, scratch qword_14302AC58 (and [2] = QPC at present 0x140D6A2B0, gated on byte_141E07128); dynamic-VB ring 0x143025F18: 3 buffers, packed u64 at 0x143025F30, 4 MB wrap, event queries at +0x250 with GetData busy-wait Sleep(1) and Map NO_OVERWRITE(5) — deferred-context-illegal as stated; top-level 0x1412E3480 (TLS 0x143497408 +1896 saved/29/restored, light vtbl+0x50); Func10 trio 0x141324C30/0x14132D040/0x14132E4E0 all calling 0x141305610, directional: stride 240 @light+320, count @+312, +84=2 cascades /3 when dword_141E0E2E8==2 /4 focus (+88=k+4, byte+232=1, focus array 0x1431D0FB8); 0x141305610: releases +1312/+1328 list, slice alloc from dword_141E10538 when +84==-1 (freed + refs released in 0x141304AF0, +224 vs light shaderAccumulator), clear colors 1.0x4, cube path via RT-manager 0x14302BB20 (dims at dword [4*ds+798/799]), NiCamera::Render(cam=+64, accum=+72, flags|0x400) at 0x1412C15C0, camera recompute via 0x140D7BBC0 into mirror 0x143028230.. and store-back to +0..63; camera chain SetCameraData 0x140D7BAB0 (TLS+10760 magic-static, cache lookup 0x140D7D7B0, INSERT 0x140D7D130, fallback 0x14302C9B0) -> 0x140D7D430 (0x250-byte mirror copy via 0x140D7D8C0, posAdjust 0x14302820C/prev 0x143028218) -> 0x140D7BEF0 -> per-frame CB 0x140D6B210 (gated on 0x14302C8E0, set at 0x140D6A0C0, cleared + frame counter 0x14302C8DC++ at present 0x140D6A2B0, swapchain holder 0x143025F10); SetShader 0x140D6F9B0 / SetPixelShader 0x140D6FD60 write B+0x348/B+0x350 + immediate VS/PSSetShader with *(obj+8); RenderPassImmediately 0x141308440 dedup trio 0x143283BA4/BA8 + 0x5C006076 + material 0x143490BB0 (SetupMaterial = vfunc+0x20), dispatch to Standard 0x141308970 (which calls 0x14131F7C0 clearing TLS+10752)/Skinned 0x1413088C0/Custom 0x141308B20; BeginPass helper 0x1413086C0 calls old-shader +0x18 then new-shader +0x10; writer sets for the technique globals match exactly (0x141307930, 0x141308030, 0x141308440, InitSDM 0x141308520, 0x1413086C0, ClearState 0x141308760, 0x1413090C0); sorted pass array = qsort(0x143490BD0, count 0x143283BA0, stride 0x28, cmp 0x141309750), reset 0x141308540; accumulator global 0x1431D0E20 set by plain-global setter 0x1412966B0 (getter 0x1412966A0), camera global 0x1431D0E68 written by NiCamera::sub_1412C1600 and read in utility Setup*; bone setter 0x14131F630 (TLS tag 26, VSSetConstantBuffers slots 10 then 9, skin stamp 0x140D74F70 reads frame counter); utility SetupTechnique 0x14130DF90: writes shader+0x90/+0x94 (a1+0x20+112/116), PS SRV slot2 cache 0x143028000 from inst qword [19*ds+1032], slot5 0x143028018 from [1033] (gated byte_141E0DE43 + focus count), hazard byte 0x1430284C2=1, forces biasMode 1 (dirty 0x40), scissor-mode 1 (dirty 0x1000), sun splits at sunShadowDirLight+0x598, Map(DISCARD) VS b0 pair +0x18/+0x20 and PS b0 pair +0x10/+0x18, config globals 0x141E10670/0x141E106A0/0x141E106B8/0x141E10B78/7C/0x141E0DE34/0x141E0DE4C/0x143283B78/B7C/B88/B90/0x1431D0FA8 all as listed; SetupGeometry 0x14130EC70: VS b2 pair +0x38/+0x40, PS b2 pair +0x30/+0x38, PS offset words +0x40.., VS offset bytes +0x50.., saves blend-write token to 0x141E10660, PS+0x08 released via 0x140D6FCF0, scissor via 0x140D70100 (RSSetScissorRects, vfunc+360) from projectedBoundingBox, calls 0x14130F960 + SetupShadowLightParameters 0x14130FBE0, reads 0x1431D0E20/0x1431D0E68/0x1431D0F88; RestoreGeometry 0x141310300 consumes 0x141E10660 (13=empty) into B+0xB0 with dirty 0x80 and writes the u64 stencil pair 0xFF00000000 to B+0x90; InitFlags 0x140D73BD0 defaults (sampler addr 3 at +252/+512 blocks, DS-mode-prev 6 at +140=0x8C); Renderer_Lock 0x140D6A080 = EnterCriticalSection(inst+10128) = 0x14302AC20. The privatize/share classification follows from these verified writers and needs no change beyond correction (1)'s naming.
+
+---
+
+# Adversarial verification — SkyrimSE 1.5.97 shadow-loop report
+
+Verdict: the report is substantially correct — every major address, struct offset, vfunc index, table entry, and the call order were re-derived from the binary and match. Four concrete errors (3 offsets/addresses, 1 target-index description) require correction.
+
+## CORRECTIONS (wrong in the report)
+
+1. **Depth-readonly flag offset: `renderer+400` is WRONG → `renderer+0x32` (+50).**
+   In `FUN_140d6a330`, the DSV read-only selector is `cmp [rbp+32h], r14b` at 0x140d6a461 (rbp = renderer 0x143028490 base), i.e. a byte flag at **renderer+50**, and it is zeroed at 0x140d6a43e when depthMode==0 (`*(a1 + 50) = 0` is byte-addressed, not `_QWORD*` indexing). DSV fetch itself is confirmed: `mov r14,[rbp+rcx*8+1FC0h]` (normal, base 8128) / `mov r14,[rbp+rcx*8+2000h]` (read-only) with `rcx = slice + 19*dsTarget` (`imul rcx, rax, 13h` at 0x140d6a454).
+
+2. **Viewport-source marker flattened address: `0x143027F14` is WRONG → `0x143027EF0`.**
+   The index is correct (`dword_143027EBC[13]`), but 0x143027EBC + 4*13 = **0x143027EF0**. 0x143027F14 would be index [22]. (Neighbors check out: [11]=0x143027EE8, [12]=0x143027EEC, [23]=0x143027F18, viewport [25..28]=0x143027F20..F2C.)
+
+3. **Stale focus-target ref array: `a1+1312` is WRONG → pointer at `light+1320`, count at `light+1336`.**
+   `sub_141305610` reads `v8 = *(light+1320)` (`_pad_8[1312]`, decompiled at 0x141305671) and count `*(light+1328+8)`= +1336 (0x14130567f), clearing the count at 0x1413056b6. `light+1312` is a *different* dword — the caster-array index written by `CalculateActiveShadowCasterLights` at 0x1412e31ea (`*(v10+1312) = v13`).
+
+4. **Shadowmask-pass depth binding: "DS 3 mode 3" is WRONG → DS target −1 (none), depthMode 3, slice 0.**
+   `FUN_1412E3B80` at 0x1412e3bba calls `SetDepthStencilRenderTarget(0x14302BB20, -1, 3, 0)`; only RT 18 is bound (`SetRenderTarget(0, 18, 0, 1)` at 0x1412e3bd4). If "DS 3" was meant as depth target index 3, that is incorrect; the correct reading is depthMode=3 with no DS target change.
+
+## Notes (not errors, but sharpen the report)
+
+- **Accumulator pool caveat refinement**: the pool at `0x1431D0E38` is *not* unreferenced — `FUN_141294060` allocates it (count `unk_1431D0E2C`, cursor `unk_1431D0E30`=0, per-entry 384-byte accumulators via `FUN_1412c9c90(v45, 0x63)` at 0x141294a2e..0x141294a93). Whether anything *consumes* it at runtime remains open, per the original caveat.
+- Spot mode-13 store 0x14132d3a1 sits inside `BSShadowFrustumLight::Func16_14132D1D0` (frustum update), and mode-15 stores 0x14132d988/0x14132db29 inside `FUN_14132d800` — consistent with the report's "set at accumulator creation" claim, just noting the owning functions.
+- `SetRenderTarget` (0x140D74EC0) has an unreported `a4==5` special case: `CopyResource` (ctx vtbl +376 = idx 47) from renderer+48*rt+2648 to +2656, then treats mode as 3. Irrelevant to the shadow path (mode 3 is passed) but relevant to a full deferred-context inventory.
+- Focus SPOT shadowmask technique variant: focus-flagged lights get `0x400100` (0x400000|0x100), not bare 0x400000 (0x1412e3cfc).
+
+## VERIFIED (re-derived, exact)
+
+- **Driver loop 0x1412E3480**: TLS `[dword 0x143497408]+1896` saved/set to 29/restored; SSN global 0x141E0DED0; cursor-driven `GetShadowCasterLightArrayEntry_1412BC7D0`; per-light virtual call `call qword ptr [r8+50h]` at 0x1412e34eb = vtbl idx 10.
+- **Call site**: `DrawWorld::MainAccum` 0x1412E2A60 calls it at **0x1412e2ba6**, after queueing 2× `DoSceneListAccumRegisterJob_1412D6FB0` (accums `unk_1432333F8` and `MEMORY[0x143233400]`) on mgr 0x143233208 and `Submit`, with `JobList::Finish` after — shadow GPU submission does overlap main-view registration.
+- **Dir Func10 0x141324C30**: exact structure — count at light+320, ShadowMapData* at light+328, 240-byte stride; VL loop gated `dword_141E0E2E8==2` writing +84=3/+88=i, flags 0x100; sun loop +84=2/+88=j; focus loop gated byte light+1368, entries inline at light+352+240k, +84=4, byte+232=1 forced, slice k+4, count `unk_1431D0FB8._used`.
+- **RenderShadowmap 0x141305610**: `++*a3`; pool path `*(a2+84)==-1` → 4 + free-bit scan/claim of `dword_141E10538`; `SetClearColors(0x143028490, 1,1,1,1)` (0x140D6A6D0); gate `*(a2+232)`; `SetDepthStencilRenderTarget(0x14302BB20, *(a2+84), 1, *(a2+88))`; `SetRenderTarget(0x14302BB20, 0, -1, 3, 1)`; `FUN_140d6a330(0x143028490, 0)`; `RenderPreAndPostResolveDepth(*(a2+64), *(a2+72), a4|0x400)`; clear-color restore; focus near/far+extent rescale via RT-mgr dims at float-index 798/799 (= byte +16*idx+3192/3196, confirmed in `FUN_140d74c20`) with rect a2+208..220; `FUN_140d7bbc0(0x14302C890, cam+160, cols +124..156, ...)`; scratch 0x143028260..2D0; focus 0.5-bias `FUN_14044b4a0`; rows stored to a2+0/16/32/48.
+- **Camera/flush chain**: 0x1412C15C0 → sub_1412C1600 + vtbl +0x158 (idx 43, 0x1412CAC90: mode==0 → sub_1412CB2E0, then NiAccumulator::Func38); sub_1412C1600: `SetCameraData(0x14302C890,…)` = 0x140D7BAB0, `UpdateViewPort(0x143028490,0,0,1)` iff flags&0x400, `unk_1431D0E68=cam`, SetCurrentAccumulator 0x1412966B0, vtbl +0x128 (Func37), vtbl +0x150 (idx 42) = 0x1412CAC20.
+- **Func42 0x1412CAC20**: renderMode at accum+0x150; `SetRenderMode` 0x141295E90 (writes 0x1431D0E28, picks from tables 0x1431D1B40/0x1431D1C40 into 0x1431D1C30/0x1431D1C38); dispatch with entry-0 fallback; mode 0 → FinishAccumulating 0x1412CACD0.
+- **Flush table entries 12..17 = sub_1412CC3C0**: populated in `FUN_141294060` at 0x1412948e5–0x141294908 (0x1431D1CA0..0x1431D1CC8 = indices 12–17 off base 0x1431D1C40).
+- **sub_1412CC3C0**: accum+16 gate; grass bracket `(a2&0x22)==0x20` → FUN_1412e1e80/FUN_1412e1fe0; VL branch `a2&0x100` (unk_143027F4C → dirty|0x20 on 0x143027EB0; persistent list at *(accum+0x130)+232; `RenderBatches(1, 0x5C000074, a2, 15)`); main windows `(0x2B, 0x4000002B, −1)`, `(0x5C000030, 0x5C00005C, −1)`, blood `(1, 0x5C006074, 1)` via *(accum+0x130)+120, LowAniso `(1, 0x5C000074, 9)` via +184, decals sub_1412CBCC0; RenderPersistentPassList 0x141306240.
+- **RenderBatches/RenderGeometryGroup 0x1412CCE40**: seeds via `BSBatchRenderer::sub_141307DD0`, loops `sub_141308030` (BeginPass) or alpha walker `sub_1413083B0` when group−0x5C000058 ≤ 3, ends `FUN_141308760`.
+- **renderMode stores**: 13 @0x14132d3a1 (`mov dword ptr [rcx+150h], 0Dh`, in BSShadowFrustumLight::Func16_14132D1D0); 14 @0x141305592 (sub_1413054C0) and @0x14132761d (Func16_1413251C0); 15 @0x14132d988 & 0x14132db29 (FUN_14132d800). Accum+0x148=SSN store confirmed @0x14132766a (`mov [rcx+148h], rax`).
+- **SetDepthStencilRenderTarget 0x140D74D10**: [11]=target, [12]=slice, [23]=depthMode, dirty|1 — exact.
+- **SetRenderTarget 0x140D74CF0 → 0x140D74EC0**: slot cache = 0x143027EB0+4*slot+24 (=0x143027EC8+4*slot), mode = +72 (=0x143027EF8+4*slot), `[13]=-1`, dirty|1, optional UpdateViewPort.
+- **UpdateViewPort 0x140D69D00**: dirty|2; viewport → [25..28]; DRS scale floats 0x14302C98C(+0x4)/flag 0x14302C9A0, bypassed by ForceMatchRenderTarget; dims via [13]==-1 → FUN_140d74c20/c60 which use depth-target[11] dims when RT-slot0 index [3] is negative — exactly the reported `bDirShadowMapFullViewPort` behavior.
+- **FUN_140d6a330** vtbl indices on ctx `MEMORY[0x1430261B0][926]`: +264=idx 33 OMSetRenderTargets; +400=idx 50 ClearRenderTargetView (clear color renderer+10104); +424=idx 53 ClearDepthStencilView (mode 0→3 D|S, 1→1 D, 2→2 S; [23]=4 after); deferred +288=36 OMSetDepthStencilState (dirty 0xC), +344=43 RSSetState (0x1070), +352=44 RSSetViewports (2), +280=35 OMSetBlendState (0x80); state-id cells 0x143027F38..F60 as listed.
+- **Caller chain**: Main::Update 0x1405B2FF0 → call 0x1405B1020 @0x1405b35c2; 0x1405B1020 → 0x1405B1710 @0x1405b12fc; 0x1405B1710 → Main::Draw 0x1405B1860 @0x1405b182d; Draw → CalculateAndDrawShadowCasterLights 0x1412E2660 @0x1405b1a24 (before) → MainAccum @0x1405b1b4c. RenderDepth 0x1412E3520, RenderShadowmasks 0x1412E3AC0→FUN_1412E3B80, Precipitation::RenderOcclusion 0x1403AE860, RenderWorld 0x1412E3E70 all exist as named.
+- **Cull side 0x1412E2F60**: light budget `v1 < 4`; dir light first via `shadowSceneNode->shadowDirLight` vfunc +0x48 (Func9); per pool light vfunc +0x80 (Func16) gate then vfunc +72=0x48 (Func9); portal-graph entry at cullProc+197008; focus flag byte light+1368; caster registration via SetShadowCasterLightArrayEntry_1412BC770; count → 0x1432334D0.
+- **Mask pass FUN_1412E3B80**: per-caster `MakeRenderPass` + `RenderPassImmediately_141308440(pass, *(pass+0x18), 0, 0)`; techniques (base+43): 0x200000|0x2 RENDER_SHADOWMASK (grayscale variant 8448|… ), SPOT 0x400000 (focus 0x400100), PB 0x800000, DPB 0x1000000; caster array via `unk_1432334C0`; per-light vfunc +0x60 (Func12 = slot release, 0x141304D30 exists) after the pass; blend-id restore via unk_143027F60/dirty 0x80.
+- **Spot/parabolic Func10**: BSShadowFrustumLight::Func10_14132D040 (calls 0x141305610 twice) and BSShadowParabolicLight::Func10_14132E4E0 — both bottom out in the shared per-map body, as claimed.
+
+---
+
