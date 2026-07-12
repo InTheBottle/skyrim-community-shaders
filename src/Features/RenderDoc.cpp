@@ -175,6 +175,15 @@ void RenderDoc::Load()
 		}
 	}
 
+	// The frame-annotation machinery is boot-gated: the engine pass/region hooks install
+	// once at kPostPostLoad, the render-target naming loop runs once at kDataLoaded, and
+	// the profiler bridge registers at device init -- all early-return if the flag is off
+	// at that moment. Force it for capture sessions (mirroring the runtime force in
+	// DrawSettings) so captures carry the full pass tree and named engine targets.
+	globals::state->useFrameAnnotations = globals::state->frameAnnotations;
+	globals::state->frameAnnotations = true;
+	logger::info("[RenderDoc] Frame annotations force-enabled for the capture session");
+
 	logger::info("[RenderDoc] Successfully initialized");
 }
 

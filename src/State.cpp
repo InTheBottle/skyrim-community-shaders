@@ -985,6 +985,20 @@ void State::SetPerfMarker(std::string_view title)
 	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
 }
 
+void State::SetPerfAnnotationContext(ID3D11DeviceContext* a_context)
+{
+	// Follows the SetupResources acquisition pattern: QueryInterface writes the raw
+	// interface pointer into the shared_ptr's storage (the control block stays null, so
+	// the shared_ptr never manages it). Release the previous interface before
+	// overwriting -- each QI adds a reference on its owning context.
+	auto* target = a_context ? a_context : reinterpret_cast<ID3D11DeviceContext*>(globals::d3d::context);
+	if (!target)
+		return;
+	if (auto* previous = pPerf.get())
+		previous->Release();
+	target->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
+}
+
 void State::SetAdapterDescription(const std::wstring& description, uint32_t vendorId, uint32_t deviceId)
 {
 	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;

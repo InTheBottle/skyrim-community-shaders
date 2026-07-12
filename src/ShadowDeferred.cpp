@@ -1,19 +1,21 @@
 #include "ShadowDeferred.h"
 
 #include "Globals.h"
+#include "State.h"
+#include "Utils/D3D.h"
 
 // STATUS (WIP): the mechanism runs -- the shadow loop records onto the deferred context,
 // FinishCommandList + ExecuteCommandList replays it, no crash, and the private dynamic-VB
-// ring keeps the shared ring uncorrupted. Correctness is NOT there yet: single-session A/B
-// (engine mode 0 vs deferred mode 1, frozen scene) shows the deferred frame ~2.1x brighter
-// (mean 76.6 vs 36) -- shadows are largely too weak. Forcing the main dirty word at scope
-// start recovered render-target/depth/raster/viewport (partial improvement) but not the
-// rest. Leading suspects, to be checked with a RenderDoc capture of the shadow depth
-// textures: (a) cross-context WRITE_DISCARD of the SHARED per-draw/bone constant-buffer
-// rings (the dynamic-VB ring needed privatizing for the same reason -- the CB rings likely
-// do too); (b) a missing depth->SRV barrier at ExecuteCommandList so RenderShadowmasks
-// samples stale/undefined shadow depth; (c) the shadow-mask pass depending on immediate-
-// context state the scope isolates. Gated off by default (CS_SHADOW_DEFERRED unset).
+// ring keeps the shared ring uncorrupted. The missing-shadows cause was settled by a
+// RenderDoc capture A/B (engine mode 0 vs deferred mode 1, frozen scene): the recorded
+// draws ran with VS cb12 -- the per-frame camera constant buffer, bound once per frame
+// OUTSIDE the dirty-state system -- unbound on the fresh deferred context, so every draw
+// transformed garbage and wrote no depth. The scope now carries the frame-persistent
+// bindings over (PersistentBindings; diagnostic capture of the live context -- the
+// standalone end-state re-establishes them from RE'd engine knowledge instead), executes
+// with RestoreContextState=FALSE per the DXVK deferred-context guidelines, and
+// re-establishes the immediate context itself. Gated off by default (CS_SHADOW_DEFERRED
+// unset).
 
 namespace
 {
@@ -95,6 +97,103 @@ namespace
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	// DIAGNOSTIC persistent-binding carrier -- not the final design. Captures the shader
+	// bindings the engine established on the immediate context OUTSIDE the dirty-state
+	// system (the RenderDoc capture A/B showed the deferred shadow draws ran with VS
+	// cb12 -- the per-frame camera buffer -- unbound, so every draw transformed garbage
+	// and wrote no depth). The captured set is applied to the deferred context before
+	// recording, and re-applied to the immediate context after ExecuteCommandList with
+	// RestoreContextState=FALSE (per the DXVK deferred-context guidelines: a full restore
+	// is CPU-expensive and pessimizes resource lifetime tracking; we re-establish the
+	// little that matters ourselves). The standalone system must eventually NOT depend on
+	// reading a live context: each binding this discovers gets traced to the engine code
+	// that creates/binds it and is re-established from that understanding (see the
+	// one-shot inventory log), keeping the deferred path fully self-described for the
+	// eventual multithreaded recording. Skyrim binds whole buffers (no 11.1
+	// first-constant ranges), so plain Get/Set pairs reproduce the bindings exactly.
+	struct PersistentBindings
+	{
+		static constexpr UINT kCBSlots = D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT;
+		static constexpr UINT kSamplerSlots = D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT;
+		static constexpr UINT kStages = 6;  // VS HS DS GS PS CS
+
+		ID3D11Buffer*       constantBuffers[kStages][kCBSlots] = {};
+		ID3D11SamplerState* samplers[kStages][kSamplerSlots] = {};
+
+		// Get* AddRefs every returned pointer; Release() drops them once per capture.
+		void Capture(ID3D11DeviceContext* a_src)
+		{
+			a_src->VSGetConstantBuffers(0, kCBSlots, constantBuffers[0]);
+			a_src->HSGetConstantBuffers(0, kCBSlots, constantBuffers[1]);
+			a_src->DSGetConstantBuffers(0, kCBSlots, constantBuffers[2]);
+			a_src->GSGetConstantBuffers(0, kCBSlots, constantBuffers[3]);
+			a_src->PSGetConstantBuffers(0, kCBSlots, constantBuffers[4]);
+			a_src->CSGetConstantBuffers(0, kCBSlots, constantBuffers[5]);
+			a_src->VSGetSamplers(0, kSamplerSlots, samplers[0]);
+			a_src->HSGetSamplers(0, kSamplerSlots, samplers[1]);
+			a_src->DSGetSamplers(0, kSamplerSlots, samplers[2]);
+			a_src->GSGetSamplers(0, kSamplerSlots, samplers[3]);
+			a_src->PSGetSamplers(0, kSamplerSlots, samplers[4]);
+			a_src->CSGetSamplers(0, kSamplerSlots, samplers[5]);
+		}
+
+		void Apply(ID3D11DeviceContext* a_dst) const
+		{
+			a_dst->VSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[0]));
+			a_dst->HSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[1]));
+			a_dst->DSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[2]));
+			a_dst->GSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[3]));
+			a_dst->PSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[4]));
+			a_dst->CSSetConstantBuffers(0, kCBSlots, const_cast<ID3D11Buffer* const*>(constantBuffers[5]));
+			a_dst->VSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[0]));
+			a_dst->HSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[1]));
+			a_dst->DSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[2]));
+			a_dst->GSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[3]));
+			a_dst->PSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[4]));
+			a_dst->CSSetSamplers(0, kSamplerSlots, const_cast<ID3D11SamplerState* const*>(samplers[5]));
+		}
+
+		void Release()
+		{
+			for (auto& stage : constantBuffers)
+				for (auto*& buffer : stage) {
+					if (buffer)
+						buffer->Release();
+					buffer = nullptr;
+				}
+			for (auto& stage : samplers)
+				for (auto*& sampler : stage) {
+					if (sampler)
+						sampler->Release();
+					sampler = nullptr;
+				}
+		}
+
+		// One-shot inventory of what the engine had bound pre-scope -- the discovery
+		// output that drives the follow-up RE (trace each slot to the engine code that
+		// binds it, then re-establish from that knowledge instead of capturing).
+		void LogInventory() const
+		{
+			static constexpr const char* kStageNames[kStages] = { "VS", "HS", "DS", "GS", "PS", "CS" };
+			for (UINT stage = 0; stage < kStages; ++stage) {
+				std::string slots;
+				for (UINT i = 0; i < kCBSlots; ++i)
+					if (constantBuffers[stage][i])
+						slots += std::format("{}b{}({:p})", slots.empty() ? "" : " ", i, static_cast<void*>(constantBuffers[stage][i]));
+				if (!slots.empty())
+					logger::info("[ShadowDeferred] pre-scope {} CBs: {}", kStageNames[stage], slots);
+			}
+			for (UINT stage = 0; stage < kStages; ++stage) {
+				std::string slots;
+				for (UINT i = 0; i < kSamplerSlots; ++i)
+					if (samplers[stage][i])
+						slots += std::format("{}s{}", slots.empty() ? "" : " ", i);
+				if (!slots.empty())
+					logger::info("[ShadowDeferred] pre-scope {} samplers: {}", kStageNames[stage], slots);
+			}
+		}
+	};
 }
 
 void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
@@ -136,6 +235,8 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 		savedRing[0]->GetDesc(&desc);
 		if (FAILED(globals::d3d::device->CreateBuffer(&desc, nullptr, privateDynVB.put())))
 			privateDynVB = nullptr;
+		else
+			Util::SetResourceName(privateDynVB.get(), "ShadowDeferred::PrivateDynVB");
 	}
 	if (privateDynVB) {
 		ringSlots[0] = ringSlots[1] = ringSlots[2] = privateDynVB.get();
@@ -164,22 +265,61 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	// viewport/scissor -- still clears the map, exactly matching the observed "shadows
 	// cleared but never drawn". Seed a max-size viewport + scissor; the engine's own
 	// UpdateViewPort overrides the viewport per shadow map, and the scissor stays wide open.
+	// Capture the immediate context's ACTUAL pre-scope viewport/scissor (also reused to
+	// re-establish the immediate context after the state-clearing execute below) -- the
+	// engine enters its shadow rendering with whatever these were left at, and per-map
+	// code overrides the viewport through the forced-dirty path. The wide-open seed is
+	// the fallback for the edge case where nothing was set: a fresh deferred context
+	// starts with a 0x0 viewport and an empty scissor, which clips every draw away.
+	UINT           savedViewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT savedViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	immediate->RSGetViewports(&savedViewportCount, savedViewports);
+	UINT       savedScissorCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_RECT savedScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	immediate->RSGetScissorRects(&savedScissorCount, savedScissors);
 	{
 		const D3D11_VIEWPORT vp{ 0.0f, 0.0f, 16384.0f, 16384.0f, 0.0f, 1.0f };
 		const D3D11_RECT     sc{ 0, 0, 16384, 16384 };
 		deferred->RSSetViewports(1, &vp);
 		deferred->RSSetScissorRects(1, &sc);
+		if (savedViewportCount)
+			deferred->RSSetViewports(savedViewportCount, savedViewports);
+		if (savedScissorCount)
+			deferred->RSSetScissorRects(savedScissorCount, savedScissors);
 	}
 
+	// Carry over the frame-persistent bindings (per-frame camera CB in VS b12 et al.) that
+	// the engine bound on the immediate context before this scope and never re-binds per
+	// pass. Kept alive past ExecuteCommandList so the immediate context can be
+	// re-established without a full (expensive) RestoreContextState. One-shot inventory
+	// log feeds the follow-up RE. See PersistentBindings for the capture evidence.
+	PersistentBindings persistentBindings;
+	persistentBindings.Capture(immediate);
+	persistentBindings.Apply(deferred);
+	if (framesDeferred == 0)
+		persistentBindings.LogInventory();
+
+	// Retarget the perf-annotation interface at the deferred context for the scope so the
+	// engine's frame-annotation hooks ("Directional Light Shadowmaps" etc.) record their
+	// labels INSIDE the command list -- on the immediate context they would bracket
+	// nothing and the executed draws would be unlabeled. Restored after the scope.
+	globals::state->SetPerfAnnotationContext(deferred);
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("ShadowDeferred: deferred shadow-map recording");
+
 	auto* const sflags = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
-	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags. NOTE: the deferred output is
-	                          // byte-for-byte identical whether this is 0xFFFFFFFF or has the
-	                          // depth-stencil bits cleared -- so render STATE is not the cause
-	                          // of the missing shadows; the recorded draws produce no usable
-	                          // depth (likely wrong per-draw transform CBs across the DXVK
-	                          // deferred-context boundary). See the file-header STATUS note.
+	sflags[0] = 0xFFFFFFFFu;  // 0x143027EB0 main state flags. The RenderDoc deferred-vs-engine
+	                          // capture A/B settled the earlier "state or draws?" question: the
+	                          // draws ran with VS cb12 (per-frame camera CB, bound outside the
+	                          // dirty system) missing -- persistent bindings are mirrored above,
+	                          // while this force covers only the dirty-tracked state.
 
 	callOriginal();
+
+	if (globals::state->frameAnnotations)
+		globals::state->EndPerfEvent();
+	// Rebind annotations to the immediate context before it resumes the frame.
+	globals::state->SetPerfAnnotationContext(immediate);
 
 	scopeActive = false;
 	globals::d3d::context = savedCsContext;
@@ -189,20 +329,40 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	ringSlots[1] = savedRing[1];
 	ringSlots[2] = savedRing[2];
 
-	// Close the recording and replay it in place. RestoreContextState=TRUE so the
-	// immediate context is left exactly as the engine expected before the shadow scope.
+	// Close the recording and replay it in place. RestoreContextState=FALSE on BOTH calls
+	// per the DXVK deferred-context guidelines (a full restore is CPU-expensive and
+	// pessimizes resource lifetime tracking). Execute-with-FALSE leaves the immediate
+	// context CLEARED, so re-establish what the engine assumes persists ourselves:
+	// the frame-persistent bindings captured at scope entry, the pre-scope viewport /
+	// scissor, and -- after the mirror snapshot restore below -- a forced-dirty main
+	// state word so the engine's next SetDirtyStates re-binds everything it tracks from
+	// the (restored) mirror caches. The command list is released immediately after
+	// execution (com_ptr scope) so its resources drop early, also per the guidelines.
 	const auto drawsThisScope = g_deferredDraws.exchange(0, std::memory_order_relaxed);
-	winrt::com_ptr<ID3D11CommandList> commandList;
-	if (SUCCEEDED(deferred->FinishCommandList(FALSE, commandList.put())) && commandList) {
-		immediate->ExecuteCommandList(commandList.get(), TRUE);
-		++framesDeferred;
-		if ((framesDeferred & 0x3F) == 1)
-			logger::info("[ShadowDeferred] frame {}: recorded {} DrawIndexed on the deferred context", framesDeferred, drawsThisScope);
-	} else {
-		logger::error("[ShadowDeferred] FinishCommandList failed; shadows this frame are lost");
+	{
+		winrt::com_ptr<ID3D11CommandList> commandList;
+		if (SUCCEEDED(deferred->FinishCommandList(FALSE, commandList.put())) && commandList) {
+			immediate->ExecuteCommandList(commandList.get(), FALSE);
+			++framesDeferred;
+			if ((framesDeferred & 0x3F) == 1)
+				logger::info("[ShadowDeferred] frame {}: recorded {} DrawIndexed on the deferred context", framesDeferred, drawsThisScope);
+		} else {
+			logger::error("[ShadowDeferred] FinishCommandList failed; shadows this frame are lost");
+		}
 	}
 
-	// Restore the render-state mirror + caches to their pre-scope values.
+	// Re-establish the immediate context after the state-clearing execute: the
+	// frame-persistent bindings and the pre-scope viewport/scissor captured at entry.
+	persistentBindings.Apply(immediate);
+	persistentBindings.Release();
+	if (savedViewportCount)
+		immediate->RSSetViewports(savedViewportCount, savedViewports);
+	if (savedScissorCount)
+		immediate->RSSetScissorRects(savedScissorCount, savedScissors);
+
+	// Restore the render-state mirror + caches to their pre-scope values, then force the
+	// main dirty word so the engine's next SetDirtyStates re-binds the dirty-tracked
+	// state (render targets, raster, viewport, IA) onto the cleared immediate context.
 	std::memcpy(reinterpret_cast<void*>(engine::S_base.address()), s_snapshot.data(), engine::kSnapshotBytes);
 	*engine::g_currentTechnique = savedTechnique;
 	*engine::g_currentShader = savedShader;
@@ -210,6 +370,7 @@ void ShadowDeferred::RenderShadowmapsDetour(void* a_original)
 	*engine::g_boneCBRingCursor = savedBoneCursor;
 	*engine::g_dynVBRingState = savedDynVB;
 	*engine::g_shadowGeomToken = savedShadowToken;
+	sflags[0] = 0xFFFFFFFFu;
 }
 
 void ShadowDeferred::Setup()
@@ -247,6 +408,7 @@ void ShadowDeferred::Setup()
 		mode.store(Mode::kOff, std::memory_order_relaxed);
 		return;
 	}
+	Util::SetResourceName(deferredContext.get(), "ShadowDeferred::DeferredContext");
 
 	// Diagnostic: patch the deferred context's own vtable DrawIndexed (index 12) to count
 	// recorded draws. The deferred context is a distinct DXVK class from the immediate one,

@@ -202,6 +202,12 @@ public:
 	void EndPerfEvent();
 	/** @brief Inserts a single-point GPU performance marker. */
 	void SetPerfMarker(std::string_view title);
+	/** @brief Retargets perf annotations at another context's annotation interface --
+	 *  e.g. a deferred context while a recording scope is active, so labels emitted by
+	 *  the engine annotation hooks land inside the recorded command list instead of as
+	 *  empty brackets on the immediate context. Pass nullptr to rebind
+	 *  globals::d3d::context. */
+	void SetPerfAnnotationContext(ID3D11DeviceContext* a_context);
 
 	/** @brief Converts and stores the GPU adapter description (and PCI vendor + device IDs). */
 	void SetAdapterDescription(const std::wstring& description, uint32_t vendorId = 0, uint32_t deviceId = 0);

@@ -962,6 +962,13 @@ namespace FrameAnnotations
 				texture->SetPrivateData(WKPDID_D3DDebugObjectName,
 					static_cast<UINT>(renderTargetName.size()), renderTargetName.data());
 			}
+			// The copy image is a distinct texture many passes sample through SRVCopy;
+			// without its own name it shows up anonymous in captures.
+			if (auto textureCopy = renderer->GetRuntimeData().renderTargets[renderTargetIndex].textureCopy) {
+				const auto copyName = std::format("{} COPY", renderTargetName);
+				textureCopy->SetPrivateData(WKPDID_D3DDebugObjectName,
+					static_cast<UINT>(copyName.size()), copyName.data());
+			}
 		}
 
 		for (size_t renderTargetIndex = 0;
