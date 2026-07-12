@@ -168,3 +168,37 @@ Anchors: block `0x143027EB0` (0x5D8); imm ctx `*(0x143027EA0)`=pool[926]; alpha 
 `0x141E10538`; RT mgr `0x14302BB20`; camera-data `0x14302C890`; last shader/tech/mat
 `0x143283BA8`/`0x143283BA4`/`0x143490BB0`; BSShaderAccumulator vtable `0x14185CF50` (+0x128
 Func37, +0x150 Func42); `BSRenderPass::m_PassGroupNext` = +0x30.
+
+## Appendix: SetDirtyStates transcription reference
+
+Resolved addressing (from disasm 0x140D705B0, settles the `MEMORY[]` ambiguity):
+- **State-object pool** = the qword array **at** `0x1430261B0` (address itself). `pool[N] =
+  *(uintptr*)(0x1430261B0 + 8*N)`. Context = `pool[926] = *(0x143027EA0)`; alpha CB =
+  `pool[783] = *(0x143027A28)`. DS/raster/blend/sampler state objects are `pool[<index>]`.
+- **RT pool** = the pointer **stored at** `0x143025F00` (`mov r8, [0x143025F00]`), i.e.
+  `rtBase = *(uint8**)0x143025F00`. RTVs at `rtBase + 48*idx + 0xA58` (MRT) /
+  `rtBase + 8*([14]+8*[13]) + 0x26D0` (single-DSV); clear color `rtBase + 0x2768`.
+- Block field map (S = `0x143027EB0`): `dword_143027EBC[N] = S+0x0C+4N`; PS-SRV mask S+0x04,
+  PS-SAMP S+0x08; MRT RT-index[i]=S+0x18+4i, clear-flag[i]=S+0x48+4i, single-DSV clear-flag
+  [24]=S+0x6C; DS `unk_F38`=S+0x88/`F40`=S+0x90/`F44`=S+0x94; raster `F48`=S+0x98/`F4C`=S+0x9C/
+  `F50`=S+0xA0/`F54`=S+0xA4; blend `F58`=S+0xA8/`F5C`=S+0xAC/`F60`=S+0xB0; alpha `F64`=S+0xB4/
+  `F68`=S+0xB8; viewport `[25]`=S+0x70; depth-bias `[29]`=S+0x80/`[30]`=S+0x84; PS-SAMP pool idx
+  `dword_143027F6C[i]`=S+0xBC+4i / `dword_143027FAC[i]`=S+0xFC+4i; PS-SRV views
+  `qword_143027FF0[i]`=S+0x140+8i; CS views/idx `dword_143028070[i]`=S+0x1C0+4i (IL-key qword
+  @[96]=S+0x340, topology @[102]=S+0x358); slope-bias `flt_143028470[i]`=S+0x5C0+4i.
+- Shared read-only externals: slope-bias table `unk_143026180` (0x3026180), blend factor
+  `unk_141E07168` (0x1E07168).
+- Vtable indices (offset/8) for the emitted calls: OMSetRenderTargets 33, ClearRTV 50,
+  ClearDSV 53, OMSetDepthStencilState 36, RSSetState 43, RSSetViewports 44, OMSetBlendState
+  35, Map 14, Unmap 15, IASetInputLayout 17, IASetPrimitiveTopology 24, PSSetShaderResources
+  8, PSSetSamplers 10, CSSetShaderResources 67, CSSetUAV 68, CSSetSamplers 70.
+
+**REMAINING RE GAP (blocks the byte-exact reimpl):** the input-layout branch (bit 0x400,
+`a1==false`): key = `*(u64)(S+0x340) & *(u64)(*(u64)(S+0x348)+72)`, then a shared hash-table
+lookup in `qword_141E07160` (node stride 24: key@0, IL@+8, next@+16, sentinel
+`off_141E07150`, mask `dword_141E07144-1`) with create (`FUN_140d70f90(key)`) + insert
+(`FUN_140d730e0(&unk_141E07140, head, hash, &key, &outIL)` → bool) + grow (`FUN_140d73f70`)
+on miss, hash via `sub_140C06570(&struct32, key)`. The `struct32` semantics and the four
+helper signatures need RE before this branch can be transcribed. This branch ALSO mutates
+the shared cache (the race in §4.3); pre-warm the (small) BSUtilityShader IL set on the main
+thread to sidestep both. Everything else is mechanical from the map above.
