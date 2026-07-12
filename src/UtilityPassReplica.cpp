@@ -694,6 +694,9 @@ namespace
 		RE::BSShader**       shader = nullptr;     // g_currentShader cache
 		void**               material = nullptr;   // g_currentMaterial cache
 		std::uint32_t*       shadowToken = nullptr;  // g_shadowGeomToken (dword_141E10660) cache
+		std::uint32_t*       techFlags = nullptr;  // shader+0x90 (technique flags) -- shared singleton scratch
+		std::uint32_t*       techSub = nullptr;    // shader+0x94 (technique & 0x7F)
+		std::uint8_t*        dsvDirty = nullptr;   // g_dsvDirty (0x1430284C2), OUT-of-block DSV-rebind flag
 	};
 	thread_local ShadowWorkerState* t_worker = nullptr;
 
@@ -708,6 +711,11 @@ namespace
 	inline RE::BSShader*&       WsShader() { return t_worker ? *t_worker->shader : *engine::g_currentShader; }
 	inline void*&               WsMaterial() { return t_worker ? *t_worker->material : *reinterpret_cast<void**>(engine::g_currentMaterial.address()); }
 	inline std::uint32_t&       WsShadowToken() { return t_worker ? *t_worker->shadowToken : *engine::g_shadowGeomToken; }
+	// Technique flags live on the SHARED singleton BSUtilityShader (shader+0x90/0x94); a worker reads
+	// its OWN cell so concurrent per-pass technique stamps don't tear. At N=1 the cell is null so the
+	// read falls through to the shared object -- identical to before, byte-exact.
+	inline std::uint32_t        WsTechFlags(std::uint8_t* a_shader) { return t_worker ? *t_worker->techFlags : *reinterpret_cast<std::uint32_t*>(a_shader + 0x90); }
+	inline std::uint8_t&        WsDsvDirty() { return t_worker ? *t_worker->dsvDirty : *engine::g_dsvDirty; }
 }
 
 void UtilityPassReplica::Setup()
@@ -1568,7 +1576,7 @@ namespace
 	{
 		const auto u32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
 		auto&               main = u32(0x00);
-		const std::uint32_t v2 = *reinterpret_cast<std::uint32_t*>(shader + 0x90);
+		const std::uint32_t v2 = WsTechFlags(shader);
 		std::uint32_t       v3 = main;
 		if (v2 & 0x100000) {
 			if (u32(0xA0)) {
@@ -1653,7 +1661,7 @@ namespace
 					v4 = main | 1;
 					u64(0x150) = 0;
 					main |= 1;
-					*engine::g_dsvDirty = 0;  // unk_1430284C2 (OUT-of-block DSV dirty byte)
+					WsDsvDirty() = 0;  // unk_1430284C2 (OUT-of-block DSV dirty byte); worker cell under MT
 				}
 				if (u32(0x88) != 3) {  // unk_143027F38
 					u32(0x88) = 3;
@@ -1672,7 +1680,7 @@ namespace
 		} else {
 			v4 = main;
 		}
-		if ((*reinterpret_cast<std::uint32_t*>(shader + 0x90) & 0x1200) == 0x1200) {
+		if ((WsTechFlags(shader) & 0x1200) == 0x1200) {
 			if (u64(0x90) != 0xFF00000000ull) {  // unk_143027F40
 				v4 |= 8u;
 				u64(0x90) = 0xFF00000000ull;
@@ -1717,7 +1725,7 @@ namespace
 			psMapped = m.pData;
 		}
 
-		const std::uint32_t flags = *reinterpret_cast<std::uint32_t*>(shader + 0x90);
+		const std::uint32_t flags = WsTechFlags(shader);
 		if ((flags & 2) != 0 && (flags & 0x2040280) != 0) {
 			const std::uint32_t idx = *engine::g_utilMaterialFillIndex;
 			auto*               vd = reinterpret_cast<std::uint8_t*>(vsMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(vsShader + 0x51));
@@ -1868,31 +1876,44 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 	// PerTechnique CBs to Map/fill/bind: passed private copies, or the shader-owned CBs at N=1.
 	ID3D11Buffer*            vsBuf = vsCB ? vsCB : *reinterpret_cast<ID3D11Buffer**>(vs + 0x18);
 	D3D11_MAPPED_SUBRESOURCE mapped{};  // == var_C8 (reused as the powf scratch far below)
+	// Keep the mapped pointers in LOCALS: the engine stashes them on the SHARED vs/ps shader object
+	// (+0x20 / +0x18), which two workers would clobber. The stashes below are kept for engine parity
+	// but the fills read the locals, so a worker never depends on the shared field.
+	void* pDataVSraw = nullptr;
+	void* pDataPSraw = nullptr;
 
 	if (vsBuf) {
 		EngineCallV<14, HRESULT>(ctx, vsBuf, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map VS CB
-		*reinterpret_cast<void**>(vs + 0x20) = mapped.pData;                              // shader+0x20 = pData
+		pDataVSraw = mapped.pData;
+		*reinterpret_cast<void**>(vs + 0x20) = mapped.pData;                              // shader+0x20 = pData (parity)
 	}
 	ID3D11Buffer* psBuf = nullptr;
 	if (v6) {
 		psBuf = psCB ? psCB : *reinterpret_cast<ID3D11Buffer**>(ps + 0x10);
 		if (psBuf) {
 			EngineCallV<14, HRESULT>(ctx, psBuf, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map PS CB
-			*reinterpret_cast<void**>(ps + 0x18) = mapped.pData;                              // shader+0x18 = pData
+			pDataPSraw = mapped.pData;
+			*reinterpret_cast<void**>(ps + 0x18) = mapped.pData;                              // shader+0x18 = pData (parity)
 		}
 	}
 
-	// Technique flags on the shader object (BSShader+0x90 / +0x94).
+	// Technique flags on the shader object (BSShader+0x90 / +0x94). Keep the shared-object write (an
+	// engine consumer / N=1 reads it) AND mirror into the worker's cell so concurrent workers read
+	// their OWN technique flags instead of the last writer's.
 	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x90) = static_cast<std::uint32_t>(v2);
 	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x94) = static_cast<std::uint32_t>(v2 & 0x7F);
+	if (t_worker) {
+		*t_worker->techFlags = static_cast<std::uint32_t>(v2);
+		*t_worker->techSub = static_cast<std::uint32_t>(v2 & 0x7F);
+	}
 
 	// The engine reloads [shader+0x20]/[shader+0x18] lazily at each fill site; hoisting here is
 	// equivalent because pDataVS is consumed only in VS fills (vs always present) and pDataPS
 	// only in PS fills (ps present). A vertex-only technique (v6 false) leaves ps null, so the
 	// deref must be guarded. CbOrScratch also absorbs the load-screen transient where the CB is
 	// momentarily unmapped (see the note above); in steady state both are the mapped pointers.
-	auto* pDataVS = CbOrScratch(vs ? *reinterpret_cast<std::uint8_t**>(vs + 0x20) : nullptr);
-	auto* pDataPS = CbOrScratch(ps ? *reinterpret_cast<std::uint8_t**>(ps + 0x18) : nullptr);
+	auto* pDataVS = CbOrScratch(vs ? reinterpret_cast<std::uint8_t*>(pDataVSraw) : nullptr);
+	auto* pDataPS = CbOrScratch(ps ? reinterpret_cast<std::uint8_t*>(pDataPSraw) : nullptr);
 
 	// -- Block 1: VS PerTechnique depth constants (offset vs[0x53]) --
 	if ((v2 & 0x1E00100) == 0x100) {
@@ -1959,7 +1980,7 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 				orU32(0x04, 4);           // unk_143027EB4
 				orU32(0x00, 1);
 				setQw(0x150, depthSRV);
-				*engine::g_dsvDirty = 1;  // unk_1430284C2 (OUT of block)
+				WsDsvDirty() = 1;  // unk_1430284C2 (OUT of block); worker cell under MT
 			}
 			std::uint32_t v27 = u32(0x08);  // unk_143027EB8
 			if (u32(0xC4) != 0) {           // unk_143027F74
@@ -1979,7 +2000,7 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 					orU32(0x04, 0x20);
 					orU32(0x00, 1);
 					setQw(0x168, stencilSRV);
-					*engine::g_dsvDirty = 1;
+					WsDsvDirty() = 1;  // worker cell under MT
 				}
 			}
 			if (u32(0xA0) != 1) {  // dword_143027F50 -> raster dirty (bit6)
@@ -2172,7 +2193,7 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 	u8v* shaderProperty = *reinterpret_cast<u8v**>(pass + 0x08);  // a2->shaderProperty
 	u8v* v88            = nullptr;                                 // effect-shader data (alpha-test-ref source)
 
-	const u32 tech = *reinterpret_cast<u32*>(shader + 0x90);       // technique flag (a1->_pad_20[112])
+	const u32 tech = WsTechFlags(shader);       // technique flag (a1->_pad_20[112]); worker cell under MT
 
 	// ================= world matrix -> VS CB[VS+0x50] (unless tech & 4) =================
 	if ((tech & 4) == 0) {
@@ -2737,6 +2758,8 @@ void UtilityPassReplica::ResetValidation()
 // worker's state and records onto its deferred context -- no shared mutable state across threads
 // (skinned passes, whose bone-CB/dyn-VB rings are still global, stay on the serial remainder).
 // ============================================================================================
+#pragma warning(push)
+#pragma warning(disable : 4324)  // structure padded due to alignas(16) on `block`
 class UtilityPassReplica::ShadowWorker
 {
 public:
@@ -2746,7 +2769,11 @@ public:
 	RE::BSShader*                   shader = nullptr;
 	void*                           material = nullptr;
 	std::uint32_t                   shadowToken = 0;
+	std::uint32_t                   techFlags = 0;
+	std::uint32_t                   techSub = 0;
+	std::uint8_t                    dsvDirty = 0;
 };
+#pragma warning(pop)
 
 UtilityPassReplica::ShadowWorker* UtilityPassReplica::MakeShadowWorker(ID3D11DeviceContext* a_ctx, std::uint32_t a_initToken)
 {
@@ -2758,6 +2785,9 @@ UtilityPassReplica::ShadowWorker* UtilityPassReplica::MakeShadowWorker(ID3D11Dev
 	w->state.shader = &w->shader;
 	w->state.material = &w->material;
 	w->state.shadowToken = &w->shadowToken;
+	w->state.techFlags = &w->techFlags;
+	w->state.techSub = &w->techSub;
+	w->state.dsvDirty = &w->dsvDirty;
 	return w;
 }
 
@@ -2776,6 +2806,9 @@ void UtilityPassReplica::WorkerSeedMap(ShadowWorker* a_worker, const std::uint8_
 	a_worker->technique = 0;
 	a_worker->shader = nullptr;
 	a_worker->material = nullptr;
+	a_worker->techFlags = 0;
+	a_worker->techSub = 0;
+	a_worker->dsvDirty = 0;
 }
 
 void UtilityPassReplica::WorkerBeginScope(ShadowWorker* a_worker)
