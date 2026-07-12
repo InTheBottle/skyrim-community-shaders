@@ -847,6 +847,14 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		return;
 	}
 
+	// Shadow-capture fan-out (ShadowThreaded). While a shadow-map walk is being captured, offer
+	// each utility pass to the hook; if it claims ownership (worker pool will replay it), skip the
+	// inline render here entirely. Otherwise fall through to the normal per-mode path.
+	if (auto hook = shadowCaptureHook.load(std::memory_order_acquire)) {
+		if (hook(a_pass, a_technique, a_alphaTest, a_renderFlags, CanReplicate(a_pass)))
+			return;
+	}
+
 	// The smoke test showed utility passes arriving from TWO threads (loading-screen
 	// renderer vs main render thread). The recorder windows are single-threaded state,
 	// so only one thread may compare at a time; a contender just renders via the engine.

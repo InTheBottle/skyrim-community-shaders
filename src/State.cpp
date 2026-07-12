@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "ShadowDeferred.h"
+#include "ShadowThreaded.h"
 #include "UtilityPassReplica.h"
 #include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
@@ -267,6 +268,10 @@ void State::Setup()
 	// Shadow-map commands on a deferred context (Stage D). Inert unless
 	// CS_SHADOW_DEFERRED=1; see src/ShadowDeferred.h.
 	ShadowDeferred::GetSingleton()->Setup();
+
+	// Multithreaded shadow-map recording (fan-out across worker contexts). Inert unless
+	// CS_SHADOW_MT=1; see src/ShadowThreaded.h.
+	ShadowThreaded::GetSingleton()->Setup();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();

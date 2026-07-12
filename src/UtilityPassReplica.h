@@ -169,6 +169,18 @@ public:
 	 *         dynamic bone-setter branch stay whole-pass engine. */
 	[[nodiscard]] bool CanReplicate(RE::BSRenderPass* a_pass) const;
 
+	/**
+	 * @brief Shadow-capture hook (ShadowThreaded fan-out). While set, OnRenderPassImmediately
+	 *        offers each utility pass to the hook BEFORE its own mode logic. Return true to
+	 *        signal "the caller took ownership of this pass" -- the replica then skips its
+	 *        inline render entirely (the worker pool will replay it later). Return false to
+	 *        let the replica render the pass normally (observe-only capture). The hook runs on
+	 *        the render thread during the shadow-map walk. Params mirror RenderPassImmediately;
+	 *        `canReplicate` is the coverage verdict so the hook can leave uncovered passes to
+	 *        the engine. Set to nullptr to detach. */
+	using ShadowCaptureHook = bool (*)(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags, bool a_canReplicate);
+	void SetShadowCaptureHook(ShadowCaptureHook a_hook) { shadowCaptureHook.store(a_hook, std::memory_order_release); }
+
 private:
 	UtilityPassReplica() = default;
 
@@ -188,8 +200,9 @@ private:
 	void EndWindow();
 	void DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_technique);
 
-	std::atomic<Mode> mode{ Mode::kOff };
-	bool              hooksInstalled = false;
+	std::atomic<Mode>              mode{ Mode::kOff };
+	std::atomic<ShadowCaptureHook> shadowCaptureHook{ nullptr };
+	bool                           hooksInstalled = false;
 
 	// Per-pass command windows (render thread only).
 	std::vector<RecordedCall> engineWindow;
