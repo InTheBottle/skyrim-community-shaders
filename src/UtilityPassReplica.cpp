@@ -577,6 +577,65 @@ namespace engine
 	inline REL::Relocation<ILInsert_t> ILInsert{ REL::Offset(0xD730E0) };           // scatter-table insert
 	using ILGrow_t = void (*)(void*);
 	inline REL::Relocation<ILGrow_t> ILGrow{ REL::Offset(0xD73F70) };               // grow/rehash
+
+	// --- Per-pass setup reimplementation support (FlushSetupTechnique/Material/GeometryReplica).
+	//     These reimplement BSUtilityShader::SetupTechnique/Material/Geometry ctx-parameterized
+	//     so a worker can fill+bind its OWN PerTechnique/Material/Geometry CBs on its own context.
+	//     The CBs are owned by the current VS/PS shader objects (*0x1430281F8 / *0x143028200 =
+	//     block+0x348 / +0x350); at N=1 the shared shader CBs are passed for byte-identical parity.
+	inline REL::Relocation<std::uint32_t*> g_utilMaterialFillIndex{ REL::Offset(0x1E0DFF0) };  // dword_141E0DFF0
+	// SetupTechnique helpers + data
+	inline REL::Relocation<std::uint32_t (*)(std::uint32_t)> UtilVSIndex{ REL::Offset(0x1334900) };
+	inline REL::Relocation<std::uint32_t (*)(std::uint32_t)> UtilPSIndex{ REL::Offset(0x1334970) };
+	inline REL::Relocation<bool (*)(RE::BSShader*, std::uint32_t, std::uint32_t, bool)> BeginTechnique{ REL::Offset(0x131FBD0) };
+	inline REL::Relocation<std::uint32_t (*)(void*)> RTGetWidth{ REL::Offset(0xD74C20) };
+	inline REL::Relocation<std::uint32_t (*)(void*)> RTGetHeight{ REL::Offset(0xD74C60) };
+	inline REL::Relocation<std::int32_t (*)()>       GetDepthStencilTargetMain{ REL::Offset(0xD74E50) };
+	inline REL::Relocation<float (*)(float, float)>  PowF{ REL::Offset(0x134BEAC) };
+	inline REL::Relocation<std::uint8_t*>  g_mainRTDesc{ REL::Offset(0x302BB20) };
+	inline REL::Relocation<float*>         g_utilDepthConst{ REL::Offset(0x1E0DF04) };
+	inline REL::Relocation<std::uint8_t*>  g_dsvDirty{ REL::Offset(0x30284C2) };          // OUT of 0x5D8 block
+	inline REL::Relocation<std::uint8_t*>  g_focusShadowEnable{ REL::Offset(0x1E0DE43) };
+	inline REL::Relocation<std::uint32_t*> g_focusShadowCount{ REL::Offset(0x1D0FB8) };
+	inline REL::Relocation<std::uint8_t**> g_viewCamera{ REL::Offset(0x1D0E68) };
+	inline REL::Relocation<std::uint8_t**> g_shadowSceneNode{ REL::Offset(0x1E0DED0) };
+	inline REL::Relocation<std::uint32_t*> g_shadowFixedCount{ REL::Offset(0x1867188) };
+	inline REL::Relocation<std::uint8_t*>  g_copySplitToVS{ REL::Offset(0x1E0DE4C) };
+	inline REL::Relocation<std::uint32_t*> g_shadowMode{ REL::Offset(0x1E0DE34) };
+	inline REL::Relocation<std::uint32_t*> g_poissonDenom{ REL::Offset(0x3283B90) };
+	inline REL::Relocation<float*>         g_poissonRadiusScale{ REL::Offset(0x1E10670) };
+	inline REL::Relocation<float*>         g_fixedSplit{ REL::Offset(0x3283B78) };
+	inline REL::Relocation<float*>         g_maxFocusDist{ REL::Offset(0x1E106B8) };
+	inline REL::Relocation<float**>        g_focusShadowData{ REL::Offset(0x1D0FA8) };
+	inline REL::Relocation<float*>         g_fadeFracStart{ REL::Offset(0x1E106A0) };
+	inline REL::Relocation<float*>         g_shadowRadius{ REL::Offset(0x1E10B78) };
+	inline REL::Relocation<float*>         g_shadowSign{ REL::Offset(0x1E10B7C) };
+	inline REL::Relocation<float*>         g_biasBase{ REL::Offset(0x3283B7C) };
+	// SetupGeometry helpers + data
+	inline REL::Relocation<void*> SG_BuildMatrix{ REL::Offset(0x12C3440) };
+	inline REL::Relocation<void*> SG_MatrixTranspose{ REL::Offset(0x134C1DC) };
+	inline REL::Relocation<void*> SG_Vec3TransformCoord{ REL::Offset(0x134C206) };
+	inline REL::Relocation<void*> SG_ShadowFill{ REL::Offset(0x130F960) };
+	inline REL::Relocation<void*> SG_SetupShadowLightParams{ REL::Offset(0x130FBE0) };
+	inline REL::Relocation<void*> SG_ScissorFromBBox{ REL::Offset(0xD70100) };
+	inline REL::Relocation<void*> SG_ScissorApply{ REL::Offset(0xD6FCF0) };
+	inline REL::Relocation<void*> SG_WorldToView{ REL::Offset(0xD42C50) };
+	inline REL::Relocation<void*> SG_GetAccumulator{ REL::Offset(0x12966A0) };
+	inline REL::Relocation<std::uintptr_t> SG_pCamNode{ REL::Offset(0x1D0F88) };
+	inline REL::Relocation<std::uintptr_t> SG_pViewFrustumObj{ REL::Offset(0x1D0E68) };
+	inline REL::Relocation<std::uintptr_t> SG_pFadeExclude{ REL::Offset(0x1D0DA8) };
+	inline REL::Relocation<std::uintptr_t> SG_mode1D0E28{ REL::Offset(0x1D0E28) };
+	inline REL::Relocation<std::uintptr_t> SG_flagDE4C{ REL::Offset(0x1E0DE4C) };
+	inline REL::Relocation<std::uintptr_t> SG_modeDF94{ REL::Offset(0x1E0DF94) };
+	inline REL::Relocation<std::uintptr_t> SG_windFadeMin{ REL::Offset(0x1E0DF70) };
+	inline REL::Relocation<std::uintptr_t> SG_windFadeMax{ REL::Offset(0x1E0DF74) };
+	inline REL::Relocation<std::uintptr_t> SG_stencilVal014{ REL::Offset(0x1E0E014) };
+	inline REL::Relocation<std::uintptr_t> SG_c283B88{ REL::Offset(0x3283B88) };
+	inline REL::Relocation<std::uintptr_t> SG_c283B7C{ REL::Offset(0x3283B7C) };
+	inline REL::Relocation<std::uintptr_t> SG_recip127{ REL::Offset(0x156302C) };
+	inline REL::Relocation<std::uintptr_t> SG_recip255{ REL::Offset(0x1540648) };
+	inline REL::Relocation<std::uintptr_t> SG_alphaBias{ REL::Offset(0x1866724) };
+
 	using GetNiProperty_t = RE::NiAlphaProperty* (*)(RE::BSRenderPass*);
 	inline REL::Relocation<GetNiProperty_t> GetNiProperty{ REL::Offset(0x12FD8A0) };
 	using GrassShadowBlacklist_t = bool (*)(std::uint32_t);
@@ -865,6 +924,16 @@ bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 	return true;
 }
 
+namespace
+{
+	// Forward declarations: the per-pass setup reimplementations are defined below (same TU /
+	// anonymous namespace) but called from ReplicaRenderPassImmediately here.
+	int  CsSetupMask();
+	void FlushSetupMaterialReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, std::uint8_t*, std::uint8_t*);
+	bool FlushSetupTechniqueReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, std::int32_t);
+	void FlushSetupGeometryReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, RE::BSRenderPass*);
+}
+
 void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
 {
 	// ---- RenderPassImmediately body (1.5.97 0x141308440), replicated ----
@@ -898,8 +967,19 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 												  reinterpret_cast<const std::uint8_t*>(a_pass->shaderProperty) + 0x78) :
 	                                          nullptr;
 	if (material != WsMaterial()) {
-		if (material)
-			EngineCallV<4, void>(shader, material);  // SetupMaterial
+		if (material) {
+			if (CsSetupMask() & 1) {
+				auto* Sb = WsBlock();
+				auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sb + 0x348);
+				auto* psSh = *reinterpret_cast<std::uint8_t**>(Sb + 0x350);
+				FlushSetupMaterialReplica(WsCtx(),
+					vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x28) : nullptr,
+					psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x20) : nullptr,
+					Sb, reinterpret_cast<std::uint8_t*>(shader), reinterpret_cast<std::uint8_t*>(material));
+			} else {
+				EngineCallV<4, void>(shader, material);  // SetupMaterial
+			}
+		}
 		WsMaterial() = material;
 	}
 
@@ -1206,6 +1286,122 @@ namespace
 			return GetEnvironmentVariableA("CS_UTIL_RE_CSFLUSH", buf, sizeof(buf)) && buf[0] == '1';
 		}();
 		return s_on;
+	}
+
+	// CS_UTIL_RE_CSSETUP bitmask: 1=SetupMaterial, 2=SetupTechnique, 4=SetupGeometry route
+	// through the CS reimplementation (validate each byte-exact via the parity gate before
+	// it backs the private-CB worker path).
+	int CsSetupMask()
+	{
+		static const int s_mask = [] {
+			char buf[16] = {};
+			return GetEnvironmentVariableA("CS_UTIL_RE_CSSETUP", buf, sizeof(buf)) ? atoi(buf) : 0;
+		}();
+		return s_mask;
+	}
+
+	// BSUtilityShader::SetupMaterial (vf4, 1.5.97 0x14130E890) reimplemented against a caller-
+	// supplied render-state block (S = the 0x5D8 block, 0x143027EB0 at N=1), context, and the
+	// VS/PS PerMaterial constant buffers. Maps both PerMaterial CBs (WRITE_DISCARD), fills them
+	// from the material (a2), stamps the block's PS SRV/sampler dirty bits + caches, then binds
+	// VS slot 1 / PS slot 1. Byte-exact transcription; context calls via EngineCallV so the
+	// compare recorder captures them exactly as it captures the engine's.
+	void FlushSetupMaterialReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3D11Buffer* psCB,
+		std::uint8_t* S, std::uint8_t* shader /*a1*/, std::uint8_t* material /*a2*/)
+	{
+		auto* vsShader = *reinterpret_cast<std::uint8_t**>(S + 0x348);  // *0x1430281F8
+		auto* psShader = *reinterpret_cast<std::uint8_t**>(S + 0x350);  // *0x143028200
+
+		const auto mU8 = [&](std::size_t o) { return *reinterpret_cast<std::uint8_t*>(material + o); };
+		const auto mU32 = [&](std::size_t o) { return *reinterpret_cast<std::uint32_t*>(material + o); };
+		const auto mF32 = [&](std::size_t o) { return *reinterpret_cast<float*>(material + o); };
+		const auto mPtr = [&](std::size_t o) { return *reinterpret_cast<std::uint8_t**>(material + o); };
+		const auto sU32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
+		const auto sPtr = [&](std::size_t o) -> std::uint8_t*& { return *reinterpret_cast<std::uint8_t**>(S + o); };
+
+		void* vsMapped = nullptr;
+		void* psMapped = nullptr;
+		if (vsCB) {
+			D3D11_MAPPED_SUBRESOURCE m{};
+			EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &m);
+			vsMapped = m.pData;
+		}
+		if (psShader && psCB) {
+			D3D11_MAPPED_SUBRESOURCE m{};
+			EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &m);
+			psMapped = m.pData;
+		}
+
+		const std::uint32_t flags = *reinterpret_cast<std::uint32_t*>(shader + 0x90);
+		if ((flags & 2) != 0 && (flags & 0x2040280) != 0) {
+			const std::uint32_t idx = *engine::g_utilMaterialFillIndex;
+			auto*               vd = reinterpret_cast<std::uint8_t*>(vsMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(vsShader + 0x51));
+			*reinterpret_cast<std::uint32_t*>(vd + 0) = mU32(8ull * idx + 0x0C);
+			*reinterpret_cast<std::uint32_t*>(vd + 4) = mU32(8ull * idx + 0x10);
+			*reinterpret_cast<std::uint32_t*>(vd + 8) = mU32(8ull * idx + 0x1C);
+			*reinterpret_cast<std::uint32_t*>(vd + 12) = mU32(8ull * idx + 0x20);
+
+			if ((flags & 0x2040080) != 0) {
+				std::uint32_t v14 = 0;
+				std::uint8_t* v15 = nullptr;
+				if (EngineCallV<7, std::uint32_t>(material) == 2) {
+					v14 = mU32(0x70);
+					v15 = mPtr(0x48);
+				} else if (EngineCallV<7, std::uint32_t>(material) == 1) {
+					v14 = mU8(0x80);
+					v15 = mPtr(0x58);
+				}
+
+				if ((flags & 0x20000000) != 0) {
+					auto* pd = reinterpret_cast<std::uint8_t*>(psMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(psShader + 0x43));
+					*reinterpret_cast<float*>(pd + 0) = mF32(0x48) * mF32(0x6C);
+					*reinterpret_cast<float*>(pd + 4) = mF32(0x4C) * mF32(0x6C);
+					*reinterpret_cast<float*>(pd + 8) = mF32(0x50) * mF32(0x6C);
+					*reinterpret_cast<std::uint32_t*>(pd + 12) = mU32(0x54);
+
+					auto*         tex7 = *reinterpret_cast<std::uint8_t**>(mPtr(0x60) + 0x48);
+					std::uint8_t* srv7 = tex7 ? *reinterpret_cast<std::uint8_t**>(tex7 + 0x10) : nullptr;
+					if (sPtr(0x178) != srv7) {
+						sU32(0x04) |= 0x80;
+						sPtr(0x178) = srv7;
+					}
+					if (sU32(0xD8) != 0) { sU32(0x08) |= 0x80; sU32(0xD8) = 0; }
+					if (sU32(0x118) != 1) { sU32(0x08) |= 0x80; sU32(0x118) = 1; }
+				}
+
+				auto*         tex0 = *reinterpret_cast<std::uint8_t**>(v15 + 0x48);
+				std::uint8_t* srv0 = tex0 ? *reinterpret_cast<std::uint8_t**>(tex0 + 0x10) : nullptr;
+				if (sPtr(0x140) != srv0) {
+					sU32(0x04) |= 1;
+					sPtr(0x140) = srv0;
+				}
+				if (sU32(0xBC) != v14) { sU32(0x08) |= 1; sU32(0xBC) = v14; }
+				if (sU32(0xFC) != 3) { sU32(0x08) |= 1; sU32(0xFC) = 3; }
+			}
+
+			if ((flags & 0x200) != 0) {
+				auto*         tex1 = *reinterpret_cast<std::uint8_t**>(mPtr(0x48) + 0x48);
+				std::uint8_t* srv1 = tex1 ? *reinterpret_cast<std::uint8_t**>(tex1 + 0x10) : nullptr;
+				if (sPtr(0x148) != srv1) {
+					sU32(0x04) |= 2;
+					sPtr(0x148) = srv1;
+				}
+				if (sU32(0xC0) != mU32(0x70)) { sU32(0x08) |= 2; sU32(0xC0) = mU32(0x70); }
+				if (sU32(0x100) != 3) { sU32(0x08) |= 2; sU32(0x100) = 3; }
+				auto* pd = reinterpret_cast<std::uint8_t*>(psMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(psShader + 0x41));
+				*reinterpret_cast<std::uint32_t*>(pd) = mU32(0x84);
+			}
+		}
+
+		if (psShader) {
+			if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);
+			if (psCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u);
+			EngineCallV<7, void>(ctx, 1u, 1u, &vsCB);
+			EngineCallV<16, void>(ctx, 1u, 1u, &psCB);
+		} else {
+			if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);
+			EngineCallV<7, void>(ctx, 1u, 1u, &vsCB);
+		}
 	}
 }
 
