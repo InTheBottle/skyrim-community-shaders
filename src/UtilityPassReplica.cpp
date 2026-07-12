@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <intrin.h>
+#include <mutex>
 #include <winrt/base.h>
 
 #include <RE/B/BSRenderPass.h>
@@ -499,6 +500,10 @@ namespace engine
 	// SRV caches, vertex desc, current shaders, topology, camera data, blend-extra).
 	inline REL::Relocation<std::uint8_t*> S_base{ REL::Offset(0x3027EB0) };
 	constexpr std::uint32_t               kSnapshotBytes = 0x5D8;
+	// The engine's "current context" pointer slot (state-pool[926] == 0x143027EA0). BSGraphics::
+	// Renderer::SetShader/SetPixelShader bind VS/PS on *this* slot, so temporarily swapping it to a
+	// worker's deferred context routes BeginTechnique's binds onto the worker's command list.
+	inline REL::Relocation<ID3D11DeviceContext**> g_engineCtxSlot{ REL::Offset(0x3027EA0) };
 
 	// Cross-pass shadow token written by SetupGeometry (0x14130EC70) and read+reset by
 	// RestoreTechnique (0x141310300) to decide the alpha-blend dirty bit. It lives well
@@ -1860,16 +1865,38 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 	                ((v2 & 0x80) != 0) ||
 	                ((v2 & 0x14000) == 0x10000);
 
-	const bool v59 = EngineCall<bool>(reinterpret_cast<void*>(engine::BeginTechnique.address()), a1, vsIndex, psIndex, !v6);
+	// BeginTechnique binds VS/PS on the engine's global context slot (0x143027EA0) and writes the
+	// global VS/PS shader-object slots (block+0x348/0x350). For a worker that is fatal two ways: the
+	// binds land on the shared IMMEDIATE context (used by every worker thread -> not thread-safe ->
+	// the garbage-VS AV) and the global slots tear across workers. Under one mutex, temporarily point
+	// the global context slot at the worker's OWN deferred context so the binds record onto the
+	// worker's command list, and read back the resolved shader objects while still holding the lock.
+	// At N=1 (t_worker==null) nothing is swapped or locked -> byte-exact.
+	static std::mutex s_beginTechMutex;
+	bool              v59;
+	std::uint8_t*     gvs;
+	std::uint8_t*     gps;
+	{
+		std::unique_lock<std::mutex> lk;
+		ID3D11DeviceContext*         savedCtx = nullptr;
+		if (t_worker) {
+			lk = std::unique_lock<std::mutex>(s_beginTechMutex);
+			savedCtx = *engine::g_engineCtxSlot;
+			*engine::g_engineCtxSlot = ctx;  // ctx == WsCtx() == this worker's deferred context
+		}
+		v59 = EngineCall<bool>(reinterpret_cast<void*>(engine::BeginTechnique.address()), a1, vsIndex, psIndex, !v6);
+		gvs = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x348);
+		gps = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x350);
+		if (t_worker)
+			*engine::g_engineCtxSlot = savedCtx;
+	}
 	if (!v59)
 		return false;
 
-	// BeginTechnique writes the current VS/PS shader objects to the GLOBAL block (0x1430281F8 /
-	// 0x143028200), NOT the caller's block. Propagate them into S so a worker with a PRIVATE block
-	// sees BeginTechnique's output instead of the map-seeded (stale) value; at N=1 S aliases the
-	// global block, so this is a no-op copy (byte-exact-preserving).
-	auto* vs = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x348);
-	auto* ps = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x350);
+	// Propagate BeginTechnique's resolved VS/PS shader objects (read from the GLOBAL block under the
+	// lock above) into the caller's block S so a worker with a PRIVATE block sees them; no-op at N=1.
+	auto* vs = gvs;
+	auto* ps = gps;
 	*reinterpret_cast<std::uint8_t**>(S + 0x348) = vs;
 	*reinterpret_cast<std::uint8_t**>(S + 0x350) = ps;
 
@@ -2223,7 +2250,13 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 		u8v*  v30 = *sceneLights;                                                           // first shadow light
 
 		EngineCall<void>(reinterpret_cast<void*>(engine::SG_ShadowFill.address()), static_cast<void*>(pass), 0);                 // FUN_14130f960 (pure CPU)
-		EngineCall<void>(reinterpret_cast<void*>(engine::SG_SetupShadowLightParams.address()), static_cast<void*>(pass), 0, static_cast<void*>(v9));  // 0x14130fbe0 (pure CPU)
+		// SG_SetupShadowLightParams reads ONLY arg3+8 (the PS PerGeometry CB base) and writes the CB.
+		// At N=1 pass the real slot (v9 = PS+0x30, whose +8 = PS+0x38 = psMapped) -> byte-exact. A
+		// worker passes a PRIVATE {pad, psMapped} slot so the helper writes ITS OWN buffer instead of
+		// the shared PS+0x38 the other workers overwrite (verified: no other v9 offset is read).
+		void* psCbSlotFake[2] = { nullptr, psMapped };
+		void* shadowLightArg = t_worker ? static_cast<void*>(psCbSlotFake) : static_cast<void*>(v9);
+		EngineCall<void>(reinterpret_cast<void*>(engine::SG_SetupShadowLightParams.address()), static_cast<void*>(pass), 0, shadowLightArg);  // 0x14130fbe0 (pure CPU)
 
 		// lodFade constant -> VS CB[VS+0x55].x and PS CB[PS+0x48].z (raw dword copy)
 		const u32 v32 = v30[0x63] ? *reinterpret_cast<u32*>(engine::SG_c283B88.address()) : 1287568416u;  // dword_141667CD0

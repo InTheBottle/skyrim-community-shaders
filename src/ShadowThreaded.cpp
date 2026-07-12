@@ -169,7 +169,8 @@ namespace
 
 	std::vector<MapWork> g_mapWorkList;
 	MapWork*             g_curMap = nullptr;
-	bool                 g_claiming = false;  // serial/threaded: claim covered passes for replay
+	bool                 g_claiming = false;         // serial/threaded: claim covered passes for replay
+	bool                 g_concurrentRestrict = false;  // kConcurrent: claim ONLY the thread-safe subset
 
 	// UtilityPassReplica::ShadowCaptureHook. Stores each covered pass on the current map and (when
 	// claiming) takes ownership so the inline render is skipped -- the replay renders it later.
@@ -190,6 +191,19 @@ namespace
 		if (geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(geom) + 0x130)) {
 			++g_curMap->skinnedInline;
 			return false;
+		}
+		// kConcurrent phase 1 admits only the thread-safe subset: pure directional cascades ((tech &
+		// 0x200000); non-directional spot/point/stencil call the scissor helpers that mutate the shared
+		// renderer scissor global) that are WHOLE TRISHAPE (geom type 3; SUB_INDEX drives SubIndexPreDraw's
+		// global wholeDraw flag). Everything else stays on the serial remainder (rendered inline).
+		if (g_concurrentRestrict) {
+			const std::uint32_t tech = a_technique - 0x2Bu;
+			const bool          directional = (tech & 0x200000u) != 0;
+			const bool          wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
+			if (!directional || !wholeTri) {
+				++g_curMap->unsupported;
+				return false;  // serial remainder
+			}
 		}
 		g_curMap->passes.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
 		return g_claiming;  // claim -> skip inline; replay owns it
@@ -261,6 +275,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	g_mapWorkList.reserve(24);
 	g_curMap = nullptr;
 	g_claiming = (m != Mode::kCapture);  // capture observes; every replay mode claims the covered passes
+	g_concurrentRestrict = (m == Mode::kConcurrent);  // restrict the concurrent claim to the safe subset
 	replica->SetShadowCaptureHook(&CaptureHook);
 
 	callOriginal();  // per-map interceptor brackets each map; covered passes stored (+claimed if replaying)
