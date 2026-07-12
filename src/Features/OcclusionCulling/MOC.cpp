@@ -351,6 +351,10 @@ namespace MOC
 			float       cx, cy, cz, r;   // value-copied world bound
 		};
 		constexpr std::uint32_t    kSnapCap = 1u << 18;  // 262144 candidates/frame cap
+		// PROBE: verdict stored directly on the object as an unused NiAVObject flag bit
+		// (bit 31 -- absent from the Skyrim Flag enum). Read is then a free bit-test on a
+		// cache line Process1 already touches (no map lookup) -- measures the async CEILING.
+		constexpr std::uint32_t    kMocOccludedBit = 1u << 31;
 		std::vector<SnapEntry>     g_snap[2];
 		std::atomic<std::uint32_t> g_snapCount[2]{ { 0 }, { 0 } };
 		std::atomic<int>           g_snapAppend{ 0 };  // buffer Process1 appends to this frame
@@ -359,24 +363,7 @@ namespace MOC
 		// the current frame is appending to yet stamp with the current version (defeating the
 		// gate). The builder stamps its table with the version it captured here; if a flip
 		// then advances the version, the gate rejects the (possibly torn) table -> keep.
-		std::atomic<std::uint64_t> g_asyncStamp{ 0 };
-		// Published visibility table (immutable once published; double-buffered, 2-frame
-		// recycle so a read never races the build). Keyed by object pointer. Each verdict
-		// carries the TESTED bound so Process1 can reject a stale verdict for an object that
-		// MOVED since (avoids culling a non-actor mover emerging from behind an occluder).
-		struct Verdict
-		{
-			bool  visible;
-			float cx, cy, cz, r;
-		};
-		struct ResultTable
-		{
-			std::uint32_t                             version = 0xFFFFFFFFu;
-			std::unordered_map<const void*, Verdict>  vis;
-		};
-		ResultTable                g_resultTable[2];
-		std::atomic<ResultTable*>  g_publishedResults{ nullptr };
-		int                        g_resultBuild = 0;
+		std::atomic<std::uint64_t> g_asyncStamp{ 0 };  // (version << 1) | testBuffer, published together
 
 
 		// WorldScenegraph global (holds a NiNode*). Nukem 0x2F4CE30 -> SE REL::ID(517006).
@@ -2171,24 +2158,22 @@ namespace MOC
 		// Read {version, testBuffer} as ONE atomic snapshot so the pair can't decouple.
 		const std::uint64_t stamp = g_asyncStamp.load(std::memory_order_acquire);
 		const int           tb = static_cast<int>(stamp & 1u);
-		const std::uint32_t ver = static_cast<std::uint32_t>(stamp >> 1);
 		const std::uint32_t n = std::min(g_snapCount[tb].load(std::memory_order_acquire), kSnapCap);
-		const int           ri = g_resultBuild ^ 1;  // build the SPARE table
-		ResultTable&        t = g_resultTable[ri];
-		t.version = 0xFFFFFFFFu;  // mark building
-		t.vis.clear();
-		t.vis.reserve(n);
 		for (std::uint32_t i = 0; i < n; ++i) {
 			const auto& e = g_snap[tb][i];
-			t.vis.emplace(e.key, Verdict{ TestSphereBound(e.cx, e.cy, e.cz, e.r), e.cx, e.cy, e.cz, e.r });
+			const bool  visible = TestSphereBound(e.cx, e.cy, e.cz, e.r);
+			// PROBE: write the verdict bit directly on the object -- a raw-pointer deref of a
+			// LAST-frame snapshot key. Assumes the object is still alive (true for stationary
+			// scenes; unsafe across streaming/cell transitions -- benchmark use only). Atomic
+			// so a racing engine flag write can only lose OUR bit (-> conservative keep),
+			// never corrupt the engine's other flags.
+			auto* obj = static_cast<RE::NiAVObject*>(const_cast<void*>(e.key));
+			std::atomic_ref<std::uint32_t> fref(*reinterpret_cast<std::uint32_t*>(&obj->GetFlags()));
+			if (visible)
+				fref.fetch_and(~kMocOccludedBit, std::memory_order_relaxed);
+			else
+				fref.fetch_or(kMocOccludedBit, std::memory_order_relaxed);
 		}
-		// Stamp with the version captured ABOVE. If a flip has since advanced the version
-		// (builder was lapped and may have read a torn buffer), the gate in TestObjectCached
-		// rejects this table (version mismatch) -> keep. Correct results only survive when
-		// the builder kept up.
-		t.version = ver;
-		g_resultBuild = ri;
-		g_publishedResults.store(&t, std::memory_order_release);
 	}
 
 	// Drop-in for TestObject on the async path: records the object for next frame's test and
@@ -2213,29 +2198,14 @@ namespace MOC
 			g_snap[b][i] = SnapEntry{ a_object, bd.center.x, bd.center.y, bd.center.z, bd.radius };
 		}
 
-		// Read THIS frame's verdict. Version-gated: until the builder republishes for this
-		// frame, the table is stale -> miss -> keep (conservative). Table is immutable once
-		// published, so the concurrent read is safe.
-		const std::uint32_t curVer = static_cast<std::uint32_t>(g_asyncStamp.load(std::memory_order_acquire) >> 1);
-		const ResultTable*  t = g_publishedResults.load(std::memory_order_acquire);
-		if (t && t->version == curVer) {
-			if (auto it = t->vis.find(a_object); it != t->vis.end()) {
-				const Verdict& v = it->second;
-				if (v.visible)
-					return true;  // visible -> keep (no harm even if stale)
-				// Occluded verdict: only trust it if the object hasn't MOVED since it was
-				// tested (its bound is the same). A non-actor mover emerging from behind an
-				// occluder would otherwise be wrongly culled for a frame -> keep if it moved.
-				const auto&  bd = a_object->worldBound;
-				const float  dx = bd.center.x - v.cx, dy = bd.center.y - v.cy, dz = bd.center.z - v.cz;
-				if (dx * dx + dy * dy + dz * dz > 1.0f || bd.radius != v.r)
-					return true;  // moved -> keep (conservative)
-				g_tested.fetch_add(1, std::memory_order_relaxed);
-				g_culled.fetch_add(1, std::memory_order_relaxed);
-				return false;  // occluded and stationary -> cull
-			}
+		// Read the verdict bit the builder wrote on this object last frame. Free (no lookup)
+		// -- the object is already in cache from the guards above. Bit unset (default) -> keep.
+		if ((a_object->GetFlags().underlying() & kMocOccludedBit) != 0) {
+			g_tested.fetch_add(1, std::memory_order_relaxed);
+			g_culled.fetch_add(1, std::memory_order_relaxed);
+			return false;  // occluded -> cull
 		}
-		return true;  // miss -> keep
+		return true;  // visible / not-yet-tested -> keep
 	}
 
 	bool TestMultiBound(void* a_multiBound)
