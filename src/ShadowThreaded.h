@@ -41,7 +41,9 @@ public:
 	enum class Mode : std::uint32_t
 	{
 		kOff = 0,
-		kCapture = 1,
+		kCapture = 1,  // M1/M2: observe + log the per-map partition (inline render unchanged).
+		kSerial = 2,   // Phase 0: claim the covered passes, replay them from the mapWorkList on
+		               //          ONE deferred context in map order, ExecuteCommandList in place.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }
