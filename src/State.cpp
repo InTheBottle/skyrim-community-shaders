@@ -6,7 +6,6 @@
 
 #include "Deferred.h"
 #include "FeatureIssues.h"
-#include "ParallelShaderSetup.h"
 #include "ShadowDeferred.h"
 #include "UtilityPassReplica.h"
 #include "Features/CSEditor.h"
@@ -260,11 +259,6 @@ void State::Setup()
 
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
-
-	// Parallel shader-setup plumbing (P0). Inert unless CS_PARALLEL_SETUP=1 or explicitly
-	// enabled; creates per-worker deferred contexts + render-state copies but does not yet
-	// route any pass through them. See docs/development/parallel-shader-setup.md.
-	ParallelShaderSetup::GetSingleton()->Setup();
 
 	// Utility-pass RE replica (baseline reverse engineering). Inert unless
 	// CS_UTIL_RE_MODE=1/2; see src/UtilityPassReplica.h.
