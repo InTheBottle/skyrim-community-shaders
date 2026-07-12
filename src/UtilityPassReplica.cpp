@@ -1527,14 +1527,20 @@ namespace
 	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3)
 	{
 		auto& main = *reinterpret_cast<std::uint32_t*>(S + 0x00);   // MEMORY[0x143027EB0]
-		auto& refCache = *reinterpret_cast<double*>(S + 0xB8);      // unk_143027F68 (8-byte double)
-		const int    v4 = static_cast<int>(static_cast<float>(a2->alphaThreshold) * (a3 ? a3->alpha : 1.0f));
-		// unk_143027F68 is a DOUBLE: the engine stores the exact product and compares double-to-double,
-		// so the alpha-CB dirty bit (0x200) is raised only when the reference actually changes.
-		const double prod = v4 * 0.0039215689;
-		if (refCache != prod) {
+		auto& refCache = *reinterpret_cast<float*>(S + 0xB8);      // unk_143027F68 is a 4-byte FLOAT (movss)
+		// Reproduce the engine's ALL-single-precision sequence exactly (0x14131F2A0):
+		//   v4     = (int)truncate((float)alphaThreshold * material.alpha)      ; mulss + cvttss2si
+		//   newRef = (float)v4 * (1/255 as float, dword_141540648 = 0x3B808081) ; cvtsi2ss + mulss
+		//   if (cache != newRef) raise 0x200 + store                            ; ucomiss + movss
+		// (0.0039215689 in the decompile was a MISREAD double; a double intermediate diverged by a ULP,
+		// and an 8-byte store clobbered the adjacent field at S+0xBC -> load crash.)
+		const __m128 thr = _mm_cvtsi32_ss(_mm_setzero_ps(), static_cast<int>(a2->alphaThreshold));  // (float)threshold
+		const __m128 prod = _mm_mul_ss(thr, _mm_set_ss(a3 ? a3->alpha : 1.0f));
+		const int    v4 = _mm_cvtt_ss2si(prod);
+		const float  newRef = _mm_cvtss_f32(_mm_mul_ss(_mm_cvtsi32_ss(_mm_setzero_ps(), v4), _mm_set_ss(1.0f / 255.0f)));
+		if (refCache != newRef) {
 			main |= 0x200;
-			refCache = prod;
+			refCache = newRef;
 		}
 	}
 
