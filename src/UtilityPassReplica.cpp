@@ -2273,11 +2273,21 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 		}
 
 		if (!(tech & 0x200000)) {
-			// spot/point sub-branch. NOTE: FUN_140d70100 MUTATES the renderer scissor global
-			// (0x143028490); the pure directional cascade (tech & 0x200000) skips it.
-			EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorFromBBox.address()),
-				reinterpret_cast<void*>(engine::g_renderer.address()),
-				U(v30, 0x544), U(v30, 0x550), U(v30, 0x548), U(v30, 0x54C));   // FUN_140d70100(scissor,left,bottom,right,top)
+			// spot/point sub-branch. FUN_140d70100 builds a D3D11_RECT and calls RSSetScissorRects on
+			// the engine's GLOBAL context slot (*0x143027EA0) -- which, from N worker threads, both
+			// races and lands on the shared immediate context (the scissor never reaches the worker's
+			// command list). A worker binds the identical rect on ITS OWN deferred context instead; at
+			// N=1 the engine call is used verbatim (byte-exact; the recorder does not track scissor).
+			if (t_worker) {
+				const std::int32_t sl = static_cast<std::int32_t>(U(v30, 0x544));
+				const std::int32_t st = static_cast<std::int32_t>(U(v30, 0x550));
+				const D3D11_RECT   rect{ sl, st, sl + static_cast<std::int32_t>(U(v30, 0x548)), st + static_cast<std::int32_t>(U(v30, 0x54C)) };
+				ctx->RSSetScissorRects(1, &rect);
+			} else {
+				EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorFromBBox.address()),
+					reinterpret_cast<void*>(engine::g_renderer.address()),
+					U(v30, 0x544), U(v30, 0x550), U(v30, 0x548), U(v30, 0x54C));   // FUN_140d70100(scissor,left,bottom,right,top)
+			}
 
 			// camera-relative view-depth falloff -> VS CB[VS+0x55].z. cam (*0x1431D0F88), the light
 			// (v30->light._ptr) and the view frustum (*0x1431D0E68) are all engine objects that can

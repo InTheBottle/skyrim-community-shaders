@@ -197,10 +197,13 @@ namespace
 		// renderer scissor global) that are WHOLE TRISHAPE (geom type 3; SUB_INDEX drives SubIndexPreDraw's
 		// global wholeDraw flag). Everything else stays on the serial remainder (rendered inline).
 		if (g_concurrentRestrict) {
-			const std::uint32_t tech = a_technique - 0x2Bu;
-			const bool          directional = (tech & 0x200000u) != 0;
-			const bool          wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
-			if (!directional || !wholeTri) {
+			// Concurrent claim = the thread-safe subset: WHOLE TRISHAPE (geom type 3) only. Both
+			// directional cascades (scissor-free) and spot/point (their scissor is now bound on the
+			// worker's own deferred context, not the shared global) are safe. SUB_INDEX (SubIndexPreDraw
+			// mutates a global wholeDraw flag), skinned (bone/dyn-VB rings), and stencil (CanReplicate
+			// excludes it) stay on the serial remainder.
+			const bool wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
+			if (!wholeTri) {
 				++g_curMap->unsupported;
 				return false;  // serial remainder
 			}
