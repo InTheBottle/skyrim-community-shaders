@@ -63,6 +63,13 @@ public:
 	 *         run the original walk (the covered passes flow through the hook), disarm, report. */
 	void RenderShadowmapsDetour(void* a_original);
 
+	/** @brief BSShadowLight::RenderShadowmap (0x141305610, AddrLib 100820) planning interceptor.
+	 *         One invocation == one shadow map (one {DSV-target, slice}). Brackets the map so the
+	 *         capture hook partitions its passes, and snapshots the map's params (camera=desc+64,
+	 *         accumulator=desc+72, target=desc+84, slice=desc+88, renderFlags=a4) BY VALUE into the
+	 *         ordered mapWorkList -- the unit a worker will replay. @return the original's result. */
+	std::int32_t RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original);
+
 private:
 	ShadowThreaded() = default;
 
