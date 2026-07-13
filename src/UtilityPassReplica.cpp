@@ -9,6 +9,7 @@
 #include <DirectXPackedVector.h>
 #include <algorithm>
 #include <chrono>
+#include <immintrin.h>
 #include <intrin.h>
 #include <mutex>
 #include <unordered_map>
@@ -2781,11 +2782,18 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	{
 		engine::TriShapeData*            rd;
 		std::uint32_t                    tech;
+		std::uint8_t                     fade;      // group fade key (uniform within the group)
+		std::uint32_t                    baseInst;  // start slot in the shared instance VB
 		std::vector<RE::BSRenderPass*>   passes;
 	};
-	std::vector<Group>                         groups;
-	std::unordered_map<std::uint64_t, std::size_t> index;
-	groups.reserve(a_count);
+	static std::vector<Group>                             groups;    // persistent: reuse pass-vector allocations
+	static std::unordered_map<std::uint64_t, std::size_t> index;
+	for (auto& g : groups)
+		g.passes.clear();
+	std::size_t liveGroups = 0;  // groups[0..liveGroups) are this map's
+	index.clear();
+	if (groups.capacity() < a_count)
+		groups.reserve(a_count);
 	index.reserve(a_count);
 	for (std::uint32_t i = 0; i < a_count; ++i) {
 		auto* geom = reinterpret_cast<std::uint8_t*>(a_passes[i]->geometry);
@@ -2826,26 +2834,48 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		auto                it = index.find(k);
 		std::size_t         gi;
 		if (it == index.end()) {
-			gi = groups.size();
+			gi = liveGroups++;
 			index.emplace(k, gi);
-			groups.push_back(Group{ rd, a_techniques[i], {} });
+			if (gi < groups.size()) {  // recycle slot (passes already cleared; inner vector capacity kept)
+				groups[gi].rd = rd;
+				groups[gi].tech = a_techniques[i];
+				groups[gi].fade = fadeKey;
+			} else {
+				groups.push_back(Group{ rd, a_techniques[i], fadeKey, 0, {} });
+			}
 		} else {
 			gi = it->second;
 		}
 		groups[gi].passes.push_back(a_passes[i]);
 	}
-	if (groups.empty())
+	if (liveGroups == 0)
 		return;
 
-	// ---- instance VB: one dynamic buffer, grown to the largest group (32 bytes/instance) ----
+	// Sort (indices, not Groups -- keeps recycled inner vectors in place) by (tech, fade) so the draw loop
+	// runs technique setup ONCE per run instead of per group (was ~1.7k FlushSetupTechniqueReplica/frame).
+	static std::vector<std::uint32_t> order;
+	order.resize(liveGroups);
+	for (std::uint32_t i = 0; i < liveGroups; ++i)
+		order[i] = i;
+	std::sort(order.begin(), order.end(), [&](std::uint32_t a, std::uint32_t b) {
+		if (groups[a].tech != groups[b].tech)
+			return groups[a].tech < groups[b].tech;
+		return groups[a].fade < groups[b].fade;
+	});
+
+	// ---- instance VB: one dynamic buffer sized for ALL of this map's instances (32 bytes each), filled
+	// with ONE Map(DISCARD); each group draws from its baseInst via DrawIndexedInstanced's
+	// StartInstanceLocation (was one Map per group = ~1.7k DISCARD slices/frame of pure overhead) ----
 	static winrt::com_ptr<ID3D11Buffer> s_instVB;
 	static std::uint32_t                s_instCap = 0;
-	std::uint32_t                       maxGroup = 0;
-	for (auto& g : groups)
-		maxGroup = std::max<std::uint32_t>(maxGroup, static_cast<std::uint32_t>(g.passes.size()));
-	if (maxGroup > s_instCap) {
-		std::uint32_t newCap = s_instCap ? s_instCap : 512u;
-		while (newCap < maxGroup)
+	std::uint32_t                       totalInst = 0;
+	for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+		groups[order[oi]].baseInst = totalInst;
+		totalInst += static_cast<std::uint32_t>(groups[order[oi]].passes.size());
+	}
+	if (totalInst > s_instCap) {
+		std::uint32_t newCap = s_instCap ? s_instCap : 4096u;
+		while (newCap < totalInst)
 			newCap *= 2u;
 		s_instVB = nullptr;
 		D3D11_BUFFER_DESC bd{};
@@ -2857,6 +2887,54 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			return;
 		s_instCap = newCap;
 		Util::SetResourceName(s_instVB.get(), "ShadowInstance::InstanceVB");
+	}
+
+	// Fill the whole map's instance stream in one Map(DISCARD). Per instance: engine SG_BuildMatrix (exact
+	// world build incl. quirks), then SSE transpose + F16C pack (_mm_cvtps_ph, round-to-nearest-even ==
+	// XMConvertFloatToHalf) -- replaces the SG_MatrixTranspose engine call + 16 scalar half-converts per
+	// instance (~100k software conversions/frame, the dominant CPU overhead of the old fill).
+	{
+		D3D11_MAPPED_SUBRESOURCE mappedAll{};
+		if (FAILED(ctx->Map(s_instVB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedAll))) {
+			++s_acct.dropMap;
+			return;
+		}
+		auto* outBase = reinterpret_cast<std::uint8_t*>(mappedAll.pData);
+		for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+			auto&      g = groups[order[oi]];
+			auto*      out = outBase + static_cast<std::size_t>(g.baseInst) * 32u;
+			const auto n = static_cast<std::uint32_t>(g.passes.size());
+			for (std::uint32_t i = 0; i < n; ++i, out += 32) {
+				auto*             geom = reinterpret_cast<std::uint8_t*>(g.passes[i]->geometry);
+				alignas(16) float m44[16];
+				if (EngineCallV<16, void*>(reinterpret_cast<RE::BSGeometry*>(g.passes[i]->geometry))) {
+					// AsParticlesGeom: translate = world.translate + scale*(rot*modelBound.center).
+					alignas(16) float mt[16];
+					auto*             gw = geom + 0x7C;
+					float             r[9];
+					std::memcpy(r, gw, 36);
+					std::memcpy(mt, r, 36);
+					const float sc = *reinterpret_cast<float*>(gw + 0x30);
+					const float cx = *reinterpret_cast<float*>(geom + 0x110);
+					const float cy = *reinterpret_cast<float*>(geom + 0x114);
+					const float cz = *reinterpret_cast<float*>(geom + 0x118);
+					mt[9] = *reinterpret_cast<float*>(gw + 0x24) + sc * (r[0] * cx + r[1] * cy + r[2] * cz);
+					mt[10] = *reinterpret_cast<float*>(gw + 0x28) + sc * (r[3] * cx + r[4] * cy + r[5] * cz);
+					mt[11] = *reinterpret_cast<float*>(gw + 0x2C) + sc * (r[6] * cx + r[7] * cy + r[8] * cz);
+					mt[12] = sc;
+					EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(mt));
+				} else {
+					EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(geom + 0x7C));
+				}
+				__m128 r0 = _mm_load_ps(m44 + 0), r1 = _mm_load_ps(m44 + 4), r2 = _mm_load_ps(m44 + 8), r3 = _mm_load_ps(m44 + 12);
+				_MM_TRANSPOSE4_PS(r0, r1, r2, r3);  // == SG_MatrixTranspose
+				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 0), _mm_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT));
+				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 8), _mm_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT));
+				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 16), _mm_cvtps_ph(r2, _MM_FROUND_TO_NEAREST_INT));
+				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 24), _mm_cvtps_ph(r3, _MM_FROUND_TO_NEAREST_INT));
+			}
+		}
+		ctx->Unmap(s_instVB.get(), 0);
 	}
 
 	// The INSTANCED Utility VS is fetched PER GROUP below (each group's exact permutation, not a hardcoded
@@ -2891,133 +2969,107 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	// CS_INST_ALPHA=1 enables the per-group SetupGeometryAlphaBlending mirror (A/B; no measured effect).
 	static const bool s_alphaSetup = [] { char b[8] = {}; return GetEnvironmentVariableA("CS_INST_ALPHA", b, sizeof(b)) && b[0] && b[0] != '0'; }();
 
-	for (auto& g : groups) {
+	// Draw loop over the (tech, fade)-sorted groups. Per-(tech,fade) RUN setup is hoisted -- BeginTechnique,
+	// instanced-VS fetch, alpha/geometry setup, VS override happen ONCE per run (was per group: ~1.7k
+	// FlushSetupTechniqueReplica + VSSetShader + SetupGeometry per frame). Groups inside a run issue only
+	// their mesh binds + one DrawIndexedInstanced reading from their baseInst slot of the shared instance
+	// stream. RestoreGeometry closes each run (resets the shadow-fade depth-stencil token, uniform per run
+	// because fade is part of the sort key).
+	std::uint32_t                 curTech = 0xFFFFFFFFu;
+	std::uint8_t                  curFade = 0;
+	bool                          runLive = false;      // hoisted state valid; instanced draws may proceed
+	bool                          runFallback = false;  // this (tech,fade) run renders per-pass (VS compiling)
+	RE::BSGraphics::VertexShader* instVS = nullptr;
+	RE::BSShader*                 runShader = nullptr;
+	RE::BSRenderPass*             runPass0 = nullptr;
+	const auto closeRun = [&]() {
+		if (runLive && runShader && runPass0)
+			EngineCallV<7, void>(runShader, runPass0, a_renderFlags);  // RestoreGeometry (fade token reset)
+		runLive = false;
+	};
+	for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+		auto&               g = groups[order[oi]];
 		const std::uint32_t n = static_cast<std::uint32_t>(g.passes.size());
 		if (n == 0)
 			continue;
-		auto*              shader = g.passes[0]->shader;
-		auto*              geom0 = reinterpret_cast<std::uint8_t*>(g.passes[0]->geometry);
-		auto*              rd = g.rd;
+		auto*               shader = g.passes[0]->shader;
+		auto*               geom0 = reinterpret_cast<std::uint8_t*>(g.passes[0]->geometry);
+		auto*               rd = g.rd;
 		const std::uint16_t triCount = *reinterpret_cast<const std::uint16_t*>(geom0 + 0x158);
 
-		// 1. BeginTechnique: engine binds depth PS + blend/depth/raster + PerTechnique CB (and its VS,
-		//    which we override next). Reset the caches so BeginPass runs a fresh SetupTechnique.
-		WsShader() = nullptr;
-		WsTechnique() = 0;
-		WsMaterial() = nullptr;
-		if (!FlushSetupTechniqueReplica(ctx, nullptr, nullptr, S, shader, static_cast<std::int32_t>(g.tech))) {
-			++s_acct.dropTech;
-			continue;
-		}
-		++s_acct.groups;
+		if (!runLive && !runFallback || g.tech != curTech || g.fade != curFade) {
+			closeRun();
+			curTech = g.tech;
+			curFade = g.fade;
+			runFallback = false;
 
-		// 2. Fetch the INSTANCED VS for THIS group's EXACT permutation. BeginTechnique just bound the
-		//    engine's shadow VS at S+0x348; its id (offset 0) is the compiled descriptor (ModifyShaderLookup
-		//    leaves Utility descriptors untouched, so id == the descriptor CS built). id | INSTANCED gives the
-		//    matching instanced permutation (parabolic / clamped / wind / vertex-format preserved). The
-		//    Utility.hlsl INSTANCED edit substitutes World upstream of the PB/clamped code, so all variants
-		//    stay correct. Fall back to the engine's own inline render for this group if the instanced VS is
-		//    unavailable (shader still compiling) rather than dropping the shadows.
-		auto* boundVS = *reinterpret_cast<RE::BSGraphics::VertexShader**>(S + 0x348);
-		auto* instVS = boundVS ? ShaderCache::Instance().MakeAndAddVertexShader(
-									 *shader, boundVS->id | kInstancedFlag) :
-		                         nullptr;
-		if (!instVS || !instVS->shader || s_forceFallback) {
+			// 1. BeginTechnique: engine binds depth PS + blend/depth/raster + PerTechnique CB (and its VS,
+			//    which we override below). Reset the caches so a fresh SetupTechnique runs.
+			WsShader() = nullptr;
+			WsTechnique() = 0;
+			WsMaterial() = nullptr;
+			if (!FlushSetupTechniqueReplica(ctx, nullptr, nullptr, S, shader, static_cast<std::int32_t>(g.tech))) {
+				++s_acct.dropTech;
+				runFallback = true;  // no valid technique state: render this run's groups per-pass
+				instVS = nullptr;
+			} else {
+				// 2. Fetch the INSTANCED VS for THIS run's EXACT permutation (id | INSTANCED preserves the
+				//    parabolic / clamped / wind / vertex-format variant). Lookup-first; a miss queues an async
+				//    compile and the run renders per-pass until the instanced VS is ready.
+				auto* boundVS = *reinterpret_cast<RE::BSGraphics::VertexShader**>(S + 0x348);
+				instVS = boundVS ? ShaderCache::Instance().GetVertexShader(*shader, boundVS->id | kInstancedFlag) : nullptr;
+				if (!instVS || !instVS->shader || s_forceFallback) {
+					runFallback = true;
+				} else {
+					// Mirror ReplayOnePass' per-object alpha/depth setup (A/B-gated; no measured effect).
+					if (s_alphaSetup && shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
+						if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), g.passes[0]->passEnum)) {
+							const bool alphaTest0 = *engine::g_useEarlyZ != 0;
+							auto*      ap = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), g.passes[0]);
+							EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader, ap, g.passes[0]->shaderProperty, alphaTest0);
+						}
+					}
+
+					// Per-geometry setup once per run, on the run's first pass, while the engine shadow VS is
+					// bound: establishes (1) the shadow-FADE depth-stencil token (uniform per run -- fade is in
+					// the sort key) and (2) the per-LIGHT scissor (SG_ScissorFromBBox; per light == per map, so
+					// uniform across every group here). Also writes b2 World (IGNORED -- the instanced VS reads
+					// World from the stream) and the ShadowFadeParam.z falloff (SHADOWMASK-only; harmless).
+					if (s_setupReplica) {
+						auto* vsSh = *reinterpret_cast<std::uint8_t**>(S + 0x348);
+						auto* psSh = *reinterpret_cast<std::uint8_t**>(S + 0x350);
+						FlushSetupGeometryReplica(ctx,
+							vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
+							psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
+							S, shader, g.passes[0]);
+					} else {
+						EngineCallV<6, void>(shader, g.passes[0], a_renderFlags);  // engine SetupGeometry
+					}
+
+					// Override the bound VS with the INSTANCED permutation; the b2 CB stays bound at slot 2.
+					EngineCallV<11, void>(ctx, reinterpret_cast<ID3D11VertexShader*>(instVS->shader), nullptr, 0u);  // VSSetShader
+					*reinterpret_cast<void**>(S + 0x348) = instVS;
+
+					runShader = shader;
+					runPass0 = g.passes[0];
+					runLive = true;
+				}
+			}
+		}
+
+		if (runFallback) {
+			// Per-pass fallback (technique failed or instanced VS still compiling). ReplicaRenderPassImmediately
+			// does its own full per-pass setup and clobbers the hoisted state, so the run stays non-live and any
+			// following (tech,fade) change re-runs the full setup above.
 			++s_acct.fbGroups;
 			s_acct.fbPasses += n;
 			for (std::uint32_t i = 0; i < n; ++i)
 				ReplicaRenderPassImmediately(g.passes[i], g.tech, false, a_renderFlags);
 			continue;
 		}
+		++s_acct.groups;
 
-		// Mirror ReplayOnePass' per-object alpha/depth setup (SetupGeometryAlphaBlending) that the instanced
-		// batch omitted: for shadow passes (renderFlags&4) the engine runs it BEFORE SetupGeometry to set the
-		// opaque depth-stencil/blend state the depth write needs. Without it the batch inherited the technique
-		// default and under-occluded (mode 3, which calls this per pass, matched vanilla; mode 9 did not).
-		if (s_alphaSetup && shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
-			if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), g.passes[0]->passEnum)) {
-				const bool alphaTest0 = *engine::g_useEarlyZ != 0;
-				auto*      ap = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), g.passes[0]);
-				EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader, ap, g.passes[0]->shaderProperty, alphaTest0);
-			}
-		}
-
-		// Per-geometry (SetupGeometry) setup, run once for this group on passes[0] while the engine shadow VS
-		// is bound. This is what establishes the two pieces of PER-DRAW state a local-light shadow needs that
-		// the instanced batch would otherwise miss: (1) the shadow-FADE depth-stencil token (S+0x90=11,
-		// S+0x94=fade*31 for accumulationHint==10) -- valid for the whole batch only because the group is keyed
-		// by fade above, so every instance shares passes[0]'s fade; (2) the per-LIGHT scissor (SG_ScissorFromBBox
-		// on the light's projected bbox) that isolates this light's atlas region. It also writes b2 World (IGNORED
-		// -- the instanced VS reads World from the per-instance stream) and the ShadowFadeParam.z view-depth
-		// falloff (only read by the screen-space SHADOWMASK path, NOT the shadow-map depth -- harmless here).
-		// Use the REAL engine SetupGeometry (vfunc 6) here, exactly as mode 3's per-pass replay does by default
-		// (UtilityPassReplica.cpp:1243). Mode 9 previously used the FlushSetupGeometryReplica reimplementation,
-		// which mode 3 only uses under CS_UTIL_RE_CSSETUP&4; on the immediate context the engine call is the
-		// faithful path and sets ALL per-object depth-stencil/dirty state the batch's depth write needs. The b2
-		// World it also writes is ignored by the instanced VS (reads World from the stream).
-		if (s_setupReplica) {
-			auto* vsSh = *reinterpret_cast<std::uint8_t**>(S + 0x348);
-			auto* psSh = *reinterpret_cast<std::uint8_t**>(S + 0x350);
-			FlushSetupGeometryReplica(ctx,
-				vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
-				psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
-				S, shader, g.passes[0]);
-		} else {
-			EngineCallV<6, void>(shader, g.passes[0], a_renderFlags);  // engine SetupGeometry (0x14130EC70)
-		}
-
-		// Override the bound VS with the INSTANCED permutation; the b2 CB just filled stays bound at slot 2.
-		EngineCallV<11, void>(ctx, reinterpret_cast<ID3D11VertexShader*>(instVS->shader), nullptr, 0u);  // VSSetShader
-		*reinterpret_cast<void**>(S + 0x348) = instVS;
-
-		// 3. Fill the instance stream: each object's transposed World, packed FP16 (4x half4 = 32 bytes).
-		D3D11_MAPPED_SUBRESOURCE mapped{};
-		if (FAILED(ctx->Map(s_instVB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			++s_acct.dropMap;
-			continue;
-		}
-		auto* out = reinterpret_cast<HALF*>(mapped.pData);
-		for (std::uint32_t i = 0; i < n; ++i) {
-			auto*             geom = reinterpret_cast<std::uint8_t*>(g.passes[i]->geometry);
-			alignas(16) float m44[16];
-			alignas(16) float world[16];
-			if (EngineCallV<16, void*>(reinterpret_cast<RE::BSGeometry*>(g.passes[i]->geometry))) {
-				// AsParticlesGeom: translate = world.translate + scale*(rot*modelBound.center).
-				alignas(16) float mt[16];
-				auto*             gw = geom + 0x7C;
-				float             r[9];
-				std::memcpy(r, gw, 36);
-				std::memcpy(mt, r, 36);
-				const float sc = *reinterpret_cast<float*>(gw + 0x30);
-				const float cx = *reinterpret_cast<float*>(geom + 0x110);
-				const float cy = *reinterpret_cast<float*>(geom + 0x114);
-				const float cz = *reinterpret_cast<float*>(geom + 0x118);
-				mt[9] = *reinterpret_cast<float*>(gw + 0x24) + sc * (r[0] * cx + r[1] * cy + r[2] * cz);
-				mt[10] = *reinterpret_cast<float*>(gw + 0x28) + sc * (r[3] * cx + r[4] * cy + r[5] * cz);
-				mt[11] = *reinterpret_cast<float*>(gw + 0x2C) + sc * (r[6] * cx + r[7] * cy + r[8] * cz);
-				mt[12] = sc;
-				EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(mt));
-			} else {
-				EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(geom + 0x7C));
-			}
-			EngineCall<void>(reinterpret_cast<void*>(engine::SG_MatrixTranspose.address()), static_cast<void*>(world), static_cast<const void*>(m44));
-			// DIAGNOSTIC: verify each instance in a group gets its OWN World (not all passes[0]'s). If instances
-			// 0..N share one geom/translation, the per-instance fill is broken -> casters overlap -> under-occlusion.
-			{
-				static std::atomic<bool> s_logged{ false };
-				if (!s_logged.load() && n >= 4 && i < 4) {
-					logger::info("[InstVar] group n={} inst[{}] geom={:016X} col-T=({:.1f},{:.1f},{:.1f})",
-						n, i, reinterpret_cast<std::uintptr_t>(geom), world[3], world[7], world[11]);
-					if (i == 3)
-						s_logged.store(true);
-				}
-			}
-			for (int j = 0; j < 16; ++j)
-				out[i * 16 + j] = XMConvertFloatToHalf(world[j]);
-		}
-		ctx->Unmap(s_instVB.get(), 0);
-
-		// 4. renderStateVertexDesc = meshDesc | VA_INSTANCEDATA; mark IL + topology dirty.
+		// 3. renderStateVertexDesc = meshDesc | VA_INSTANCEDATA (slot-1 presence bit only); IL + topology dirty.
 		auto& vertexDesc = *reinterpret_cast<std::uint64_t*>(S + 0x340);
 		auto& stateFlags = *reinterpret_cast<std::uint32_t*>(S + 0);
 		auto& topology = *reinterpret_cast<std::uint32_t*>(S + 0x358);
@@ -3028,52 +3080,38 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			stateFlags |= 0x800;
 		}
 
-		// 5. Flush the input layout + all pending render state (engine SetDirtyStates; N=1 == global block).
+		// 4. Flush the input layout + pending render state (engine SetDirtyStates; N=1 == global block).
+		//    The per-LIGHT scissor set by the run's SetupGeometry survives this -- do NOT widen it.
 		EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
 
-		// The scissor SetupGeometry set for spot/point via SG_ScissorFromBBox is the LIGHT's projected
-		// bounding box (per-LIGHT, not per-object) -- correct for every instance in the group (they all
-		// belong to this same shadow-map / light) and it survives SetDirtyStates. Do NOT widen it: the
-		// local-light atlas viewport spans ALL lights' regions, so widening the scissor to the viewport
-		// would let this light's instanced draw write depth across neighbouring lights' atlas slices.
-		// Directional cascades take no SG_ScissorFromBBox branch and keep the map's own scissor. (Engine
-		// never widens here.)
-
-		// 6. Bind mesh VB (slot 0) + instance VB (slot 1), the mesh IB, and issue one instanced draw.
+		// 5. Bind mesh VB (slot 0) + shared instance VB (slot 1) and draw this group's slice of the
+		//    instance stream via StartInstanceLocation (no per-group Map, no per-group VB re-fill).
 		const UINT    meshStride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
 		ID3D11Buffer* vbs[2] = { rd->vertexBuffer, s_instVB.get() };
 		UINT          strides[2] = { meshStride, 32u };
 		UINT          offsets[2] = { 0u, 0u };
 		EngineCallV<19, void>(ctx, rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0u);          // IASetIndexBuffer
 		EngineCallV<18, void>(ctx, 0u, 2u, vbs, strides, offsets);                      // IASetVertexBuffers
-		// DIAGNOSTIC: a null input layout (ILCreate failed for meshDesc|bit63 & instVS.vertexDesc) makes
-		// D3D11/DXVK silently DROP the draw -- the capture showed our instanced draws never reach the GPU.
-		{
+		// DIAGNOSTIC (first draws only): null IL would silently drop the draw in D3D11/DXVK.
+		if (s_acct.logIL < 4) {
 			ID3D11InputLayout* il = nullptr;
 			ctx->IAGetInputLayout(&il);
 			if (!il)
 				++s_acct.nullIL;
 			else
 				il->Release();
-			if (s_acct.logIL < 4) {
-				++s_acct.logIL;
-				logger::info("[InstIL] meshDesc|inst={:016X} vsDesc={:016X} key={:016X} il={} tri={} n={}",
-					vertexDesc, *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
-					vertexDesc & *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
-					il ? "OK" : "NULL", triCount, n);
-			}
+			++s_acct.logIL;
+			logger::info("[InstIL] meshDesc|inst={:016X} vsDesc={:016X} key={:016X} il={} tri={} n={} base={}",
+				vertexDesc, *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
+				vertexDesc & *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
+				il ? "OK" : "NULL", triCount, n, g.baseInst);
 		}
-		readB12("DRAW");  // b12 at ACTUAL draw time -- compare to b12@TOP to detect mid-loop clobber
-		EngineCallV<20, void>(ctx, 3u * triCount, n, 0u, 0, 0u);                        // DrawIndexedInstanced
+		readB12("DRAW");  // throttled b12 probe
+		EngineCallV<20, void>(ctx, 3u * triCount, n, 0u, 0, g.baseInst);                // DrawIndexedInstanced
 		++s_acct.drawn;
 		s_acct.instSum += n;
-
-		// 7. Mirror the engine's post-pass RestoreGeometry: reset the shadow-fade depth-stencil token
-		//    (S+0x90=11/S+0x94=fade*31, set by SetupGeometry for fading casters) back to solid, so a
-		//    FOLLOWING non-fading group -- which does not re-set the token -- is not left rendering with this
-		//    group's fade-dither state (which would dither-drop its depth writes -> under-occlusion).
-		EngineCallV<7, void>(shader, g.passes[0], a_renderFlags);  // RestoreGeometry
 	}
+	closeRun();
 
 	// Invalidate the technique/material caches so the engine re-binds its OWN VS on the next pass
 	// instead of hitting the cache and drawing through the still-bound INSTANCED VS.
