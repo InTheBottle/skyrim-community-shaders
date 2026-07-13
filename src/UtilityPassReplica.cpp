@@ -2,6 +2,7 @@
 
 #include "Globals.h"
 #include "State.h"
+#include "Vanilla/DrawState.h"
 
 #include <chrono>
 #include <intrin.h>
@@ -228,6 +229,8 @@ namespace
 		{
 			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
 				Record(Kind::kDrawIndexed, 0, indexCount, startIndex, static_cast<std::uint64_t>(static_cast<std::int64_t>(baseVertex)));
+			// Regime-B draw-state fingerprint (no-op unless the shadow driver armed capture on this thread).
+			vanilla::DrawStateValidator::GetSingleton()->OnDrawIndexed(ctx, indexCount, startIndex, baseVertex);
 			func(ctx, indexCount, startIndex, baseVertex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -504,6 +507,10 @@ namespace engine
 	// Renderer::SetShader/SetPixelShader bind VS/PS on *this* slot, so temporarily swapping it to a
 	// worker's deferred context routes BeginTechnique's binds onto the worker's command list.
 	inline REL::Relocation<ID3D11DeviceContext**> g_engineCtxSlot{ REL::Offset(0x3027EA0) };
+	// BSBatchRenderer::sub_141307DD0 -- advances the batch-group iterator; returns whether more
+	// groups remain. BeginPassReplica calls it verbatim (pure iterator logic, no D3D11).
+	inline REL::Relocation<std::uint8_t (*)(void*, void*, void*, void*)> BatchAdvance{ REL::Offset(0x1307DD0) };
+	inline REL::Relocation<std::uint8_t*> g_beginPassFlagE5D{ REL::Offset(0x31D0E5D) };  // unk_1431D0E5D
 
 	// Cross-pass shadow token written by SetupGeometry (0x14130EC70) and read+reset by
 	// RestoreTechnique (0x141310300) to decide the alpha-blend dirty bit. It lives well
@@ -705,6 +712,23 @@ namespace
 	};
 	thread_local ShadowWorkerState* t_worker = nullptr;
 
+	// BeginPass-level command/orchestration compare (kOwnBeginPassVerify). During a compare, one run
+	// of the engine's BeginPass and one of BeginPassReplica each append the (pass,key,alpha,flags)
+	// they dispatch to this sink -- the engine passes via OnRenderPassImmediately, the replica passes
+	// via BeginPassReplica's loop. Comparing the two sequences + the block delta + the group-advance
+	// proves the reimplemented orchestration matches (per-pass DX11 is already byte-exact). Non-null
+	// only for the duration of one captured run; null on the normal render path (zero overhead).
+	struct VerifyPassRec
+	{
+		const void*   pass;
+		std::uint32_t tech;
+		std::uint8_t  alpha;
+		std::uint32_t flags;
+	};
+	thread_local std::vector<VerifyPassRec>* t_bpSeqSink = nullptr;
+	std::uint64_t                            g_bpCompareGroups = 0;    // pure-covered groups compared
+	std::uint64_t                            g_bpCompareDiverged = 0;  // of those, how many diverged
+
 	// Accessors: return the worker's private state when a worker is active, else the engine
 	// global (identical object at N=1). The replica render path reads/writes through these
 	// so the exact same code drives the render-thread compare and a worker's private record.
@@ -723,15 +747,15 @@ namespace
 	inline std::uint8_t&        WsDsvDirty() { return t_worker ? *t_worker->dsvDirty : *engine::g_dsvDirty; }
 }
 
-void UtilityPassReplica::Setup()
+// Bring up the recorder/replica infrastructure (module range, engine-call stub, RenderPassImmediately
+// detour + immediate-context recorder vfuncs) exactly once. Idempotent and mode-independent: the
+// ShadowThreaded BeginPass-ownership modes need the RenderPassImmediately trampoline (for the uncovered
+// engine fallback) and the OnRenderPassImmediately detour (to observe the engine's dispatch) even when
+// CS_UTIL_RE_MODE is off, so they call this directly. With mode kOff, OnRenderPassImmediately is a thin
+// passthrough for the rest of the game.
+void UtilityPassReplica::EnsureInitialized()
 {
-	char buf[8] = {};
-	if (GetEnvironmentVariableA("CS_UTIL_RE_MODE", buf, sizeof(buf)) && buf[0]) {
-		const int v = atoi(buf);
-		if (v >= 0 && v <= 2)
-			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
-	}
-	if (!IsActive())
+	if (hooksInstalled)
 		return;
 
 	// Establish our own module range so the recorder can exclude CS-originated calls.
@@ -752,6 +776,20 @@ void UtilityPassReplica::Setup()
 	engineWindow.reserve(64);
 	replicaWindow.reserve(64);
 	InstallHooks();
+}
+
+void UtilityPassReplica::Setup()
+{
+	char buf[8] = {};
+	if (GetEnvironmentVariableA("CS_UTIL_RE_MODE", buf, sizeof(buf)) && buf[0]) {
+		const int v = atoi(buf);
+		if (v >= 0 && v <= 2)
+			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
+	}
+	if (!IsActive())
+		return;
+
+	EnsureInitialized();
 	logger::info("[UtilityPassReplica] active, mode={} ({})", static_cast<std::uint32_t>(GetMode()),
 		GetMode() == Mode::kCompare ? "compare" : "replace");
 }
@@ -821,10 +859,27 @@ void UtilityPassReplica::EndWindow()
 
 void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
 {
+	// BeginPass-compare engine run: the engine's BeginPass reaches every pass through this detour.
+	// Record what it dispatched (to diff against BeginPassReplica's sequence) and render via the
+	// real function -- no settle gate, no per-pass compare, no capture hook. This branch is active
+	// only while BeginPassCompare has armed the sink; the normal render path never enters it.
+	if (t_bpSeqSink) {
+		t_bpSeqSink->push_back({ a_pass, a_technique, static_cast<std::uint8_t>(a_alphaTest), a_renderFlags });
+		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		return;
+	}
+
 	// Only utility passes are in scope; everything else is always the engine's.
 	const bool isUtility = a_pass && a_pass->shader &&
 	                       a_pass->shader->shaderType.get() == RE::BSShader::Type::Utility;
-	if (!isUtility || GetMode() == Mode::kOff) {
+	if (!isUtility) {
+		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		return;
+	}
+	// When the UtilityPassReplica mode is off we still proceed IF a shadow-capture hook is armed
+	// (ShadowThreaded arms it only during the shadow-map walk, so main-scene utility passes are
+	// unaffected). This is the seam the draw-state/MT modes ride even without CS_UTIL_RE_MODE set.
+	if (GetMode() == Mode::kOff && !shadowCaptureHook.load(std::memory_order_acquire)) {
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
@@ -845,21 +900,25 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 	auto* const player = RE::PlayerCharacter::GetSingleton();
 	const bool  rawInWorld = player && player->GetParentCell() &&
 	                     globals::state && !globals::state->IsMainOrLoadingMenuOpen();
-	// s_everUnsettled makes the latch fail CLOSED: the replica stays off until at least one
-	// unsettled pass has been observed (always true at boot/menu/load), so an auto-load that
-	// jumps straight to an in-world pass cannot bypass the settle window with a stale timestamp.
-	static std::atomic<bool>         s_everUnsettled{ false };
-	static std::atomic<std::int64_t> s_lastUnsettledMs{ 0 };
+	// Settle: proceed only after we've been CONTINUOUSLY in-world for kSettleMs. Track the first-in-world
+	// timestamp and reset it whenever we leave the world (menu/load), so the load->gameplay transition
+	// race is past before the replica double-renders. Unlike the old s_everUnsettled latch, this does NOT
+	// require a prior !rawInWorld pass to have routed through here -- that latch could stay closed forever
+	// when the boot menu never drives a utility pass to this detour (observed: the capture-hook modes
+	// never settled because s_everUnsettled stayed false the whole session).
+	static std::atomic<std::int64_t> s_inWorldSinceMs{ 0 };
 	const std::int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                               std::chrono::steady_clock::now().time_since_epoch())
 	                               .count();
-	if (!rawInWorld) {
-		s_everUnsettled.store(true, std::memory_order_relaxed);
-		s_lastUnsettledMs.store(nowMs, std::memory_order_relaxed);
+	if (rawInWorld) {
+		std::int64_t expected = 0;
+		s_inWorldSinceMs.compare_exchange_strong(expected, nowMs, std::memory_order_relaxed);  // stamp first in-world frame
+	} else {
+		s_inWorldSinceMs.store(0, std::memory_order_relaxed);  // left world -> restart the settle window
 	}
 	constexpr std::int64_t kSettleMs = 750;
-	const bool settled = rawInWorld && s_everUnsettled.load(std::memory_order_relaxed) &&
-	                     (nowMs - s_lastUnsettledMs.load(std::memory_order_relaxed)) >= kSettleMs;
+	const std::int64_t     inWorldSince = s_inWorldSinceMs.load(std::memory_order_relaxed);
+	const bool             settled = rawInWorld && inWorldSince != 0 && (nowMs - inWorldSince) >= kSettleMs;
 	if (!settled) {
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
@@ -930,11 +989,26 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		const std::uint32_t savedBoneCBRingCursor = *engine::g_boneCBRingCursor;
 		const std::uint64_t savedDynVBRingState = *engine::g_dynVBRingState;
 
+		// Regime-B fingerprint-soundness verify (opt-in via CS_RE_REFLECT): capture the engine's and the
+		// replica's per-draw effective-state fingerprints for this pass and diff them. Byte-exact commands
+		// MUST yield identical fingerprints -- this proves the fingerprint is deterministic + correctly
+		// built before it is trusted to gate MT. The Get*/staging-read capture adds no records to the
+		// command windows (Get*/CopyResource unhooked; MAP_READ ignored by the recorder).
+		auto* const ds = vanilla::DrawStateValidator::GetSingleton();
+		const bool  fpv = ds->FpVerifyActive();
+		thread_local std::vector<vanilla::DrawFingerprint> s_fpE, s_fpR;
+		if (fpv) {
+			s_fpE.clear();
+			ds->SetFingerprintSink(&s_fpE);
+		}
+
 		// Ground truth first: the engine renders and we record its command window
 		// (BeginWindow arms the symmetric CS-injection filter).
 		BeginWindow(engineWindow);
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
+		if (fpv)
+			ds->SetFingerprintSink(nullptr);
 
 		// Restore pre-engine state, then the replica issues its own window from the
 		// same starting point. Depth-only work is idempotent, so the double render is
@@ -957,18 +1031,32 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		// go through the out-of-module stub (g_stubActive) so they and the engine's
 		// tail-called binds survive the filter while CS-hook injections drop out
 		// exactly as they did in the engine window.
+		if (fpv) {
+			s_fpR.clear();
+			ds->SetFingerprintSink(&s_fpR);
+		}
 		g_stubActive = true;
 		BeginWindow(replicaWindow);
 		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		EndWindow();
 		g_stubActive = false;
+		if (fpv)
+			ds->SetFingerprintSink(nullptr);
 
 		DiffWindows(a_pass, a_technique);
+		if (fpv)
+			ds->CompareFingerprints(s_fpE, s_fpR, a_pass, a_technique);
 		return;
 	}
 
-	// Mode::kReplace: the engine is switched off for this pass.
-	ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	// Mode::kReplace: the engine is switched off for this pass. If we reached here in kOff (a covered
+	// pass a capture hook declined to claim -- not expected, since the verify hook claims all covered
+	// passes), fall back to the engine rather than replacing, so the hook-armed kOff seam never silently
+	// swaps rendering.
+	if (GetMode() == Mode::kReplace)
+		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	else
+		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 }
 
 
@@ -1364,6 +1452,11 @@ namespace
 					while (!engine::ILInsert(engine::g_ilTable.get(), *engine::g_ilBase, static_cast<std::uint32_t>(h2), &k2, &il))
 						engine::ILGrow(engine::g_ilTable.get());
 				}
+			}
+			if (t_worker) {
+				static std::atomic<int> s_ilDbg{ 8 };
+				if (s_ilDbg.fetch_sub(1, std::memory_order_relaxed) > 0)
+					logger::warn("[ILDBG] worker key={:016X} found={} il={}", key, found, il);
 			}
 			EngineCallV<17, void>(ctx, il);  // IASetInputLayout
 			dirty = u16(0);
@@ -2862,4 +2955,247 @@ void UtilityPassReplica::WorkerBeginScope(ShadowWorker* a_worker)
 void UtilityPassReplica::WorkerEndScope()
 {
 	t_worker = nullptr;
+}
+
+// ============================================================================================
+// BSBatchRenderer::BeginPass (SE 1.5.97 0x141308030), reimplemented 1:1. Owns the per-group DX11
+// state setup + the m_PassGroupNext pass loop + the RestoreTechnique cleanup, driving the passes
+// through ReplicaRenderPassImmediately. Structural fields on the batch renderer (a1): hash table
+// base @+0x48, capacity @+0x2C, sentinel @+0x38, pass-array base @+8, "release passes" flag @+0x6C.
+// Group-state caches in the render-state block: main @S+0, unk_143027F4C @S+0x9C, F5C @S+0xAC,
+// F64 @S+0xB4. v11 is the alpha-test flag threaded into RenderPassImmediately.
+// ============================================================================================
+// Hash-table lookup shared by BeginPassReplica and BeginPassCompare: resolve the batch-group id v6
+// for a key. Table base @a1+0x48, capacity (pow2) @a1+0x2C, sentinel @a1+0x38; entries {key@0,val@4,
+// next@8} stride 16. Returns 0 (the default group) on miss, matching the engine.
+static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
+{
+	std::uint32_t v6 = 0;
+	if (auto tbl = *reinterpret_cast<std::uintptr_t*>(a1 + 0x48)) {
+		std::uintptr_t e = tbl + 16ull * (key & (*reinterpret_cast<std::uint32_t*>(a1 + 0x2C) - 1));
+		if (*reinterpret_cast<std::uintptr_t*>(e + 8)) {
+			const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(a1 + 0x38);
+			bool                 hit = true;
+			while (*reinterpret_cast<std::uint32_t*>(e) != key) {
+				e = *reinterpret_cast<std::uintptr_t*>(e + 8);
+				if (e == sentinel) { hit = false; break; }
+			}
+			if (hit)
+				v6 = *reinterpret_cast<std::uint32_t*>(e + 4);
+		}
+	}
+	return v6;
+}
+
+std::uint8_t UtilityPassReplica::BeginPassReplica(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a5)
+{
+	auto* const   a1 = reinterpret_cast<std::uint8_t*>(a_batchRenderer);
+	const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(a2);
+	auto* const   groupPtr = reinterpret_cast<std::int32_t*>(a3);
+
+	// --- 1. hash-table lookup: batch-group id v6 for this key ---
+	const std::uint32_t v6 = BeginPassGroupId(a1, key);
+
+	// --- 2. per-group DX11 state setup (block dirty bits + change caches) ---
+	std::uint8_t* const S = t_worker ? t_worker->block : reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+	auto&               main = *reinterpret_cast<std::uint32_t*>(S + 0x00);
+	auto&               f4C = *reinterpret_cast<std::uint32_t*>(S + 0x9C);
+	auto&               f5C = *reinterpret_cast<std::uint32_t*>(S + 0xAC);
+	auto&               f64 = *reinterpret_cast<std::uint32_t*>(S + 0xB4);
+	const std::uint8_t  e5D = *engine::g_beginPassFlagE5D;
+	const std::int32_t  grp = *groupPtr;
+	const bool          noBlend = (a5 & 0x108) == 0;
+	bool                v11 = false;  // alpha-test flag passed to RenderPassImmediately
+
+	if (grp == 0) {
+		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
+		if (f64) { f64 = 0; main |= 0x100; }
+		if (f5C) { f5C = 0; main |= 0x80; }
+	} else if (grp == 2) {
+		if (noBlend && f4C) { f4C = 0; main |= 0x20; }
+		if (f64) { f64 = 0; main |= 0x100; }
+		if (f5C) { f5C = 0; main |= 0x80; }
+	} else if (grp == 3) {
+		if (noBlend && f4C) { f4C = 0; main |= 0x20; }
+		if (f64 != 1) { f64 = 1; main |= 0x100; }
+		v11 = true;
+		if (e5D && f5C != 1) { f5C = 1; main |= 0x80; }
+	} else if (grp == 1) {
+		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
+		if (f64 != 1) { f64 = 1; main |= 0x100; }
+		v11 = true;
+		if (e5D && f5C != 1) { f5C = 1; main |= 0x80; }
+	} else if (grp == 4) {
+		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
+		if (f64 != 1) { f64 = 1; main |= 0x100; }
+		v11 = true;
+		if (f5C) { f5C = 0; main |= 0x80; }
+	}
+
+	// --- 3. pass loop: head of (group, bucket) chain, walk m_PassGroupNext, render each ---
+	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(a1 + 8);
+	auto*       pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (grp + 6ll * v6));
+	while (pass) {
+		// Same coverage split as mode-2's OnRenderPassImmediately: the replica owns the passes it can
+		// reproduce byte-for-byte (CanReplicate) and hands everything else -- skinned-dynamic, stencil,
+		// custom-render, non-trishape -- to the engine's RenderPassImmediately whole-pass. Both paths
+		// share the g_currentShader/technique/material caches, so interleaving is state-consistent.
+		if (t_bpSeqSink)  // verify capture: record the dispatch (see BeginPassCompare)
+			t_bpSeqSink->push_back({ pass, key, static_cast<std::uint8_t>(v11), a5 });
+		if (CanReplicate(pass))
+			ReplicaRenderPassImmediately(pass, key, v11, a5);
+		else
+			RenderPassImmediately_Hook::Engine(pass, key, v11, a5);
+		pass = pass->passGroupNext;  // 0x30
+	}
+
+	// --- 4. cleanup: release the group's pass list (when the renderer owns them), RestoreTechnique
+	//        on the last shader, reset the current shader/technique/material caches. ---
+	if (*reinterpret_cast<std::uint8_t*>(a1 + 0x6C)) {
+		auto* const bucket = passArrayBase + 48ull * v6;
+		*reinterpret_cast<std::uint32_t*>(bucket + 40) &= ~(1u << grp);
+		*reinterpret_cast<std::uintptr_t*>(bucket + 8ull * grp) = 0;
+	}
+	if (auto* curShader = WsShader()) {
+		RestoreTechniqueReplica(S, reinterpret_cast<std::uint8_t*>(curShader), WsTechnique());
+	}
+	WsShader() = nullptr;
+	WsTechnique() = 0;
+	WsMaterial() = nullptr;
+	if (f5C) { f5C = 0; main |= 0x80; }
+
+	// --- 5. advance the batch iterator (pure engine logic, no DX11) + return "more groups remain" ---
+	++*groupPtr;
+	return engine::BatchAdvance(a1, a2, a3, a4);
+}
+
+// ============================================================================================
+// BeginPass-level orchestration compare (kOwnBeginPassVerify). NON-DESTRUCTIVE: the engine's BeginPass
+// pops-and-FREES the group's list nodes on the release path (sub_141307E80 via BatchAdvance), so it
+// must run exactly once -- a double execution would double-free and desync the caller's group loop.
+// Instead we compute the replica's EXPECTED dispatch by reading the (still-intact) pass chain, then run
+// the engine ONCE for real while recording its ACTUAL per-pass dispatch, and diff:
+//   the ordered (pass, key=technique, alphaTest=v11, renderFlags) sequence.
+// A match proves BeginPassReplica's hash lookup + m_PassGroupNext walk + v11 derivation select exactly
+// the passes the engine does. The per-pass DX11 (already byte-exact via the RenderPassImmediately
+// compare), the group-state block writes and the cleanup are transcribed 1:1 from the decompile and
+// exercised under mode-5 rendering; this mode adds the deterministic enumeration proof on top.
+// ============================================================================================
+std::uint8_t UtilityPassReplica::BeginPassCompare(void* a1v, void* a2, void* a3, void* a4, std::uint32_t a5, BeginPassFn a_engine)
+{
+	auto* const         a1 = reinterpret_cast<std::uint8_t*>(a1v);
+	const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(a2);
+	const std::int32_t  grp = *reinterpret_cast<std::int32_t*>(a3);
+
+	// Replica's EXPECTED dispatch, computed by pure reads before the engine consumes the chain. v11
+	// (the alpha-test flag threaded into RenderPassImmediately) depends only on the group index -- true
+	// for groups 1/3/4 -- exactly as the group-state machine sets it.
+	thread_local std::vector<VerifyPassRec> replicaSeq, engineSeq;
+	replicaSeq.clear();
+	const std::uint8_t  v11 = (grp == 1 || grp == 3 || grp == 4) ? 1u : 0u;
+	const std::uint32_t v6 = BeginPassGroupId(a1, key);
+	auto* const         passArrayBase = *reinterpret_cast<std::uint8_t**>(a1 + 8);
+	for (auto* p = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (grp + 6ll * v6)); p; p = p->passGroupNext)
+		replicaSeq.push_back({ p, key, v11, a5 });
+
+	// Engine's ACTUAL dispatch: run it once (renders + advances + may free nodes). Each pass flows
+	// through OnRenderPassImmediately, which appends to engineSeq while the sink is armed.
+	engineSeq.clear();
+	t_bpSeqSink = &engineSeq;
+	const std::uint8_t ret = static_cast<std::uint8_t>(reinterpret_cast<std::uintptr_t>(a_engine(a1v, a2, a3, a4, a5)));
+	t_bpSeqSink = nullptr;
+
+	// Diff the two sequences element-by-element.
+	bool        diverged = engineSeq.size() != replicaSeq.size();
+	std::size_t firstDiff = SIZE_MAX;
+	if (!diverged) {
+		for (std::size_t i = 0; i < engineSeq.size(); ++i) {
+			const auto& e = engineSeq[i];
+			const auto& r = replicaSeq[i];
+			if (e.pass != r.pass || e.tech != r.tech || e.alpha != r.alpha || e.flags != r.flags) {
+				diverged = true;
+				firstDiff = i;
+				break;
+			}
+		}
+	}
+
+	++g_bpCompareGroups;
+	if (diverged) {
+		++g_bpCompareDiverged;
+		if (g_bpCompareDiverged <= 32)  // cap log spam; first 32 divergences suffice to debug
+			logger::warn("[BeginPassCompare] DIVERGE grp={} key={:#x} v11={} seq(engine={},replica={}) firstDiff={}",
+				grp, key, v11, engineSeq.size(), replicaSeq.size(),
+				firstDiff == SIZE_MAX ? -1 : static_cast<int>(firstDiff));
+	}
+	return ret;
+}
+
+void UtilityPassReplica::GetBeginPassCompareStats(std::uint64_t& a_groups, std::uint64_t& a_diverged) const
+{
+	a_groups = g_bpCompareGroups;
+	a_diverged = g_bpCompareDiverged;
+}
+
+// ============================================================================================
+// Regime-B MULTITHREAD draw-state gate. For one covered shadow pass, render it two ways from the SAME
+// starting state and diff the per-draw effective-state fingerprints:
+//   (E) the engine's RenderPassImmediately, and
+//   (T) the WORKER path -- ReplicaRenderPassImmediately under a ShadowWorker with its PRIVATE 0x5D8
+//       block + private caches + the full setup/flush reimplementation (CsSetupMask=31), exactly the
+//       code the real N-thread MT runs, seeded (all-dirty) as on a fresh context.
+// The worker renders on the IMMEDIATE context here (staging CB reads are legal), but the fingerprint is
+// context-blind and the worker forces all-state-dirty regardless of context -- so T is bit-identical to
+// what the worker would produce on its deferred context. E==T therefore proves the worker path binds the
+// same effective state (used CB bytes + all pipeline objects) the engine does, per draw. This is the
+// gate that lets the MT path be optimized freely (order/context/buffer-identity independent). Same frame,
+// deterministic, no frozen scene. The double render is depth-idempotent.
+// ============================================================================================
+void UtilityPassReplica::VerifyPassDrawStateThreaded(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
+{
+	auto* const ds = vanilla::DrawStateValidator::GetSingleton();
+	auto* const S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+
+	// A private worker on the immediate context, created once (draw-state-equivalent to a deferred worker).
+	static ShadowWorker* s_verifyWorker = nullptr;
+	if (!s_verifyWorker)
+		s_verifyWorker = MakeShadowWorker(globals::d3d::context, 0);
+	if (!s_verifyWorker)
+		return;
+
+	// Snapshot the PRE-PASS block: the map's state + the group state BeginPass just set. This seeds the
+	// worker's private block (it must render from the SAME starting state as the engine). The engine
+	// render is left to evolve S normally (its per-pass dirty tracking must carry into the next pass), so
+	// we do NOT restore S -- only rewind the SHARED bone/dyn-VB ring cursors the worker's maps advance.
+	static thread_local std::vector<std::uint8_t> snap;
+	snap.assign(S, S + engine::kSnapshotBytes);
+
+	thread_local std::vector<vanilla::DrawFingerprint> fpE, fpT;
+
+	// (E) engine render on the immediate context -> fingerprint list E (this is the real inline render;
+	// S evolves to its correct post-render state and is left there for the next pass).
+	fpE.clear();
+	ds->SetFingerprintSink(&fpE);
+	RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	ds->SetFingerprintSink(nullptr);
+	const std::uint32_t postBone = *engine::g_boneCBRingCursor;
+	const std::uint64_t postDyn = *engine::g_dynVBRingState;
+
+	// (T) worker path: PRIVATE block seeded (all-dirty) from the pre-pass snapshot, rendered on the
+	// immediate context via the exact MT code. The worker uses private caches (WsShader/WsTechFlags), so
+	// it doesn't disturb the engine's global shader/technique/material caches or the shader +0x90 flags.
+	WorkerSeedMap(s_verifyWorker, snap.data());
+	fpT.clear();
+	ds->SetFingerprintSink(&fpT);
+	WorkerBeginScope(s_verifyWorker);
+	ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	WorkerEndScope();
+	ds->SetFingerprintSink(nullptr);
+
+	// Undo only the worker's shared-ring advance (skinned casters map the bone/dyn-VB rings); everything
+	// else the worker touched was private, and S/caches stay at the engine's post-render values.
+	*engine::g_boneCBRingCursor = postBone;
+	*engine::g_dynVBRingState = postDyn;
+
+	ds->CompareFingerprints(fpE, fpT, a_pass, a_technique);
 }

@@ -121,6 +121,12 @@ public:
 	 *         State::Setup (device ready). Inert at mode 0. */
 	void Setup();
 
+	/** @brief Bring up the recorder/replica infrastructure (engine-call stub, RenderPassImmediately
+	 *         detour + context recorder vfuncs) exactly once, independent of CS_UTIL_RE_MODE. The
+	 *         ShadowThreaded BeginPass-ownership modes call this so the engine fallback trampoline and
+	 *         the OnRenderPassImmediately observation point exist even with the replica mode off. */
+	void EnsureInitialized();
+
 	/** @brief A queryable snapshot of the structural-compare validation state. This is the
 	 *  rerunnable vanilla-parity gate: reset the counters, run N frames in compare mode,
 	 *  then read this back and assert diverged==0. `firstDivergingPass` pinpoints the
@@ -203,6 +209,34 @@ public:
 	/// Begin and End, ReplicaRenderPassImmediately reads/writes the worker's block/ctx/caches.
 	static void WorkerBeginScope(ShadowWorker* a_worker);
 	static void WorkerEndScope();
+
+	/// Reimplementation of BSBatchRenderer::BeginPass (SE 1.5.97 0x141308030): the per-group DX11
+	/// state setup + the m_PassGroupNext pass loop (each pass -> ReplicaRenderPassImmediately) + the
+	/// RestoreTechnique cleanup, against the worker/engine block. Taking ownership here means the
+	/// worker replay carries the per-group blend/depth state the raw pass capture missed. Returns the
+	/// iterator-advance result (whether more groups remain). a2=&key, a3=&groupIndex, a4=&iterState.
+	std::uint8_t BeginPassReplica(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a_renderFlags);
+
+	/// Signature of the engine's original BSBatchRenderer::BeginPass (the detour trampoline).
+	using BeginPassFn = void* (*)(void*, void*, void*, void*, std::uint32_t);
+
+	/// Non-destructive enumeration compare for BeginPassReplica: computes the replica's expected pass
+	/// dispatch by reading the (intact) chain, then runs the engine's BeginPass (a_engine = the detour
+	/// trampoline) exactly ONCE for real -- it must not double-run, as BatchAdvance frees the group's
+	/// list nodes -- and diffs the ordered (pass, key, alphaTest, renderFlags) it dispatched against the
+	/// replica's. Proves the hash lookup + m_PassGroupNext walk + v11 derivation match. Returns the
+	/// engine's iterator-advance result. Divergences are logged; totals via GetBeginPassCompareStats.
+	std::uint8_t BeginPassCompare(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a_renderFlags, BeginPassFn a_engine);
+
+	/// Cumulative BeginPassCompare tallies: total pure-covered groups compared and how many diverged.
+	void GetBeginPassCompareStats(std::uint64_t& a_groups, std::uint64_t& a_diverged) const;
+
+	/// Regime-B MULTITHREAD gate for one covered pass: render it via the engine and via the WORKER path
+	/// (private block + full setup/flush reimpl, the exact MT code) from the same state, and diff the
+	/// per-draw effective-state fingerprints (vanilla::DrawStateValidator::CompareFingerprints). The
+	/// worker runs on the immediate context but is draw-state-equivalent to a deferred worker. E==T proves
+	/// the MT path binds identical effective state per draw. Requires CS_RE_REFLECT (reflection masking).
+	void VerifyPassDrawStateThreaded(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
 
 private:
 	UtilityPassReplica() = default;

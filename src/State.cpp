@@ -223,6 +223,16 @@ void State::Reset()
 	frameCount++;
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
+	// Universal FPS probe (CS_FPS_LOG): mode-agnostic frame+timestamp every 128 frames so an
+	// interleaved bench can compute FPS = 128 / dt uniformly across shadow modes. Inert by default.
+	{
+		static const bool s_fpsLog = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_FPS_LOG", b, sizeof(b)) && b[0] && b[0] != '0';
+		}();
+		if (s_fpsLog && (frameCount % 128u) == 0u)
+			logger::info("[FPSLOG] frame={}", frameCount);
+	}
 	drawSubmitsLastFrame.store(drawSubmitsThisFrame, std::memory_order_relaxed);
 	drawSubmitsThisFrame = 0;
 	for (std::size_t i = 0; i <= RE::BSShader::Type::Total; ++i) {

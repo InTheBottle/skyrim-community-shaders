@@ -49,6 +49,27 @@ public:
 		                    //           worker-block path renders correct shadows before threading.
 		kConcurrent = 4,    // Phase 1b: N worker threads, each recording a subset of the maps onto
 		                    //           its own deferred context; command lists execute in place.
+		kOwnBeginPass = 5,  // Stage 1a (full-ownership track): single-threaded. The engine still does
+		                    //           the per-map slice alloc + RT/DSV setup + clear + camera walk, but
+		                    //           every BSBatchRenderer::BeginPass (0x141308030) -- the point where
+		                    //           "renderpasses are ready to call RenderPassImmediately" -- routes
+		                    //           to UtilityPassReplica::BeginPassReplica, a 1:1 reimplementation of
+		                    //           the per-group DX11 state machine + the m_PassGroupNext pass loop
+		                    //           (ReplicaRenderPassImmediately) + the RestoreTechnique cleanup.
+		                    //           Validates the pass-orchestration ownership before ownership climbs
+		                    //           up to RenderGeometryGroup -> RenderShadowmap setup/clear.
+		kOwnBeginPassVerify = 6,  // Stage 1a command-level validation: for every pure-covered shadow
+		                    //           BeginPass, run the engine's original AND BeginPassReplica from the
+		                    //           same starting state and diff the dispatch sequence + 0x5D8 block
+		                    //           delta + group-advance. diverged=0 proves the reimplemented
+		                    //           orchestration is byte-exact (per-pass DX11 already byte-exact).
+		kDrawStateVerify = 7,  // Regime-B MT gate (needs CS_RE_REFLECT): for every covered shadow pass,
+		                    //           render it via the engine AND via the WORKER path (private block +
+		                    //           full reimpl -- the exact MT code) from the same state, and diff the
+		                    //           per-draw EFFECTIVE-STATE fingerprints (used CB bytes + all pipeline
+		                    //           objects, normalized to ignore identity/order/context/unused). diff=0
+		                    //           proves the MT path renders identically without command equality,
+		                    //           the gate that frees MT to be optimized. See vanilla::DrawState.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

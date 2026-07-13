@@ -1,6 +1,7 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
 #include "ShadowDeferred.h"
+#include "ShadowThreaded.h"
 #include "UtilityPassReplica.h"
 
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
@@ -727,6 +728,34 @@ namespace
 		RunHandler(&BuildShadowDeferredResult, a_argsJson, a_sink, a_write);
 	}
 
+	json BuildShadowMtResult(const json& a_args)
+	{
+		auto* st = ShadowThreaded::GetSingleton();
+		const std::string action = a_args.value("action", std::string{ "get" });
+		if (action == "get") {
+			return json{
+				{ "mode", static_cast<std::uint32_t>(st->GetMode()) },
+				{ "hooksInstalled", st->HooksInstalled() },
+			};
+		}
+		if (action == "set") {
+			if (!a_args.contains("mode"))
+				return json{ { "error", "missing required parameter 'mode'" } };
+			const auto m = a_args["mode"].get<std::uint32_t>();
+			if (m > 7)
+				return json{ { "error", "mode must be 0..7" } };
+			if (!st->SetMode(static_cast<ShadowThreaded::Mode>(m)))
+				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_MT>=1" } };
+			return json{ { "action", "set" }, { "mode", m } };
+		}
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
+	}
+
+	void ShadowMtToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildShadowMtResult, a_argsJson, a_sink, a_write);
+	}
+
 	void SettingsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
@@ -782,6 +811,10 @@ namespace DevBenchBridge
 		static constexpr const char* shadowDeferredDesc =
 			R"({"description":"Runtime mode switch for ShadowDeferred (runs the engine's shadow-map commands on a private deferred context). Requires launching with CS_SHADOW_DEFERRED=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1 (0=engine renders shadows, 1=deferred replica) -- takes effect next frame, safe mid-session; used for single-session engine-vs-deferred screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
 		dvb->RegisterTool("communityshaders.shadowdeferred", shadowDeferredDesc, &ShadowDeferredToolHandler, nullptr);
+
+		static constexpr const char* shadowMtDesc =
+			R"({"description":"Runtime mode switch for ShadowThreaded (shadow-map reimplementation / MT). Requires launching with CS_SHADOW_MT>=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0..7 (0=engine renders shadows = VANILLA, 5=BeginPassReplica full ownership, 7=draw-state MT verify) -- takes effect next frame, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
+		dvb->RegisterTool("communityshaders.shadowmt", shadowMtDesc, &ShadowMtToolHandler, nullptr);
 	}
 }
 
