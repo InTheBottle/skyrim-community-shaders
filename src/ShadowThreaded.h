@@ -76,6 +76,14 @@ public:
 		                    //           accumulator; the cheap submit (Func43, 2%) stays serial. Stage 1 =
 		                    //           dispatch-and-join per map (proves the cull is correct off the render
 		                    //           thread); Stage 2 = defer + fan out + serial submit phase. Target >=50%.
+		kInstance = 9,      // Perf track (THE FPS lever): reduce the shadow DRAW COUNT via same-mesh
+		                    //           instancing. Claim the instanceable subset (whole-TRISHAPE, non-skinned,
+		                    //           non-alpha-test) per map; the engine renders the rest inline. Per map,
+		                    //           group the claimed passes by (mesh, technique) and issue ONE
+		                    //           DrawIndexedInstanced per group with each object's World in a per-instance
+		                    //           vertex stream (UtilityPassReplica::RenderShadowInstanced). ~9x fewer
+		                    //           shadow draws in dense exterior (88.9% instanceable). Inline on the
+		                    //           immediate context (render thread) so the draw-count cut is the FPS win.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

@@ -578,6 +578,10 @@ namespace SShaderCache
 				if (descriptor & static_cast<uint32_t>(RenderShadowmapPb)) {
 					defines[lastIndex++] = { "RENDER_SHADOWMAP_PB", nullptr };
 				}
+				// Shadow instancing: per-object World comes from the instance vertex stream, not b2.
+				if (descriptor & static_cast<uint32_t>(Instanced)) {
+					defines[lastIndex++] = { "INSTANCED", nullptr };
+				}
 			} else if (descriptor &
 					   static_cast<uint32_t>(AdditionalAlphaMask)) {
 				defines[lastIndex++] = { "ADDITIONAL_ALPHA_MASK", nullptr };
@@ -1347,6 +1351,15 @@ namespace SShaderCache
 
 		auto& cache = ShaderCache::Instance();
 		auto key = SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
+
+		// DIAGNOSTIC (shadow instancing): the compiled instanced-descriptor VS reflects POSITION-only
+		// (no TEXCOORD4-7), i.e. the INSTANCED define was not in effect. Log the exact merged-defines
+		// key used for bit-30 descriptors to pin where the define is lost. Throttled.
+		if ((descriptor & 0x40000000u) && shader.shaderType.get() == RE::BSShader::Type::Utility) {
+			static std::atomic<int> s_instKeyLogs{ 8 };
+			if (s_instKeyLogs.fetch_sub(1, std::memory_order_relaxed) > 0)
+				logger::info("[InstCompile] class={} desc={:08X} key={}", static_cast<int>(shaderClass), descriptor, key);
+		}
 
 		// Atomically check the shaderMap and either:
 		//  - return the blob if already Completed (cache hit),

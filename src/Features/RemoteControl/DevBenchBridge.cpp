@@ -742,8 +742,8 @@ namespace
 			if (!a_args.contains("mode"))
 				return json{ { "error", "missing required parameter 'mode'" } };
 			const auto m = a_args["mode"].get<std::uint32_t>();
-			if (m > 7)
-				return json{ { "error", "mode must be 0..7" } };
+			if (m > 9)
+				return json{ { "error", "mode must be 0..9" } };
 			if (!st->SetMode(static_cast<ShadowThreaded::Mode>(m)))
 				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_MT>=1" } };
 			return json{ { "action", "set" }, { "mode", m } };
@@ -813,7 +813,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("communityshaders.shadowdeferred", shadowDeferredDesc, &ShadowDeferredToolHandler, nullptr);
 
 		static constexpr const char* shadowMtDesc =
-			R"({"description":"Runtime mode switch for ShadowThreaded (shadow-map reimplementation / MT). Requires launching with CS_SHADOW_MT>=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0..7 (0=engine renders shadows = VANILLA, 5=BeginPassReplica full ownership, 7=draw-state MT verify) -- takes effect next frame, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
+			R"({"description":"Runtime mode switch for ShadowThreaded (shadow-map reimplementation / MT). Requires launching with CS_SHADOW_MT>=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0..9 (0=engine renders shadows = VANILLA, 5=BeginPassReplica full ownership, 7=draw-state MT verify, 9=shadow instancing) -- takes effect next frame, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
 		dvb->RegisterTool("communityshaders.shadowmt", shadowMtDesc, &ShadowMtToolHandler, nullptr);
 	}
 }

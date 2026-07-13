@@ -169,6 +169,15 @@ public:
 	 */
 	void ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
 
+	/** @brief Shadow instancing: render a set of captured static shadow passes as a small number of
+	 *         DrawIndexedInstanced calls (one per unique mesh+technique group) instead of one DrawIndexed
+	 *         per object. Each object's World matrix (identical to the b2 PerGeometry World the engine
+	 *         builds) is packed into a per-instance vertex stream and consumed by the INSTANCED Utility VS.
+	 *         Must be called while the shadow map's RT/DSV/viewport are still bound (per-map replay point).
+	 *         a_passes / a_techniques are parallel arrays; a_count entries; a_renderFlags is the map's flags. */
+	void RenderShadowInstanced(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
+		std::uint32_t a_count, std::uint32_t a_renderFlags);
+
 	/** @brief True when the pass is inside the replica's current RE coverage:
 	 *         non-custom TRISHAPE / SUB_INDEX_TRISHAPE geometry plus skinned passes on
 	 *         the static skin-instance Render branch. Stencil-above-water and the

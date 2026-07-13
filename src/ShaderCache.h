@@ -709,6 +709,7 @@ public:
 		LodObject = 1 << 27,
 		LocalMapFogOfWar = 1 << 28,
 		OpaqueEffect = 1 << 29,
+		Instanced = 1u << 30,  // shadow-instancing: read per-object World from the instance stream, not b2
 	};
 
 	// Shader blocking data for developer mode

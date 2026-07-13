@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -135,6 +136,54 @@ namespace
 		return h;
 	}
 
+	// Debug (CS_SHADOW_DUMP): write each shadow-atlas slice's raw depth to F:\claudetmp\rtprof\atlas\<tag>_s<N>.raw
+	// (header: u32 width,height,DXGI_FORMAT,rowPitch; then rowPitch bytes per row). A/B mode 0 (tag "vanilla")
+	// vs mode 9 (tag "instanced") on a FROZEN scene to see WHICH light's slice differs and by how much.
+	void DumpShadowAtlas(int a_target, const char* a_tag)
+	{
+		static const bool on = [] { char b[8] = {}; return GetEnvironmentVariableA("CS_SHADOW_DUMP", b, sizeof(b)) && b[0] && b[0] != '0'; }();
+		if (!on || !globals::d3d::device)
+			return;
+		auto* rtPool = reinterpret_cast<std::uint8_t*>(engine::g_renderer.address());
+		auto* srv = *reinterpret_cast<ID3D11ShaderResourceView**>(rtPool + 152 * a_target + 0x2040);
+		if (!srv)
+			return;
+		winrt::com_ptr<ID3D11Resource> res;
+		srv->GetResource(res.put());
+		winrt::com_ptr<ID3D11Texture2D> tex;
+		if (!res || FAILED(res->QueryInterface(IID_PPV_ARGS(tex.put()))))
+			return;
+		D3D11_TEXTURE2D_DESC desc{};
+		tex->GetDesc(&desc);
+		D3D11_TEXTURE2D_DESC sd = desc;
+		sd.Usage = D3D11_USAGE_STAGING;
+		sd.BindFlags = 0;
+		sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		sd.MiscFlags = 0;
+		winrt::com_ptr<ID3D11Texture2D> staging;
+		if (FAILED(globals::d3d::device->CreateTexture2D(&sd, nullptr, staging.put())))
+			return;
+		auto* ctx = *engine::g_immediateContext;
+		ctx->CopyResource(staging.get(), tex.get());
+		for (UINT slice = 0; slice < desc.ArraySize; ++slice) {
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			const UINT sub = D3D11CalcSubresource(0, slice, desc.MipLevels);
+			if (FAILED(ctx->Map(staging.get(), sub, D3D11_MAP_READ, 0, &mapped)) || !mapped.pData) {
+				continue;
+			}
+			char path[260];
+			snprintf(path, sizeof(path), "F:\\claudetmp\\rtprof\\atlas\\%s_s%u.raw", a_tag, slice);
+			std::ofstream f(path, std::ios::binary);
+			if (f) {
+				const std::uint32_t hdr[4] = { desc.Width, desc.Height, static_cast<std::uint32_t>(desc.Format), mapped.RowPitch };
+				f.write(reinterpret_cast<const char*>(hdr), sizeof(hdr));
+				for (UINT row = 0; row < desc.Height; ++row)
+					f.write(reinterpret_cast<const char*>(static_cast<std::uint8_t*>(mapped.pData) + static_cast<std::size_t>(row) * mapped.RowPitch), mapped.RowPitch);
+			}
+			ctx->Unmap(staging.get(), sub);
+		}
+	}
+
 	// Re-establish the frame-persistent CBs a fresh deferred context lacks (per-frame camera CB in
 	// VS/PS b12, PS b11, the CS shared CBs). Standalone read of the same engine/CS globals the
 	// engine binds from -- no live-context read, so it is multithread-ready. Mirrors
@@ -182,6 +231,7 @@ namespace
 	MapWork*             g_curMap = nullptr;
 	bool                 g_claiming = false;         // serial/threaded: claim covered passes for replay
 	bool                 g_concurrentRestrict = false;  // kConcurrent: claim ONLY the thread-safe subset
+	bool                 g_instanceRestrict = false;    // kInstance: claim ONLY the instanceable subset
 
 	// UtilityPassReplica::ShadowCaptureHook. Stores each covered pass on the current map and (when
 	// claiming) takes ownership so the inline render is skipped -- the replay renders it later.
@@ -239,6 +289,17 @@ namespace
 			if (!wholeTri) {
 				++g_curMap->unsupported;
 				return false;  // serial remainder
+			}
+		}
+		// kInstance admits the instanceable subset: WHOLE TRISHAPE (geom type 3), NON-alpha-test. The
+		// instanced path fills World from the per-instance stream and does NOT run the alpha-test /
+		// alpha-blend geometry setup, so alpha-tested casters (foliage) and SUB_INDEX stay inline; a
+		// per-object depth for them is cheap relative to the dense repeated static meshes we instance.
+		if (g_instanceRestrict) {
+			const bool wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
+			if (!wholeTri || a_alphaTest) {
+				++g_curMap->unsupported;
+				return false;  // serial remainder (alpha-test / sub-index render inline)
 			}
 		}
 		// Capture the map's clean render-state block at the FIRST covered pass -- while the engine's
@@ -638,7 +699,8 @@ namespace
 	// Concurrent fan-out: one deferred context per worker thread (index 0 aliases g_deferred).
 	std::vector<winrt::com_ptr<ID3D11DeviceContext>> g_deferredPool;
 
-	void ReplayOneMap(MapWork& mw);  // defined below (needs GlobalStateGuard); called per-map from the detour
+	void ReplayOneMap(MapWork& mw);       // defined below (needs GlobalStateGuard); called per-map from the detour
+	void RenderMapInstanced(MapWork& mw);  // defined below; per-map instanced draws on the immediate context
 }
 
 std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
@@ -659,6 +721,8 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	// Per-map replay: execute this map's claimed passes NOW, while its view globals are current.
 	if (GetMode() == Mode::kWorkerSerial && g_curMap)
 		ReplayOneMap(*g_curMap);
+	else if (GetMode() == Mode::kInstance && g_curMap)
+		RenderMapInstanced(*g_curMap);
 
 	g_curMap = nullptr;
 	return r;
@@ -806,6 +870,34 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		return;
 	}
 
+	// kInstance: claim the instanceable subset per map and issue the instanced draws inline (per-map, in
+	// RenderShadowmapDetour, while the map's view globals are live). No deferred context -- the draws run
+	// on the immediate context so the reduced draw count is the render-thread FPS win.
+	if (m == Mode::kInstance) {
+		auto* const replica = UtilityPassReplica::GetSingleton();
+		g_mapWorkList.clear();
+		g_mapWorkList.reserve(24);
+		g_curMap = nullptr;
+		g_claiming = true;
+		g_instanceRestrict = true;
+		replica->SetShadowCaptureHook(&CaptureHook);
+		callOriginal();  // per map: claims instanceable passes; RenderShadowmapDetour issues the instanced draws
+		replica->SetShadowCaptureHook(nullptr);
+		g_claiming = false;
+		g_instanceRestrict = false;
+		if ((++frames & 0x3F) == 1) {
+			std::uint64_t tot = 0, uns = 0;
+			for (auto& mw : g_mapWorkList) {
+				tot += mw.passes.size();
+				uns += mw.unsupported;
+			}
+			logger::info("[ShadowThreaded][instance] frame {}: maps={} instancedPasses={} inline={} atlasHash={:016X}",
+				frames, g_mapWorkList.size(), tot, uns, HashShadowAtlas(4));
+			DumpShadowAtlas(4, "instanced");
+		}
+		return;
+	}
+
 	if (m == Mode::kOff || !g_deferred) {
 		// Direct wall-clock + render-thread-CPU measurement of RenderShadowmaps (CS_SHADOW_TIMING).
 		// RenderShadowmaps is once-per-frame and synchronous on the render thread, so: the QPC span of
@@ -819,6 +911,13 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		}();
 		if (!s_timing) {
 			callOriginal();
+			// Vanilla-atlas hash for the instanced-vs-vanilla A/B (CS_SHADOW_HASH): toggle mode 0/9 on a
+			// FROZEN scene; identical hashes => instanced atlas is bit-exact (residual is post/exposure, not
+			// the shadow depth); differing => the instanced shadow atlas itself differs.
+			if (ShadowHashEnabled() && (++frames & 0xF) == 1) {
+				logger::info("[ShadowHash] mode0(vanilla) frame {}: atlasHash={:016X}", frames, HashShadowAtlas(4));
+				DumpShadowAtlas(4, "vanilla");
+			}
 			return;
 		}
 		LARGE_INTEGER freq, t0, t1;
@@ -1151,6 +1250,53 @@ namespace
 		UtilityPassReplica::FreeShadowWorker(worker);
 		guard.Restore();
 	}
+
+	// kInstance per-map: the engine's RenderShadowmap already rendered the non-instanceable passes inline
+	// and unbound the map's DSV on return, so seed the map's CAPTURED render-state block (RT/DSV/viewport
+	// snapshotted at the first covered pass while the DSV was live), force the main dirty word, and reset
+	// the technique caches. Then RenderShadowInstanced groups the claimed passes by (mesh, technique) and
+	// issues one DrawIndexedInstanced per group on the immediate context (the render-thread draw-count cut
+	// that is the FPS win). Finally restore the engine's block+caches so the next map's engine render is
+	// undisturbed. Save/restore (rather than a private worker block) keeps the draws on the immediate
+	// context; the block is CPU-side dirty tracking, so the force-dirty makes the engine re-bind cleanly.
+	void RenderMapInstanced(MapWork& mw)
+	{
+		if (mw.passes.empty())
+			return;
+		auto* const S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+		auto* const sflags = reinterpret_cast<std::uint32_t*>(S);
+
+		static std::vector<std::uint8_t> s_saved(engine::kBlockBytes);
+		std::memcpy(s_saved.data(), S, engine::kBlockBytes);
+		const auto  savedTech = *engine::g_currentTechnique;
+		auto* const savedShader = *engine::g_currentShader;
+		auto* const savedMaterial = *engine::g_currentMaterial;
+
+		std::memcpy(S, mw.block, engine::kBlockBytes);
+		sflags[0] = 0xFFFFFFFFu;  // force first group's SetDirtyStates to re-bind RT/DSV/viewport
+		*engine::g_currentTechnique = 0;
+		*engine::g_currentShader = nullptr;
+		*engine::g_currentMaterial = nullptr;
+
+		static std::vector<RE::BSRenderPass*> s_passes;
+		static std::vector<std::uint32_t>     s_techs;
+		s_passes.clear();
+		s_techs.clear();
+		s_passes.reserve(mw.passes.size());
+		s_techs.reserve(mw.passes.size());
+		for (const auto& cp : mw.passes) {
+			s_passes.push_back(cp.pass);
+			s_techs.push_back(cp.technique);
+		}
+		UtilityPassReplica::GetSingleton()->RenderShadowInstanced(
+			s_passes.data(), s_techs.data(), static_cast<std::uint32_t>(s_passes.size()), mw.passes[0].renderFlags);
+
+		std::memcpy(S, s_saved.data(), engine::kBlockBytes);
+		*engine::g_currentTechnique = savedTech;
+		*engine::g_currentShader = savedShader;
+		*engine::g_currentMaterial = savedMaterial;
+		sflags[0] = 0xFFFFFFFFu;  // engine's next SetDirtyStates re-binds onto whatever we left bound
+	}
 }
 
 void ShadowThreaded::ReplayWorkerSerial()
@@ -1407,7 +1553,7 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if (v >= 0 && v <= 8)
+		if (v >= 0 && v <= 9)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
@@ -1455,7 +1601,8 @@ void ShadowThreaded::Setup()
 	// fallback calls the RenderPassImmediately trampoline; the verify mode observes the engine's
 	// dispatch through OnRenderPassImmediately). Both require UtilityPassReplica's hooks, which are
 	// otherwise gated behind CS_UTIL_RE_MODE -- bring them up here so the modes are self-contained.
-	if (GetMode() == Mode::kOwnBeginPass || GetMode() == Mode::kOwnBeginPassVerify || GetMode() == Mode::kDrawStateVerify)
+	if (GetMode() == Mode::kOwnBeginPass || GetMode() == Mode::kOwnBeginPassVerify ||
+		GetMode() == Mode::kDrawStateVerify || GetMode() == Mode::kInstance)
 		UtilityPassReplica::GetSingleton()->EnsureInitialized();
 	InstallHooks();
 	logger::info("[ShadowThreaded] active, mode={}", static_cast<std::uint32_t>(GetMode()));
