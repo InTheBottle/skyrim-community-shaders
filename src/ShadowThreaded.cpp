@@ -1,9 +1,17 @@
 #include "ShadowThreaded.h"
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
+
+#include <spdlog/spdlog.h>
 
 #include "Globals.h"
 #include "State.h"
@@ -296,6 +304,336 @@ namespace
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// --- cull-vs-submission split instrumentation (CS_SHADOW_TIMING) ---
+	// Scoped true only around the vanilla RenderShadowmaps walk so CullHook attributes ONLY shadow culls.
+	std::atomic<bool> g_inShadowTiming{ false };
+	// In-session A/B intervention flag, flipped every 128-frame window so alternating [ShadowTiming] lines
+	// compare intervention-ON vs OFF at the SAME view (no cross-launch variance). Two interventions:
+	//  - CS_SHADOW_SKIP_CULL=1: CullHook returns early (removes cull CPU *and* shadow-GPU work -> only the
+	//    "unchanged => not on critical path" direction is clean; a speedup is ambiguous CPU-vs-GPU).
+	//  - CS_SHADOW_SPIN_US=N: inject N microseconds of pure render-thread busy-spin per frame (adds CPU, ZERO
+	//    GPU/render effect) -> if the frame grows by ~N us the render thread IS the frame limiter; the clean test.
+	std::atomic<bool> g_intervene{ false };
+	// Render-thread CPU cycles / QPC ticks spent inside NiCamera::sub_1412C1600 (the shadow CULL:
+	// SetCameraData + accumulator Func37/Func42) during the current shadow walk. Accumulated by CullHook,
+	// snapshotted per frame by the timing branch. The remainder of RenderShadowmaps is DX11 setup + SUBMISSION.
+	ULONG64       g_cullCyc = 0;
+	std::uint64_t g_cullWall = 0;
+	// Diagnostic: (camera, accumulator) per shadow cull this frame. If the accumulators are all DISTINCT,
+	// the per-map culls can run in parallel into their own accumulators (Phase B); if shared, need private ones.
+	std::vector<std::pair<void*, void*>> g_cullMapsDiag;
+
+	// --- kParallelCull worker(s) ---
+	// A tiny persistent worker: the render thread hands it a task and (Stage 1) blocks until done. Running
+	// the ENGINE cull off the render thread is the key risk to validate (it uses per-thread ScrapHeap +
+	// thread-safe MemoryManager; the walk is pure CPU). Stage 2 will add async dispatch + a barrier.
+	struct CullWorker
+	{
+		std::thread             th;
+		std::mutex              m;
+		std::condition_variable cv;
+		std::function<void()>   task;
+		bool                    hasTask = false;
+		bool                    done = false;
+		bool                    stop = false;
+		bool                    started = false;
+
+		void Start()
+		{
+			if (started)
+				return;
+			started = true;
+			th = std::thread([this] {
+				for (;;) {
+					std::function<void()> t;
+					{
+						std::unique_lock<std::mutex> lk(m);
+						cv.wait(lk, [this] { return hasTask || stop; });
+						if (stop)
+							return;
+						t = std::move(task);
+						hasTask = false;
+					}
+					t();
+					{
+						std::lock_guard<std::mutex> lk(m);
+						done = true;
+					}
+					cv.notify_all();
+				}
+			});
+		}
+		void RunAndWait(std::function<void()> t)
+		{
+			std::unique_lock<std::mutex> lk(m);
+			task = std::move(t);
+			hasTask = true;
+			done = false;
+			cv.notify_all();
+			cv.wait(lk, [this] { return done; });
+		}
+	};
+	CullWorker g_cullWorker;
+
+	// ============================ kParallelCull Stage 2 ============================
+	// Parallel per-map cull + serial submit. The per-map cull (sub_1412C1600) is DISPATCHED to a worker
+	// pool (no join) into its own accumulator; the concrete submit (Func43 @0x1412CAC90) is DETOURED and
+	// DEFERRED (its RT/viewport captured); after the RenderShadowmaps walk we BARRIER on the pool and replay
+	// the deferred submits serially with each map's camera + RT re-bound. Maps whose accumulator is REUSED
+	// this frame (2/9, detected via last frame's histogram) run fully inline (they'd clobber a shared accum).
+	struct CullPool
+	{
+		std::vector<std::thread>          threads;
+		std::deque<std::function<void()>> tasks;
+		std::mutex                        m;
+		std::condition_variable           cv, cvDone;
+		int                               active = 0;
+		bool                              stop = false;
+		bool                              started = false;
+
+		void Start(std::uint32_t n)
+		{
+			if (started)
+				return;
+			started = true;
+			for (std::uint32_t i = 0; i < n; ++i)
+				threads.emplace_back([this] { Run(); });
+		}
+		void Run()
+		{
+			for (;;) {
+				std::function<void()> t;
+				{
+					std::unique_lock<std::mutex> lk(m);
+					cv.wait(lk, [this] { return !tasks.empty() || stop; });
+					if (stop && tasks.empty())
+						return;
+					t = std::move(tasks.front());
+					tasks.pop_front();
+				}
+				t();
+				{
+					std::lock_guard<std::mutex> lk(m);
+					if (--active == 0)
+						cvDone.notify_all();
+				}
+			}
+		}
+		void Submit(std::function<void()> t)
+		{
+			{
+				std::lock_guard<std::mutex> lk(m);
+				++active;
+				tasks.push_back(std::move(t));
+			}
+			cv.notify_one();
+		}
+		void Wait()
+		{
+			std::unique_lock<std::mutex> lk(m);
+			cvDone.wait(lk, [this] { return active == 0; });
+		}
+	};
+	CullPool g_cullPool;
+
+	// One deferred map's submit: its accumulator + camera + submit-flags + the captured render targets/viewport.
+	struct DeferredSubmit
+	{
+		void*                      accum = nullptr;
+		void*                      camera = nullptr;
+		std::uint32_t              flags = 0;
+		std::uint32_t              cullFlags = 0;
+		winrt::com_ptr<ID3D11DepthStencilView>   dsv;
+		winrt::com_ptr<ID3D11RenderTargetView>   rtvs[8];
+		UINT                       numRtv = 0;
+		UINT                       numVp = 0;
+		D3D11_VIEWPORT             vps[16]{};
+	};
+
+	std::atomic<bool>                     g_pcActive{ false };  // inside a kParallelCull RenderShadowmaps walk
+	std::atomic<int>                      g_pcFrame{ 0 };       // frame counter for gated crash-pinpoint logging
+	// Flushed log to pin the crashing op (the CS log survives a hard crash only if flushed).
+	inline void pclog(const char* what, void* p)
+	{
+		if (g_pcFrame.load(std::memory_order_relaxed) > 4)
+			return;
+		logger::warn("[pc] f{} {} {}", g_pcFrame.load(std::memory_order_relaxed), what, p);
+		if (auto l = spdlog::default_logger())
+			l->flush();
+	}
+	std::vector<DeferredSubmit>           g_deferredSubmits;    // deferred submits collected this frame
+	bool                                  g_curMapDeferred = false;  // did the current map's cull get deferred?
+	void*                                 g_curMapCamera = nullptr;  // camera captured by CullHook for this map
+	std::set<void*>                       g_accumSeenThisFrame;      // accumulators deferred this frame
+	std::map<void*, int>                  g_accumCountThisFrame;     // accumulator usage count this frame
+	std::set<void*>                       g_accumSharedLastFrame;    // accumulators used >1x last frame -> inline
+	bool                                  g_haveHistogram = false;   // first kParallelCull frame runs all inline
+
+	// Engine calls for the serial submit phase (SE 1.5.97 module offsets).
+	using SetCameraData_t = void(__fastcall*)(void*, void*, std::uint32_t);
+	using Func43_t = void(__fastcall*)(void*, std::int64_t);
+	using Func37_t = void(__fastcall*)(void*, void*);
+	using Func42_t = void(__fastcall*)(void*, std::uint32_t);
+	using UpdateViewport_t = void(__fastcall*)(void*, int, int, int);
+
+	// Replicates NiCamera::sub_1412C1600 MINUS the walk (Func42): sets the global camera + accumulator so the
+	// per-map shadow-matrix setup that follows in RenderShadowmap reads correct data. Runs INLINE (serial).
+	void CullSetup(void* camera, void* accum, std::uint32_t flags)
+	{
+		reinterpret_cast<SetCameraData_t>(REL::Offset(0xd7bab0).address())(
+			reinterpret_cast<void*>(REL::Offset(0x302c890).address()), camera, flags);
+		if (flags & 0x400)
+			reinterpret_cast<UpdateViewport_t>(REL::Offset(0xd69d00).address())(
+				reinterpret_cast<void*>(REL::Offset(0x3028490).address()), 0, 0, 1);
+		*reinterpret_cast<void**>(REL::Offset(0x31d0e68).address()) = camera;                  // unk_1431D0E68
+		reinterpret_cast<void(__fastcall*)(void*)>(REL::Offset(0x12966b0).address())(accum);   // SetCurrentAccumulator
+		reinterpret_cast<Func37_t>(REL::Offset(0x12ca100).address())(accum, camera);           // Func37 (stub)
+	}
+	// The WALK (BSShaderAccumulator::Func42 0x1412CAC20): the 98% cost. Parallel-safe -- FinishAccumulating
+	// uses per-process state, NOT the global camera (verified via xrefs to unk_14302C890). Runs on the pool.
+	void CullWalk(void* accum, std::uint32_t flags)
+	{
+		pclog("walkStart", accum);
+		reinterpret_cast<Func42_t>(REL::Offset(0x12cac20).address())(accum, flags);
+		pclog("walkEnd", accum);
+	}
+
+	// NiCamera::sub_1412C1600 (0x1412C1600): the per-map cull driver called from NiCamera::Render, right
+	// before Func43 does the draw submission. Timing it separates cull CPU from submission CPU.
+	struct CullHook
+	{
+		static std::int32_t thunk(void* a1, void* a2, std::uint32_t a3)
+		{
+			auto* orig = reinterpret_cast<std::int32_t (*)(void*, void*, std::uint32_t)>(func.address());
+			if (ShadowThreaded::GetSingleton()->GetMode() == ShadowThreaded::Mode::kParallelCull) {
+				// Stage 1 fallback (CS_SHADOW_CULL_SERIAL=1): run on ONE worker + join (serial, validated).
+				static const bool s_serial = [] {
+					char b[8] = {};
+					return GetEnvironmentVariableA("CS_SHADOW_CULL_SERIAL", b, sizeof(b)) && b[0] && b[0] != '0';
+				}();
+				if (s_serial || !g_pcActive.load(std::memory_order_relaxed)) {
+					std::int32_t ret = 0;
+					g_cullWorker.RunAndWait([&] { ret = orig(a1, a2, a3); });
+					return ret;
+				}
+				// Stage 2: a1=camera, a2=accumulator, a3=flags.
+				g_accumCountThisFrame[a2]++;
+				g_curMapCamera = a1;
+				const bool sharedHist = g_accumSharedLastFrame.count(a2) > 0;
+				const bool seenThisFrame = g_accumSeenThisFrame.count(a2) > 0;
+				if (!g_haveHistogram || sharedHist || seenThisFrame) {
+					// Run inline: first frame (no histogram yet), a known-shared accumulator, or a histogram-miss
+					// reuse. Drain the pool before a reuse so we never write a still-in-flight accumulator.
+					g_curMapDeferred = false;
+					if (seenThisFrame)
+						g_cullPool.Wait();
+					return orig(a1, a2, a3);
+				}
+				// Distinct accumulator: run the SETUP inline now (SetCameraData + globals, so the shadow-matrix
+				// setup that follows in RenderShadowmap is correct), DEFER the WALK (Func42) to the parallel
+				// phase after the light loop, and DEFER the submit (Func43Hook). a3 = cull flags.
+				g_accumSeenThisFrame.insert(a2);
+				g_curMapDeferred = true;
+				DeferredSubmit d;
+				d.accum = a2;
+				d.camera = a1;
+				d.cullFlags = a3;
+				g_deferredSubmits.push_back(std::move(d));
+				// SETUP inline now (sets unk_14302C890 for the shadow-matrix setup that follows on the render
+				// thread). DISPATCH the WALK now too -- at THIS map's light-loop position (the cull must run at
+				// its map's position; Stage 1 proved that), but on a worker so it runs concurrently with the
+				// other maps' walks + the render thread. The walk does NOT touch unk_14302C890 (verified), so
+				// it does not race the render thread's matrix setup. The submit is deferred (Func43Hook) to
+				// after the end-of-loop barrier.
+				CullSetup(a1, a2, a3);
+				pclog("setupDone", a2);
+				{
+					void* acc = a2;
+					std::uint32_t cf = a3;
+					g_cullPool.Submit([acc, cf] { CullWalk(acc, cf); });
+				}
+				return 0;
+			}
+			if (!g_inShadowTiming.load(std::memory_order_relaxed))
+				return orig(a1, a2, a3);
+			// DIAGNOSTIC (CS_SHADOW_SKIP_CULL): skip the shadow cull when the A/B intervention is ON.
+			static const bool s_skipMode = [] {
+				char b[8] = {};
+				return GetEnvironmentVariableA("CS_SHADOW_SKIP_CULL", b, sizeof(b)) && b[0] && b[0] != '0';
+			}();
+			if (s_skipMode && g_intervene.load(std::memory_order_relaxed))
+				return 0;
+			g_cullMapsDiag.emplace_back(a1, a2);  // (camera, accumulator) for the distinctness diagnostic
+			ULONG64 c0 = 0, c1 = 0;
+			QueryThreadCycleTime(GetCurrentThread(), &c0);
+			LARGE_INTEGER t0, t1;
+			QueryPerformanceCounter(&t0);
+			const std::int32_t r = orig(a1, a2, a3);
+			QueryPerformanceCounter(&t1);
+			QueryThreadCycleTime(GetCurrentThread(), &c1);
+			g_cullCyc += c1 - c0;
+			g_cullWall += static_cast<std::uint64_t>(t1.QuadPart - t0.QuadPart);
+			return r;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// BSShaderAccumulator::Func43 (0x1412CAC90): the per-map SUBMIT, called right after the cull in
+	// NiCamera::Render. For a DEFERRED map (its cull is running on the pool), capture the RT + viewport the
+	// engine bound for this map, record them for the serial submit phase, and SKIP the submit now.
+	struct Func43Hook
+	{
+		static void thunk(void* a1, std::int64_t a2)  // a1 = accumulator, a2 = flags
+		{
+			auto* orig = reinterpret_cast<Func43_t>(func.address());
+			if (ShadowThreaded::GetSingleton()->GetMode() != ShadowThreaded::Mode::kParallelCull ||
+				!g_pcActive.load(std::memory_order_relaxed) || !g_curMapDeferred) {
+				orig(a1, a2);  // main render, inline (shared-accum) map, or Stage-1 fallback: submit now
+				return;
+			}
+			g_curMapDeferred = false;
+			if (!g_deferredSubmits.empty()) {
+				auto& d = g_deferredSubmits.back();  // the record CullHook pushed for this map
+				d.flags = static_cast<std::uint32_t>(a2);
+				auto* ctx = globals::d3d::context;
+				ID3D11RenderTargetView* rtvs[8] = {};
+				ID3D11DepthStencilView* dsv = nullptr;
+				ctx->OMGetRenderTargets(8, rtvs, &dsv);
+				d.dsv.attach(dsv);
+				d.numRtv = 0;
+				for (UINT i = 0; i < 8; ++i) {
+					d.rtvs[i].attach(rtvs[i]);
+					if (rtvs[i])
+						d.numRtv = i + 1;
+				}
+				d.numVp = 16;
+				ctx->RSGetViewports(&d.numVp, d.vps);
+			}
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// --- shadow instancing payoff diagnostic (CS_SHADOW_INSTANCE_DIAG) ---
+	// During the timed vanilla shadow render (g_inShadowTiming), record each static DrawTriShape's mesh id
+	// (rendererData, startIndex, triCount). unique/total => instanceable fraction (repeated meshes = the win).
+	std::vector<std::uint64_t> g_shadowDrawIds;
+	std::uint64_t              g_shadowDrawTotalVerts = 0;
+
+	struct DrawTriShapeHook
+	{
+		static void thunk(std::int64_t a1, std::int64_t a2, std::uint32_t a3, std::int32_t a4)
+		{
+			if (g_inShadowTiming.load(std::memory_order_relaxed)) {
+				std::uint64_t h = static_cast<std::uint64_t>(a2) * 1099511628211ull;
+				h ^= (static_cast<std::uint64_t>(a3) << 32) | static_cast<std::uint32_t>(a4);
+				g_shadowDrawIds.push_back(h);
+				g_shadowDrawTotalVerts += 3ull * static_cast<std::uint32_t>(a4);
+			}
+			reinterpret_cast<void (*)(std::int64_t, std::int64_t, std::uint32_t, std::int32_t)>(func.address())(a1, a2, a3, a4);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	winrt::com_ptr<ID3D11DeviceContext> g_deferred;
 	// Concurrent fan-out: one deferred context per worker thread (index 0 aliases g_deferred).
 	std::vector<winrt::com_ptr<ID3D11DeviceContext>> g_deferredPool;
@@ -391,8 +729,190 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		return;
 	}
 
+	if (m == Mode::kParallelCull) {
+		static const bool s_serial = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_CULL_SERIAL", b, sizeof(b)) && b[0] && b[0] != '0';
+		}();
+		if (s_serial) {
+			// Stage 1 (validated): CullHook runs each cull on ONE worker + joins. No fan-out, no defer.
+			callOriginal();
+			return;
+		}
+		// Stage 2: parallel cull + serial submit.
+		LARGE_INTEGER freq, t0, t1;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&t0);
+		g_deferredSubmits.clear();
+		g_accumSeenThisFrame.clear();
+		g_accumCountThisFrame.clear();
+		g_curMapDeferred = false;
+		g_pcFrame.fetch_add(1, std::memory_order_relaxed);
+		pclog("loopStart", nullptr);
+		g_pcActive.store(true, std::memory_order_relaxed);
+		callOriginal();  // CullHook runs each map's setup inline + dispatches its walk; Func43Hook defers submits
+		g_pcActive.store(false, std::memory_order_relaxed);
+
+		// The walks were dispatched during the light loop (at each map's position). Barrier here.
+		pclog("barrierBefore", nullptr);
+		g_cullPool.Wait();  // every dispatched walk has filled its accumulator
+		pclog("barrierAfter", nullptr);
+
+		// Serial submit phase: re-establish each deferred map's camera + RT, then submit (original Func43).
+		auto* ctx = globals::d3d::context;
+		auto  setCam = reinterpret_cast<SetCameraData_t>(REL::Offset(0xd7bab0).address());
+		auto  setAcc = reinterpret_cast<void(__fastcall*)(void*)>(REL::Offset(0x12966b0).address());
+		auto  func43 = reinterpret_cast<Func43_t>(Func43Hook::func.address());  // trampoline = original submit
+		void* camData = reinterpret_cast<void*>(REL::Offset(0x302c890).address());
+		auto  camPtr = reinterpret_cast<void**>(REL::Offset(0x31d0e68).address());
+		for (auto& d : g_deferredSubmits) {
+			pclog("submit", d.accum);
+			setCam(camData, d.camera, d.flags);
+			*camPtr = d.camera;
+			setAcc(d.accum);
+			ID3D11RenderTargetView* rtvs[8] = {};
+			for (UINT i = 0; i < d.numRtv; ++i)
+				rtvs[i] = d.rtvs[i].get();
+			ctx->OMSetRenderTargets(d.numRtv, rtvs, d.dsv.get());
+			if (d.numVp)
+				ctx->RSSetViewports(d.numVp, d.vps);
+			func43(d.accum, static_cast<std::int64_t>(d.flags));
+		}
+		// Update the shared-accumulator histogram for next frame (light set is stable frame-to-frame).
+		g_accumSharedLastFrame.clear();
+		for (auto& kv : g_accumCountThisFrame)
+			if (kv.second > 1)
+				g_accumSharedLastFrame.insert(kv.first);
+		g_haveHistogram = true;
+		QueryPerformanceCounter(&t1);
+		{
+			static std::uint64_t s_lastEnter = 0, s_shWall = 0, s_frWall = 0, s_n = 0;
+			const std::uint64_t enter = static_cast<std::uint64_t>(t0.QuadPart);
+			if (s_lastEnter) {
+				s_frWall += enter - s_lastEnter;
+				s_shWall += static_cast<std::uint64_t>(t1.QuadPart - t0.QuadPart);
+				s_n++;
+			}
+			s_lastEnter = enter;
+			if (s_n >= 128) {
+				const double f = static_cast<double>(freq.QuadPart);
+				logger::info("[ParallelCullTiming] RenderShadowmaps wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame) "
+							 "deferred(parallel)={} sharedInline={} (n={})",
+					1000.0 * s_shWall / s_n / f, s_frWall ? 100.0 * s_shWall / s_frWall : 0.0,
+					1000.0 * s_frWall / s_n / f, g_deferredSubmits.size(), g_accumSharedLastFrame.size(), s_n);
+				s_shWall = s_frWall = s_n = 0;
+			}
+		}
+		return;
+	}
+
 	if (m == Mode::kOff || !g_deferred) {
+		// Direct wall-clock + render-thread-CPU measurement of RenderShadowmaps (CS_SHADOW_TIMING).
+		// RenderShadowmaps is once-per-frame and synchronous on the render thread, so: the QPC span of
+		// callOriginal() is the shadow WALL time; the QueryThreadCycleTime span is the shadow CPU cost;
+		// and the deltas between consecutive entries are the whole-frame wall period / whole-frame render-
+		// thread cycles. shadowCyc/frameCyc = fraction of the RENDER THREAD's CPU spent in shadows (the
+		// honest answer to "does RenderShadowmaps cost a lot of CPU"), independent of stack-scan attribution.
+		static const bool s_timing = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_TIMING", b, sizeof(b)) && b[0] && b[0] != '0';
+		}();
+		if (!s_timing) {
+			callOriginal();
+			return;
+		}
+		LARGE_INTEGER freq, t0, t1;
+		QueryPerformanceFrequency(&freq);
+		ULONG64 cy0 = 0, cy1 = 0;
+		const ULONG64 cullCyc0 = g_cullCyc;
+		const std::uint64_t cullWall0 = g_cullWall;
+		g_cullMapsDiag.clear();  // collect THIS frame's (camera, accumulator) pairs during the walk
+		g_shadowDrawIds.clear();
+		g_shadowDrawTotalVerts = 0;
+		g_inShadowTiming.store(true, std::memory_order_relaxed);
+		QueryThreadCycleTime(GetCurrentThread(), &cy0);
+		QueryPerformanceCounter(&t0);
 		callOriginal();
+		QueryPerformanceCounter(&t1);
+		QueryThreadCycleTime(GetCurrentThread(), &cy1);
+		g_inShadowTiming.store(false, std::memory_order_relaxed);
+		// CPU-only limiter test (CS_SHADOW_SPIN_US=N): when the A/B intervention is ON, busy-spin the render
+		// thread N microseconds -- pure CPU, ZERO GPU/render effect. If the frame period grows by ~N us the
+		// render thread is the frame limiter (parallelizing the cull will raise FPS); if not, it has slack.
+		static const std::uint32_t s_spinUs = [] {
+			char b[16] = {};
+			return (GetEnvironmentVariableA("CS_SHADOW_SPIN_US", b, sizeof(b)) && b[0]) ? static_cast<std::uint32_t>(atoi(b)) : 0u;
+		}();
+		if (s_spinUs && g_intervene.load(std::memory_order_relaxed)) {
+			LARGE_INTEGER s0, s1;
+			QueryPerformanceCounter(&s0);
+			const std::int64_t spinTicks = static_cast<std::int64_t>(freq.QuadPart) * s_spinUs / 1000000;
+			do {
+				QueryPerformanceCounter(&s1);
+			} while (s1.QuadPart - s0.QuadPart < spinTicks);
+		}
+		const ULONG64 cullCycFrame = g_cullCyc - cullCyc0;
+		const std::uint64_t cullWallFrame = g_cullWall - cullWall0;
+		static std::uint64_t s_lastEnter = 0, s_lastCy = 0;
+		static std::uint64_t s_shWall = 0, s_frWall = 0, s_shCyc = 0, s_frCyc = 0, s_n = 0;
+		static std::uint64_t s_cullCyc = 0, s_cullWall = 0;
+		const std::uint64_t enter = static_cast<std::uint64_t>(t0.QuadPart);
+		if (s_lastEnter) {
+			s_frWall += enter - s_lastEnter;
+			s_frCyc += cy0 - s_lastCy;
+			s_shWall += static_cast<std::uint64_t>(t1.QuadPart - t0.QuadPart);
+			s_shCyc += cy1 - cy0;
+			s_cullCyc += cullCycFrame;
+			s_cullWall += cullWallFrame;
+			s_n++;
+		}
+		s_lastEnter = enter;
+		s_lastCy = cy0;
+		if (s_n >= 128) {
+			const double f = static_cast<double>(freq.QuadPart);
+			const double shMs = 1000.0 * s_shWall / s_n / f;
+			const double frMs = 1000.0 * s_frWall / s_n / f;
+			const double cpuPct = s_frCyc ? 100.0 * s_shCyc / s_frCyc : 0.0;
+			const double wallPct = s_frWall ? 100.0 * s_shWall / s_frWall : 0.0;
+			// Split the shadow render-thread CPU into CULL (sub_1412C1600) vs SUBMISSION+setup (remainder).
+			const double cullPctOfShadow = s_shCyc ? 100.0 * s_cullCyc / s_shCyc : 0.0;
+			const double cullMs = 1000.0 * s_cullWall / s_n / f;
+			// A/B mode: label this window with the intervention state active for it, then flip for the next.
+			// Alternating lines compare frame time with the intervention ON vs OFF at the same view.
+			static const bool s_skipMode = [] {
+				char b[8] = {};
+				return GetEnvironmentVariableA("CS_SHADOW_SKIP_CULL", b, sizeof(b)) && b[0] && b[0] != '0';
+			}();
+			const bool s_abMode = s_skipMode || (s_spinUs != 0);
+			const bool windowIntervened = g_intervene.load(std::memory_order_relaxed);
+			const char* interv = !s_abMode ? "baseline" : (windowIntervened ? (s_skipMode ? "SKIP" : "SPIN") : "off");
+			logger::info("[ShadowTiming] ab={} RenderShadowmaps: wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame), "
+						 "render-thread CPU {:.1f}% of frame | CULL {:.3f}ms ({:.1f}% of shadow CPU), "
+						 "SUBMIT+setup {:.1f}%  (n={})",
+				interv, shMs, wallPct, frMs, cpuPct, cullMs, cullPctOfShadow, 100.0 - cullPctOfShadow, s_n);
+			if (s_abMode)
+				g_intervene.store(!windowIntervened, std::memory_order_relaxed);
+			// Accumulator-distinctness (this frame): how many shadow maps, how many DISTINCT accumulators/cameras.
+			// distinct==total ⇒ per-map accumulators ⇒ Phase-B parallel walks into their own accumulators are safe.
+			{
+				std::set<void*> accs, cams;
+				for (auto& p : g_cullMapsDiag) {
+					cams.insert(p.first);
+					accs.insert(p.second);
+				}
+				logger::info("[ShadowTiming] cullMaps: total={} distinctAccumulators={} distinctCameras={}",
+					g_cullMapsDiag.size(), accs.size(), cams.size());
+			}
+			// Instancing payoff: unique static-mesh draws vs total. instanceable = 1 - unique/total.
+			if (!g_shadowDrawIds.empty()) {
+				std::set<std::uint64_t> uniq(g_shadowDrawIds.begin(), g_shadowDrawIds.end());
+				const double instFrac = 1.0 - static_cast<double>(uniq.size()) / g_shadowDrawIds.size();
+				logger::info("[ShadowInstance] staticDraws={} uniqueMeshes={} instanceable={:.1f}% totalIndices={}",
+					g_shadowDrawIds.size(), uniq.size(), 100.0 * instFrac, g_shadowDrawTotalVerts);
+			}
+			s_shWall = s_frWall = s_shCyc = s_frCyc = s_n = 0;
+			s_cullCyc = s_cullWall = 0;
+		}
 		return;
 	}
 
@@ -861,6 +1381,22 @@ void ShadowThreaded::InstallHooks()
 	DetourAttach(reinterpret_cast<PVOID*>(&BeginPassHook::func), reinterpret_cast<PVOID>(BeginPassHook::thunk));
 	DetourTransactionCommit();
 
+	// kParallelCull: intercept the per-map cull (sub_1412C1600) + the per-map submit (Func43), spin up the
+	// worker (Stage 1 fallback) + the fan-out pool (Stage 2).
+	if (GetMode() == Mode::kParallelCull) {
+		CullHook::func = REL::Offset(0x12C1600).address();
+		Func43Hook::func = REL::Offset(0x12CAC90).address();
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
+		DetourAttach(reinterpret_cast<PVOID*>(&Func43Hook::func), reinterpret_cast<PVOID>(Func43Hook::thunk));
+		DetourTransactionCommit();
+		const std::uint32_t poolN = workerCount > 1 ? workerCount : 6;
+		g_cullWorker.Start();
+		g_cullPool.Start(poolN);
+		logger::info("[ShadowThreaded] kParallelCull: Cull+Func43 detours installed, worker + pool({}) started", poolN);
+	}
+
 	hooksInstalled = true;
 	logger::info("[ShadowThreaded] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}, BeginPass @ 0x{:X}",
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address(), BeginPassHook::func.address());
@@ -871,7 +1407,7 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if (v >= 0 && v <= 7)
+		if (v >= 0 && v <= 8)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
@@ -879,8 +1415,38 @@ void ShadowThreaded::Setup()
 		if (n >= 1 && n <= 8)
 			workerCount = static_cast<std::uint32_t>(n);
 	}
-	if (!IsActive())
+	const bool timingOnly = [] {
+		char tb[8] = {};
+		return GetEnvironmentVariableA("CS_SHADOW_TIMING", tb, sizeof(tb)) && tb[0] && tb[0] != '0';
+	}();
+	if (!IsActive()) {
+		// Measurement-only (CS_SHADOW_TIMING at mode 0): install JUST the RenderShadowmaps detour so the
+		// mode-0 branch can wall-clock/CPU-time the otherwise-vanilla shadow walk. No other hooks (no
+		// deferred pool, no per-map/BeginPass detours) -> callOriginal() runs pure vanilla = zero behavior
+		// change; the numbers are the real cost of the unmodified shadow pipeline.
+		if (timingOnly && REL::Module::IsSE() && !hooksInstalled) {
+			stl::detour_thunk<RenderShadowmapsHook>(REL::RelocationID(100420, 0));
+			// CullHook (NiCamera::sub_1412C1600 @ module+0x12C1600) to split cull vs submission. Same
+			// DetourAttach dance as BeginPass -- RelocationID isn't wired for this leaf; SE-1.5.97 offset.
+			CullHook::func = REL::Offset(0x12C1600).address();
+			DetourTransactionBegin();
+			DetourUpdateThread(GetCurrentThread());
+			DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
+			DetourTransactionCommit();
+			// Shadow-instancing payoff diagnostic: hook DrawTriShape to count repeated meshes.
+			if (char ib[8] = {}; GetEnvironmentVariableA("CS_SHADOW_INSTANCE_DIAG", ib, sizeof(ib)) && ib[0] && ib[0] != '0') {
+				DrawTriShapeHook::func = REL::Offset(0xD6BFE0).address();
+				DetourTransactionBegin();
+				DetourUpdateThread(GetCurrentThread());
+				DetourAttach(reinterpret_cast<PVOID*>(&DrawTriShapeHook::func), reinterpret_cast<PVOID>(DrawTriShapeHook::thunk));
+				DetourTransactionCommit();
+				logger::info("[ShadowThreaded] instance-diag: DrawTriShape hook installed");
+			}
+			hooksInstalled = true;
+			logger::info("[ShadowThreaded] timing-only RenderShadowmaps + Cull detours installed (mode 0)");
+		}
 		return;
+	}
 	if (!REL::Module::IsSE()) {
 		logger::info("[ShadowThreaded] SE-only; not installing on this runtime");
 		return;

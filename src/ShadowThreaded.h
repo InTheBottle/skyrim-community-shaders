@@ -70,6 +70,12 @@ public:
 		                    //           objects, normalized to ignore identity/order/context/unused). diff=0
 		                    //           proves the MT path renders identically without command equality,
 		                    //           the gate that frees MT to be optimized. See vanilla::DrawState.
+		kParallelCull = 8,  // Perf track: parallelize the shadow CULL (97.8% of RenderShadowmaps, inline
+		                    //           serial, render-thread frame limiter under DLSS). NiCamera::sub_1412C1600
+		                    //           (the per-map cull walk) runs on worker threads into its map's private
+		                    //           accumulator; the cheap submit (Func43, 2%) stays serial. Stage 1 =
+		                    //           dispatch-and-join per map (proves the cull is correct off the render
+		                    //           thread); Stage 2 = defer + fan out + serial submit phase. Target >=50%.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

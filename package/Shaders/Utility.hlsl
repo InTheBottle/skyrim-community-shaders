@@ -16,6 +16,15 @@ struct VS_INPUT
 	float2 TexCoord: TEXCOORD0;
 #endif
 
+#if defined(INSTANCED)
+	// Per-instance world matrix rows (slot 1, D3D11_INPUT_PER_INSTANCE_DATA). Replaces the per-object b2
+	// World for shadow instancing -- one DrawIndexedInstanced per mesh instead of N per-object draws.
+	float4 InstWorld0: TEXCOORD4;
+	float4 InstWorld1: TEXCOORD5;
+	float4 InstWorld2: TEXCOORD6;
+	float4 InstWorld3: TEXCOORD7;
+#endif
+
 #if defined(NORMALS)
 	float4 Normal: NORMAL0;
 	float4 Bitangent: BINORMAL0;
@@ -139,7 +148,14 @@ VS_OUTPUT main(VS_INPUT input)
 
 	positionCS = mul(FrameBuffer::CameraViewProj, positionWS);
 #		else
+#			if defined(INSTANCED)
+	// World comes from the per-instance stream instead of b2. Correctness: this matrix is byte-identical to
+	// the b2 World the engine would have set for this object (validated instance[i] == pass[i] b2).
+	precise row_major float4x4 instWorld = float4x4(input.InstWorld0, input.InstWorld1, input.InstWorld2, input.InstWorld3);
+	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj, instWorld);
+#			else
 	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj, World);
+#			endif
 	positionCS = mul(modelViewProj, positionMS);
 #		endif
 
