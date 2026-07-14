@@ -335,6 +335,31 @@ namespace
 
 	std::atomic<std::uint64_t> g_deferredDraws{ 0 };
 	using DrawIndexed_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, INT);
+	// CS_SHADOW_MAP_SPY=1 (isolation): vtable-hook the IMMEDIATE context's Map and log any call
+	// from a non-render thread while the shadow bracket is active -- the worker cull corrupts the
+	// DXVK CS stream at record time (updateVertexBufferBindings crash on a dead VB), so SOME engine
+	// call inside the walk maps the immediate context off-thread. The return address (module-
+	// relative) pins the exact engine call site.
+	using MapFn_t = HRESULT(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Resource*, UINT, D3D11_MAP, UINT, D3D11_MAPPED_SUBRESOURCE*);
+	MapFn_t                   g_origImmediateMap = nullptr;
+	std::atomic<std::uint32_t> g_renderThreadId{ 0 };
+	HRESULT STDMETHODCALLTYPE MapSpy(ID3D11DeviceContext* a_ctx, ID3D11Resource* a_res, UINT a_sub, D3D11_MAP a_type, UINT a_flags, D3D11_MAPPED_SUBRESOURCE* a_mapped)
+	{
+		const std::uint32_t rt = g_renderThreadId.load(std::memory_order_relaxed);
+		if (rt != 0 && GetCurrentThreadId() != rt) {
+			static std::atomic<int> s_logged{ 0 };
+			if (s_logged.fetch_add(1, std::memory_order_relaxed) < 24) {
+				const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+				const auto base = REL::Module::get().base();
+				logger::warn("[MapSpy] OFF-THREAD immediate Map! tid={} type={} flags={:X} ret={:#x} (SkyrimSE+{:#x})",
+					GetCurrentThreadId(), static_cast<int>(a_type), a_flags, ret,
+					(ret >= base && ret < base + 0x4000000) ? ret - base : 0);
+				spdlog::default_logger()->flush();  // the crash follows within ~1s; don't lose the line
+			}
+		}
+		return g_origImmediateMap(a_ctx, a_res, a_sub, a_type, a_flags, a_mapped);
+	}
+
 	DrawIndexed_t g_origDeferredDrawIndexed = nullptr;
 	void STDMETHODCALLTYPE DrawIndexedCounter(ID3D11DeviceContext* a_ctx, UINT a_n, UINT a_start, INT a_base)
 	{
@@ -847,7 +872,8 @@ namespace
 
 	std::atomic<bool>                     g_pcActive{ false };  // inside a kParallelCull RenderShadowmaps walk
 	std::uint32_t                         g_pcPoolSize = 6;     // resolved at InstallHooks; pool starts lazily
-	bool                                  g_pcPoolStarted = false;  // render thread only (CullHook)
+	bool                                  g_pcPoolStarted = false;    // render thread only (CullHook)
+	bool                                  g_pcWorkerStarted = false;  // render thread only (serial mode)
 	std::atomic<int>                      g_pcFrame{ 0 };       // frame counter for gated crash-pinpoint logging
 	// Flushed log to pin the crashing op (the CS log survives a hard crash only if flushed).
 	inline void pclog(const char* what, void* p)
@@ -916,21 +942,12 @@ namespace
 				// explicit CS_SHADOW_CULL_SERIAL=1 validation mode.
 				if (!g_pcActive.load(std::memory_order_relaxed))
 					return orig(a1, a2, a3);
-				if (s_serial) {
-					std::int32_t ret = 0;
-					g_cullWorker.RunAndWait([&] { ret = orig(a1, a2, a3); });
-					return ret;
-				}
-				// Stage 2: a1=camera, a2=accumulator, a3=flags.
-				// Quiesce during loads + a settle window after (the MOC lesson, relearned 2026-07-14:
-				// dispatching walks against a half-built scene mid-load = AV -- crashed in DXVK CS
-				// exec at load frame 2). Loading screens render frames, so the histogram warms up
-				// DURING the load; gate on the LoadingMenu + ~240 frames of settle, fully inline.
+				// IN-WORLD + settle gate, covering BOTH the serial-validation bounce and Stage 2:
+				// the boot intro / main-menu backdrop / loading scenes are half-built and crashed
+				// three ways (frame-2 dispatch, worker cull bounce, settle expiry mid-intro). The
+				// robust predicate is the player having a parent cell AND no LoadingMenu, plus a
+				// 240-frame settle window after every load.
 				{
-					// Stage 2 only IN-WORLD: the boot intro / main-menu backdrop / loading scenes are
-					// half-built and crashed three ways (frame-2 dispatch, worker cull bounce, settle
-					// expiry mid-intro at f720). The robust predicate is the player having a parent
-					// cell AND no LoadingMenu, plus a settle window after every load.
 					static std::uint32_t s_settleUntil = 0;
 					auto* gfx = RE::BSGraphics::State::GetSingleton();
 					const std::uint32_t frame = gfx ? gfx->frameCount : 0;
@@ -945,11 +962,43 @@ namespace
 					}
 				}
 
+				// CS_SHADOW_CULL_SERIAL=1 isolation mode: every shadow cull runs on ONE worker with
+				// the render thread JOINED -- zero concurrency, only the foreign-thread variable.
+				// Stable here + crashing in Stage 2 => concurrent walks race EACH OTHER (pass arena);
+				// crashing here too => the cull depends on render-thread/job TLS identity.
+				if (s_serial) {
+					if (!g_pcWorkerStarted) {
+						g_pcWorkerStarted = true;
+						g_cullWorker.Start();
+						logger::info("[ShadowThreaded] kParallelCull serial worker started (in-world)");
+					}
+					std::int32_t ret = 0;
+					g_cullWorker.RunAndWait([&] { ret = orig(a1, a2, a3); });
+					return ret;
+				}
+
 				// Lazy pool start (see InstallHooks): the worker threads spawn only once we are
 				// in-world and settled -- spawning them at boot destabilized loading.
 				if (!g_pcPoolStarted) {
 					g_pcPoolStarted = true;
-					g_cullWorker.Start();
+					// Map spy (CS_SHADOW_MAP_SPY=1): catch the walk's off-thread immediate-ctx Maps.
+					static const bool s_mapSpy = [] {
+						char b[8] = {};
+						return GetEnvironmentVariableA("CS_SHADOW_MAP_SPY", b, sizeof(b)) && b[0] == '1';
+					}();
+					if (s_mapSpy) {
+						g_renderThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
+						if (auto* imm = *engine::g_immediateContext) {
+							auto** vtbl = *reinterpret_cast<void***>(imm);
+							g_origImmediateMap = reinterpret_cast<MapFn_t>(vtbl[14]);
+							DWORD old = 0;
+							if (VirtualProtect(&vtbl[14], sizeof(void*), PAGE_READWRITE, &old)) {
+								vtbl[14] = reinterpret_cast<void*>(&MapSpy);
+								VirtualProtect(&vtbl[14], sizeof(void*), old, &old);
+								logger::info("[MapSpy] immediate-context Map hooked (rt tid={})", GetCurrentThreadId());
+							}
+						}
+					}
 					g_cullPool.Start(g_pcPoolSize);
 					logger::info("[ShadowThreaded] kParallelCull pool({}) started (in-world)", g_pcPoolSize);
 				}
@@ -987,7 +1036,24 @@ namespace
 				{
 					void* acc = a2;
 					std::uint32_t cf = a3;
-					g_cullPool.Submit([acc, cf] { CullWalk(acc, cf); });
+					// CS_SHADOW_WALK_MUTEX=1 (isolation): serialize the walks among themselves while
+				// keeping them ASYNC to the render thread. Serial-on-one-worker is stable, pool-N
+				// crashes -- this splits "walks race EACH OTHER" (stable here => shared pass-arena
+				// alloc; fix = fine-grained lock) from "walk races the RENDER thread" (still
+				// crashes here => hunt the shared cell the light loop reads).
+				static const bool s_walkMutex = [] {
+					char b[8] = {};
+					return GetEnvironmentVariableA("CS_SHADOW_WALK_MUTEX", b, sizeof(b)) && b[0] == '1';
+				}();
+				g_cullPool.Submit([acc, cf] {
+					if (s_walkMutex) {
+						static std::mutex s_m;
+						std::scoped_lock lk(s_m);
+						CullWalk(acc, cf);
+					} else {
+						CullWalk(acc, cf);
+					}
+				});
 				}
 				return 0;
 			}
