@@ -239,9 +239,27 @@ namespace
 	// claiming) takes ownership so the inline render is skipped -- the replay renders it later.
 	std::atomic<bool> g_drawStateVerify{ false };  // kDrawStateVerify: per-pass engine-vs-worker draw-state diff
 
+	// CS_SHADOW_CULLALL_FLAG=1 + F:\claudetmp\shadow_cullall.flag: MEASUREMENT ONLY -- claim every
+	// coverable shadow pass and DROP it (no store, no instanced render). Shadow draws vanish while
+	// the engine's per-map slice alloc / clears / camera walk still run, so unlike a whole-function
+	// skip this cannot corrupt engine state (it is exactly mode 9 minus all draws). fps(flag on) -
+	// fps(flag off) = the DRAW-side ceiling of any shadow-culling optimization. Shadows go missing
+	// visually by design. The flag is re-read once per frame in RenderShadowmapsDetour.
+	bool g_cullAllShadows = false;
+
 	bool CaptureHook(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest,
 		std::uint32_t a_renderFlags, bool a_canReplicate)
 	{
+		// Cull-all measurement: claim + drop every coverable pass (decal/custom/stencil remainder
+		// still renders inline -- tiny). Checked FIRST so the skinned/instanceable gates don't
+		// route anything back to the inline path.
+		if (g_cullAllShadows && g_claiming && g_curMap) {
+			if (!a_canReplicate) {
+				++g_curMap->unsupported;
+				return false;
+			}
+			return true;  // claimed, never stored, never rendered
+		}
 		// Regime-B MT gate: for each covered pass, run the engine-vs-worker draw-state compare (the
 		// worker path is the exact MT code). Uncovered passes render inline on the engine path. The verify
 		// does the engine render itself, so claim (return true) to skip the normal inline render.
@@ -1252,6 +1270,15 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	// RenderShadowmapDetour, while the map's view globals are live). No deferred context -- the draws run
 	// on the immediate context so the reduced draw count is the render-thread FPS win.
 	if (m == Mode::kInstance || m == Mode::kInstanceOwnVerify) {
+		// Cull-all measurement flag (see g_cullAllShadows): env-armed, file-toggled per frame so a
+		// within-boot interleaved A/B needs no relaunch.
+		static const bool s_cullAllArmed = [] {
+			char b[8]{};
+			return GetEnvironmentVariableA("CS_SHADOW_CULLALL_FLAG", b, sizeof(b)) && b[0] == '1';
+		}();
+		if (s_cullAllArmed)
+			g_cullAllShadows = GetFileAttributesA("F:\\claudetmp\\shadow_cullall.flag") != INVALID_FILE_ATTRIBUTES;
+
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		g_mapWorkList.clear();
 		g_mapWorkList.reserve(24);
