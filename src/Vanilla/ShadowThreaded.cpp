@@ -225,6 +225,8 @@ namespace
 		std::vector<CapturedPass> passes;
 		std::uint64_t             unsupported = 0;
 		std::uint64_t             skinnedInline = 0;  // covered-but-skinned; render on the engine path
+		std::uint64_t             directReadInst = 0;  // kInstanceOwnVerify: direct-read instanceable count (Func43, pre-walk)
+		bool                      directReadValid = false;
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -960,6 +962,19 @@ namespace
 		static void thunk(void* a1, std::int64_t a2)  // a1 = accumulator, a2 = flags
 		{
 			auto* orig = reinterpret_cast<Func43_t>(func.address());
+			// kInstanceOwnVerify: the cull has just filled this accumulator's pass chains and the walk has
+			// NOT run yet (Func43 precedes RenderGeometryGroup) -- the exact window to prove a self-contained
+			// direct-read finds the same instanceable passes the engine walk will hand to CaptureHook. Read,
+			// stash on the current map, then fall through to the normal walk (rendering is unchanged = mode 9).
+			if (ShadowThreaded::GetSingleton()->GetMode() == ShadowThreaded::Mode::kInstanceOwnVerify &&
+				g_claiming && g_curMap) {
+				std::uint64_t inst = 0, other = 0;
+				UtilityPassReplica::GetSingleton()->DirectReadInstanceableCount(a1, inst, other);
+				g_curMap->directReadInst = inst;
+				g_curMap->directReadValid = true;
+				orig(a1, a2);
+				return;
+			}
 			if (ShadowThreaded::GetSingleton()->GetMode() != ShadowThreaded::Mode::kParallelCull ||
 				!g_pcActive.load(std::memory_order_relaxed) || !g_curMapDeferred) {
 				orig(a1, a2);  // main render, inline (shared-accum) map, or Stage-1 fallback: submit now
@@ -1045,7 +1060,7 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	// Per-map replay: execute this map's claimed passes NOW, while its view globals are current.
 	if (GetMode() == Mode::kWorkerSerial && g_curMap)
 		ReplayOneMap(*g_curMap);
-	else if (GetMode() == Mode::kInstance && g_curMap)
+	else if ((GetMode() == Mode::kInstance || GetMode() == Mode::kInstanceOwnVerify) && g_curMap)
 		RenderMapInstanced(*g_curMap);
 
 	if (s_walkSplit) {
@@ -1236,7 +1251,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	// kInstance: claim the instanceable subset per map and issue the instanced draws inline (per-map, in
 	// RenderShadowmapDetour, while the map's view globals are live). No deferred context -- the draws run
 	// on the immediate context so the reduced draw count is the render-thread FPS win.
-	if (m == Mode::kInstance) {
+	if (m == Mode::kInstance || m == Mode::kInstanceOwnVerify) {
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		g_mapWorkList.clear();
 		g_mapWorkList.reserve(24);
@@ -1248,6 +1263,24 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		replica->SetShadowCaptureHook(nullptr);
 		g_claiming = false;
 		g_instanceRestrict = false;
+		// kInstanceOwnVerify: accumulate the per-map direct-read (Func43, pre-walk) vs CaptureHook (walk)
+		// instanceable counts. A persistent 0 divergence proves the self-contained enumeration finds the
+		// same passes, so the walk can be owned + skipped (the parallelization prerequisite).
+		if (m == Mode::kInstanceOwnVerify) {
+			static std::uint64_t s_maps = 0, s_diverged = 0, s_drSum = 0, s_chSum = 0;
+			for (auto& mw : g_mapWorkList) {
+				if (!mw.directReadValid)
+					continue;
+				++s_maps;
+				s_drSum += mw.directReadInst;
+				s_chSum += mw.passes.size();
+				if (mw.directReadInst != mw.passes.size())
+					++s_diverged;
+			}
+			if ((frames & 0x3F) == 0)
+				logger::info("[ShadowThreaded][ownverify] maps={} diverged={} directReadInst={} captureHookInst={} (delta={})",
+					s_maps, s_diverged, s_drSum, s_chSum, static_cast<std::int64_t>(s_drSum) - static_cast<std::int64_t>(s_chSum));
+		}
 		if ((++frames & 0x3F) == 1) {
 			std::uint64_t tot = 0, uns = 0;
 			for (auto& mw : g_mapWorkList) {
@@ -1906,6 +1939,17 @@ void ShadowThreaded::InstallHooks()
 		logger::info("[ShadowThreaded] kParallelCull: Cull+Func43 detours installed, worker + pool({}) started", poolN);
 	}
 
+	// kInstanceOwnVerify: hook Func43 only (no cull hook, no worker pool) so the pre-walk direct-read
+	// runs each map; rendering stays the kInstance path.
+	if (GetMode() == Mode::kInstanceOwnVerify) {
+		Func43Hook::func = REL::Offset(0x12CAC90).address();
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		DetourAttach(reinterpret_cast<PVOID*>(&Func43Hook::func), reinterpret_cast<PVOID>(Func43Hook::thunk));
+		DetourTransactionCommit();
+		logger::info("[ShadowThreaded] kInstanceOwnVerify: Func43 direct-read detour installed");
+	}
+
 	hooksInstalled = true;
 	logger::info("[ShadowThreaded] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}, BeginPass @ 0x{:X}",
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address(), BeginPassHook::func.address());
@@ -1923,7 +1967,7 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if (v >= 0 && v <= 9)
+		if (v >= 0 && v <= 10)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
@@ -1972,7 +2016,8 @@ void ShadowThreaded::Setup()
 	// dispatch through OnRenderPassImmediately). Both require UtilityPassReplica's hooks, which are
 	// otherwise gated behind CS_UTIL_RE_MODE -- bring them up here so the modes are self-contained.
 	if (GetMode() == Mode::kOwnBeginPass || GetMode() == Mode::kOwnBeginPassVerify ||
-		GetMode() == Mode::kDrawStateVerify || GetMode() == Mode::kInstance)
+		GetMode() == Mode::kDrawStateVerify || GetMode() == Mode::kInstance ||
+		GetMode() == Mode::kInstanceOwnVerify)
 		UtilityPassReplica::GetSingleton()->EnsureInitialized();
 	InstallHooks();
 	logger::info("[ShadowThreaded] active, mode={}", static_cast<std::uint32_t>(GetMode()));

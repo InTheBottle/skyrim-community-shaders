@@ -3561,6 +3561,56 @@ static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
 	return v6;
 }
 
+void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const
+{
+	a_instanceable = 0;
+	a_other = 0;
+	if (!a_accum)
+		return;
+	// BSShaderAccumulator + 0x130 -> BSBatchRenderer (CommonLib batchRenderer; RE _pad_8[296]).
+	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
+	if (!br)
+		return;
+	// renderPass inline PassGroup[] base (stride 0x30) -- same as BeginPassReplica's passArrayBase.
+	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(br + 8);
+	if (!passArrayBase)
+		return;
+	// renderPassMap scatter table: entries @ br+0x48, capacity (power-of-two) @ br+0x2C, end-sentinel @
+	// br+0x38 (exact offsets proven by BeginPassGroupId). Each 16B entry = {key(tech)@0, groupIdx@4,
+	// next@8}; a slot with next==0 is empty. Iterating every bucket visits each stored entry once
+	// (collision chains resolve within the same array), enumerating all active (technique, group) pairs.
+	auto* const tbl = *reinterpret_cast<std::uint8_t**>(br + 0x48);
+	if (!tbl)
+		return;
+	const std::uint32_t  cap = *reinterpret_cast<std::uint32_t*>(br + 0x2C);
+	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
+	if (cap == 0 || cap > (1u << 20))  // sanity bound: guard against a torn/garbage capacity read
+		return;
+	for (std::uint32_t b = 0; b < cap; ++b) {
+		auto* const e = tbl + 16ull * b;
+		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
+			continue;
+		if (!*reinterpret_cast<std::uintptr_t*>(e + 8))  // empty slot
+			continue;
+		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
+		// Modes 1/3/4 carry the alpha-test flag (v11) in BeginPass; modes 0/2 do not. The instanceable
+		// subset is non-alpha-test whole-TRISHAPE non-skinned -- so only modes 0 and 2 can contribute.
+		for (int slot = 0; slot < 5; ++slot) {
+			const bool modeAlpha = (slot == 1 || slot == 3 || slot == 4);
+			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
+				pass; pass = pass->passGroupNext) {
+				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
+				const bool  wholeTri = geom && geom[0x150] == 3;
+				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
+				if (!modeAlpha && wholeTri && !skinned)
+					++a_instanceable;
+				else
+					++a_other;
+			}
+		}
+	}
+}
+
 std::uint8_t UtilityPassReplica::BeginPassReplica(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a5)
 {
 	auto* const   a1 = reinterpret_cast<std::uint8_t*>(a_batchRenderer);

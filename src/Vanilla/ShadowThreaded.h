@@ -85,6 +85,14 @@ public:
 		                    //           vertex stream (UtilityPassReplica::RenderShadowInstanced). ~9x fewer
 		                    //           shadow draws in dense exterior (88.9% instanceable). Inline on the
 		                    //           immediate context (render thread) so the draw-count cut is the FPS win.
+		kInstanceOwnVerify = 10,  // Walk-ownership foundation (docs/development/shadow-walk-parallelization.md):
+		                    //           renders identically to kInstance, but ALSO direct-reads the accumulator's
+		                    //           BSBatchRenderer pass chains (accum+0x130 -> renderPass inline PassGroup[]
+		                    //           stride 0x30, walked via passGroupNext) in the Func43 hook -- BEFORE the
+		                    //           engine walk -- and compares its instanceable-pass count to what
+		                    //           CaptureHook collects during the walk. diverged=0 proves a self-contained
+		                    //           direct-read can find the same passes without the engine driving the walk,
+		                    //           the prerequisite for skipping the walk + moving traverse+build to workers.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

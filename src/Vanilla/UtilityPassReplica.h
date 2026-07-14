@@ -246,6 +246,15 @@ public:
 	/// Cumulative BeginPassCompare tallies: total pure-covered groups compared and how many diverged.
 	void GetBeginPassCompareStats(std::uint64_t& a_groups, std::uint64_t& a_diverged) const;
 
+	/// Self-contained direct-read of an accumulator's BSBatchRenderer pass chains, counting the
+	/// instanceable subset (whole-TRISHAPE, non-skinned, non-alpha-test = the same set CaptureHook
+	/// claims in kInstance) and the remainder. Enumerates every group via the renderPassMap scatter
+	/// table (br+0x48 entries, br+0x2C capacity), walks each PassGroup.passes[mode] chain
+	/// (passArrayBase = *(br+8), head = *(base + 8*(mode+6*groupIdx)), next = passGroupNext). No engine
+	/// walk drives it -- proves the direct-read finds the same passes, the prerequisite for owning +
+	/// parallelizing the walk. a_accum = BSShaderAccumulator*. See shadow-walk-parallelization.md.
+	void DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const;
+
 	/// Regime-B MULTITHREAD gate for one covered pass: render it via the engine and via the WORKER path
 	/// (private block + full setup/flush reimpl, the exact MT code) from the same state, and diff the
 	/// per-draw effective-state fingerprints (vanilla::DrawStateValidator::CompareFingerprints). The
