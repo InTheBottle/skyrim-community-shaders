@@ -19,6 +19,7 @@
 #include "UtilityPassReplica.h"
 #include "Utils/D3D.h"
 #include "DrawState.h"
+#include "Features/OcclusionCulling/MOC.h"
 #include "ShaderReflect.h"
 
 #include <RE/B/BSRenderPass.h>
@@ -1091,6 +1092,24 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 				s_ws.walk / 768.0, s_ws.render / 768.0);
 			s_ws.walk = s_ws.render = 0.0;
 		}
+	}
+
+	// Light-space Hi-Z capture (CS_SHADOW_HIZ): this map just rendered -- its atlas slice is
+	// complete and its ABSOLUTE view-proj is still live in the engine camera block (the same
+	// window RenderMapInstanced's MapProj diagnostic reads). Render thread. Fields per the
+	// planning notes: camera = desc+64, slice = desc+88; atlas SRV = target-4 pool slot (the
+	// HashShadowAtlas source). MOC ignores non-perspective maps + no-ops unless armed.
+	if (UtilityPassReplica::GetSingleton() && MOC::ShadowHiZActive()) {
+		// desc = a2 (IDA 0x141305610: *(a2+84)=target(4), *(a2+88)=slice, NiCamera::Render(*(a2+64),...)).
+		auto* const desc = reinterpret_cast<const std::uint8_t*>(a2);
+		const void* cam = *reinterpret_cast<void* const*>(desc + 64);
+		const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(desc + 84);
+		const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(desc + 88);
+		const float* vp = reinterpret_cast<const float*>(REL::Offset(0x30282E0).address());
+		auto* rtPool = reinterpret_cast<std::uint8_t*>(engine::g_renderer.address());
+		auto* atlasSRV = *reinterpret_cast<ID3D11ShaderResourceView**>(rtPool + 152 * 4 + 0x2040);
+		if (cam && target == 4 && slice < 64 && atlasSRV)
+			MOC::HiZShadowCapture(cam, slice, vp, atlasSRV);
 	}
 
 	g_curMap = nullptr;

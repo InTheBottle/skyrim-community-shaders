@@ -89,6 +89,16 @@ namespace
 			return;
 		}
 
+		// LOCAL shadow-map cull walks (each map's NiCamera is a registered light-space Hi-Z
+		// channel): cull casters provably behind strictly-nearer geometry in that map's own
+		// last-complete depth -- depth-test-equivalent, so the map is unchanged; the caster's
+		// pass is never generated (saves walk + build + draw). No-op unless CS_SHADOW_HIZ=1.
+		if (!bracketed && a_object && MOC::ShadowHiZActive() &&
+			!MOC::TestShadowCasterHiZ(a_self->camera, a_object)) {
+			MarkCulledLikeEngine(a_self, a_object);
+			return;
+		}
+
 
 		if (g_validateMode && bracketed && a_object) {
 			auto* bsp = static_cast<RE::BSCullingProcess*>(a_self);

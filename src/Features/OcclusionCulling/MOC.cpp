@@ -220,6 +220,97 @@ namespace MOC
 		int                                       g_hizGridW = 0, g_hizGridH = 0, g_hizFullW = 0, g_hizFullH = 0;
 		bool                                      g_hizInitTried = false, g_hizReady = false;
 
+		// =========================================================================================
+		// LIGHT-SPACE Hi-Z shadow-caster culling (CS_SHADOW_HIZ, default off until measured): per
+		// shadow map, reduce its just-rendered atlas slice into a coarse "nearest depth per 16x16
+		// block, max-reduced" grid, read it back through the same 3-deep ring, and next frame cull
+		// casters during that map's cull walk. A shadow map stores the NEAREST depth per texel, so
+		// a caster whose nearest point is DEEPER than the farthest stored depth over its whole rect
+		// (max over cells) would fail the depth test on every fragment -- rasterizing it cannot
+		// change the map. Culling it is depth-test-equivalent, i.e. correct by construction; the
+		// caster's own last-frame footprint keeps it alive (only strictly-nearer OTHER geometry
+		// culls it), and the 1+ring staleness is the same class as the main-view Hi-Z. Perspective
+		// maps only (parabolic omni VPs warp in the VS -- bound projection through the matrix is
+		// invalid there; classifier below). Channels keyed by the map's NiCamera (stable per light).
+		bool                       g_shadowHizMode = false;
+		float                      g_shadowHizBias = 1e-4f;
+		std::atomic<std::uint64_t> g_shTested{ 0 };
+		std::atomic<std::uint64_t> g_shCulled{ 0 };
+		std::atomic<std::uint64_t> g_shCapNs{ 0 };  // render-thread capture cost (diag)
+
+		constexpr int kShChannels = 8;
+#pragma warning(push)
+#pragma warning(disable: 4324)
+		struct ShSnap
+		{
+			std::vector<float> grid;
+			int                gridW = 0, gridH = 0, fullW = 0, fullH = 0;
+			XMMATRIX           vp{};
+		};
+		struct ShSlot
+		{
+			winrt::com_ptr<ID3D11Texture2D> staging;
+			XMMATRIX                        vp{};
+			bool                            pending = false;
+		};
+		struct ShChannel
+		{
+			std::atomic<const void*>                  key{ nullptr };  // map camera ptr; publish AFTER front
+			winrt::com_ptr<ID3D11Texture2D>           gridTex;
+			winrt::com_ptr<ID3D11UnorderedAccessView> gridUAV;
+			winrt::com_ptr<ID3D11ShaderResourceView>  sliceSRV;  // cached per slice index
+			std::uint32_t                             sliceOf = 0xFFFFFFFFu;
+			ShSlot                                    ring[3];
+			int                                       write = 0;
+			ShSnap                                    snaps[2];
+			std::atomic<const ShSnap*>                front{ nullptr };
+			int                                       wsnap = 0;
+			int                                       gridW = 0, gridH = 0, fullW = 0, fullH = 0;
+		};
+#pragma warning(pop)
+		ShChannel                           g_shCh[kShChannels];
+		winrt::com_ptr<ID3D11ComputeShader> g_shCS;  // Texture2DArray variant of the reduce
+
+		// Per-frame capture queue: the per-map detour records {cam, slice, vp} (pure CPU -- no GPU
+		// work between shadow maps, which injected flush/hazard bubbles into the shadow sequence);
+		// HiZPrepass drains it after the frame's shadow work when the atlas is long complete.
+		struct ShPending
+		{
+			const void*                a_cam = nullptr;
+			std::uint32_t              slice = 0;
+			float                      vp[16] = {};
+			ID3D11ShaderResourceView*  atlasSRV = nullptr;  // raw; the pool SRV outlives the frame
+		};
+		ShPending g_shPending[16];
+		int       g_shPendingN = 0;  // render thread only
+
+		const ShChannel* FindShadowChannel(const void* a_key)
+		{
+			// Cull threads call this per OBJECT; within one map's walk the camera repeats, so a
+			// per-thread single-entry cache turns the 8-channel scan into one compare. A stale
+			// cache entry can only point at a channel whose key changed -> re-validated below.
+			thread_local const void*      t_lastKey = nullptr;
+			thread_local const ShChannel* t_lastCh = nullptr;  // nullptr = cached MISS for t_lastKey
+			if (!a_key)
+				return nullptr;
+			if (a_key == t_lastKey) {
+				// Cached MISS matters most: unregistered cull cameras (parabolic maps, reflections,
+				// cubemaps) fire Process1 thousands of times per frame -- without a negative cache
+				// each call pays the full channel scan. A camera registering later is picked up on
+				// the next walk (the key changes between walks, resetting the cache).
+				if (!t_lastCh || t_lastCh->key.load(std::memory_order_acquire) == a_key)
+					return t_lastCh;
+			}
+			t_lastKey = a_key;
+			t_lastCh = nullptr;
+			for (auto& ch : g_shCh)
+				if (ch.key.load(std::memory_order_acquire) == a_key) {
+					t_lastCh = &ch;
+					break;
+				}
+			return t_lastCh;
+		}
+
 		// The Hi-Z replacement for MaskedOcclusionCulling::TestRect. Inputs are the SAME NDC rect
 		// the MOC seams already compute, plus the object's NEAREST NDC depth (min z/w over the
 		// bound). Occluded iff that nearest point is deeper than the FARTHEST depth over every
@@ -1579,6 +1670,12 @@ namespace MOC
 			if (char hbBuf[32] = {}; GetEnvironmentVariableA("CS_MOC_HIZ_BIAS", hbBuf, sizeof(hbBuf)) && hbBuf[0])
 				g_hizBias = static_cast<float>(atof(hbBuf));
 			logger::info("[MOC][HiZ] GPU Hi-Z occlusion {} (bias={})", g_hizMode ? "enabled (default)" : "DISABLED via CS_MOC_HIZ=0", g_hizBias);
+			char shBuf[8] = {};
+			g_shadowHizMode = GetEnvironmentVariableA("CS_SHADOW_HIZ", shBuf, sizeof(shBuf)) && shBuf[0] == '1';
+			if (char sbBuf[32] = {}; GetEnvironmentVariableA("CS_SHADOW_HIZ_BIAS", sbBuf, sizeof(sbBuf)) && sbBuf[0])
+				g_shadowHizBias = static_cast<float>(atof(sbBuf));
+			if (g_shadowHizMode)
+				logger::info("[MOC][ShadowHiZ] light-space shadow-caster culling armed (bias={})", g_shadowHizBias);
 		}
 		// Create the ping-pong spare whenever one-frame-behind may be used (boot env or the runtime
 		// flag-test A/B). Cheap: one extra depth buffer.
@@ -1857,6 +1954,18 @@ namespace MOC
 			g_mocSpare = nullptr;
 		}
 		g_mocFront.store(nullptr, std::memory_order_release);
+		for (auto& ch : g_shCh) {
+			ch.key.store(nullptr, std::memory_order_release);
+			ch.front.store(nullptr, std::memory_order_release);
+			ch.gridTex = nullptr;
+			ch.gridUAV = nullptr;
+			ch.sliceSRV = nullptr;
+			for (auto& s : ch.ring) {
+				s.staging = nullptr;
+				s.pending = false;
+			}
+		}
+		g_shCS = nullptr;
 		g_hizFront.store(nullptr, std::memory_order_release);
 		g_hizCS = nullptr;
 		g_hizGridUAV = nullptr;
@@ -2007,8 +2116,9 @@ namespace MOC
 			g_posAdjustV = snap->posAdjustV;
 			g_frustum.CreateFromViewProjMatrix(g_viewProj);
 			if ((frame % 120u) == 0u)
-				logger::info("[MOC][HiZ] frame={} grid={}x{} tested={} culled={}",
-					frame, snap->gridW, snap->gridH, g_tested.load(), g_culled.load());
+				logger::info("[MOC][HiZ] frame={} grid={}x{} tested={} culled={} | shadowHiZ tested={} culled={} capMs/120f={:.3f}",
+					frame, snap->gridW, snap->gridH, g_tested.load(), g_culled.load(),
+					g_shTested.load(), g_shCulled.load(), g_shCapNs.exchange(0, std::memory_order_relaxed) / 1e6);
 			g_buildDone.store(frame, std::memory_order_release);
 			return true;
 		}
@@ -2110,6 +2220,8 @@ namespace MOC
 			g_prevFrameOcclusion = on && g_mocSpare &&
 				GetFileAttributesA("F:\\claudetmp\\moc_pf.flag") != INVALID_FILE_ATTRIBUTES;
 			g_hizMode = on && GetFileAttributesA("F:\\claudetmp\\moc_hiz.flag") != INVALID_FILE_ATTRIBUTES;
+			// Light-space shadow-caster culling, independently toggleable for within-boot A/B.
+			g_shadowHizMode = GetFileAttributesA("F:\\claudetmp\\shadow_hiz.flag") != INVALID_FILE_ATTRIBUTES;
 			if (!on)
 				g_mocFront.store(nullptr, std::memory_order_release);
 		}
@@ -2223,11 +2335,19 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		}
 	}
 
+	namespace
+	{
+		void DrainShadowCaptures();  // defined below (needs the atlas reduce shader helpers)
+	}
+
 	void HiZPrepass()
 	{
 		// RENDER THREAD ONLY (immediate context) -- called from Deferred::PrepassPasses, where
 		// this frame's depth is fully populated and the camera matrices are final. Never touch
 		// the context from cull/job threads (a worker-thread CopyResource killed the process).
+		// The shadow-map captures queued during RenderShadowmaps drain here too: by prepass time
+		// the GPU has long finished the atlas, so the reduces cost no shadow-sequence bubbles.
+		DrainShadowCaptures();
 		if (!g_hizMode)
 			return;
 		auto* ctx = globals::d3d::context;
@@ -2291,6 +2411,275 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 				g_hizWrite = (g_hizWrite + 1) % kHizRing;
 			}
 		}
+	}
+
+	namespace
+	{
+		// Texture2DArray variant of the 16x max-reduce for atlas slices. The per-slice SRV is
+		// created with FirstArraySlice=<slice>, ArraySize=1, so the shader always reads array 0.
+		constexpr const char* kShReduceSrc = R"(
+Texture2DArray<float> SrcDepth : register(t0);
+RWTexture2D<float> OutGrid : register(u0);
+groupshared float gs[8][8];
+[numthreads(8, 8, 1)]
+void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
+{
+    uint3 p = uint3(gid * 16 + tid * 2, 0);
+    float d0 = SrcDepth[p];
+    float d1 = SrcDepth[p + uint3(1, 0, 0)];
+    float d2 = SrcDepth[p + uint3(0, 1, 0)];
+    float d3 = SrcDepth[p + uint3(1, 1, 0)];
+    gs[tid.y][tid.x] = max(max(d0, d1), max(d2, d3));
+    GroupMemoryBarrierWithGroupSync();
+    if (((tid.x | tid.y) & 1) == 0)
+        gs[tid.y][tid.x] = max(max(gs[tid.y][tid.x], gs[tid.y][tid.x + 1]),
+                               max(gs[tid.y + 1][tid.x], gs[tid.y + 1][tid.x + 1]));
+    GroupMemoryBarrierWithGroupSync();
+    if (((tid.x | tid.y) & 3) == 0)
+        gs[tid.y][tid.x] = max(max(gs[tid.y][tid.x], gs[tid.y][tid.x + 2]),
+                               max(gs[tid.y + 2][tid.x], gs[tid.y + 2][tid.x + 2]));
+    GroupMemoryBarrierWithGroupSync();
+    if (tid.x == 0 && tid.y == 0)
+        OutGrid[gid] = max(max(gs[0][0], gs[0][4]), max(gs[4][0], gs[4][4]));
+}
+)";
+	}
+
+	void HiZShadowCapture(const void* a_camKey, std::uint32_t a_slice, const float* a_vp16, ID3D11ShaderResourceView* a_atlasSRV)
+	{
+		// QUEUE ONLY (render thread, called between shadow maps): doing GPU work here forced the
+		// GPU to flush each map's raster before the reduce could read it AND stalled the next
+		// map's depth writes behind the SRV read -- measured -5% net. The reduces drain in
+		// HiZPrepass instead, when the atlas is long complete. Perspective maps only.
+		if (!g_shadowHizMode || !a_camKey || !a_vp16 || !a_atlasSRV)
+			return;
+		if (!(a_vp16[15] == 0.0f && std::fabs(a_vp16[14]) > 1.0f))
+			return;  // not a perspective map (parabolic omni / tiny ortho): skip
+		if (g_shPendingN >= static_cast<int>(std::size(g_shPending)))
+			return;
+		auto& p = g_shPending[g_shPendingN++];
+		p.a_cam = a_camKey;
+		p.slice = a_slice;
+		std::memcpy(p.vp, a_vp16, sizeof(p.vp));
+		p.atlasSRV = a_atlasSRV;
+	}
+
+	namespace
+	{
+	void ShadowCaptureImpl(const ShPending& a_p)
+	{
+		const void* const   a_camKey = a_p.a_cam;
+		const std::uint32_t a_slice = a_p.slice;
+		const float* const  a_vp16 = a_p.vp;
+		ID3D11ShaderResourceView* const a_atlasSRV = a_p.atlasSRV;
+		auto* ctx = globals::d3d::context;
+		auto* device = globals::d3d::device;
+		if (!ctx || !device)
+			return;
+		const auto _capT0 = std::chrono::steady_clock::now();
+		const auto _capGuard = [&] {  // accumulate on every exit path below via a scope guard
+			g_shCapNs.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - _capT0).count(), std::memory_order_relaxed);
+		};
+		struct CapGuard { const decltype(_capGuard)& f; ~CapGuard() { f(); } } _cg{ _capGuard };
+
+		// find or allocate the channel for this map camera (render thread only -> no alloc race)
+		ShChannel* ch = nullptr;
+		for (auto& c : g_shCh)
+			if (c.key.load(std::memory_order_relaxed) == a_camKey) { ch = &c; break; }
+		if (!ch) {
+			for (auto& c : g_shCh)
+				if (c.key.load(std::memory_order_relaxed) == nullptr) { ch = &c; break; }
+			if (!ch)
+				return;  // more concurrent shadow maps than channels: skip extras (no cull for them)
+			// Claim the key AT ALLOCATION (readers just get "no front yet" = keep until the first
+			// publish) -- keying at first publish let each of the map's first frames allocate a
+			// fresh channel, leaking channels for the same camera.
+			ch->key.store(a_camKey, std::memory_order_release);
+		}
+
+		// lazy init: atlas slice dims + grid resources + the array-source reduce shader
+		if (!ch->gridTex) {
+			winrt::com_ptr<ID3D11Resource> res;
+			a_atlasSRV->GetResource(res.put());
+			auto tex = res.try_as<ID3D11Texture2D>();
+			if (!tex)
+				return;
+			D3D11_TEXTURE2D_DESC dd{};
+			tex->GetDesc(&dd);
+			ch->fullW = static_cast<int>(dd.Width);
+			ch->fullH = static_cast<int>(dd.Height);
+			ch->gridW = (ch->fullW + 15) / 16;
+			ch->gridH = (ch->fullH + 15) / 16;
+			D3D11_TEXTURE2D_DESC gd{};
+			gd.Width = static_cast<UINT>(ch->gridW);
+			gd.Height = static_cast<UINT>(ch->gridH);
+			gd.MipLevels = 1;
+			gd.ArraySize = 1;
+			gd.Format = DXGI_FORMAT_R32_FLOAT;
+			gd.SampleDesc = { 1, 0 };
+			gd.Usage = D3D11_USAGE_DEFAULT;
+			gd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+			if (FAILED(device->CreateTexture2D(&gd, nullptr, ch->gridTex.put())))
+				return;
+			Util::SetResourceName(ch->gridTex.get(), "OcclusionCulling::ShadowHiZGrid");
+			if (FAILED(device->CreateUnorderedAccessView(ch->gridTex.get(), nullptr, ch->gridUAV.put())))
+				return;
+			gd.Usage = D3D11_USAGE_STAGING;
+			gd.BindFlags = 0;
+			gd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			for (auto& s : ch->ring)
+				if (FAILED(device->CreateTexture2D(&gd, nullptr, s.staging.put())))
+					return;
+			logger::info("[MOC][ShadowHiZ] channel init: cam={} slice={} atlas {}x{} -> grid {}x{}",
+				a_camKey, a_slice, ch->fullW, ch->fullH, ch->gridW, ch->gridH);
+		}
+		if (!g_shCS) {
+			winrt::com_ptr<ID3DBlob> blob, errs;
+			if (FAILED(D3DCompile(kShReduceSrc, strlen(kShReduceSrc), "ShHiZReduce", nullptr, nullptr,
+					"main", "cs_5_0", 0, 0, blob.put(), errs.put()))) {
+				logger::error("[MOC][ShadowHiZ] reduce compile failed: {}",
+					errs ? static_cast<const char*>(errs->GetBufferPointer()) : "(no log)");
+				g_shadowHizMode = false;
+				return;
+			}
+			if (FAILED(device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, g_shCS.put()))) {
+				g_shadowHizMode = false;
+				return;
+			}
+		}
+
+		// per-slice SRV (cached; slices are stable per light in practice, but realloc on change)
+		if (!ch->sliceSRV || ch->sliceOf != a_slice) {
+			D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+			a_atlasSRV->GetDesc(&sd);  // copy the atlas SRV's format
+			winrt::com_ptr<ID3D11Resource> res;
+			a_atlasSRV->GetResource(res.put());
+			sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+			sd.Texture2DArray.MostDetailedMip = 0;
+			sd.Texture2DArray.MipLevels = 1;
+			sd.Texture2DArray.FirstArraySlice = a_slice;
+			sd.Texture2DArray.ArraySize = 1;
+			ch->sliceSRV = nullptr;
+			if (FAILED(device->CreateShaderResourceView(res.get(), &sd, ch->sliceSRV.put())))
+				return;
+			ch->sliceOf = a_slice;
+		}
+
+		// 1. harvest the oldest slot -> publish this channel's snapshot
+		auto& slot = ch->ring[ch->write];
+		if (slot.pending) {
+			D3D11_MAPPED_SUBRESOURCE m{};
+			if (SUCCEEDED(ctx->Map(slot.staging.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m))) {
+				ShSnap& snap = ch->snaps[ch->wsnap];
+				snap.grid.resize(static_cast<std::size_t>(ch->gridW) * ch->gridH);
+				for (int y = 0; y < ch->gridH; ++y)
+					std::memcpy(&snap.grid[static_cast<std::size_t>(y) * ch->gridW],
+						static_cast<const std::uint8_t*>(m.pData) + static_cast<std::size_t>(y) * m.RowPitch,
+						static_cast<std::size_t>(ch->gridW) * sizeof(float));
+				ctx->Unmap(slot.staging.get(), 0);
+				snap.gridW = ch->gridW;
+				snap.gridH = ch->gridH;
+				snap.fullW = ch->fullW;
+				snap.fullH = ch->fullH;
+				snap.vp = slot.vp;
+				ch->front.store(&snap, std::memory_order_release);
+				ch->key.store(a_camKey, std::memory_order_release);  // key published after front
+				ch->wsnap ^= 1;
+				slot.pending = false;
+			}
+		}
+
+		// 2. capture this frame's slice
+		if (!slot.pending) {
+			ID3D11ShaderResourceView* srv = ch->sliceSRV.get();
+			ctx->CSSetShaderResources(0, 1, &srv);
+			ID3D11UnorderedAccessView* uav = ch->gridUAV.get();
+			ctx->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+			ctx->CSSetShader(g_shCS.get(), nullptr, 0);
+			ctx->Dispatch(static_cast<UINT>(ch->gridW), static_cast<UINT>(ch->gridH), 1);
+			ID3D11ShaderResourceView* nullSRV = nullptr;
+			ID3D11UnorderedAccessView* nullUAV = nullptr;
+			ctx->CSSetShaderResources(0, 1, &nullSRV);
+			ctx->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+			ctx->CSSetShader(nullptr, nullptr, 0);
+			ctx->CopyResource(slot.staging.get(), ch->gridTex.get());
+			std::memcpy(&slot.vp, a_vp16, sizeof(XMMATRIX));
+			slot.pending = true;
+			ch->write = (ch->write + 1) % static_cast<int>(std::size(ch->ring));
+		}
+	}
+
+	void DrainShadowCaptures()
+	{
+		for (int i = 0; i < g_shPendingN; ++i)
+			ShadowCaptureImpl(g_shPending[i]);
+		g_shPendingN = 0;
+	}
+	}  // namespace
+
+	bool TestShadowCasterHiZ(const void* a_mapCamera, RE::NiAVObject* a_object)
+	{
+		// Cull-thread path: keep (true) unless the caster's whole bound is provably behind
+		// strictly-nearer geometry in this map's last-complete depth. ABSOLUTE world coords --
+		// the engine's per-light CameraViewProj is absolute (SG_BuildMatrix contract).
+		if (!g_shadowHizMode || !a_object)
+			return true;
+		const ShChannel* ch = FindShadowChannel(a_mapCamera);
+		if (!ch)
+			return true;
+		const ShSnap* s = ch->front.load(std::memory_order_acquire);
+		if (!s || s->grid.empty())
+			return true;
+		const auto& b = a_object->worldBound;
+		if (b.radius <= 5.0f)
+			return true;  // tiny casters: not worth the test
+		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
+			return true;  // never cull actor shadows (skinned bounds lag + most visible artifact)
+
+		// Project the 8 corners of the bound's AABB (center +- r, conservative superset of the
+		// sphere) through the map VP; reject if any corner is at/behind the near plane.
+		const float cx = b.center.x, cy = b.center.y, cz = b.center.z, r = b.radius;
+		float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
+		for (int i = 0; i < 8; ++i) {
+			const XMVECTOR corner = _mm_setr_ps(
+				cx + ((i & 1) ? r : -r), cy + ((i & 2) ? r : -r), cz + ((i & 4) ? r : -r), 1.0f);
+			const XMVECTOR clip = XMVector4Transform(corner, s->vp);
+			const float w = clip.m128_f32[3];
+			if (w < 1e-6f)
+				return true;  // straddles the light near plane: keep
+			const float x = clip.m128_f32[0] / w, y = clip.m128_f32[1] / w, z = clip.m128_f32[2] / w;
+			minX = std::min(minX, x); maxX = std::max(maxX, x);
+			minY = std::min(minY, y); maxY = std::max(maxY, y);
+			minZ = std::min(minZ, z);
+		}
+		if (maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f)
+			return true;  // outside the map frustum: the engine's own cull owns this verdict
+
+		const float u0 = (minX + 1.0f) * 0.5f, u1 = (maxX + 1.0f) * 0.5f;
+		const float v0 = (1.0f - maxY) * 0.5f, v1 = (1.0f - minY) * 0.5f;
+		const int cx0 = std::clamp(static_cast<int>(u0 * s->fullW) / 16, 0, s->gridW - 1);
+		const int cx1 = std::clamp(static_cast<int>(u1 * s->fullW) / 16, 0, s->gridW - 1);
+		const int cy0 = std::clamp(static_cast<int>(v0 * s->fullH) / 16, 0, s->gridH - 1);
+		const int cy1 = std::clamp(static_cast<int>(v1 * s->fullH) / 16, 0, s->gridH - 1);
+		if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > 256)
+			return true;
+		float farthest = 0.0f;
+		for (int y = cy0; y <= cy1; ++y) {
+			const float* row = &s->grid[static_cast<std::size_t>(y) * s->gridW];
+			for (int x = cx0; x <= cx1; ++x)
+				farthest = std::max(farthest, row[x]);
+		}
+		g_shTested.fetch_add(1, std::memory_order_relaxed);
+		if (minZ > farthest + g_shadowHizBias) {
+			g_shCulled.fetch_add(1, std::memory_order_relaxed);
+			return false;  // every fragment would fail the depth test: cull
+		}
+		return true;
+	}
+
+	bool ShadowHiZActive()
+	{
+		return g_shadowHizMode;
 	}
 
 	void DumpDebugImages()

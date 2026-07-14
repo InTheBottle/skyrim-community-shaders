@@ -19,6 +19,7 @@
 #include <smmintrin.h>
 
 class MaskedOcclusionCulling;
+struct ID3D11ShaderResourceView;
 
 namespace RE
 {
@@ -91,6 +92,26 @@ namespace MOC
 	 *        after the frame's depth is populated. No-op unless Hi-Z mode is enabled.
 	 */
 	void HiZPrepass();
+
+	/**
+	 * @brief Light-space Hi-Z: reduce + ring-readback one just-rendered shadow-map atlas slice.
+	 *        RENDER THREAD ONLY, call right after the map renders (its slice complete, VP live).
+	 *        Perspective maps only (parabolic VPs are rejected by a classifier). No-op unless
+	 *        CS_SHADOW_HIZ=1. @param a_camKey the map's NiCamera (stable per light, channel key);
+	 *        @param a_vp16 the map's ABSOLUTE view-proj (16 floats); @param a_atlasSRV the whole
+	 *        shadow-atlas SRV (per-slice SRV is derived internally).
+	 */
+	void HiZShadowCapture(const void* a_camKey, std::uint32_t a_slice, const float* a_vp16, ID3D11ShaderResourceView* a_atlasSRV);
+
+	/**
+	 * @brief Cull-thread test: false = the caster's whole bound is provably behind strictly-nearer
+	 *        geometry in @p a_mapCamera's last-complete shadow depth (depth-test-equivalent cull).
+	 *        true = keep (also for actors, tiny bounds, near-plane straddles, unknown cameras).
+	 */
+	bool TestShadowCasterHiZ(const void* a_mapCamera, RE::NiAVObject* a_object);
+
+	/** @brief True when CS_SHADOW_HIZ=1 armed the light-space caster culling. */
+	bool ShadowHiZActive();
 
 	/**
 	 * @brief Occlusion query for a scene object.
