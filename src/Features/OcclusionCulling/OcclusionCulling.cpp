@@ -312,12 +312,13 @@ void OcclusionCulling::PostPostLoad()
 	if (s_installed)
 		return;
 
-	// CS_OCCLUSION=1 just flips the master toggle ON at boot; the menu checkbox
-	// (settings.EnableOcclusionTesting) is the real gate and works without the env var.
+	// CS_OCCLUSION=1 flips the master toggle ON at boot, =0 forces it OFF (for A/B perf runs);
+	// the menu checkbox (settings.EnableOcclusionTesting) is the real gate otherwise.
 	char buf[16] = {};
-	if (GetEnvironmentVariableA("CS_OCCLUSION", buf, sizeof(buf)) && buf[0] == '1') {
-		envEnabled = true;
-		settings.EnableOcclusionTesting = true;
+	if (GetEnvironmentVariableA("CS_OCCLUSION", buf, sizeof(buf)) && buf[0]) {
+		envEnabled = (buf[0] == '1');
+		settings.EnableOcclusionTesting = (buf[0] == '1');
+		settings.EnableOccluderRendering = (buf[0] == '1');
 	}
 	// CS_MOC_MAX_OCCLUDERS=<n>: boot-time raster-budget override for automated A/B runs.
 	if (GetEnvironmentVariableA("CS_MOC_MAX_OCCLUDERS", buf, sizeof(buf)) && buf[0]) {

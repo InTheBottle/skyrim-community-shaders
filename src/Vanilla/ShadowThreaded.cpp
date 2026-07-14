@@ -1029,13 +1029,36 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	g_mapWorkList.emplace_back();
 	g_curMap = &g_mapWorkList.back();
 
+	// WALK-vs-RENDER split timing (env CS_SHADOW_WALKSPLIT=1): callOriginal = engine walk + CaptureHook
+	// collect (serial, render thread); RenderMapInstanced = the parallelizable render. Confirms the ceiling.
+	static const bool s_walkSplit = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_WALKSPLIT", b, sizeof(b)) && b[0] == '1'; }();
+	static struct { double walk, render; std::uint64_t n; } s_ws{};
+	LARGE_INTEGER _w0{}, _w1{}, _w2{};
+	if (s_walkSplit)
+		QueryPerformanceCounter(&_w0);
+
 	const std::int32_t r = callOriginal(a1, a2, a3, a4);
+
+	if (s_walkSplit)
+		QueryPerformanceCounter(&_w1);
 
 	// Per-map replay: execute this map's claimed passes NOW, while its view globals are current.
 	if (GetMode() == Mode::kWorkerSerial && g_curMap)
 		ReplayOneMap(*g_curMap);
 	else if (GetMode() == Mode::kInstance && g_curMap)
 		RenderMapInstanced(*g_curMap);
+
+	if (s_walkSplit) {
+		QueryPerformanceCounter(&_w2);
+		static double s_qpc = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return 1000.0 / static_cast<double>(f.QuadPart); }();
+		s_ws.walk += static_cast<double>(_w1.QuadPart - _w0.QuadPart) * s_qpc;
+		s_ws.render += static_cast<double>(_w2.QuadPart - _w1.QuadPart) * s_qpc;
+		if ((++s_ws.n % 768) == 0) {
+			logger::info("[ShadowWalkSplit] per-768-calls avg(ms): walk(engine+collect)={:.4f} render(RSI)={:.4f}",
+				s_ws.walk / 768.0, s_ws.render / 768.0);
+			s_ws.walk = s_ws.render = 0.0;
+		}
+	}
 
 	g_curMap = nullptr;
 	return r;

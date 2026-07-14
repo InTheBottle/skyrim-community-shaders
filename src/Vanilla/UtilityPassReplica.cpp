@@ -2816,6 +2816,14 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	s_acct.fbGroups = s_acct.fbPasses = s_acct.dropType = s_acct.dropRd = 0;
 	s_acct.dropTech = s_acct.dropMap = s_acct.nullIL = 0;
 
+	// PHASE TIMING (env CS_SHADOW_PHASE=1): where does the per-map shadow submission time go?
+	static struct { double group, fill, draw; std::uint64_t calls; } s_phase{};
+	static const bool s_phaseOn = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_PHASE", b, sizeof(b)) && b[0] == '1'; }();
+	static double s_qpcToMs = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return 1000.0 / static_cast<double>(f.QuadPart); }();
+	LARGE_INTEGER _pt0{}, _pt1{}, _pt2{}, _pt3{};
+	if (s_phaseOn)
+		QueryPerformanceCounter(&_pt0);
+
 	// ---- group by (rendererData, technique): same mesh + technique => one instanced draw ----
 	struct Group
 	{
@@ -2902,12 +2910,18 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		return groups[a].fade < groups[b].fade;
 	});
 
+	if (s_phaseOn)
+		QueryPerformanceCounter(&_pt1);
+
 	// ---- instance VB: one dynamic buffer sized for ALL of this map's instances (32 bytes each), filled
 	// with ONE Map(DISCARD); each group draws from its baseInst via DrawIndexedInstanced's
 	// StartInstanceLocation (was one Map per group = ~1.7k DISCARD slices/frame of pure overhead) ----
 	static winrt::com_ptr<ID3D11Buffer> s_instVB;
 	static std::uint32_t                s_instCap = 0;
 	std::uint32_t                       totalInst = 0;
+	// Flat geom list in fill order (object k -> geometry, out slot = k*32). Lets the per-object matrix
+	// build (SG_BuildMatrix + F16C pack) run as a flat parallel-for on worker threads (view-independent:
+	// SG_BuildMatrix reads the object's world transform only; each object writes its own disjoint slot).
 	for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
 		groups[order[oi]].baseInst = totalInst;
 		totalInst += static_cast<std::uint32_t>(groups[order[oi]].passes.size());
@@ -2971,10 +2985,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 8), _mm_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT));
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 16), _mm_cvtps_ph(r2, _MM_FROUND_TO_NEAREST_INT));
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 24), _mm_cvtps_ph(r3, _MM_FROUND_TO_NEAREST_INT));
-				// COMMAND-VALIDATION reference check (throttled, first instance of the first 64 groups per
-				// session): recompute this record via the ENGINE scalar path (SG_MatrixTranspose + scalar
-				// round-to-nearest-even halves) and byte-compare -- pins the F16C fast pack to the engine
-				// reference forever (a divergence here = misplaced instanced casters).
 				if (i == 0) {
 					static std::atomic<int> s_refChecks{ 64 };
 					if (s_refChecks.fetch_sub(1, std::memory_order_relaxed) > 0) {
@@ -2997,6 +3007,9 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		}
 		ctx->Unmap(s_instVB.get(), 0);
 	}
+
+	if (s_phaseOn)
+		QueryPerformanceCounter(&_pt2);
 
 	// The INSTANCED Utility VS is fetched PER GROUP below (each group's exact permutation, not a hardcoded
 	// one): the engine's shadow VS for a group can be plain RENDER_SHADOWMAP, the parabolic point-light
@@ -3174,6 +3187,19 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		s_acct.instSum += n;
 	}
 	closeRun();
+
+	if (s_phaseOn) {
+		QueryPerformanceCounter(&_pt3);
+		s_phase.group += static_cast<double>(_pt1.QuadPart - _pt0.QuadPart) * s_qpcToMs;
+		s_phase.fill += static_cast<double>(_pt2.QuadPart - _pt1.QuadPart) * s_qpcToMs;
+		s_phase.draw += static_cast<double>(_pt3.QuadPart - _pt2.QuadPart) * s_qpcToMs;
+		if ((++s_phase.calls % 256) == 0) {
+			logger::info("[ShadowPhase] per-256-calls avg(ms): group={:.4f} fill={:.4f} draw={:.4f} total={:.4f} (this map: passes={})",
+				s_phase.group / 256.0, s_phase.fill / 256.0, s_phase.draw / 256.0,
+				(s_phase.group + s_phase.fill + s_phase.draw) / 256.0, a_count);
+			s_phase.group = s_phase.fill = s_phase.draw = 0.0;
+		}
+	}
 
 	// COMMAND-VALIDATION invariants (pass conservation): every claimed pass must land in exactly one
 	// bucket. A violation means the instanced submission dropped or duplicated shadow casters.
