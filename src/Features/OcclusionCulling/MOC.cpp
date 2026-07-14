@@ -1569,12 +1569,16 @@ namespace MOC
 			g_prevFrameOcclusion = GetEnvironmentVariableA("CS_MOC_PREV_FRAME", pfBuf, sizeof(pfBuf)) && pfBuf[0] == '1';
 			char ftBuf[8] = {};
 			g_mocFlagTest = GetEnvironmentVariableA("CS_MOC_FLAGTEST", ftBuf, sizeof(ftBuf)) && ftBuf[0] == '1';
+			// Hi-Z is the DEFAULT occlusion path (CS_MOC_HIZ=0 opts back into the MOC raster).
+			// Decisive interleaved PresentMon A/B (Save345 Dragonsreach, warm plateau): occlusion
+			// off 206.7 / MOC raster ~191 (-6%) / Hi-Z 221.8 fps (+7%) -- and Hi-Z beats dev
+			// (213.2) by +4%. The raster is a measured net tax; the game's own depth culls more
+			// (21% vs 13%) for free.
 			char hzBuf[8] = {};
-			g_hizMode = GetEnvironmentVariableA("CS_MOC_HIZ", hzBuf, sizeof(hzBuf)) && hzBuf[0] == '1';
+			g_hizMode = !(GetEnvironmentVariableA("CS_MOC_HIZ", hzBuf, sizeof(hzBuf)) && hzBuf[0] == '0');
 			if (char hbBuf[32] = {}; GetEnvironmentVariableA("CS_MOC_HIZ_BIAS", hbBuf, sizeof(hbBuf)) && hbBuf[0])
 				g_hizBias = static_cast<float>(atof(hbBuf));
-			if (g_hizMode)
-				logger::info("[MOC][HiZ] GPU Hi-Z occlusion enabled (bias={})", g_hizBias);
+			logger::info("[MOC][HiZ] GPU Hi-Z occlusion {} (bias={})", g_hizMode ? "enabled (default)" : "DISABLED via CS_MOC_HIZ=0", g_hizBias);
 		}
 		// Create the ping-pong spare whenever one-frame-behind may be used (boot env or the runtime
 		// flag-test A/B). Cheap: one extra depth buffer.
