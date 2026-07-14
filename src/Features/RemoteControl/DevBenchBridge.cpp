@@ -764,8 +764,10 @@ namespace
 				{ "selftest", st->stateValSelftest.load(std::memory_order_relaxed) },
 				{ "baselineFrames", r[0] },
 				{ "checkedFrames", r[1] },
-				{ "divergences", r[2] },
+				{ "divergences", r[2] },  // PERSISTENT leaks (rare, dangerous)
 				{ "canaryHits", r[3] },
+				{ "exitCheckedFrames", r[4] },
+				{ "boundaryDiffs", r[5] },  // exit-boundary diffs vs vanilla (informational; self-test target)
 			};
 		}
 		// Instanced-path command-validation counters (always-on): pass-conservation invariants +

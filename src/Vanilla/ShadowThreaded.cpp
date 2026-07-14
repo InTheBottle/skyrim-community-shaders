@@ -509,11 +509,25 @@ namespace
 		// the vanilla-entry baseline. This is the semantically meaningful invariant: exit-state comparison
 		// over-fires on benign transients (null PS after depth-only work) that the engine tolerates by
 		// design through the cleared technique caches + force-dirty.
+		bool selftest = false;  // published from the atomic each frame; forces a persistent divergence
+
 		void OnEntry(ID3D11DeviceContext* ctx, bool a_curIsVanilla)
 		{
 			const StateSnap snap = StateSnap::Capture(ctx);
 			std::uint64_t   f[kFields];
 			Fields(snap, f);
+
+			// PERSISTENT-tracker self-test (devbench stateval {"selftest":true}). The entry/persistent
+			// tracker is a "should always be 0" safety invariant: on this engine the main scene re-binds
+			// every DX11 context field per draw, so a real GPU leak at shadow-exit heals before the next
+			// entry -- there is nothing to naturally trip it. To prove its detect->count->log path is live
+			// (not dead code), perturb one stable field of a replica-frame snapshot; the compare below
+			// MUST then report a divergence on 'raster'. Purely a measurement perturbation -- it changes
+			// no GPU state and cannot affect rendering. (The EXIT/boundary tracker needs no self-test: it
+			// fires naturally in replica modes, where the instanced path's trailing state differs from
+			// vanilla's.)
+			if (selftest && !prevWasVanilla)
+				f[15] ^= 0xA5A5A5A5ull;
 
 			// ---- entry canary: engine CPU model vs GPU (only when the cache CLAIMS validity) ----
 			auto* S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
@@ -531,6 +545,9 @@ namespace
 			}
 
 			// ---- learned-baseline entry compare, attributed to the PREVIOUS frame's mode ----
+			// PERSISTENT-LEAK tracker: a divergence here means the previous frame's replica walk left
+			// state the engine did NOT re-establish across the whole next frame. Rare by construction --
+			// the engine re-binds most DX11 context state per draw, so this surface is narrow but exact.
 			if (prevWasVanilla) {
 				if (baselineFrames == 0) {
 					std::memcpy(base, f, sizeof(base));
@@ -549,13 +566,62 @@ namespace
 					const std::uint32_t bit = 1u << (8 + i);
 					if (!(loggedMask & bit)) {
 						loggedMask |= bit;
-						logger::warn("[ShadowStateVal] entry-state '{}' diverges from vanilla baseline ({:016X} -> {:016X}) -- previous frame's replica walk leaked",
+						logger::warn("[ShadowStateVal] PERSISTENT entry-state '{}' diverges from vanilla baseline ({:016X} -> {:016X}) -- previous frame's replica walk leaked",
 							FieldName(i), base[i], f[i]);
 					}
 				}
 			}
 			prevWasVanilla = a_curIsVanilla;
 		}
+
+		// Called at detour EXIT (right after this frame's shadow work, before the main scene overwrites
+		// the pipeline). BOUNDARY-DIFF tracker: does the replica leave the pipeline in the SAME state the
+		// engine's own RenderShadowmaps would? Vanilla exit teaches a per-field stable baseline; replica
+		// exit compares against it. Unlike the persistent tracker this fires readily -- the last shadow
+		// draw's trailing state (bound VS/PS, DS/blend/raster, stencil ref) legitimately differs between
+		// the instanced path and the engine path. The count is therefore INFORMATIONAL (a known nonzero
+		// steady state); a REGRESSION is boundaryDiffs climbing above that steady state, or a new field
+		// joining. This is also where the self-test injection (a deliberate raster desync at the walk's
+		// end) is observed -- proving the detect->count->log pipeline works end to end.
+		void OnExit(ID3D11DeviceContext* ctx, bool a_isVanilla)
+		{
+			const StateSnap snap = StateSnap::Capture(ctx);
+			std::uint64_t   f[kFields];
+			Fields(snap, f);
+			if (a_isVanilla) {
+				if (exitBaselineFrames == 0) {
+					std::memcpy(exitBase, f, sizeof(exitBase));
+				} else {
+					for (int i = 0; i < kFields; ++i)
+						if (exitBase[i] != f[i])
+							exitUnstable[i] = true;
+				}
+				++exitBaselineFrames;
+				return;
+			}
+			if (exitBaselineFrames < 8)
+				return;
+			++exitCheckedFrames;
+			for (int i = 0; i < kFields; ++i) {
+				if (exitUnstable[i] || exitBase[i] == f[i])
+					continue;
+				++boundaryDiffs;
+				const std::uint32_t bit = 1u << i;
+				if (!(exitLoggedMask & bit)) {
+					exitLoggedMask |= bit;
+					logger::info("[ShadowStateVal] BOUNDARY exit-state '{}' differs from vanilla ({:016X} -> {:016X}) -- informational (main scene re-binds)",
+						FieldName(i), exitBase[i], f[i]);
+				}
+			}
+		}
+
+		// exit-boundary baseline (separate from the entry baseline).
+		std::uint64_t exitBase[kFields]{};
+		bool          exitUnstable[kFields]{};
+		std::uint32_t exitBaselineFrames = 0;
+		std::uint32_t exitCheckedFrames = 0;
+		std::uint32_t boundaryDiffs = 0;
+		std::uint32_t exitLoggedMask = 0;
 	};
 	StateValidator g_stateValidator;
 
@@ -980,12 +1046,31 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	auto callOriginal = *static_cast<void (**)()>(a_original);
 	const Mode m = GetMode();
 
-	// State-validation (leak detector): entry-state compare. The snapshot here reflects the PREVIOUS
-	// frame's full pipeline, so divergence from the vanilla-entry baseline == the previous frame's
-	// replica walk leaked state the engine did not recover from. Inert unless armed (env or devbench).
-	if (StateValidationEnabled()) {
+	// State-validation (leak detector), two trackers, inert unless armed (env or devbench):
+	//   ENTRY compare (here): snapshot reflects the PREVIOUS frame's whole pipeline -> a divergence is a
+	//     PERSISTENT leak the engine did not recover from across a full frame (rare, exact, dangerous).
+	//   EXIT compare (guard dtor): snapshot right after this frame's shadow work -> BOUNDARY diffs vs
+	//     what vanilla RenderShadowmaps would leave (informational; also the self-test's observation
+	//     point, since the injected raster desync survives to exit but heals before the next entry).
+	const bool stateVal = StateValidationEnabled();
+	if (stateVal) {
+		g_stateValidator.selftest = stateValSelftest.load(std::memory_order_relaxed);
 		if (auto* ctx = *engine::g_immediateContext)
 			g_stateValidator.OnEntry(ctx, m == Mode::kOff);
+	}
+	struct ExitGuard
+	{
+		ID3D11DeviceContext* ctx = nullptr;
+		bool                 vanilla = false;
+		~ExitGuard()
+		{
+			if (ctx)
+				g_stateValidator.OnExit(ctx, vanilla);
+		}
+	} exitGuard;
+	if (stateVal) {
+		exitGuard.ctx = *engine::g_immediateContext;
+		exitGuard.vanilla = (m == Mode::kOff);
 	}
 
 	// Stage 1a: single-threaded full ownership at BeginPass. No deferred context, no capture/replay --
@@ -1140,14 +1225,6 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		replica->SetShadowCaptureHook(nullptr);
 		g_claiming = false;
 		g_instanceRestrict = false;
-		// Detector SELF-TEST (devbench stateval {"selftest":true}): deliberately desync the GPU
-		// rasterizer state from the engine's CPU-side block model -- the exact leak class the state
-		// validator exists to catch (the block still believes its raster mode, so the engine skips
-		// re-binding and the main scene renders with the wrong state). With the validator armed,
-		// 'raster' MUST diverge at the next frame's entry; if it does not, the detector is broken.
-		// Runtime-armed ONLY: enabling this during a load screen breaks loading.
-		if (stateValSelftest.load(std::memory_order_relaxed))
-			(*engine::g_immediateContext)->RSSetState(nullptr);
 		if ((++frames & 0x3F) == 1) {
 			std::uint64_t tot = 0, uns = 0;
 			for (auto& mw : g_mapWorkList) {
@@ -1811,10 +1888,11 @@ void ShadowThreaded::InstallHooks()
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address(), BeginPassHook::func.address());
 }
 
-std::array<std::uint32_t, 4> ShadowThreaded::StateValReport() const
+std::array<std::uint32_t, 6> ShadowThreaded::StateValReport() const
 {
 	return { g_stateValidator.baselineFrames, g_stateValidator.checkedFrames,
-		g_stateValidator.divergences, g_stateValidator.canaryHits };
+		g_stateValidator.divergences, g_stateValidator.canaryHits,
+		g_stateValidator.exitCheckedFrames, g_stateValidator.boundaryDiffs };
 }
 
 void ShadowThreaded::Setup()

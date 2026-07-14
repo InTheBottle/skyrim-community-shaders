@@ -104,14 +104,15 @@ public:
 
 	/** @brief Post-RenderShadowmaps state validation (leak detector): devbench-requested arming
 	 *         (CS_SHADOW_STATE_VALIDATE env also arms it) + counter readback.
-	 *         Report layout: { baselineFrames, checkedFrames, divergences, canaryHits }. */
+	 *         Report layout: { baselineFrames, checkedFrames, persistentDivergences, canaryHits,
+	 *                          exitCheckedFrames, boundaryDiffs }. */
 	std::atomic<bool> stateValidationRequested{ false };
 	/** @brief Detector self-test: while true, each kInstance frame deliberately desyncs the GPU
 	 *         rasterizer from the engine's CPU model; the armed validator MUST report divergences.
 	 *         Runtime-armed only (devbench stateval {"selftest":true}) -- enabling it during a load
 	 *         screen breaks loading, so never tie it to a boot-time env. */
 	std::atomic<bool> stateValSelftest{ false };
-	[[nodiscard]] std::array<std::uint32_t, 4> StateValReport() const;
+	[[nodiscard]] std::array<std::uint32_t, 6> StateValReport() const;
 
 	/** @brief DrawWorld::RenderShadowmaps (0x1412E3480) detour body: arm the capture hook,
 	 *         run the original walk (the covered passes flow through the hook), disarm, report. */
