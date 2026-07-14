@@ -696,6 +696,12 @@ int Upscaling::GetTargetFrameRate() const
 	// Divisor of the monitor refresh rate: 0 (unlocked) => no cap; otherwise refresh / divisor (so the cap
 	// stays at/below refresh — VSync-on stays inside the VRR window and DLSS-G's generated frames don't
 	// outrun the display). Returns 0 for "no limit".
+	// An UNLOADED feature must not impose present policy: the C++-default divisor was silently
+	// frame-capping every no-upscaler DXVK user at the display refresh (measured dead-flat 165.1
+	// on a 165Hz panel) because the input-poll hook feeds this into ApplyDxvkFrameRateLimit
+	// unconditionally.
+	if (!loaded)
+		return 0;
 	const int divisor = settings.frameRateLimitDivisor;
 	if (divisor <= 0)
 		return 0;

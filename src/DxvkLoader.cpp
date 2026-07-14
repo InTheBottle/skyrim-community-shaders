@@ -91,6 +91,18 @@ namespace DxvkLoader
 			return false;
 		}
 
+		// Seed the present mode to ASYNC (stock DXVK behavior). The fork's frame-gen present
+		// ownership defaults to SYNCHRONOUS present, and the only writers of the flag live in
+		// the Upscaling feature (Upscaling::Load seeds the saved setting; FrameGenController
+		// tracks the FG lifecycle) -- so with Upscaling absent/disabled NOTHING pushed async and
+		// every no-upscaler DXVK user was silently vsync-capped at the display refresh (measured
+		// dead-flat 165.1 fps on a 165Hz panel; dxvk.conf dxgi.syncInterval=0 cannot override
+		// it). Idempotent: Upscaling/FrameGenController overwrite this whenever FG engages.
+		if (auto setSync = reinterpret_cast<void (*)(uint32_t)>(::GetProcAddress(d3d11Mod, "dxvkSetSyncPresent")))
+			setSync(0u);
+		else
+			logger::warn("[DXVK] dxvkSetSyncPresent export missing -- present stays at the fork default (sync)");
+
 		logger::info("[DXVK] Loaded DXVK from '{}' (dxvk_d3d11.dll + dxvk_dxgi.dll)", dir.string());
 		g_loaded = true;
 		return true;
