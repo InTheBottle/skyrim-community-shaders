@@ -748,7 +748,39 @@ namespace
 				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_MT>=1" } };
 			return json{ { "action", "set" }, { "mode", m } };
 		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
+		// Post-RenderShadowmaps state validation (leak detector). `stateval` with optional
+		// {"enable":true|false} arms/disarms it and always returns the counters. Protocol: arm, hold
+		// mode 0 for >=8 frames (baseline learn), switch to the replica mode, read back -- nonzero
+		// divergences/canaryHits = our path leaks state into the rest of the frame.
+		if (action == "stateval") {
+			if (a_args.contains("enable"))
+				st->stateValidationRequested.store(a_args["enable"].get<bool>(), std::memory_order_relaxed);
+			if (a_args.contains("selftest"))
+				st->stateValSelftest.store(a_args["selftest"].get<bool>(), std::memory_order_relaxed);
+			const auto r = st->StateValReport();
+			return json{
+				{ "action", "stateval" },
+				{ "enabled", st->stateValidationRequested.load(std::memory_order_relaxed) },
+				{ "selftest", st->stateValSelftest.load(std::memory_order_relaxed) },
+				{ "baselineFrames", r[0] },
+				{ "checkedFrames", r[1] },
+				{ "divergences", r[2] },
+				{ "canaryHits", r[3] },
+			};
+		}
+		// Instanced-path command-validation counters (always-on): pass-conservation invariants +
+		// the F16C-pack-vs-engine-reference compare. Nonzero violations/mismatches = broken submission.
+		if (action == "instval") {
+			const auto r = UtilityPassReplica::GetSingleton()->InstValReport();
+			return json{
+				{ "action", "instval" },
+				{ "mapsValidated", r[0] },
+				{ "invariantViolations", r[1] },
+				{ "packChecks", r[2] },
+				{ "packMismatches", r[3] },
+			};
+		}
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "stateval", "instval" }) } };
 	}
 
 	void ShadowMtToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)

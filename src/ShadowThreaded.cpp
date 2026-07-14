@@ -321,6 +321,253 @@ namespace
 		g_origDeferredDrawIndexed(a_ctx, a_n, a_start, a_base);
 	}
 
+	// =================================================================================================
+	// Post-RenderShadowmaps STATE VALIDATION (leak detector). The class of bug this catches: our shadow
+	// path leaves GPU state (bindings, IL residue, stale caches) that the engine's CPU-side state model
+	// does not know about, silently corrupting MAIN-SCENE rendering later in the frame (e.g. the
+	// 2026-07-14 pillar-texture corruption). Two layers, both run at RenderShadowmapsDetour EXIT:
+	//
+	//  1. HARD CANARIES (mode-independent invariants):
+	//     - the bound VS object must equal the engine model's (S+0x348)->shader;
+	//     - S+0x340 renderStateVertexDesc must not carry the VA_INSTANCEDATA slot-1 bit (kInstBits residue);
+	//     - IA vertex-buffer slot 1 must be exactly what it was at entry (the instance stream must not leak);
+	//     - the bound PS must equal the engine model's (S+0x350)->shader.
+	//
+	//  2. LEARNED BASELINE: in mode 0 (vanilla), record the exit fingerprint (IL, topology, IB, VB0/1,
+	//     VS/PS, RTV0/DSV, blend/DS/raster objects, viewport0, scissor0, VS/PS b12 ptr) for N frames and
+	//     learn which fields are stable across frames. In any replica mode, compare those stable fields
+	//     against the learned values -- a mismatch means our path exits with different state than vanilla
+	//     would, i.e. a leak the engine may or may not tolerate. Fields vanilla itself varies are auto-
+	//     excluded, so this is false-positive-free by construction.
+	//
+	// Gated by CS_SHADOW_STATE_VALIDATE (env) or devbench shadowmt action=stateval; ~30 Get* calls/frame
+	// when armed. First divergence per field logs once (warn); counters readable via devbench.
+	struct StateSnap
+	{
+		// Keep POD so memcmp-per-field works; refs released immediately after Get (ptr identity only).
+		void*                    il;
+		std::uint32_t            topo;
+		void*                    ib;
+		std::uint32_t            ibFmt;
+		void*                    vb0;
+		void*                    vb1;
+		std::uint32_t            vb0Stride, vb1Stride;
+		void*                    vs;
+		void*                    ps;
+		void*                    rtv0;
+		void*                    dsv;
+		void*                    blend;
+		void*                    dss;
+		std::uint32_t            stencilRef;
+		void*                    raster;
+		void*                    vsCb12;
+		void*                    psCb12;
+		D3D11_VIEWPORT           vp0;
+		D3D11_RECT               sc0;
+		std::uint32_t            nVp, nSc;
+
+		static StateSnap Capture(ID3D11DeviceContext* ctx)
+		{
+			StateSnap s{};
+			ID3D11InputLayout* il = nullptr;
+			ctx->IAGetInputLayout(&il);
+			s.il = il;
+			if (il)
+				il->Release();
+			D3D11_PRIMITIVE_TOPOLOGY topo{};
+			ctx->IAGetPrimitiveTopology(&topo);
+			s.topo = static_cast<std::uint32_t>(topo);
+			ID3D11Buffer* ib = nullptr;
+			DXGI_FORMAT   fmt{};
+			UINT          off{};
+			ctx->IAGetIndexBuffer(&ib, &fmt, &off);
+			s.ib = ib;
+			s.ibFmt = static_cast<std::uint32_t>(fmt);
+			if (ib)
+				ib->Release();
+			ID3D11Buffer* vbs[2] = {};
+			UINT          strides[2] = {}, offs[2] = {};
+			ctx->IAGetVertexBuffers(0, 2, vbs, strides, offs);
+			s.vb0 = vbs[0];
+			s.vb1 = vbs[1];
+			s.vb0Stride = strides[0];
+			s.vb1Stride = strides[1];
+			for (auto* v : vbs)
+				if (v)
+					v->Release();
+			ID3D11VertexShader* vs = nullptr;
+			ctx->VSGetShader(&vs, nullptr, nullptr);
+			s.vs = vs;
+			if (vs)
+				vs->Release();
+			ID3D11PixelShader* ps = nullptr;
+			ctx->PSGetShader(&ps, nullptr, nullptr);
+			s.ps = ps;
+			if (ps)
+				ps->Release();
+			ID3D11RenderTargetView* rtv = nullptr;
+			ID3D11DepthStencilView* dsv = nullptr;
+			ctx->OMGetRenderTargets(1, &rtv, &dsv);
+			s.rtv0 = rtv;
+			s.dsv = dsv;
+			if (rtv)
+				rtv->Release();
+			if (dsv)
+				dsv->Release();
+			ID3D11BlendState* bs = nullptr;
+			float             bf[4]{};
+			UINT              sm{};
+			ctx->OMGetBlendState(&bs, bf, &sm);
+			s.blend = bs;
+			if (bs)
+				bs->Release();
+			ID3D11DepthStencilState* dss = nullptr;
+			UINT                     sref{};
+			ctx->OMGetDepthStencilState(&dss, &sref);
+			s.dss = dss;
+			s.stencilRef = sref;
+			if (dss)
+				dss->Release();
+			ID3D11RasterizerState* rs = nullptr;
+			ctx->RSGetState(&rs);
+			s.raster = rs;
+			if (rs)
+				rs->Release();
+			ID3D11Buffer* cb = nullptr;
+			ctx->VSGetConstantBuffers(12, 1, &cb);
+			s.vsCb12 = cb;
+			if (cb)
+				cb->Release();
+			cb = nullptr;
+			ctx->PSGetConstantBuffers(12, 1, &cb);
+			s.psCb12 = cb;
+			if (cb)
+				cb->Release();
+			s.nVp = 1;
+			ctx->RSGetViewports(&s.nVp, &s.vp0);
+			s.nSc = 1;
+			ctx->RSGetScissorRects(&s.nSc, &s.sc0);
+			return s;
+		}
+	};
+
+	struct StateValidator
+	{
+		// Learned baseline (mode-0 exit): value + stability per field index.
+		static constexpr int kFields = 20;
+		std::uint64_t        base[kFields]{};
+		bool                 unstable[kFields]{};
+		std::uint32_t        baselineFrames = 0;
+		std::uint32_t        divergences = 0;
+		std::uint32_t        canaryHits = 0;
+		std::uint32_t        checkedFrames = 0;
+		std::uint32_t        loggedMask = 0;  // one log per field per session
+
+		static const char* FieldName(int i)
+		{
+			static const char* names[kFields] = {
+				"inputLayout", "topology", "indexBuffer", "ibFormat", "vb0", "vb1", "vb0Stride", "vb1Stride",
+				"vs", "ps", "rtv0", "dsv", "blend", "depthStencil", "stencilRef", "raster",
+				"vsCb12", "psCb12", "viewport0", "scissor0"
+			};
+			return names[i];
+		}
+
+		static void Fields(const StateSnap& s, std::uint64_t out[kFields])
+		{
+			out[0] = reinterpret_cast<std::uint64_t>(s.il);
+			out[1] = s.topo;
+			out[2] = reinterpret_cast<std::uint64_t>(s.ib);
+			out[3] = s.ibFmt;
+			out[4] = reinterpret_cast<std::uint64_t>(s.vb0);
+			out[5] = reinterpret_cast<std::uint64_t>(s.vb1);
+			out[6] = s.vb0Stride;
+			out[7] = s.vb1Stride;
+			out[8] = reinterpret_cast<std::uint64_t>(s.vs);
+			out[9] = reinterpret_cast<std::uint64_t>(s.ps);
+			out[10] = reinterpret_cast<std::uint64_t>(s.rtv0);
+			out[11] = reinterpret_cast<std::uint64_t>(s.dsv);
+			out[12] = reinterpret_cast<std::uint64_t>(s.blend);
+			out[13] = reinterpret_cast<std::uint64_t>(s.dss);
+			out[14] = s.stencilRef;
+			out[15] = reinterpret_cast<std::uint64_t>(s.raster);
+			out[16] = reinterpret_cast<std::uint64_t>(s.vsCb12);
+			out[17] = reinterpret_cast<std::uint64_t>(s.psCb12);
+			std::uint64_t vph = 0;
+			std::memcpy(&vph, &s.vp0.TopLeftX, 8);  // x+y packed
+			out[18] = vph ^ (static_cast<std::uint64_t>(*reinterpret_cast<const std::uint32_t*>(&s.vp0.Width)) << 1);
+			std::uint64_t sch = 0;
+			std::memcpy(&sch, &s.sc0, 8);
+			out[19] = sch;
+		}
+
+		bool prevWasVanilla = true;  // mode of the PREVIOUS frame's shadow walk
+
+		// Called at detour ENTRY (before any of this frame's shadow work). The state here is the product
+		// of the PREVIOUS frame's full pipeline (its shadow walk + main scene + post) -- so if the previous
+		// frame's replica path leaked anything the engine did not recover from, THIS snapshot diverges from
+		// the vanilla-entry baseline. This is the semantically meaningful invariant: exit-state comparison
+		// over-fires on benign transients (null PS after depth-only work) that the engine tolerates by
+		// design through the cleared technique caches + force-dirty.
+		void OnEntry(ID3D11DeviceContext* ctx, bool a_curIsVanilla)
+		{
+			const StateSnap snap = StateSnap::Capture(ctx);
+			std::uint64_t   f[kFields];
+			Fields(snap, f);
+
+			// ---- entry canary: engine CPU model vs GPU (only when the cache CLAIMS validity) ----
+			auto* S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+			if (*engine::g_currentShader != nullptr) {
+				if (auto* vsObj = *reinterpret_cast<std::uint8_t**>(S + 0x348)) {
+					void* modelVs = *reinterpret_cast<void**>(vsObj + 0x08);
+					if (modelVs && snap.vs && modelVs != snap.vs && !prevWasVanilla) {
+						++canaryHits;
+						if (!(loggedMask & 1u)) {
+							loggedMask |= 1u;
+							logger::warn("[ShadowStateVal] CANARY: entry VS {:p} != engine model {:p} (previous frame's replica leaked a stale cache)", snap.vs, modelVs);
+						}
+					}
+				}
+			}
+
+			// ---- learned-baseline entry compare, attributed to the PREVIOUS frame's mode ----
+			if (prevWasVanilla) {
+				if (baselineFrames == 0) {
+					std::memcpy(base, f, sizeof(base));
+				} else {
+					for (int i = 0; i < kFields; ++i)
+						if (base[i] != f[i])
+							unstable[i] = true;  // vanilla itself varies this field -> excluded
+				}
+				++baselineFrames;
+			} else if (baselineFrames >= 8) {
+				++checkedFrames;
+				for (int i = 0; i < kFields; ++i) {
+					if (unstable[i] || base[i] == f[i])
+						continue;
+					++divergences;
+					const std::uint32_t bit = 1u << (8 + i);
+					if (!(loggedMask & bit)) {
+						loggedMask |= bit;
+						logger::warn("[ShadowStateVal] entry-state '{}' diverges from vanilla baseline ({:016X} -> {:016X}) -- previous frame's replica walk leaked",
+							FieldName(i), base[i], f[i]);
+					}
+				}
+			}
+			prevWasVanilla = a_curIsVanilla;
+		}
+	};
+	StateValidator g_stateValidator;
+
+	bool StateValidationEnabled()
+	{
+		static const bool s_env = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_STATE_VALIDATE", b, sizeof(b)) && b[0] && b[0] != '0';
+		}();
+		return s_env || ShadowThreaded::GetSingleton()->stateValidationRequested.load(std::memory_order_relaxed);
+	}
+
 	// Stage 1a gate: armed by RenderShadowmapsDetour only for the duration of the engine's shadow-map
 	// walk under kOwnBeginPass, so BeginPass calls OUTSIDE the shadow driver (main scene, deferred,
 	// UI) are left on the engine path. RenderShadowmaps is synchronous on the render thread, so a
@@ -733,6 +980,14 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 	auto callOriginal = *static_cast<void (**)()>(a_original);
 	const Mode m = GetMode();
 
+	// State-validation (leak detector): entry-state compare. The snapshot here reflects the PREVIOUS
+	// frame's full pipeline, so divergence from the vanilla-entry baseline == the previous frame's
+	// replica walk leaked state the engine did not recover from. Inert unless armed (env or devbench).
+	if (StateValidationEnabled()) {
+		if (auto* ctx = *engine::g_immediateContext)
+			g_stateValidator.OnEntry(ctx, m == Mode::kOff);
+	}
+
 	// Stage 1a: single-threaded full ownership at BeginPass. No deferred context, no capture/replay --
 	// the engine drives the walk (per-map slice alloc + RT/DSV + clear + NiCamera traversal) exactly as
 	// vanilla; only BeginPass is replaced, inline, on the immediate context. Arm the gate around the
@@ -885,6 +1140,14 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		replica->SetShadowCaptureHook(nullptr);
 		g_claiming = false;
 		g_instanceRestrict = false;
+		// Detector SELF-TEST (devbench stateval {"selftest":true}): deliberately desync the GPU
+		// rasterizer state from the engine's CPU-side block model -- the exact leak class the state
+		// validator exists to catch (the block still believes its raster mode, so the engine skips
+		// re-binding and the main scene renders with the wrong state). With the validator armed,
+		// 'raster' MUST diverge at the next frame's entry; if it does not, the detector is broken.
+		// Runtime-armed ONLY: enabling this during a load screen breaks loading.
+		if (stateValSelftest.load(std::memory_order_relaxed))
+			(*engine::g_immediateContext)->RSSetState(nullptr);
 		if ((++frames & 0x3F) == 1) {
 			std::uint64_t tot = 0, uns = 0;
 			for (auto& mw : g_mapWorkList) {
@@ -1546,6 +1809,12 @@ void ShadowThreaded::InstallHooks()
 	hooksInstalled = true;
 	logger::info("[ShadowThreaded] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}, BeginPass @ 0x{:X}",
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address(), BeginPassHook::func.address());
+}
+
+std::array<std::uint32_t, 4> ShadowThreaded::StateValReport() const
+{
+	return { g_stateValidator.baselineFrames, g_stateValidator.checkedFrames,
+		g_stateValidator.divergences, g_stateValidator.canaryHits };
 }
 
 void ShadowThreaded::Setup()

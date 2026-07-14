@@ -4,6 +4,7 @@
 
 -   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
 -   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
+-   **[Vanilla Replica System](./vanilla-replica.md)** - The RenderShadowmaps reimplementation: modes, validation layers, instanced submission, and the z-prepass extension recipe
 
 ## Quick Links
 
