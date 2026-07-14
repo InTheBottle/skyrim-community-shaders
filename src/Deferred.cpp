@@ -8,6 +8,7 @@
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
+#include "Features/OcclusionCulling/MOC.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -242,6 +243,11 @@ void Deferred::PrepassPasses()
 
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+
+	// Hi-Z GPU occlusion: reduce + read back this frame's depth for the next frame's cull.
+	// Render thread with the frame's depth populated -- exactly HiZPrepass' contract. No-op
+	// unless Hi-Z mode is enabled (CS_MOC_HIZ / moc_hiz.flag).
+	MOC::HiZPrepass();
 
 	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) { feature->Prepass(); }, true);
 }

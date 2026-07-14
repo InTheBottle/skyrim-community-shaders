@@ -2,6 +2,9 @@
 #include "MOC.h"
 
 #include "Globals.h"
+#include "Utils/D3D.h"
+
+#include <d3dcompiler.h>
 
 #include <MaskedOcclusionCulling/CullingThreadpool.h>
 #include <MaskedOcclusionCulling/MaskedOcclusionCulling.h>
@@ -163,6 +166,89 @@ namespace MOC
 		inline MaskedOcclusionCulling* TestBuf()
 		{
 			return g_prevFrameOcclusion ? g_mocFront.load(std::memory_order_acquire) : g_moc;
+		}
+
+		// =========================================================================================
+		// Hi-Z GPU occlusion (CS_MOC_HIZ / moc_hiz.flag under CS_MOC_FLAGTEST): replace the CPU
+		// occluder RASTER with the game's own depth buffer. A tiny compute pass max-reduces the
+		// post-zprepass depth (STANDARD Z: near=0, far=1 -- verified via SharedData::GetScreenDepth)
+		// into a (w/16, h/16) grid of "farthest depth per 16x16 block"; a 3-deep staging ring reads
+		// it back without stalling (Map DO_NOT_WAIT on a slot written kRing frames earlier); the
+		// cull tests object screen rects against the CPU grid (HiZTestRect) instead of MOC TestRect.
+		// EVERY opaque surface occludes (not 384 hand-picked meshes) and the software raster + its
+		// builder thread disappear from the frame. Inherently 1+kRing frames stale -- the same
+		// class as the one-frame-behind mode that was visually clean; each snapshot carries the
+		// matrices of the frame its depth was rendered with, so the test projection matches the
+		// buffer exactly (no reprojection error by construction).
+		bool  g_hizMode = false;
+		float g_hizBias = 1e-4f;  // occluded iff objNdcMin > cellMax + bias (standard Z)
+
+#pragma warning(push)
+#pragma warning(disable: 4324)  // padding from the XMMATRIX/XMVECTOR alignment is intended
+		struct HiZSnapshot
+		{
+			std::vector<float> grid;  // gridW*gridH, farthest (max) depth per 16x16 block
+			int                gridW = 0, gridH = 0;
+			int                fullW = 0, fullH = 0;
+			XMMATRIX           view{};
+			XMMATRIX           viewProj{};
+			RE::NiPoint3       posAdjust{};
+			XMVECTOR           posAdjustV = _mm_setzero_ps();
+		};
+		// Two snapshots recycled alternately; readers grab the published pointer and finish a
+		// per-object test in microseconds while publishes are a frame apart -- same benign
+		// 2-slot recycle contract as g_mocFront above.
+		HiZSnapshot                      g_hizSnaps[2];
+		std::atomic<const HiZSnapshot*>  g_hizFront{ nullptr };
+		int                              g_hizWriteSnap = 0;
+
+		constexpr int kHizRing = 3;
+		struct HiZRingSlot
+		{
+			winrt::com_ptr<ID3D11Texture2D> staging;
+			XMMATRIX                        view{};
+			XMMATRIX                        viewProj{};
+			RE::NiPoint3                    posAdjust{};
+			bool                            pending = false;
+		};
+		HiZRingSlot                               g_hizRing[kHizRing];
+#pragma warning(pop)
+		int                                       g_hizWrite = 0;
+		winrt::com_ptr<ID3D11ComputeShader>       g_hizCS;
+		winrt::com_ptr<ID3D11Texture2D>           g_hizGridTex;
+		winrt::com_ptr<ID3D11UnorderedAccessView> g_hizGridUAV;
+		int                                       g_hizGridW = 0, g_hizGridH = 0, g_hizFullW = 0, g_hizFullH = 0;
+		bool                                      g_hizInitTried = false, g_hizReady = false;
+
+		// The Hi-Z replacement for MaskedOcclusionCulling::TestRect. Inputs are the SAME NDC rect
+		// the MOC seams already compute, plus the object's NEAREST NDC depth (min z/w over the
+		// bound). Occluded iff that nearest point is deeper than the FARTHEST depth over every
+		// grid cell the rect touches. Conservative by construction: coarse cells only over-
+		// estimate occluder distance (max-reduce), OOB depth reads contributed 0 (near) which a
+		// max ignores, off-screen rects are kept (the engine's frustum cull owns that verdict).
+		bool HiZTestRect(float a_minX, float a_minY, float a_maxX, float a_maxY, float a_objNdcZMin)
+		{
+			const HiZSnapshot* s = g_hizFront.load(std::memory_order_acquire);
+			if (!s || s->grid.empty())
+				return true;
+			if (a_maxX < -1.0f || a_minX > 1.0f || a_maxY < -1.0f || a_minY > 1.0f)
+				return true;  // fully off-screen in the snapshot's view: keep
+			// NDC -> UV (y flips) -> grid-cell range (cells cover 16px blocks of the full res).
+			const float u0 = (a_minX + 1.0f) * 0.5f, u1 = (a_maxX + 1.0f) * 0.5f;
+			const float v0 = (1.0f - a_maxY) * 0.5f, v1 = (1.0f - a_minY) * 0.5f;
+			const int cx0 = std::clamp(static_cast<int>(u0 * s->fullW) / 16, 0, s->gridW - 1);
+			const int cx1 = std::clamp(static_cast<int>(u1 * s->fullW) / 16, 0, s->gridW - 1);
+			const int cy0 = std::clamp(static_cast<int>(v0 * s->fullH) / 16, 0, s->gridH - 1);
+			const int cy1 = std::clamp(static_cast<int>(v1 * s->fullH) / 16, 0, s->gridH - 1);
+			if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > 256)
+				return true;  // huge screen rect: almost surely visible; skip the scan
+			float farthest = 0.0f;
+			for (int y = cy0; y <= cy1; ++y) {
+				const float* row = &s->grid[static_cast<std::size_t>(y) * s->gridW];
+				for (int x = cx0; x <= cx1; ++x)
+					farthest = std::max(farthest, row[x]);
+			}
+			return a_objNdcZMin <= farthest + g_hizBias;  // false => occluded
 		}
 
 		// SUN-SHADOW occlusion (the +30% pool: utility/shadow = 52% of draws).
@@ -1483,6 +1569,12 @@ namespace MOC
 			g_prevFrameOcclusion = GetEnvironmentVariableA("CS_MOC_PREV_FRAME", pfBuf, sizeof(pfBuf)) && pfBuf[0] == '1';
 			char ftBuf[8] = {};
 			g_mocFlagTest = GetEnvironmentVariableA("CS_MOC_FLAGTEST", ftBuf, sizeof(ftBuf)) && ftBuf[0] == '1';
+			char hzBuf[8] = {};
+			g_hizMode = GetEnvironmentVariableA("CS_MOC_HIZ", hzBuf, sizeof(hzBuf)) && hzBuf[0] == '1';
+			if (char hbBuf[32] = {}; GetEnvironmentVariableA("CS_MOC_HIZ_BIAS", hbBuf, sizeof(hbBuf)) && hbBuf[0])
+				g_hizBias = static_cast<float>(atof(hbBuf));
+			if (g_hizMode)
+				logger::info("[MOC][HiZ] GPU Hi-Z occlusion enabled (bias={})", g_hizBias);
 		}
 		// Create the ping-pong spare whenever one-frame-behind may be used (boot env or the runtime
 		// flag-test A/B). Cheap: one extra depth buffer.
@@ -1761,6 +1853,16 @@ namespace MOC
 			g_mocSpare = nullptr;
 		}
 		g_mocFront.store(nullptr, std::memory_order_release);
+		g_hizFront.store(nullptr, std::memory_order_release);
+		g_hizCS = nullptr;
+		g_hizGridUAV = nullptr;
+		g_hizGridTex = nullptr;
+		for (auto& slot : g_hizRing) {
+			slot.staging = nullptr;
+			slot.pending = false;
+		}
+		g_hizReady = false;
+		g_hizInitTried = false;
 		g_init = false;
 	}
 
@@ -1886,6 +1988,27 @@ namespace MOC
 			return g_buildDone.load(std::memory_order_acquire) == frame;
 		g_buildStart = std::chrono::high_resolution_clock::now();
 
+		// Hi-Z mode: no occluder gather, no raster kick -- the game's own depth IS the occluder
+		// set (built + read back on the render thread in HiZPrepass). Load the published
+		// snapshot's matrices into the shared test globals so every projection in TestAABB /
+		// TestSphereBound matches the buffer it tests against, then declare the frame built.
+		// No snapshot yet (first frames / readback still in flight) => no occlusion this frame.
+		if (g_hizMode) {
+			const HiZSnapshot* snap = g_hizFront.load(std::memory_order_acquire);
+			if (!snap)
+				return false;
+			g_view = snap->view;
+			g_viewProj = snap->viewProj;
+			g_posAdjust = snap->posAdjust;
+			g_posAdjustV = snap->posAdjustV;
+			g_frustum.CreateFromViewProjMatrix(g_viewProj);
+			if ((frame % 120u) == 0u)
+				logger::info("[MOC][HiZ] frame={} grid={}x{} tested={} culled={}",
+					frame, snap->gridW, snap->gridH, g_tested.load(), g_culled.load());
+			g_buildDone.store(frame, std::memory_order_release);
+			return true;
+		}
+
 		CalculateViewProjection(renderCam, g_view, g_proj, g_viewProj);
 		const RE::NiPoint3 posAdj = renderCam->world.translate;
 		g_posAdjust = posAdj;
@@ -1982,6 +2105,7 @@ namespace MOC
 			EnableOcclusionTesting = on;
 			g_prevFrameOcclusion = on && g_mocSpare &&
 				GetFileAttributesA("F:\\claudetmp\\moc_pf.flag") != INVALID_FILE_ATTRIBUTES;
+			g_hizMode = on && GetFileAttributesA("F:\\claudetmp\\moc_hiz.flag") != INVALID_FILE_ATTRIBUTES;
 			if (!on)
 				g_mocFront.store(nullptr, std::memory_order_release);
 		}
@@ -1992,6 +2116,177 @@ namespace MOC
 		BeginAsyncTestFrame();
 		if (auto* cam = GetMainCamera())
 			BuildOccluders(cam);
+	}
+
+	namespace
+	{
+		// 16x block max-reduce: one 8x8 group covers a 16x16 depth block (each thread reads a
+		// 2x2 quad), groupshared-reduces, and writes ONE grid texel = the FARTHEST (max, standard
+		// Z) depth in the block. Out-of-bounds Loads return 0 (= near), which a max ignores, so
+		// partial edge blocks are handled for free. Compiled from this string at init -- no
+		// shader-file deployment to forget.
+		constexpr const char* kHiZReduceSrc = R"(
+Texture2D<float> SrcDepth : register(t0);
+RWTexture2D<float> OutGrid : register(u0);
+groupshared float gs[8][8];
+[numthreads(8, 8, 1)]
+void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
+{
+    uint2 p = gid * 16 + tid * 2;
+    float d0 = SrcDepth[p];
+    float d1 = SrcDepth[p + uint2(1, 0)];
+    float d2 = SrcDepth[p + uint2(0, 1)];
+    float d3 = SrcDepth[p + uint2(1, 1)];
+    gs[tid.y][tid.x] = max(max(d0, d1), max(d2, d3));
+    GroupMemoryBarrierWithGroupSync();
+    if (((tid.x | tid.y) & 1) == 0)
+        gs[tid.y][tid.x] = max(max(gs[tid.y][tid.x], gs[tid.y][tid.x + 1]),
+                               max(gs[tid.y + 1][tid.x], gs[tid.y + 1][tid.x + 1]));
+    GroupMemoryBarrierWithGroupSync();
+    if (((tid.x | tid.y) & 3) == 0)
+        gs[tid.y][tid.x] = max(max(gs[tid.y][tid.x], gs[tid.y][tid.x + 2]),
+                               max(gs[tid.y + 2][tid.x], gs[tid.y + 2][tid.x + 2]));
+    GroupMemoryBarrierWithGroupSync();
+    if (tid.x == 0 && tid.y == 0)
+        OutGrid[gid] = max(max(gs[0][0], gs[0][4]), max(gs[4][0], gs[4][4]));
+}
+)";
+
+		bool HiZEnsureInit()
+		{
+			if (g_hizReady)
+				return true;
+			if (g_hizInitTried)
+				return false;
+			g_hizInitTried = true;
+			auto* device = globals::d3d::device;
+			auto* srv = Util::GetCurrentSceneDepthSRV(false);
+			if (!device || !srv) {
+				g_hizInitTried = false;  // renderer not up yet -- retry next frame
+				return false;
+			}
+			winrt::com_ptr<ID3D11Resource> res;
+			srv->GetResource(res.put());
+			auto tex = res.try_as<ID3D11Texture2D>();
+			if (!tex)
+				return false;
+			D3D11_TEXTURE2D_DESC dd{};
+			tex->GetDesc(&dd);
+			g_hizFullW = static_cast<int>(dd.Width);
+			g_hizFullH = static_cast<int>(dd.Height);
+			g_hizGridW = (g_hizFullW + 15) / 16;
+			g_hizGridH = (g_hizFullH + 15) / 16;
+
+			D3D11_TEXTURE2D_DESC gd{};
+			gd.Width = static_cast<UINT>(g_hizGridW);
+			gd.Height = static_cast<UINT>(g_hizGridH);
+			gd.MipLevels = 1;
+			gd.ArraySize = 1;
+			gd.Format = DXGI_FORMAT_R32_FLOAT;
+			gd.SampleDesc = { 1, 0 };
+			gd.Usage = D3D11_USAGE_DEFAULT;
+			gd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+			if (FAILED(device->CreateTexture2D(&gd, nullptr, g_hizGridTex.put())))
+				return false;
+			Util::SetResourceName(g_hizGridTex.get(), "OcclusionCulling::HiZGrid");
+			if (FAILED(device->CreateUnorderedAccessView(g_hizGridTex.get(), nullptr, g_hizGridUAV.put())))
+				return false;
+			Util::SetResourceName(g_hizGridUAV.get(), "OcclusionCulling::HiZGrid UAV");
+
+			gd.Usage = D3D11_USAGE_STAGING;
+			gd.BindFlags = 0;
+			gd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			for (int i = 0; i < kHizRing; ++i) {
+				if (FAILED(device->CreateTexture2D(&gd, nullptr, g_hizRing[i].staging.put())))
+					return false;
+				Util::SetResourceName(g_hizRing[i].staging.get(), "OcclusionCulling::HiZStaging%d", i);
+			}
+
+			winrt::com_ptr<ID3DBlob> blob, errs;
+			if (FAILED(D3DCompile(kHiZReduceSrc, strlen(kHiZReduceSrc), "HiZReduce", nullptr, nullptr,
+					"main", "cs_5_0", 0, 0, blob.put(), errs.put()))) {
+				logger::error("[MOC][HiZ] reduce shader compile failed: {}",
+					errs ? static_cast<const char*>(errs->GetBufferPointer()) : "(no log)");
+				return false;
+			}
+			if (FAILED(device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, g_hizCS.put())))
+				return false;
+
+			g_hizReady = true;
+			logger::info("[MOC][HiZ] initialized: depth {}x{} -> grid {}x{}, ring={}",
+				g_hizFullW, g_hizFullH, g_hizGridW, g_hizGridH, kHizRing);
+			return true;
+		}
+	}
+
+	void HiZPrepass()
+	{
+		// RENDER THREAD ONLY (immediate context) -- called from Deferred::PrepassPasses, where
+		// this frame's depth is fully populated and the camera matrices are final. Never touch
+		// the context from cull/job threads (a worker-thread CopyResource killed the process).
+		if (!g_hizMode)
+			return;
+		auto* ctx = globals::d3d::context;
+		if (!ctx || !HiZEnsureInit())
+			return;
+
+		// 1. Harvest the OLDEST ring slot (written kHizRing frames ago -> its copy has long
+		//    retired; DO_NOT_WAIT will practically always succeed). Publish it as the snapshot
+		//    the next cull tests against, paired with the matrices its depth was rendered with.
+		auto& slot = g_hizRing[g_hizWrite];
+		if (slot.pending) {
+			D3D11_MAPPED_SUBRESOURCE m{};
+			if (SUCCEEDED(ctx->Map(slot.staging.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m))) {
+				HiZSnapshot& snap = g_hizSnaps[g_hizWriteSnap];
+				snap.grid.resize(static_cast<std::size_t>(g_hizGridW) * g_hizGridH);
+				for (int y = 0; y < g_hizGridH; ++y)
+					std::memcpy(&snap.grid[static_cast<std::size_t>(y) * g_hizGridW],
+						static_cast<const std::uint8_t*>(m.pData) + static_cast<std::size_t>(y) * m.RowPitch,
+						static_cast<std::size_t>(g_hizGridW) * sizeof(float));
+				ctx->Unmap(slot.staging.get(), 0);
+				snap.gridW = g_hizGridW;
+				snap.gridH = g_hizGridH;
+				snap.fullW = g_hizFullW;
+				snap.fullH = g_hizFullH;
+				snap.view = slot.view;
+				snap.viewProj = slot.viewProj;
+				snap.posAdjust = slot.posAdjust;
+				snap.posAdjustV = _mm_setr_ps(slot.posAdjust.x, slot.posAdjust.y, slot.posAdjust.z, 0.0f);
+				g_hizFront.store(&snap, std::memory_order_release);
+				g_hizWriteSnap ^= 1;
+				slot.pending = false;
+			}
+			// WAS_STILL_DRAWING: keep the slot pending and skip this frame's capture (never
+			// overwrite an in-flight copy); the ring self-heals next frame.
+		}
+
+		// 2. Capture this frame: reduce the depth into the grid, queue the copy into the slot,
+		//    and tag it with THIS frame's camera (the one that rendered this depth).
+		if (!slot.pending) {
+			auto* cam = GetMainCamera();
+			auto* depthSRV = Util::GetCurrentSceneDepthSRV(false);
+			if (cam && depthSRV) {
+				ctx->CSSetShaderResources(0, 1, &depthSRV);
+				ID3D11UnorderedAccessView* uav = g_hizGridUAV.get();
+				ctx->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+				ctx->CSSetShader(g_hizCS.get(), nullptr, 0);
+				ctx->Dispatch(static_cast<UINT>(g_hizGridW), static_cast<UINT>(g_hizGridH), 1);
+				ID3D11ShaderResourceView* nullSRV = nullptr;
+				ID3D11UnorderedAccessView* nullUAV = nullptr;
+				ctx->CSSetShaderResources(0, 1, &nullSRV);
+				ctx->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+				ctx->CSSetShader(nullptr, nullptr, 0);
+				ctx->CopyResource(slot.staging.get(), g_hizGridTex.get());
+
+				XMMATRIX v{}, p{}, vp{};
+				CalculateViewProjection(cam, v, p, vp);
+				slot.view = v;
+				slot.viewProj = vp;
+				slot.posAdjust = cam->world.translate;
+				slot.pending = true;
+				g_hizWrite = (g_hizWrite + 1) % kHizRing;
+			}
+		}
 	}
 
 	void DumpDebugImages()
@@ -2069,6 +2364,11 @@ namespace MOC
 				screenMax = _mm_max_ps(screenMax, xformedPos);
 			}
 
+			// Hi-Z seam: the object's NEAREST NDC depth (standard Z) = min z over the projected
+			// corners, already present as component 2 of the per-corner min.
+			if (g_hizMode)
+				return HiZTestRect(screenMin.m128_f32[0], screenMin.m128_f32[1],
+					screenMax.m128_f32[0], screenMax.m128_f32[1], screenMin.m128_f32[2]);
 			auto* moc = TestBuf();
 			if (!moc)
 				return true;
@@ -2141,6 +2441,11 @@ namespace MOC
 			XMVECTOR xyMins = _mm_min_ps(vCorner0NDC, _mm_min_ps(vCorner1NDC, _mm_min_ps(vCorner2NDC, vCorner3NDC)));
 			XMVECTOR xyMaxs = _mm_max_ps(vCorner0NDC, _mm_max_ps(vCorner1NDC, _mm_max_ps(vCorner2NDC, vCorner3NDC)));
 
+			// Hi-Z seam: nearest sphere point's NDC depth = clip z / clip w of closestPoint.
+			if (g_hizMode)
+				return HiZTestRect(xyMins.m128_f32[0], xyMins.m128_f32[1],
+					xyMaxs.m128_f32[0], xyMaxs.m128_f32[1],
+					closestPoint.m128_f32[2] / closestSpherePointW);
 			auto* moc = TestBuf();
 			if (!moc)
 				return true;
@@ -2185,7 +2490,10 @@ namespace MOC
 		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
 			return true;
 
-		if (g_prevFrameOcclusion) {
+		if (g_hizMode) {
+			if (!g_hizFront.load(std::memory_order_acquire))
+				return true;  // no Hi-Z readback published yet -- keep (conservative)
+		} else if (g_prevFrameOcclusion) {
 			if (!g_mocFront.load(std::memory_order_acquire))
 				return true;  // no completed prev-frame buffer yet -- keep (conservative)
 		} else {
@@ -2298,7 +2606,10 @@ namespace MOC
 		if (!aabb || aabb->size.z <= 1.0f)
 			return true;  // no AABB shape (spheres etc.) or degenerate bounds -> keep
 
-		if (g_prevFrameOcclusion) {
+		if (g_hizMode) {
+			if (!g_hizFront.load(std::memory_order_acquire))
+				return true;
+		} else if (g_prevFrameOcclusion) {
 			if (!g_mocFront.load(std::memory_order_acquire))
 				return true;
 		} else {

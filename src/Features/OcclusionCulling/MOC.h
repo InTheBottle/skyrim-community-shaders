@@ -84,6 +84,15 @@ namespace MOC
 	void KickBuild();
 
 	/**
+	 * @brief Hi-Z GPU occlusion frame step (CS_MOC_HIZ / moc_hiz.flag): max-reduce this frame's
+	 *        scene depth into a coarse grid on the GPU, harvest the oldest staging-ring readback
+	 *        into the CPU snapshot the cull tests against, and queue this frame's copy.
+	 *        RENDER THREAD ONLY (immediate context) -- called from Deferred::PrepassPasses,
+	 *        after the frame's depth is populated. No-op unless Hi-Z mode is enabled.
+	 */
+	void HiZPrepass();
+
+	/**
 	 * @brief Occlusion query for a scene object.
 	 * @return true if the object may be visible (keep it), false if provably occluded.
 	 *         Returns true (conservative) for all early-outs (not initialized, testing
