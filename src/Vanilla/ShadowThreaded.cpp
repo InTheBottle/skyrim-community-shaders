@@ -349,11 +349,21 @@ namespace
 		if (rt != 0 && GetCurrentThreadId() != rt) {
 			static std::atomic<int> s_logged{ 0 };
 			if (s_logged.fetch_add(1, std::memory_order_relaxed) < 24) {
-				const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
 				const auto base = REL::Module::get().base();
-				logger::warn("[MapSpy] OFF-THREAD immediate Map! tid={} type={} flags={:X} ret={:#x} (SkyrimSE+{:#x})",
-					GetCurrentThreadId(), static_cast<int>(a_type), a_flags, ret,
-					(ret >= base && ret < base + 0x4000000) ? ret - base : 0);
+				// Full caller chain: the return address says WHICH mapper fired; the backtrace
+				// says WHO in the cull drove it (the skip-vs-redirect decision needs the driver).
+				void* frames[10] = {};
+				const USHORT n = RtlCaptureStackBackTrace(1, 10, frames, nullptr);
+				std::string bt;
+				for (USHORT i = 0; i < n; ++i) {
+					const auto f = reinterpret_cast<std::uintptr_t>(frames[i]);
+					if (f >= base && f < base + 0x4000000)
+						bt += fmt::format(" SkyrimSE+{:#x}", f - base);
+					else
+						bt += fmt::format(" [{:#x}]", f);
+				}
+				logger::warn("[MapSpy] OFF-THREAD Map tid={} type={} bt:{}",
+					GetCurrentThreadId(), static_cast<int>(a_type), bt);
 				spdlog::default_logger()->flush();  // the crash follows within ~1s; don't lose the line
 			}
 		}
