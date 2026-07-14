@@ -154,6 +154,7 @@ namespace MOC
 		MaskedOcclusionCulling* g_mocSpare = nullptr;  // ping-pong partner instance
 		std::atomic<MaskedOcclusionCulling*> g_mocFront{ nullptr };  // FRONT: prev-frame completed buffer (testers)
 		bool          g_prevFrameOcclusion = false;   // CS_MOC_PREV_FRAME: test last frame's buffer, no raster wait
+		bool          g_mocFlagTest = false;          // CS_MOC_FLAGTEST: flag-file runtime A/B (off/sync/prev-frame)
 		std::uint32_t g_lastKicked = 0xFFFFFFFFu;      // frame of the last builder kick (build-claim thread only)
 		// Buffer the cull tests against: FRONT (prev-frame) in one-frame-behind mode, else the live BACK
 		// (paired with WaitForRasterComplete). One-frame-behind holds NO cross-frame OBJECT pointers -- it
@@ -1480,13 +1481,17 @@ namespace MOC
 		{
 			char pfBuf[8] = {};
 			g_prevFrameOcclusion = GetEnvironmentVariableA("CS_MOC_PREV_FRAME", pfBuf, sizeof(pfBuf)) && pfBuf[0] == '1';
+			char ftBuf[8] = {};
+			g_mocFlagTest = GetEnvironmentVariableA("CS_MOC_FLAGTEST", ftBuf, sizeof(ftBuf)) && ftBuf[0] == '1';
 		}
-		if (g_prevFrameOcclusion) {
+		// Create the ping-pong spare whenever one-frame-behind may be used (boot env or the runtime
+		// flag-test A/B). Cheap: one extra depth buffer.
+		if (g_prevFrameOcclusion || g_mocFlagTest) {
 			g_mocSpare = MaskedOcclusionCulling::Create(simd);
 			if (g_mocSpare) {
 				g_mocSpare->SetResolution(MOC_WIDTH, MOC_HEIGHT);
 				g_mocSpare->ClearBuffer();
-				logger::info("[MOC] one-frame-behind occlusion ENABLED (double-buffered; no raster wait)");
+				logger::info("[MOC] one-frame-behind buffer ready (prevFrame={} flagTest={})", g_prevFrameOcclusion, g_mocFlagTest);
 			} else {
 				g_prevFrameOcclusion = false;
 				logger::warn("[MOC] one-frame-behind: spare Create failed; using synchronous wait");
@@ -1968,6 +1973,19 @@ namespace MOC
 
 	void KickBuild()
 	{
+		// Flag-file A/B (CS_MOC_FLAGTEST): flip MOC-enable + one-frame-behind at runtime so a frozen-camera
+		// comparison can interleave off / sync / prev-frame in ONE thermal session (cross-boot is warm-drift
+		// unreliable). Render thread, once per frame, before the cull. moc_on.flag => MOC on; moc_pf.flag =>
+		// one-frame-behind. When off, clear the front so a stale buffer can't keep culling.
+		if (g_mocFlagTest) {
+			const bool on = GetFileAttributesA("F:\\claudetmp\\moc_on.flag") != INVALID_FILE_ATTRIBUTES;
+			EnableOcclusionTesting = on;
+			g_prevFrameOcclusion = on && g_mocSpare &&
+				GetFileAttributesA("F:\\claudetmp\\moc_pf.flag") != INVALID_FILE_ATTRIBUTES;
+			if (!on)
+				g_mocFront.store(nullptr, std::memory_order_release);
+		}
+
 		// Flip the async snapshot before the scene-list cull runs (this frame's kick =
 		// the frame boundary). Ordered before BuildOccluders so the builder, once signaled,
 		// sees the frozen test buffer.
