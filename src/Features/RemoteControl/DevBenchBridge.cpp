@@ -1,8 +1,8 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
 #include "ShadowDeferred.h"
-#include "ShadowThreaded.h"
-#include "UtilityPassReplica.h"
+#include "Vanilla/ShadowThreaded.h"
+#include "Vanilla/UtilityPassReplica.h"
 
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
 // DEVBENCH_BRIDGE_ENABLED (set by CMake when the devbench-api port is available);

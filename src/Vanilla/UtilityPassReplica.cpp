@@ -4,7 +4,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "Vanilla/DrawState.h"
+#include "DrawState.h"
 
 #include <DirectXPackedVector.h>
 #include <algorithm>

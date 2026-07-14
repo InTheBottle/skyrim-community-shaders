@@ -18,8 +18,8 @@
 #include "State.h"
 #include "UtilityPassReplica.h"
 #include "Utils/D3D.h"
-#include "Vanilla/DrawState.h"
-#include "Vanilla/ShaderReflect.h"
+#include "DrawState.h"
+#include "ShaderReflect.h"
 
 #include <RE/B/BSRenderPass.h>
 
