@@ -150,7 +150,19 @@ namespace MOC
 		// raster and tests are always matched and deterministic, so every cull
 		// walk of the frame computes identical verdicts -- no verdict caches,
 		// no temporal hysteresis, no flicker by construction.
-		MaskedOcclusionCulling* g_moc = nullptr;
+		MaskedOcclusionCulling* g_moc = nullptr;       // BACK: builder rasterizes this frame's occluders here
+		MaskedOcclusionCulling* g_mocSpare = nullptr;  // ping-pong partner instance
+		std::atomic<MaskedOcclusionCulling*> g_mocFront{ nullptr };  // FRONT: prev-frame completed buffer (testers)
+		bool          g_prevFrameOcclusion = false;   // CS_MOC_PREV_FRAME: test last frame's buffer, no raster wait
+		std::uint32_t g_lastKicked = 0xFFFFFFFFu;      // frame of the last builder kick (build-claim thread only)
+		// Buffer the cull tests against: FRONT (prev-frame) in one-frame-behind mode, else the live BACK
+		// (paired with WaitForRasterComplete). One-frame-behind holds NO cross-frame OBJECT pointers -- it
+		// tests LIVE objects against a stale BUFFER -- so it is lifetime-safe (unlike AsyncOcclusionTest),
+		// and every walk in a frame reads the same buffer, so there is no per-walk flicker.
+		inline MaskedOcclusionCulling* TestBuf()
+		{
+			return g_prevFrameOcclusion ? g_mocFront.load(std::memory_order_acquire) : g_moc;
+		}
 
 		// SUN-SHADOW occlusion (the +30% pool: utility/shadow = 52% of draws).
 		// A second buffer rasterized from the sun's shadow-gather view; the
@@ -1459,6 +1471,28 @@ namespace MOC
 		g_moc->SetResolution(MOC_WIDTH, MOC_HEIGHT);
 		g_moc->ClearBuffer();
 
+		// One-frame-behind ping-pong (CS_MOC_PREV_FRAME=1): a SECOND instance so the builder rasterizes
+		// this frame's occluders into the BACK buffer while the cull tests the PREVIOUS frame's completed
+		// FRONT buffer -- WaitForRasterComplete never spins. NOTE (fast version): tests project with THIS
+		// frame's camera against last frame's buffer, so a fast camera move can misalign by a few low-res
+		// pixels (TestRect's conservative margin absorbs small motion). If that pops, matched per-buffer
+		// matrices are the fix. When off, g_mocFront stays null and everything tests g_moc as before.
+		{
+			char pfBuf[8] = {};
+			g_prevFrameOcclusion = GetEnvironmentVariableA("CS_MOC_PREV_FRAME", pfBuf, sizeof(pfBuf)) && pfBuf[0] == '1';
+		}
+		if (g_prevFrameOcclusion) {
+			g_mocSpare = MaskedOcclusionCulling::Create(simd);
+			if (g_mocSpare) {
+				g_mocSpare->SetResolution(MOC_WIDTH, MOC_HEIGHT);
+				g_mocSpare->ClearBuffer();
+				logger::info("[MOC] one-frame-behind occlusion ENABLED (double-buffered; no raster wait)");
+			} else {
+				g_prevFrameOcclusion = false;
+				logger::warn("[MOC] one-frame-behind: spare Create failed; using synchronous wait");
+			}
+		}
+
 		// Intel's CullingThreadpool: occluder rasterization is queued by the (single)
 		// build thread and executed by worker threads binning the screen. Bins must be
 		// tile-aligned and >= thread count: 4x4 bins of 128x72 over 512x288. maxJobs=32
@@ -1717,6 +1751,11 @@ namespace MOC
 			MaskedOcclusionCulling::Destroy(g_moc);
 			g_moc = nullptr;
 		}
+		if (g_mocSpare) {
+			MaskedOcclusionCulling::Destroy(g_mocSpare);
+			g_mocSpare = nullptr;
+		}
+		g_mocFront.store(nullptr, std::memory_order_release);
 		g_init = false;
 	}
 
@@ -1884,11 +1923,25 @@ namespace MOC
 		// above), suspend, then gather NEXT frame's candidates. The claim thread pays ~0;
 		// tests may start immediately against the filling buffer (conservatively correct
 		// per the library contract). When occluder rendering is off the builder clears.
+		// One-frame-behind flip (build-claim winner, once per frame, at the frame boundary before the
+		// scene-list cull runs -- the builder is provably idle since raster==last kick, so SetBuffer is
+		// safe): publish the buffer the builder JUST finished as the FRONT this frame's cull tests, and
+		// hand the builder the OTHER instance for this frame's raster. If the previous kick has not
+		// completed, keep the current front (this frame tests a 2-frame-old buffer -- one consistent
+		// buffer per frame, so still no per-walk flicker) and do NOT swap under the busy builder.
+		if (g_prevFrameOcclusion && g_mocSpare &&
+			g_rasterFrame.load(std::memory_order_acquire) == g_lastKicked) {
+			g_mocFront.store(g_moc, std::memory_order_release);
+			std::swap(g_moc, g_mocSpare);
+			g_pool->SetBuffer(g_moc);
+		}
+
 		{
 			std::scoped_lock lk(g_builderMtx);
 			g_builderKick = true;
 		}
 		g_kickFrame.store(frame, std::memory_order_release);
+		g_lastKicked = frame;
 		g_builderCV.notify_one();
 
 		// DIAG (rate-limited): build time (gather + raster, on whichever cull thread won
@@ -1998,7 +2051,10 @@ namespace MOC
 				screenMax = _mm_max_ps(screenMax, xformedPos);
 			}
 
-			const auto r = g_moc->TestRect(screenMin.m128_f32[0], screenMin.m128_f32[1], screenMax.m128_f32[0], screenMax.m128_f32[1], minW);
+			auto* moc = TestBuf();
+			if (!moc)
+				return true;
+			const auto r = moc->TestRect(screenMin.m128_f32[0], screenMin.m128_f32[1], screenMax.m128_f32[0], screenMax.m128_f32[1], minW);
 			return r == MaskedOcclusionCulling::VISIBLE;
 		}
 
@@ -2067,7 +2123,10 @@ namespace MOC
 			XMVECTOR xyMins = _mm_min_ps(vCorner0NDC, _mm_min_ps(vCorner1NDC, _mm_min_ps(vCorner2NDC, vCorner3NDC)));
 			XMVECTOR xyMaxs = _mm_max_ps(vCorner0NDC, _mm_max_ps(vCorner1NDC, _mm_max_ps(vCorner2NDC, vCorner3NDC)));
 
-			const auto r = g_moc->TestRect(xyMins.m128_f32[0], xyMins.m128_f32[1], xyMaxs.m128_f32[0], xyMaxs.m128_f32[1], closestSpherePointW);
+			auto* moc = TestBuf();
+			if (!moc)
+				return true;
+			const auto r = moc->TestRect(xyMins.m128_f32[0], xyMins.m128_f32[1], xyMaxs.m128_f32[0], xyMaxs.m128_f32[1], closestSpherePointW);
 			return r == MaskedOcclusionCulling::VISIBLE;
 		}
 
@@ -2108,7 +2167,10 @@ namespace MOC
 		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
 			return true;
 
-		{
+		if (g_prevFrameOcclusion) {
+			if (!g_mocFront.load(std::memory_order_acquire))
+				return true;  // no completed prev-frame buffer yet -- keep (conservative)
+		} else {
 			auto* gfx = RE::BSGraphics::State::GetSingleton();
 			if (!gfx || !WaitForRasterComplete(gfx->frameCount))
 				return true;  // buffer not ready this frame -- keep (conservative)
@@ -2218,7 +2280,10 @@ namespace MOC
 		if (!aabb || aabb->size.z <= 1.0f)
 			return true;  // no AABB shape (spheres etc.) or degenerate bounds -> keep
 
-		{
+		if (g_prevFrameOcclusion) {
+			if (!g_mocFront.load(std::memory_order_acquire))
+				return true;
+		} else {
 			auto* gfx = RE::BSGraphics::State::GetSingleton();
 			if (!gfx || !WaitForRasterComplete(gfx->frameCount))
 				return true;
