@@ -3586,12 +3586,14 @@ void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_
 	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
 	if (cap == 0 || cap > (1u << 20))  // sanity bound: guard against a torn/garbage capacity read
 		return;
+	std::uint64_t rawWalked = 0, occupiedBuckets = 0;
 	for (std::uint32_t b = 0; b < cap; ++b) {
 		auto* const e = tbl + 16ull * b;
 		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
 			continue;
 		if (!*reinterpret_cast<std::uintptr_t*>(e + 8))  // empty slot
 			continue;
+		++occupiedBuckets;
 		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
 		// Modes 1/3/4 carry the alpha-test flag (v11) in BeginPass; modes 0/2 do not. The instanceable
 		// subset is non-alpha-test whole-TRISHAPE non-skinned -- so only modes 0 and 2 can contribute.
@@ -3599,6 +3601,7 @@ void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_
 			const bool modeAlpha = (slot == 1 || slot == 3 || slot == 4);
 			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
 				pass; pass = pass->passGroupNext) {
+				++rawWalked;
 				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
 				const bool  wholeTri = geom && geom[0x150] == 3;
 				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
@@ -3609,6 +3612,17 @@ void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_
 			}
 		}
 	}
+	(void)occupiedBuckets;
+	(void)rawWalked;
+	// FINDING (2026-07-14, mode-10 harness): at Func43 ENTRY this reads occBuckets=10 (the technique
+	// registry persists) but rawWalked=0 -- the renderPass hash-array chains are EMPTY -- and the
+	// geometryGroups[16] pass-lists are empty too. The batchRenderer holds NO materialized passes before
+	// the walk: RenderBatches (0x1412CCE40) materializes each group's passes, walks them, and clears them
+	// transiently, per group. So there is no clean pre-walk point to direct-read; the passes exist only
+	// DURING the walk (which is exactly where CaptureHook taps them). The skip-walk + direct-read design
+	// in shadow-walk-parallelization.md is therefore invalid at this hook point -- parallelizing the walk
+	// needs either capture-during-walk (serial) or MT-the-walk (global-state localization), not a
+	// self-contained pre-walk read. Function retained for a future correct hook point (e.g. mid-walk).
 }
 
 std::uint8_t UtilityPassReplica::BeginPassReplica(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a5)

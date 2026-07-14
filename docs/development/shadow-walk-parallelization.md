@@ -1,8 +1,42 @@
 # Shadow walk parallelization — native +7.5–12% (the max shadow lever)
 
-Status: **designed + RE-complete, implementation pending.** Every offset here is verified
-against the legit unpacked SE-1.5.97 db (`G:\IDA Projects\skyrimcutter`) and CommonLibSSE-NG
-headers, cross-checked with `D:\GitHub\offsets-1-5-97-0.csv` (addr→AddrLib-ID). No guessed IDs.
+Status: **RE-complete; the pre-walk direct-read design is INVALIDATED by in-engine testing (see
+"CRITICAL FINDING" below); a corrected approach is needed.** Every offset here is verified against
+the legit unpacked SE-1.5.97 db (`G:\IDA Projects\skyrimcutter`) and CommonLibSSE-NG headers,
+cross-checked with `D:\GitHub\offsets-1-5-97-0.csv` (addr→AddrLib-ID). No guessed IDs.
+
+## CRITICAL FINDING (2026-07-14, mode-10 `kInstanceOwnVerify` harness)
+
+The `kInstanceOwnVerify` mode direct-reads the accumulator at **Func43 entry** and compares its
+instanceable count to CaptureHook's. Result: **directReadInst=0 every map** (diverged ~100%). The
+one-shot diagnostic pinned the cause precisely:
+
+```
+[DirectRead] br=<valid> cap=16 occBuckets=10 rawWalked=0 inst=0 | ggNonNull=16 ggViaNext=0 ggViaPGN=0
+```
+
+- `occBuckets=10`: the `renderPassMap` technique registry IS populated (structure/offsets correct).
+- `rawWalked=0`: the `renderPass` hash-array pass chains are **empty**.
+- `ggNonNull=16 / ggViaNext=0 / ggViaPGN=0`: the `geometryGroups[16]` pass-lists are **empty too**.
+
+**The batchRenderer holds NO materialized passes at Func43 entry.** `RenderBatches` (0x1412CCE40)
+materializes each group's passes from the culled geometry, walks them, and clears them — transiently,
+per group — so the passes exist ONLY during the walk (exactly where CaptureHook taps them). There is
+no clean pre-walk point to enumerate them.
+
+**Consequence:** the "skip Func43 walk + self-contained direct-read on a worker" design below does not
+work as written. Parallelizing the walk must instead be one of:
+1. **Capture during the walk** (CaptureHook, serial — the current mode-9) and parallelize only the
+   downstream build — but that build (0.26ms across 7 uneven maps) was already measured net-negative.
+2. **MT the walk itself** — run RenderBatches/BeginPass on workers with the shared render-state
+   globals (S-block `0x143027EB0`, technique caches) localized per worker (the kConcurrent machinery,
+   which works but was deferred-context-bound → fails ExecuteCommandList on native).
+3. **Read the culled geometry pre-walk and replicate geometry→pass** (technique selection etc.) — the
+   most work, effectively re-implementing RenderBatches' materialization.
+
+Combined with the Amdahl ceiling (below), the shadow lever is both **bounded (~+7.5–12% max over dev)
+AND hard to realize** — there is no cheap correct direct-read. The mode-10 harness (retained) is the
+proof; `DirectReadInstanceableCount` is kept for a future mid-walk hook point.
 
 ## Why this, and the hard ceiling (measured, not estimated)
 
