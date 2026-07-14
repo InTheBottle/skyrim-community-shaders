@@ -846,6 +846,8 @@ namespace
 	};
 
 	std::atomic<bool>                     g_pcActive{ false };  // inside a kParallelCull RenderShadowmaps walk
+	std::uint32_t                         g_pcPoolSize = 6;     // resolved at InstallHooks; pool starts lazily
+	bool                                  g_pcPoolStarted = false;  // render thread only (CullHook)
 	std::atomic<int>                      g_pcFrame{ 0 };       // frame counter for gated crash-pinpoint logging
 	// Flushed log to pin the crashing op (the CS log survives a hard crash only if flushed).
 	inline void pclog(const char* what, void* p)
@@ -906,12 +908,52 @@ namespace
 					char b[8] = {};
 					return GetEnvironmentVariableA("CS_SHADOW_CULL_SERIAL", b, sizeof(b)) && b[0] && b[0] != '0';
 				}();
-				if (s_serial || !g_pcActive.load(std::memory_order_relaxed)) {
+				// Non-shadow culls (main view, reflections, boot/intro) run UNTOUCHED on the
+				// calling thread. The old Stage-1 behavior bounced EVERY cull through the worker
+				// via RunAndWait -- tolerable on native D3D11, but on DXVK an off-render-thread
+				// cull corrupts the CS command stream (crashed at boot in DxvkCsTypedCmd::exec
+				// even with all shadow dispatches settle-gated). The bounce survives only as the
+				// explicit CS_SHADOW_CULL_SERIAL=1 validation mode.
+				if (!g_pcActive.load(std::memory_order_relaxed))
+					return orig(a1, a2, a3);
+				if (s_serial) {
 					std::int32_t ret = 0;
 					g_cullWorker.RunAndWait([&] { ret = orig(a1, a2, a3); });
 					return ret;
 				}
 				// Stage 2: a1=camera, a2=accumulator, a3=flags.
+				// Quiesce during loads + a settle window after (the MOC lesson, relearned 2026-07-14:
+				// dispatching walks against a half-built scene mid-load = AV -- crashed in DXVK CS
+				// exec at load frame 2). Loading screens render frames, so the histogram warms up
+				// DURING the load; gate on the LoadingMenu + ~240 frames of settle, fully inline.
+				{
+					// Stage 2 only IN-WORLD: the boot intro / main-menu backdrop / loading scenes are
+					// half-built and crashed three ways (frame-2 dispatch, worker cull bounce, settle
+					// expiry mid-intro at f720). The robust predicate is the player having a parent
+					// cell AND no LoadingMenu, plus a settle window after every load.
+					static std::uint32_t s_settleUntil = 0;
+					auto* gfx = RE::BSGraphics::State::GetSingleton();
+					const std::uint32_t frame = gfx ? gfx->frameCount : 0;
+					auto* ui = RE::UI::GetSingleton();
+					auto* player = RE::PlayerCharacter::GetSingleton();
+					const bool inWorld = player && player->parentCell;
+					if (!inWorld || s_settleUntil == 0 || (ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)))
+						s_settleUntil = frame + 240;
+					if (frame < s_settleUntil) {
+						g_curMapDeferred = false;
+						return orig(a1, a2, a3);
+					}
+				}
+
+				// Lazy pool start (see InstallHooks): the worker threads spawn only once we are
+				// in-world and settled -- spawning them at boot destabilized loading.
+				if (!g_pcPoolStarted) {
+					g_pcPoolStarted = true;
+					g_cullWorker.Start();
+					g_cullPool.Start(g_pcPoolSize);
+					logger::info("[ShadowThreaded] kParallelCull pool({}) started (in-world)", g_pcPoolSize);
+				}
+
 				g_accumCountThisFrame[a2]++;
 				g_curMapCamera = a1;
 				const bool sharedHist = g_accumSharedLastFrame.count(a2) > 0;
@@ -1979,10 +2021,12 @@ void ShadowThreaded::InstallHooks()
 		DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
 		DetourAttach(reinterpret_cast<PVOID*>(&Func43Hook::func), reinterpret_cast<PVOID>(Func43Hook::thunk));
 		DetourTransactionCommit();
-		const std::uint32_t poolN = workerCount > 1 ? workerCount : 6;
-		g_cullWorker.Start();
-		g_cullPool.Start(poolN);
-		logger::info("[ShadowThreaded] kParallelCull: Cull+Func43 detours installed, worker + pool({}) started", poolN);
+		// Pool start is LAZY (first in-world Stage-2 dispatch, see CullHook): spawning the worker
+		// threads at boot destabilized loading -- five straight boot crashes in unrelated-looking
+		// places (DxvkCsTypedCmd::exec, engine 0x130E09F, MapBuffer) that all vanish without the
+		// early threads; same failure signature as the parallel-fill BS::thread_pool lesson.
+		g_pcPoolSize = workerCount > 1 ? workerCount : 6;
+		logger::info("[ShadowThreaded] kParallelCull: Cull+Func43 detours installed, pool({}) starts lazily in-world", g_pcPoolSize);
 	}
 
 	// kInstanceOwnVerify: hook Func43 only (no cull hook, no worker pool) so the pre-walk direct-read
