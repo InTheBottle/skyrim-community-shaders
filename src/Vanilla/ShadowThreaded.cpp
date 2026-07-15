@@ -1170,7 +1170,10 @@ namespace
 						return GetEnvironmentVariableA("CS_SHADOW_WALKMT_JOIN", b, sizeof(b)) && b[0] == '1';
 					}();
 					if (s_join)
-						g_cullWorker.RunAndWait([&] { CullWalkMT(acc, cf, blockCopy); });
+						CullWalkMT(acc, cf, blockCopy);  // INLINE on the render thread: validates the
+						                                 // replica-record walk (BeginPass->Replica onto a
+						                                 // deferred ctx + command-list execute) produces
+						                                 // correct shadows BEFORE adding concurrency.
 					else
 						g_cullPool.Submit([acc, cf, blockCopy] { CullWalkMT(acc, cf, blockCopy); });
 					return 0;
@@ -1478,6 +1481,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		// snapshot) but dispatches each map's WALK to the pool, where it records via BeginPassReplica
 		// onto a private deferred context (BeginPass diverted -> t_worker ctx, never the shared
 		// immediate slot). Barrier, then execute the collected command lists, then the serial submit.
+		g_claiming = false;  // singular RenderShadowmapDetour takes passthrough; CullHook drives the defer
 		auto* immediate = *engine::g_immediateContext;
 		GlobalStateGuard guard(immediate);
 		g_walkMTToken = guard.shadowToken;
