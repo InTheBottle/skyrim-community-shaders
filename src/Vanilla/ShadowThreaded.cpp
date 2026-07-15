@@ -15,6 +15,7 @@
 #include <spdlog/spdlog.h>
 
 #include "Globals.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "UtilityPassReplica.h"
 #include "Utils/D3D.h"
@@ -1085,14 +1086,22 @@ namespace
 				// robust predicate is the player having a parent cell AND no LoadingMenu, plus a
 				// 240-frame settle window after every load.
 				{
+					// Conservative dispatch gate: the worker record touches DXVK-mapped buffers, so
+					// dispatching against half-built load-transient state AVs in DeferredContext::
+					// MapBuffer. Require the player fully in-world (parent cell AND 3D loaded), no
+					// loading/main menu, shaders not compiling, AND a long settle after every load.
 					static std::uint32_t s_settleUntil = 0;
 					auto* gfx = RE::BSGraphics::State::GetSingleton();
 					const std::uint32_t frame = gfx ? gfx->frameCount : 0;
 					auto* ui = RE::UI::GetSingleton();
 					auto* player = RE::PlayerCharacter::GetSingleton();
-					const bool inWorld = player && player->parentCell;
-					if (!inWorld || s_settleUntil == 0 || (ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)))
-						s_settleUntil = frame + 240;
+					const bool inWorld = player && player->parentCell &&
+						player->loadedData && player->loadedData->data3D;
+					const bool menuUp = ui && (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) ||
+						ui->IsMenuOpen(RE::MainMenu::MENU_NAME));
+					const bool compiling = globals::shaderCache && globals::shaderCache->IsCompiling();
+					if (!inWorld || menuUp || compiling || s_settleUntil == 0)
+						s_settleUntil = frame + 600;
 					if (frame < s_settleUntil) {
 						g_curMapDeferred = false;
 						return orig(a1, a2, a3);

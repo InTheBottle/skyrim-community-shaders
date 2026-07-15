@@ -723,6 +723,7 @@ namespace
 		winrt::com_ptr<ID3D11Buffer> psGeomCB;
 	};
 	thread_local ShadowWorkerState* t_worker = nullptr;
+	std::atomic<std::uint64_t>      g_walkMTSkippedSkinned{ 0 };  // skinned passes skipped on workers (kWalkMT measurement gate)
 
 	// Lazily create a per-worker copy of a shared PerGeometry CB (matching the shared buffer's
 	// desc) so the worker's deferred-context Map(WRITE_DISCARD) never touches the shared buffer.
@@ -1216,6 +1217,17 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 
 	// ---- geometry dispatch (RenderPassImmediately tail, 1.5.97 0x1413084C5) ----
 	if (*reinterpret_cast<void**>(geomBytes + 0x130)) {
+		// SKINNED pass. Its bone-palette upload runs through the engine's skin Render vfunc, which
+		// Maps the SHARED bone-CB / dyn-VB ring -- not a swappable per-object buffer -- so on a
+		// worker thread it races the immediate context / CS thread (crash in DeferredContext::
+		// MapBuffer, then hang in updateVertexBufferBindings). kWalkMT keeps skinned on the serial
+		// remainder (the design's plan); for the MEASUREMENT gate the worker SKIPS skinned passes
+		// (temporarily drops actor/creature shadows on worker-rendered maps) so the concurrent
+		// static-TRISHAPE path can be timed. g_walkMTSkippedSkinned counts what was dropped.
+		if (t_worker) {
+			g_walkMTSkippedSkinned.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
 		ReplicaRenderSkinned(a_pass, a_alphaTest, a_renderFlags);
 		return;
 	}
