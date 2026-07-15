@@ -914,6 +914,13 @@ namespace
 	using Func37_t = void(__fastcall*)(void*, void*);
 	using Func42_t = void(__fastcall*)(void*, std::uint32_t);
 	using UpdateViewport_t = void(__fastcall*)(void*, int, int, int);
+	// BSBatchRenderer::sub_141306DB0 (0x141306DB0): the reverse-of-accumulation reset -- zeroes every
+	// group's 0x30-byte slot-head block (via the br+0x20 hash iterator) and drains the br+0x60 group-key
+	// list back to the global 16B node pool (unk_143490BC0), with a TLS-local alloc-tag guard. This is the
+	// exact primitive the batch-renderer ctor/teardown use; it is what heals the passGroupNext self-cycle
+	// that freezes the skip-Func42 path (an un-cleared slot head re-inserts a cached pass as its own
+	// successor). It does NOT drain the persistent lists at br+0x78/0xB8/0xE8 (M3 risk #1, probed below).
+	using BatchRendererReset_t = void(__fastcall*)(void*);
 
 	// Replicates NiCamera::sub_1412C1600 MINUS the walk (Func42): sets the global camera + accumulator so the
 	// per-map shadow-matrix setup that follows in RenderShadowmap reads correct data. Runs INLINE (serial).
@@ -1278,6 +1285,7 @@ namespace
 	// engine bound for this map, record them for the serial submit phase, and SKIP the submit now.
 	bool EnumInstanceRender(void* a_accum, std::uint32_t a_flags);   // defined after RenderMapInstanced
 	void EnumInstanceObserve(void* a_accum, std::uint32_t a_flags);  // safe: enumerate + log, no render
+	void EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw);  // M3: draw?(0b) + our own reset
 
 	// BSShaderAccumulator::Func42 (0x1412CAC20): dispatcher -- SetRenderMode(accum+0x150) then
 	// table[renderMode](accum, flags) (0x1431D1C40, runtime-populated), the fused per-map walk+draw+FREE.
@@ -1298,6 +1306,40 @@ namespace
 	// future private-accumulator work; it latches off on the first rejected chain to avoid the engine hang.
 	inline std::atomic<std::uint32_t> g_enumBadFrame{ 0xFFFFFFFFu };
 
+	// kEnumInstance sub-behavior, selected once from env at first Func42:
+	//   Observe (default)  -- enumerate+log, engine renders+frees (safe, shipped).
+	//   Skip               -- CS_SHADOW_ENUM_SKIP=1: render from our enum, skip Func42 (PROVEN freeze).
+	//   M3ResetOnly        -- CS_SHADOW_M3=0a: skip the engine render, call sub_141306DB0 ourselves. The
+	//                         cheapest de-risk of the whole M3 thesis: if the game stays stable with a
+	//                         CONSTANT enum count (not growing), our own reset heals the pool -> M3 is the
+	//                         SMALL variant (no private accumulators needed). Shadows go black (expected).
+	//   M3DrawReset        -- CS_SHADOW_M3=0b: DirectReadEnumerate -> instanced draw -> our reset. Correct
+	//                         shadows owned end-to-end on the render thread; gate on atlas-hash vs vanilla.
+	enum class EnumSub
+	{
+		Observe,
+		Skip,
+		M3ResetOnly,
+		M3DrawReset
+	};
+
+	inline EnumSub EnumSubBehavior()
+	{
+		static const EnumSub s = [] {
+			char b[8]{};
+			if (GetEnvironmentVariableA("CS_SHADOW_ENUM_SKIP", b, sizeof(b)) && b[0] == '1')
+				return EnumSub::Skip;
+			if (GetEnvironmentVariableA("CS_SHADOW_M3", b, sizeof(b)) && b[0] == '0') {
+				if (b[1] == 'a')
+					return EnumSub::M3ResetOnly;
+				if (b[1] == 'b')
+					return EnumSub::M3DrawReset;
+			}
+			return EnumSub::Observe;
+		}();
+		return s;
+	}
+
 	struct Func42Hook
 	{
 		static void thunk(void* a1, std::uint32_t a2)  // a1 = accumulator, a2 = flags
@@ -1309,17 +1351,27 @@ namespace
 				reinterpret_cast<Func42_t>(func.address())(a1, a2);
 				return;
 			}
-			static const bool s_skip = [] {
-				char b[8]{};
-				return GetEnvironmentVariableA("CS_SHADOW_ENUM_SKIP", b, sizeof(b)) && b[0] == '1';
-			}();
-			if (!s_skip) {
+			switch (EnumSubBehavior()) {
+			case EnumSub::Observe:
 				// Safe default: prove the enumeration (observe + log), then engine renders + frees.
 				EnumInstanceObserve(a1, a2);
 				reinterpret_cast<Func42_t>(func.address())(a1, a2);
 				return;
+			case EnumSub::M3ResetOnly:
+				// M3.0a: skip the engine render entirely; reset the batch renderer ourselves. If stable,
+				// the reset heals the cycle -> M3 SMALL. (No fallback/latch: the whole point is to prove
+				// our reset -- if it freezes, that IS the result, and CS_SHADOW_M3 is opt-in.)
+				EnumInstanceM3(a1, a2, /*draw=*/false);
+				return;
+			case EnumSub::M3DrawReset:
+				// M3.0b: render from our enumeration + reset ourselves (own the map end-to-end).
+				EnumInstanceM3(a1, a2, /*draw=*/true);
+				return;
+			case EnumSub::Skip:
+			default:
+				break;
 			}
-			// Opt-in skip harness (PROVEN to freeze; kept for the private-accumulator build).
+			// Opt-in skip harness (PROVEN to freeze; kept only for reference / private-accumulator work).
 			auto* const         gfx = RE::BSGraphics::State::GetSingleton();
 			const std::uint32_t frame = gfx ? gfx->frameCount : 0;
 			const std::uint32_t bad = g_enumBadFrame.load(std::memory_order_relaxed);
@@ -2233,6 +2285,52 @@ namespace
 			logger::info("[EnumInstance] inst={} remainder={} flags={:#x} (Func42 skipped, instanced-only)",
 				s_inst.size(), s_rem.size(), a_flags);
 		return true;
+	}
+
+	// M3: own the map end-to-end. Optionally render from our enumeration (draw=0b), then RESET this map's
+	// batch renderer OURSELVES (BSBatchRenderer::sub_141306DB0) instead of running the engine Func42. The
+	// reset is the reverse-of-accumulation the engine's walk performs incrementally -- it heals the
+	// passGroupNext self-cycle that froze the plain skip path (an un-cleared slot head re-inserts a cached
+	// pass as its own successor). M3.0a (draw=false) is the cheapest de-risk of the whole thesis: skip the
+	// render, reset only, and watch for a CONSTANT enum count + no freeze (shadows go black -- expected).
+	// M3.0b (draw=true) adds the instanced draw for correct shadows. sub_141306DB0 does NOT drain the
+	// persistent lists (br+0x78/0xB8/0xE8); we probe their counts so risk #1 is diagnosed in the same run.
+	void EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw)
+	{
+		auto* const br = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
+		auto* const replica = UtilityPassReplica::GetSingleton();
+		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
+		static thread_local std::vector<std::uint32_t>     s_techs;
+		const bool ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem);
+
+		if (a_draw && ok && !s_inst.empty()) {
+			static thread_local MapWork mw;
+			std::memcpy(mw.block, reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+			mw.passes.clear();
+			mw.passes.reserve(s_inst.size());
+			for (std::size_t i = 0; i < s_inst.size(); ++i)
+				mw.passes.push_back(CapturedPass{ s_inst[i], s_techs[i], false, a_flags });
+			RenderMapInstanced(mw);
+		}
+
+		// Our own reset: replaces the engine Func42's incremental free -- the load-bearing step the plain
+		// skip path omitted. Pure CPU (no D3D), so it is order-independent w.r.t. the draw above.
+		if (br)
+			reinterpret_cast<BatchRendererReset_t>(REL::Offset(0x1306DB0).address())(br);
+
+		// Probe: enum count (CONSTANT frame-to-frame == reset healthy) + persistent-list residue (risk #1;
+		// -1 = that slot's list pointer is null). br+0x78/0xB8/0xE8 hold persistent-list objects whose
+		// count lives at +0x24 (they are what sub_1412CC3C0 drains via RenderPersistentPassList).
+		static std::atomic<std::uint64_t> s_n{ 0 };
+		if ((s_n.fetch_add(1, std::memory_order_relaxed) % 240) == 0) {
+			auto plistCount = [](void* b, std::size_t off) -> std::int64_t {
+				auto* p = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(b) + off);
+				return p ? static_cast<std::int64_t>(*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(p) + 0x24)) : -1;
+			};
+			logger::info("[EnumM3] draw={} ok={} inst={} rem={} flags={:#x} plists[78/B8/E8]={}/{}/{}",
+				a_draw, ok, s_inst.size(), s_rem.size(), a_flags,
+				br ? plistCount(br, 0x78) : -1, br ? plistCount(br, 0xB8) : -1, br ? plistCount(br, 0xE8) : -1);
+		}
 	}
 }
 
