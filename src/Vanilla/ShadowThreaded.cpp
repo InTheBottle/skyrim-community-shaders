@@ -1068,6 +1068,25 @@ namespace
 		static std::int32_t thunk(void* a1, void* a2, std::uint32_t a3)
 		{
 			auto* orig = reinterpret_cast<std::int32_t (*)(void*, void*, std::uint32_t)>(func.address());
+			// CS_SHADOW_PREREAD=1 (feasibility probe for the enumeration rebuild): read the
+			// accumulator's BatchRenderer pass chains AT CULLHOOK ENTRY -- BEFORE Func42 consumes
+			// them. IDA (sub_141307E80) proves Func42 WALKS+FREES a pre-populated list, so the
+			// caster passes should be readable here (mode-10 read at Func43, post-consumption =
+			// empty). Non-zero here => the parallel enumeration is feasible. Bypasses all MT logic.
+			static const bool s_preread = [] {
+				char b[8] = {};
+				return GetEnvironmentVariableA("CS_SHADOW_PREREAD", b, sizeof(b)) && b[0] == '1';
+			}();
+			if (s_preread) {
+				if (a2 && g_pcActive.load(std::memory_order_relaxed)) {
+					std::uint64_t inst = 0, other = 0;
+					UtilityPassReplica::GetSingleton()->DirectReadInstanceableCount(a2, inst, other);
+					static std::atomic<std::uint64_t> s_n{ 0 };
+					if ((s_n.fetch_add(1, std::memory_order_relaxed) % 240) == 0)
+						logger::info("[PreRead] CullHook-ENTRY accum={} instanceable={} other={} (pre-Func42)", a2, inst, other);
+				}
+				return orig(a1, a2, a3);
+			}
 			const auto curMode = ShadowThreaded::GetSingleton()->GetMode();
 			if (curMode == ShadowThreaded::Mode::kParallelCull || curMode == ShadowThreaded::Mode::kWalkMT) {
 				const bool walkMT = curMode == ShadowThreaded::Mode::kWalkMT;
