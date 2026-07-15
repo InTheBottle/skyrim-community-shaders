@@ -1377,6 +1377,23 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	g_mapWorkList.emplace_back();
 	g_curMap = &g_mapWorkList.back();
 
+	// M0 enumeration-rebuild ORACLE (CS_SHADOW_ENUM_VERIFY=1): read the accumulator's caster chains
+	// NOW (post-cull, pre-Func42; accum = desc+0x48) and compare our enumerated instanceable count to
+	// what CaptureHook claims during the walk. diverged=0 proves the pre-walk direct-read finds the
+	// SAME instanceable set the engine walk does -- the prerequisite for the whole rebuild.
+	static const bool s_enumVerify = [] {
+		char b[8] = {};
+		return GetEnvironmentVariableA("CS_SHADOW_ENUM_VERIFY", b, sizeof(b)) && b[0] == '1';
+	}();
+	static thread_local std::vector<RE::BSRenderPass*> s_enumInst, s_enumRem;
+	static thread_local std::vector<std::uint32_t>     s_enumTech;
+	std::size_t enumInstN = 0;
+	if (s_enumVerify) {
+		void* accum = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(a2) + 0x48);
+		UtilityPassReplica::GetSingleton()->DirectReadEnumerate(accum, s_enumInst, s_enumTech, s_enumRem);
+		enumInstN = s_enumInst.size();
+	}
+
 	// WALK-vs-RENDER split timing (env CS_SHADOW_WALKSPLIT=1): callOriginal = engine walk + CaptureHook
 	// collect (serial, render thread); RenderMapInstanced = the parallelizable render. Confirms the ceiling.
 	static const bool s_walkSplit = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_WALKSPLIT", b, sizeof(b)) && b[0] == '1'; }();
@@ -1389,6 +1406,19 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 
 	if (s_walkSplit)
 		QueryPerformanceCounter(&_w1);
+
+	// M0 oracle compare: CaptureHook (in callOriginal) just claimed the instanceable subset into
+	// g_curMap->passes. Diff its count against our pre-walk enumeration.
+	if (s_enumVerify && g_curMap) {
+		const std::size_t claimed = g_curMap->passes.size();
+		static std::atomic<std::uint64_t> s_maps{ 0 }, s_diverged{ 0 };
+		if (enumInstN != claimed)
+			s_diverged.fetch_add(1, std::memory_order_relaxed);
+		const std::uint64_t n = s_maps.fetch_add(1, std::memory_order_relaxed);
+		if ((n % 240) == 0)
+			logger::info("[EnumVerify] map: enumInst={} captureClaimed={} match={} | totalMaps={} diverged={}",
+				enumInstN, claimed, enumInstN == claimed, n + 1, s_diverged.load());
+	}
 
 	// Per-map replay: execute this map's claimed passes NOW, while its view globals are current.
 	if (GetMode() == Mode::kWorkerSerial && g_curMap)

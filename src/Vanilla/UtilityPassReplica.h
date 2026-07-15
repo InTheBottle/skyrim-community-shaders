@@ -255,6 +255,15 @@ public:
 	/// parallelizing the walk. a_accum = BSShaderAccumulator*. See shadow-walk-parallelization.md.
 	void DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const;
 
+	/// Shadow-caster enumeration (the enumeration-rebuild source): walk the accumulator's populated
+	/// pass chains (the SAME layout DirectReadInstanceableCount uses) and COLLECT the passes,
+	/// classified. Instanceable (non-alpha whole-TRISHAPE non-skinned) -> (a_instPasses, a_instTechs)
+	/// paired arrays for RenderShadowInstanced; everything else -> a_remainder. Pure CPU, no D3D --
+	/// safe to run on a worker over a per-light PRIVATE accumulator. Must be called while the chains
+	/// are populated (post-cull, pre-Func42; e.g. at RenderShadowmap/CullHook entry -- NOT Func43).
+	void DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
+		std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const;
+
 	/// Regime-B MULTITHREAD gate for one covered pass: render it via the engine and via the WORKER path
 	/// (private block + full setup/flush reimpl, the exact MT code) from the same state, and diff the
 	/// per-draw effective-state fingerprints (vanilla::DrawStateValidator::CompareFingerprints). The

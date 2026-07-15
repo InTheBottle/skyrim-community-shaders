@@ -3605,6 +3605,51 @@ static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
 	return v6;
 }
 
+void UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
+	std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const
+{
+	a_instPasses.clear();
+	a_instTechs.clear();
+	a_remainder.clear();
+	if (!a_accum)
+		return;
+	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
+	if (!br)
+		return;
+	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(br + 8);
+	auto* const tbl = *reinterpret_cast<std::uint8_t**>(br + 0x48);
+	if (!passArrayBase || !tbl)
+		return;
+	const std::uint32_t  cap = *reinterpret_cast<std::uint32_t*>(br + 0x2C);
+	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
+	if (cap == 0 || cap > (1u << 20))
+		return;
+	for (std::uint32_t b = 0; b < cap; ++b) {
+		auto* const e = tbl + 16ull * b;
+		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
+			continue;
+		if (!*reinterpret_cast<std::uintptr_t*>(e + 8))
+			continue;
+		const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(e);       // technique key for this group
+		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
+		for (int slot = 0; slot < 5; ++slot) {
+			const bool modeAlpha = (slot == 1 || slot == 3 || slot == 4);  // v11 alpha-test flag per BeginPass
+			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
+				pass; pass = pass->passGroupNext) {
+				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
+				const bool  wholeTri = geom && geom[0x150] == 3;
+				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
+				if (!modeAlpha && wholeTri && !skinned) {
+					a_instPasses.push_back(pass);
+					a_instTechs.push_back(key);
+				} else {
+					a_remainder.push_back(pass);
+				}
+			}
+		}
+	}
+}
+
 void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const
 {
 	a_instanceable = 0;
