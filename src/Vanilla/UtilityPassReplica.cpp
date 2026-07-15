@@ -3016,32 +3016,28 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			return;
 		}
 		auto* outBase = reinterpret_cast<std::uint8_t*>(mappedAll.pData);
+		// SG_BuildMatrix (FUN_1412c3440) subtracts a per-frame camera position adjust from the translation
+		// (0 during shadow render, but read it to stay byte-exact). Constant across the map -> read once.
+		const float adjX = *reinterpret_cast<const float*>(REL::Offset(0x302820C).address());
+		const float adjY = *reinterpret_cast<const float*>(REL::Offset(0x3028210).address());
+		const float adjZ = *reinterpret_cast<const float*>(REL::Offset(0x3028214).address());
 		for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
 			auto&      g = groups[order[oi]];
 			auto*      out = outBase + static_cast<std::size_t>(g.baseInst) * 32u;
 			const auto n = static_cast<std::uint32_t>(g.passes.size());
 			for (std::uint32_t i = 0; i < n; ++i, out += 32) {
-				auto*             geom = reinterpret_cast<std::uint8_t*>(g.passes[i]->geometry);
+				auto* geom = reinterpret_cast<std::uint8_t*>(g.passes[i]->geometry);
+				// Inlined SG_BuildMatrix: World = scale * rotation (transposed 3x3) + (translate - camAdjust).
+				// Replaces the per-instance engine call (~1200/frame, the dominant fill cost). All casters
+				// here are whole-TRISHAPE (geom[0x150]==3, filtered above), so the engine's AsParticlesGeom
+				// branch never runs -- that per-instance virtual call was dead on this path and is dropped.
+				const float*      x = reinterpret_cast<const float*>(geom + 0x7C);  // NiTransform: rot[9] trans[3] scale
+				const float       s = x[12];
 				alignas(16) float m44[16];
-				if (EngineCallV<16, void*>(reinterpret_cast<RE::BSGeometry*>(g.passes[i]->geometry))) {
-					// AsParticlesGeom: translate = world.translate + scale*(rot*modelBound.center).
-					alignas(16) float mt[16];
-					auto*             gw = geom + 0x7C;
-					float             r[9];
-					std::memcpy(r, gw, 36);
-					std::memcpy(mt, r, 36);
-					const float sc = *reinterpret_cast<float*>(gw + 0x30);
-					const float cx = *reinterpret_cast<float*>(geom + 0x110);
-					const float cy = *reinterpret_cast<float*>(geom + 0x114);
-					const float cz = *reinterpret_cast<float*>(geom + 0x118);
-					mt[9] = *reinterpret_cast<float*>(gw + 0x24) + sc * (r[0] * cx + r[1] * cy + r[2] * cz);
-					mt[10] = *reinterpret_cast<float*>(gw + 0x28) + sc * (r[3] * cx + r[4] * cy + r[5] * cz);
-					mt[11] = *reinterpret_cast<float*>(gw + 0x2C) + sc * (r[6] * cx + r[7] * cy + r[8] * cz);
-					mt[12] = sc;
-					EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(mt));
-				} else {
-					EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(m44), static_cast<const void*>(geom + 0x7C));
-				}
+				m44[0] = s * x[0];  m44[1] = s * x[3];  m44[2] = s * x[6];   m44[3] = 0.0f;
+				m44[4] = s * x[1];  m44[5] = s * x[4];  m44[6] = s * x[7];   m44[7] = 0.0f;
+				m44[8] = s * x[2];  m44[9] = s * x[5];  m44[10] = s * x[8];  m44[11] = 0.0f;
+				m44[12] = x[9] - adjX;  m44[13] = x[10] - adjY;  m44[14] = x[11] - adjZ;  m44[15] = 1.0f;
 				__m128 r0 = _mm_load_ps(m44 + 0), r1 = _mm_load_ps(m44 + 4), r2 = _mm_load_ps(m44 + 8), r3 = _mm_load_ps(m44 + 12);
 				_MM_TRANSPOSE4_PS(r0, r1, r2, r3);  // == SG_MatrixTranspose
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 0), _mm_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT));
@@ -3049,10 +3045,20 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 16), _mm_cvtps_ph(r2, _MM_FROUND_TO_NEAREST_INT));
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 24), _mm_cvtps_ph(r3, _MM_FROUND_TO_NEAREST_INT));
 				if (i == 0) {
-					static std::atomic<int> s_refChecks{ 64 };
+					// Validate the inlined SG_BuildMatrix + F16C pack against the engine (SG_BuildMatrix ->
+					// SG_MatrixTranspose -> XMConvertFloatToHalf) for the first N groups. diverge=0 proves the
+					// inline is byte-exact with the engine path it replaces.
+					static std::atomic<int> s_refChecks{ 256 };
 					if (s_refChecks.fetch_sub(1, std::memory_order_relaxed) > 0) {
-						alignas(16) float           wref[16];
+						alignas(16) float           mref[16], wref[16];
 						DirectX::PackedVector::HALF href[16];
+						EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(mref), static_cast<const void*>(geom + 0x7C));
+						if (std::memcmp(mref, m44, 64) != 0) {
+							g_instVal.packMismatches.fetch_add(1, std::memory_order_relaxed);
+							static std::atomic<bool> s_bm{ false };
+							if (!s_bm.exchange(true))
+								logger::warn("[InstVal] inlined SG_BuildMatrix DIVERGES from engine (geom {:p})", static_cast<void*>(geom));
+						}
 						EngineCall<void>(reinterpret_cast<void*>(engine::SG_MatrixTranspose.address()), static_cast<void*>(wref), static_cast<const void*>(m44));
 						for (int j = 0; j < 16; ++j)
 							href[j] = DirectX::PackedVector::XMConvertFloatToHalf(wref[j]);
