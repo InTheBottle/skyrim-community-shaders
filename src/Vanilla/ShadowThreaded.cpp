@@ -757,6 +757,27 @@ namespace
 	// Func42 (the RENDER inside sub_1412C1600) wall ticks, to split the cull driver into Func37 (cull) vs
 	// Func42 (render). Timed by Func42Hook's passthrough when g_inShadowTiming (works in mode 0 too).
 	std::uint64_t g_func42Wall = 0, g_func42Cnt = 0;
+	// BSGraphics::State::SetCameraData (0x140d7bab0) wall ticks + count -- to CONFIRM the ~1.15ms that
+	// reappears there in mode 13 (vs 0.003ms vanilla) is genuine, not a CullHook artifact.
+	std::uint64_t g_setCamWall = 0, g_setCamCnt = 0;
+	using SetCameraData_pfn = void(__fastcall*)(void*, void*, std::uint32_t);
+	struct SetCameraDataHook
+	{
+		static void thunk(void* a1, void* a2, std::uint32_t a3)
+		{
+			if (g_inShadowTiming.load(std::memory_order_relaxed)) {
+				LARGE_INTEGER a, b;
+				QueryPerformanceCounter(&a);
+				reinterpret_cast<SetCameraData_pfn>(func.address())(a1, a2, a3);
+				QueryPerformanceCounter(&b);
+				g_setCamWall += static_cast<std::uint64_t>(b.QuadPart - a.QuadPart);
+				++g_setCamCnt;
+			} else {
+				reinterpret_cast<SetCameraData_pfn>(func.address())(a1, a2, a3);
+			}
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 	// M3 phase breakdown (CS_SHADOW_TIMING): per-frame QPC ticks in each stage of OUR owned shadow render,
 	// summed across all maps, reset + logged by the kEnumInstance timing branch. With the total (timed around
 	// callOriginal) this answers vanilla-vs-ours; the group-vs-draw split inside "render" comes from the
@@ -1740,6 +1761,8 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		g_m3EnumTicks = g_m3RenderTicks = g_m3ResetTicks = 0;
 		const std::uint64_t func42Wall0 = g_func42Wall;  // engine Func42 for the fallback (mode 14/15) maps
 		const std::uint64_t cullWall0m = g_cullWall;     // sub_1412C1600 (SetCameraData+Func37+our render)
+		const std::uint64_t setCam0m = g_setCamWall;
+		const std::uint64_t setCamCnt0m = g_setCamCnt;
 		g_inShadowTiming.store(true, std::memory_order_relaxed);  // arm Func42Hook's fallback timing
 		QueryThreadCycleTime(GetCurrentThread(), &cy0);
 		QueryPerformanceCounter(&t0);
@@ -1757,12 +1780,14 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		g_inShadowTiming.store(false, std::memory_order_relaxed);
 		const std::uint64_t func42WallFrame = g_func42Wall - func42Wall0;
 		const std::uint64_t cullWallFrameM = g_cullWall - cullWall0m;
+		const std::uint64_t setCamFrame = g_setCamWall - setCam0m;
+		const std::uint64_t setCamCntFrame = g_setCamCnt - setCamCnt0m;
 		g_enumM3FrameReset.clear();
 		g_inEnumShadowPhase = false;
 		{
 			static std::uint64_t s_lastEnter = 0, s_lastCy = 0;
 			static std::uint64_t s_shWall = 0, s_frWall = 0, s_shCyc = 0, s_frCyc = 0, s_n = 0;
-			static std::uint64_t s_enum = 0, s_render = 0, s_reset = 0, s_fb = 0, s_cull = 0;
+			static std::uint64_t s_enum = 0, s_render = 0, s_reset = 0, s_fb = 0, s_cull = 0, s_setcam = 0, s_setcamCnt = 0;
 			const std::uint64_t  enter = static_cast<std::uint64_t>(t0.QuadPart);
 			if (s_lastEnter) {
 				s_frWall += enter - s_lastEnter;
@@ -1774,6 +1799,8 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 				s_reset += g_m3ResetTicks;
 				s_fb += func42WallFrame;
 				s_cull += cullWallFrameM;
+				s_setcam += setCamFrame;
+				s_setcamCnt += setCamCntFrame;
 				s_n++;
 			}
 			s_lastEnter = enter;
@@ -1786,12 +1813,12 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 				const double wallPct = s_frWall ? 100.0 * s_shWall / s_frWall : 0.0;
 				logger::info("[ShadowTiming] ab=M3 RenderShadowmaps: wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame), "
 							 "render-thread CPU {:.1f}% of frame | sub_1412C1600 {:.3f}ms; ours: enum {:.3f} render {:.3f} "
-							 "reset {:.3f}ms; fbFunc42 {:.3f}ms; NON-sub1600(setup+teardown) {:.3f}ms  (n={})",
+							 "reset {:.3f}ms; fbFunc42 {:.3f}ms; SetCameraData {:.3f}ms/{}calls  (n={})",
 					shMs, wallPct, frMs, cpuPct, 1000.0 * s_cull / s_n / f,
 					1000.0 * s_enum / s_n / f, 1000.0 * s_render / s_n / f, 1000.0 * s_reset / s_n / f,
-					1000.0 * s_fb / s_n / f, shMs - 1000.0 * s_cull / s_n / f, s_n);
+					1000.0 * s_fb / s_n / f, 1000.0 * s_setcam / s_n / f, s_setcamCnt / (s_n ? s_n : 1), s_n);
 				s_shWall = s_frWall = s_shCyc = s_frCyc = s_n = 0;
-				s_enum = s_render = s_reset = s_fb = s_cull = 0;
+				s_enum = s_render = s_reset = s_fb = s_cull = s_setcam = s_setcamCnt = 0;
 			}
 		}
 		return;
@@ -2783,13 +2810,15 @@ void ShadowThreaded::InstallHooks()
 		Func42Hook::func = REL::Offset(0x12CAC20).address();
 		CullHook::func = REL::Offset(0x12C1600).address();  // time sub_1412C1600 to locate the hidden ~1ms
 		Func43Hook::func = REL::Offset(0x12CAC90).address();
+		SetCameraDataHook::func = REL::Offset(0xD7BAB0).address();
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		DetourAttach(reinterpret_cast<PVOID*>(&Func42Hook::func), reinterpret_cast<PVOID>(Func42Hook::thunk));
 		DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
 		DetourAttach(reinterpret_cast<PVOID*>(&Func43Hook::func), reinterpret_cast<PVOID>(Func43Hook::thunk));
+		DetourAttach(reinterpret_cast<PVOID*>(&SetCameraDataHook::func), reinterpret_cast<PVOID>(SetCameraDataHook::thunk));
 		DetourTransactionCommit();
-		logger::info("[ShadowThreaded] kEnumInstance: Func42+Cull+Func43 detours installed");
+		logger::info("[ShadowThreaded] kEnumInstance: Func42+Cull+Func43+SetCam detours installed");
 	}
 
 	// kInstanceOwnVerify: hook Func43 only (no cull hook, no worker pool) so the pre-walk direct-read
@@ -2854,10 +2883,12 @@ void ShadowThreaded::Setup()
 			// DetourAttach dance as BeginPass -- RelocationID isn't wired for this leaf; SE-1.5.97 offset.
 			CullHook::func = REL::Offset(0x12C1600).address();
 			Func42Hook::func = REL::Offset(0x12CAC20).address();  // split sub_1412C1600 into Func37(cull)/Func42(render)
+			SetCameraDataHook::func = REL::Offset(0xD7BAB0).address();
 			DetourTransactionBegin();
 			DetourUpdateThread(GetCurrentThread());
 			DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
 			DetourAttach(reinterpret_cast<PVOID*>(&Func42Hook::func), reinterpret_cast<PVOID>(Func42Hook::thunk));
+			DetourAttach(reinterpret_cast<PVOID*>(&SetCameraDataHook::func), reinterpret_cast<PVOID>(SetCameraDataHook::thunk));
 			DetourTransactionCommit();
 			// Shadow-instancing payoff diagnostic: hook DrawTriShape to count repeated meshes.
 			if (char ib[8] = {}; GetEnvironmentVariableA("CS_SHADOW_INSTANCE_DIAG", ib, sizeof(ib)) && ib[0] && ib[0] != '0') {
