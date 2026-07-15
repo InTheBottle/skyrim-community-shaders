@@ -1029,7 +1029,21 @@ namespace
 		SeedWideViewport(ctx);
 		UtilityPassReplica::WorkerSeedMap(worker, block->data());
 		pclog("walkStart", accum);
-		reinterpret_cast<Func42_t>(REL::Offset(0x12cac20).address())(accum, flags);
+		// CS_SHADOW_WALKMT_SERIAL=1: serialize the Func42+record across workers. If this un-hangs
+		// the concurrent path, the deadlock is worker-vs-worker shared scratch (BeginPassReplica's
+		// BSUtilityShader singleton) -> the localization sub-project; if it still hangs, the block
+		// is a worker-vs-render-thread dependency.
+		static const bool s_walkSerial = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_WALKMT_SERIAL", b, sizeof(b)) && b[0] == '1';
+		}();
+		static std::mutex s_recordMtx;
+		if (s_walkSerial) {
+			std::scoped_lock lk(s_recordMtx);
+			reinterpret_cast<Func42_t>(REL::Offset(0x12cac20).address())(accum, flags);
+		} else {
+			reinterpret_cast<Func42_t>(REL::Offset(0x12cac20).address())(accum, flags);
+		}
 		pclog("walkEnd", accum);
 		UtilityPassReplica::WorkerEndScope();
 		winrt::com_ptr<ID3D11CommandList> cl;
