@@ -118,11 +118,28 @@ interior) — the same co-bound ceiling as all shadow-MT work here; the instance
 hidden behind the GPU. The correctness foundation (own render + own free, pixel-perfect) is the
 milestone.
 
-## Remaining
+## Mode-14 directional cascades (opt-in `CS_SHADOW_M3_OWN14=1`, INCOMPLETE)
 
-1. **Cascade ownership (mode 14).** Extend M3 to directional cascades — the big exterior sun cost.
-   Needs the cascade-slice reset timing: reset only after the LAST Func42 call for a shared
-   accumulator, or detect the shared reuse. This is where the real exterior draw-count cut lives.
+Investigated via a 4-lens RE workflow + live crash bisect. Findings:
+- Mode 14 shares ONE accumulator (`0x9f6bc280`) across N cascade Func42 calls, unlike mode 13's
+  private per-light accumulator. The per-Func42 `sub_141306DB0` reset drains its nodes to the global
+  pool, so a later cascade renders a recycled pass → engine `BeginPass` null-deref (RBX=0,
+  `SkyrimSE+0x1308707`). Skipping the reset instead LEAKS the chain into a self-cycle (grows to 2^17).
+- **Fix that works (main groups): frame-end reset.** Collect mode-14 batch renderers during the light
+  loop (dedup'd), reset each ONCE after the whole loop (`callOriginal`). Validated: no crash, no
+  main-group leak, pixel-diff vs vanilla = drift floor on the sparse exterior Save344. Commit 9ac82f52.
+- **Two remaining blockers on dense/realistic scenes:**
+  1. **Persistent-list leak.** `br+0x78/0xB8/0xE8` (blood/lowaniso/decal/VL lists) grow every frame
+     (observed B8 38980→43180, E8 91604→93404) — `sub_141306DB0` does NOT drain them and we skip the
+     engine's `RenderPersistentPassList` (0x141306240). Needs a persistent-list drain at reset.
+  2. **Dense-caster crash.** `coc WhiterunExterior01` (grass+trees) → garbage-vtable call
+     (jumped to `0x7EEECB80`): a directional-unique `BSInstanceGroup`/grass caster whose per-instance
+     world is NOT a single matrix at `geom+0x7C`, so `RenderShadowInstanced` reads a bad pointer. Needs
+     caster-type gating (reject BSInstanceGroup/BSSegmentedTriShape) + let the engine render those.
+- Full mode-14 ownership therefore needs: **snapshot-by-value** at enumerate time (own the pass fields,
+  don't deref live `BSRenderPass*` across a cascade), **group-layout-flag-aware walk** (only flat-walk
+  groups with `groupHead+0x26 & 1`), **caster-type gating**, and **persistent-list draining**. Given the
+  perf is co-bound-neutral, this is a large effort for correctness completeness, not FPS.
 2. **M3.2 workers.** Move `DirectReadEnumerate` + (mesh,tech) batching onto worker threads; keep
    the instanced + remainder draws + reset on the render thread. Note the ceiling is small: the
    enumerate is cheap (~microseconds over ~1400 passes) and the DX11 draws are inherently
