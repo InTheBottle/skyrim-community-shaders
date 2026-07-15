@@ -715,8 +715,28 @@ namespace
 		std::uint32_t*       techFlags = nullptr;  // shader+0x90 (technique flags) -- shared singleton scratch
 		std::uint32_t*       techSub = nullptr;    // shader+0x94 (technique & 0x7F)
 		std::uint8_t*        dsvDirty = nullptr;   // g_dsvDirty (0x1430284C2), OUT-of-block DSV-rebind flag
+		// Per-worker PerGeometry constant buffers. The engine's VS/PS PerGeometry CBs live on the
+		// SHARED BSUtilityShader singleton (*(vsSh+0x38) / *(psSh+0x30)); N workers Map(WRITE_DISCARD)
+		// of the SAME buffer from their own deferred contexts crash DXVK's D3D11DeferredContext::
+		// MapBuffer (cross-context discard of one buffer). Each worker maps its OWN copy instead.
+		winrt::com_ptr<ID3D11Buffer> vsGeomCB;  // lazy, sized from the shared buffer's desc
+		winrt::com_ptr<ID3D11Buffer> psGeomCB;
 	};
 	thread_local ShadowWorkerState* t_worker = nullptr;
+
+	// Lazily create a per-worker copy of a shared PerGeometry CB (matching the shared buffer's
+	// desc) so the worker's deferred-context Map(WRITE_DISCARD) never touches the shared buffer.
+	inline ID3D11Buffer* EnsureWorkerGeomCB(winrt::com_ptr<ID3D11Buffer>& a_dst, ID3D11Buffer* a_src)
+	{
+		if (!a_src)
+			return nullptr;
+		if (!a_dst) {
+			D3D11_BUFFER_DESC bd{};
+			a_src->GetDesc(&bd);
+			globals::d3d::device->CreateBuffer(&bd, nullptr, a_dst.put());
+		}
+		return a_dst ? a_dst.get() : a_src;
+	}
 
 	// BeginPass-level command/orchestration compare (kOwnBeginPassVerify). During a compare, one run
 	// of the engine's BeginPass and one of BeginPassReplica each append the (pass,key,alpha,flags)
@@ -1236,10 +1256,16 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		auto* Sg = WsBlock();
 		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
 		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
-		FlushSetupGeometryReplica(WsCtx(),
-			vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
-			psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
-			Sg, shader, a_pass);
+		auto* vsCB = vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr;
+		auto* psCB = psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr;
+		// A worker Maps its OWN PerGeometry CB copies so N deferred contexts never
+		// Map(WRITE_DISCARD) the same shared BSUtilityShader buffer -- that crashed DXVK's
+		// D3D11DeferredContext::MapBuffer. Lazy-mirror the shared buffer's desc on first use.
+		if (t_worker) {
+			vsCB = EnsureWorkerGeomCB(t_worker->vsGeomCB, vsCB);
+			psCB = EnsureWorkerGeomCB(t_worker->psGeomCB, psCB);
+		}
+		FlushSetupGeometryReplica(WsCtx(), vsCB, psCB, Sg, shader, a_pass);
 	} else {
 		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
 	}
@@ -3270,10 +3296,16 @@ void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_a
 		auto* Sg = WsBlock();
 		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
 		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
-		FlushSetupGeometryReplica(WsCtx(),
-			vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
-			psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
-			Sg, shader, a_pass);
+		auto* vsCB = vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr;
+		auto* psCB = psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr;
+		// A worker Maps its OWN PerGeometry CB copies so N deferred contexts never
+		// Map(WRITE_DISCARD) the same shared BSUtilityShader buffer -- that crashed DXVK's
+		// D3D11DeferredContext::MapBuffer. Lazy-mirror the shared buffer's desc on first use.
+		if (t_worker) {
+			vsCB = EnsureWorkerGeomCB(t_worker->vsGeomCB, vsCB);
+			psCB = EnsureWorkerGeomCB(t_worker->psGeomCB, psCB);
+		}
+		FlushSetupGeometryReplica(WsCtx(), vsCB, psCB, Sg, shader, a_pass);
 	} else {
 		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
 	}
