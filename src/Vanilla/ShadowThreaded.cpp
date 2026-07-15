@@ -1285,7 +1285,7 @@ namespace
 	// engine bound for this map, record them for the serial submit phase, and SKIP the submit now.
 	bool EnumInstanceRender(void* a_accum, std::uint32_t a_flags);   // defined after RenderMapInstanced
 	void EnumInstanceObserve(void* a_accum, std::uint32_t a_flags);  // safe: enumerate + log, no render
-	void EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw);  // M3: draw?(0b) + our own reset
+	bool EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw);  // M3: false = fall back to engine
 
 	// BSShaderAccumulator::Func42 (0x1412CAC20): dispatcher -- SetRenderMode(accum+0x150) then
 	// table[renderMode](accum, flags) (0x1431D1C40, runtime-populated), the fused per-map walk+draw+FREE.
@@ -1358,14 +1358,18 @@ namespace
 				reinterpret_cast<Func42_t>(func.address())(a1, a2);
 				return;
 			case EnumSub::M3ResetOnly:
-				// M3.0a: skip the engine render entirely; reset the batch renderer ourselves. If stable,
-				// the reset heals the cycle -> M3 SMALL. (No fallback/latch: the whole point is to prove
-				// our reset -- if it freezes, that IS the result, and CS_SHADOW_M3 is opt-in.)
-				EnumInstanceM3(a1, a2, /*draw=*/false);
+				// M3.0a: skip the engine render entirely; reset the batch renderer ourselves. Falls back
+				// to the engine for renderModes we don't own (directional cascades etc.).
+				if (!EnumInstanceM3(a1, a2, /*draw=*/false))
+					reinterpret_cast<Func42_t>(func.address())(a1, a2);
 				return;
 			case EnumSub::M3DrawReset:
-				// M3.0b: render from our enumeration + reset ourselves (own the map end-to-end).
-				EnumInstanceM3(a1, a2, /*draw=*/true);
+				// M3.0b: render from our enumeration + reset ourselves (own the map end-to-end). Falls
+				// back to the engine Func42 for renderModes we don't own (directional/parabolic/VL) --
+				// those reference passes across multiple Func42 calls, so our per-call reset would free a
+				// pass a later call still renders (observed: engine BeginPass AV on the exterior).
+				if (!EnumInstanceM3(a1, a2, /*draw=*/true))
+					reinterpret_cast<Func42_t>(func.address())(a1, a2);
 				return;
 			case EnumSub::Skip:
 			default:
@@ -2295,9 +2299,23 @@ namespace
 	// render, reset only, and watch for a CONSTANT enum count + no freeze (shadows go black -- expected).
 	// M3.0b (draw=true) adds the instanced draw for correct shadows. sub_141306DB0 does NOT drain the
 	// persistent lists (br+0x78/0xB8/0xE8); we probe their counts so risk #1 is diagnosed in the same run.
-	void EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw)
+	bool EnumInstanceM3(void* a_accum, std::uint32_t a_flags, bool a_draw)
 	{
 		auto* const br = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
+		if (!br)
+			return false;  // fall back to the engine for a map with no batch renderer
+		// renderMode = accum+0x150. Shadow family is 12..17 (spot/dir-cascade/parabolic/VL). We only OWN
+		// the modes proven to reference their passes within a SINGLE Func42 call (spot). Directional
+		// cascades reuse an accumulator across multiple Func42 calls, so our per-call reset would free a
+		// pass a later call renders -> engine BeginPass AV (observed on the exterior). Fall back to the
+		// engine (safe + correct) for any mode not in the owned set.
+		const std::uint32_t renderMode = *reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x150);
+		static std::atomic<std::uint64_t> s_modeLog{ 0 };
+		if ((s_modeLog.fetch_add(1, std::memory_order_relaxed) % 240) == 0)
+			logger::info("[EnumM3] renderMode={} (owned set = {{13}})", renderMode);
+		if (renderMode != 13)
+			return false;  // not owned -> caller runs the engine Func42
+
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
 		static thread_local std::vector<std::uint32_t>     s_techs, s_remTechs;
@@ -2355,6 +2373,7 @@ namespace
 				a_draw, ok, s_inst.size(), s_rem.size(), a_flags,
 				br ? plistCount(br, 0x78) : -1, br ? plistCount(br, 0xB8) : -1, br ? plistCount(br, 0xE8) : -1);
 		}
+		return true;  // we owned this map (rendered? + reset)
 	}
 }
 
