@@ -760,6 +760,84 @@ namespace
 	// BSGraphics::State::SetCameraData (0x140d7bab0) wall ticks + count -- to CONFIRM the ~1.15ms that
 	// reappears there in mode 13 (vs 0.003ms vanilla) is genuine, not a CullHook artifact.
 	std::uint64_t g_setCamWall = 0, g_setCamCnt = 0;
+
+	// Render-thread IP sampler (CS_SHADOW_TIMING): a background thread samples the render thread's
+	// instruction pointer while g_inShadowTiming, to find WHERE the ~1ms of sub_1412C1600 CPU goes when
+	// every named sub-function is trivial -- i.e. the busy-wait/hot loop the function hooks can't attribute.
+	std::atomic<std::uint32_t>                        g_renderTid{ 0 };
+	std::atomic<bool>                                 g_samplerStarted{ false };
+	std::mutex                                        g_sampMutex;
+	std::unordered_map<std::uintptr_t, std::uint32_t> g_sampHist;   // raw IP -> hit count (in-phase only)
+	std::atomic<std::uint64_t>                        g_sampInPhase{ 0 };
+
+	void RenderThreadSampler()
+	{
+		HANDLE        rt = nullptr;
+		std::uint32_t rtid = 0;
+		for (;;) {
+			if (!g_inShadowTiming.load(std::memory_order_relaxed)) {
+				::Sleep(0);
+				continue;
+			}
+			const std::uint32_t tid = g_renderTid.load(std::memory_order_relaxed);
+			if (tid && tid != rtid) {
+				if (rt)
+					::CloseHandle(rt);
+				rt = ::OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, tid);
+				rtid = tid;
+			}
+			if (!rt)
+				continue;
+			if (::SuspendThread(rt) == static_cast<DWORD>(-1))
+				continue;
+			CONTEXT ctx{};
+			ctx.ContextFlags = CONTEXT_CONTROL;
+			std::uintptr_t rip = ::GetThreadContext(rt, &ctx) ? static_cast<std::uintptr_t>(ctx.Rip) : 0;
+			::ResumeThread(rt);
+			if (rip && g_inShadowTiming.load(std::memory_order_relaxed)) {
+				{
+					std::lock_guard<std::mutex> lk(g_sampMutex);
+					g_sampHist[rip]++;
+				}
+				if ((g_sampInPhase.fetch_add(1, std::memory_order_relaxed) % 20000) == 19999) {
+					// Dump the top in-phase IPs with their owning module (game IP -> module-relative).
+					std::vector<std::pair<std::uintptr_t, std::uint32_t>> top;
+					{
+						std::lock_guard<std::mutex> lk(g_sampMutex);
+						top.assign(g_sampHist.begin(), g_sampHist.end());
+					}
+					std::partial_sort(top.begin(), top.begin() + (top.size() < 16 ? top.size() : 16), top.end(),
+						[](auto& a, auto& b) { return a.second > b.second; });
+					logger::info("[ShadowSample] top render-thread IPs during shadow phase ({} samples):", g_sampInPhase.load());
+					for (std::size_t i = 0; i < top.size() && i < 16; ++i) {
+						HANDLE  mod = nullptr;
+						char    name[MAX_PATH] = {};
+						wchar_t wname[MAX_PATH] = {};
+						::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+							reinterpret_cast<LPCWSTR>(top[i].first), reinterpret_cast<HMODULE*>(&mod));
+						std::uintptr_t rel = top[i].first;
+						const char*    mn = "?";
+						if (mod) {
+							::GetModuleFileNameW(static_cast<HMODULE>(mod), wname, MAX_PATH);
+							const wchar_t* slash = wcsrchr(wname, L'\\');
+							wcstombs(name, slash ? slash + 1 : wname, MAX_PATH);
+							mn = name;
+							rel = top[i].first - reinterpret_cast<std::uintptr_t>(mod);
+						}
+						logger::info("[ShadowSample]   {:>6} hits  {}+{:#x}  (ip {:#x})", top[i].second, mn, rel, top[i].first);
+					}
+				}
+			}
+		}
+	}
+
+	inline void ArmRenderThreadSampler()
+	{
+		g_renderTid.store(::GetCurrentThreadId(), std::memory_order_relaxed);
+		if (!g_samplerStarted.exchange(true)) {
+			std::thread(RenderThreadSampler).detach();
+		}
+	}
 	using SetCameraData_pfn = void(__fastcall*)(void*, void*, std::uint32_t);
 	struct SetCameraDataHook
 	{
@@ -1763,6 +1841,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		const std::uint64_t cullWall0m = g_cullWall;     // sub_1412C1600 (SetCameraData+Func37+our render)
 		const std::uint64_t setCam0m = g_setCamWall;
 		const std::uint64_t setCamCnt0m = g_setCamCnt;
+		ArmRenderThreadSampler();
 		g_inShadowTiming.store(true, std::memory_order_relaxed);  // arm Func42Hook's fallback timing
 		QueryThreadCycleTime(GetCurrentThread(), &cy0);
 		QueryPerformanceCounter(&t0);
@@ -2050,6 +2129,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		g_cullMapsDiag.clear();  // collect THIS frame's (camera, accumulator) pairs during the walk
 		g_shadowDrawIds.clear();
 		g_shadowDrawTotalVerts = 0;
+		ArmRenderThreadSampler();
 		g_inShadowTiming.store(true, std::memory_order_relaxed);
 		QueryThreadCycleTime(GetCurrentThread(), &cy0);
 		QueryPerformanceCounter(&t0);
