@@ -754,6 +754,9 @@ namespace
 	// snapshotted per frame by the timing branch. The remainder of RenderShadowmaps is DX11 setup + SUBMISSION.
 	ULONG64       g_cullCyc = 0;
 	std::uint64_t g_cullWall = 0;
+	// Func42 (the RENDER inside sub_1412C1600) wall ticks, to split the cull driver into Func37 (cull) vs
+	// Func42 (render). Timed by Func42Hook's passthrough when g_inShadowTiming (works in mode 0 too).
+	std::uint64_t g_func42Wall = 0, g_func42Cnt = 0;
 	// M3 phase breakdown (CS_SHADOW_TIMING): per-frame QPC ticks in each stage of OUR owned shadow render,
 	// summed across all maps, reset + logged by the kEnumInstance timing branch. With the total (timed around
 	// callOriginal) this answers vanilla-vs-ours; the group-vs-draw split inside "render" comes from the
@@ -1365,7 +1368,18 @@ namespace
 			// g_inEnumShadowPhase is set only around RenderShadowmaps' light loop.
 			if (!g_inEnumShadowPhase ||
 				ShadowThreaded::GetSingleton()->GetMode() != ShadowThreaded::Mode::kEnumInstance) {
-				reinterpret_cast<Func42_t>(func.address())(a1, a2);
+				// Profiling: time the engine Func42 (render) during the shadow phase (works in mode 0),
+				// so the mode-0 timing block can split sub_1412C1600 into Func37 (cull) vs Func42 (render).
+				if (g_inShadowTiming.load(std::memory_order_relaxed)) {
+					LARGE_INTEGER a, b;
+					QueryPerformanceCounter(&a);
+					reinterpret_cast<Func42_t>(func.address())(a1, a2);
+					QueryPerformanceCounter(&b);
+					g_func42Wall += static_cast<std::uint64_t>(b.QuadPart - a.QuadPart);
+					++g_func42Cnt;
+				} else {
+					reinterpret_cast<Func42_t>(func.address())(a1, a2);
+				}
 				return;
 			}
 			switch (EnumSubBehavior()) {
@@ -1724,6 +1738,9 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		QueryPerformanceFrequency(&freq);
 		ULONG64 cy0 = 0, cy1 = 0;
 		g_m3EnumTicks = g_m3RenderTicks = g_m3ResetTicks = 0;
+		const std::uint64_t func42Wall0 = g_func42Wall;  // engine Func42 for the fallback (mode 14/15) maps
+		const std::uint64_t cullWall0m = g_cullWall;     // sub_1412C1600 (SetCameraData+Func37+our render)
+		g_inShadowTiming.store(true, std::memory_order_relaxed);  // arm Func42Hook's fallback timing
 		QueryThreadCycleTime(GetCurrentThread(), &cy0);
 		QueryPerformanceCounter(&t0);
 		callOriginal();
@@ -1737,12 +1754,15 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		}
 		QueryPerformanceCounter(&t1);
 		QueryThreadCycleTime(GetCurrentThread(), &cy1);
+		g_inShadowTiming.store(false, std::memory_order_relaxed);
+		const std::uint64_t func42WallFrame = g_func42Wall - func42Wall0;
+		const std::uint64_t cullWallFrameM = g_cullWall - cullWall0m;
 		g_enumM3FrameReset.clear();
 		g_inEnumShadowPhase = false;
 		{
 			static std::uint64_t s_lastEnter = 0, s_lastCy = 0;
 			static std::uint64_t s_shWall = 0, s_frWall = 0, s_shCyc = 0, s_frCyc = 0, s_n = 0;
-			static std::uint64_t s_enum = 0, s_render = 0, s_reset = 0;
+			static std::uint64_t s_enum = 0, s_render = 0, s_reset = 0, s_fb = 0, s_cull = 0;
 			const std::uint64_t  enter = static_cast<std::uint64_t>(t0.QuadPart);
 			if (s_lastEnter) {
 				s_frWall += enter - s_lastEnter;
@@ -1752,6 +1772,8 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 				s_enum += g_m3EnumTicks;
 				s_render += g_m3RenderTicks;
 				s_reset += g_m3ResetTicks;
+				s_fb += func42WallFrame;
+				s_cull += cullWallFrameM;
 				s_n++;
 			}
 			s_lastEnter = enter;
@@ -1763,11 +1785,13 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 				const double cpuPct = s_frCyc ? 100.0 * s_shCyc / s_frCyc : 0.0;
 				const double wallPct = s_frWall ? 100.0 * s_shWall / s_frWall : 0.0;
 				logger::info("[ShadowTiming] ab=M3 RenderShadowmaps: wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame), "
-							 "render-thread CPU {:.1f}% of frame | ours: enum {:.3f}ms render {:.3f}ms reset {:.3f}ms  (n={})",
-					shMs, wallPct, frMs, cpuPct,
-					1000.0 * s_enum / s_n / f, 1000.0 * s_render / s_n / f, 1000.0 * s_reset / s_n / f, s_n);
+							 "render-thread CPU {:.1f}% of frame | sub_1412C1600 {:.3f}ms; ours: enum {:.3f} render {:.3f} "
+							 "reset {:.3f}ms; fbFunc42 {:.3f}ms; NON-sub1600(setup+teardown) {:.3f}ms  (n={})",
+					shMs, wallPct, frMs, cpuPct, 1000.0 * s_cull / s_n / f,
+					1000.0 * s_enum / s_n / f, 1000.0 * s_render / s_n / f, 1000.0 * s_reset / s_n / f,
+					1000.0 * s_fb / s_n / f, shMs - 1000.0 * s_cull / s_n / f, s_n);
 				s_shWall = s_frWall = s_shCyc = s_frCyc = s_n = 0;
-				s_enum = s_render = s_reset = 0;
+				s_enum = s_render = s_reset = s_fb = s_cull = 0;
 			}
 		}
 		return;
@@ -1995,6 +2019,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		ULONG64 cy0 = 0, cy1 = 0;
 		const ULONG64 cullCyc0 = g_cullCyc;
 		const std::uint64_t cullWall0 = g_cullWall;
+		const std::uint64_t func42Wall0 = g_func42Wall;
 		g_cullMapsDiag.clear();  // collect THIS frame's (camera, accumulator) pairs during the walk
 		g_shadowDrawIds.clear();
 		g_shadowDrawTotalVerts = 0;
@@ -2022,9 +2047,10 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		}
 		const ULONG64 cullCycFrame = g_cullCyc - cullCyc0;
 		const std::uint64_t cullWallFrame = g_cullWall - cullWall0;
+		const std::uint64_t func42WallFrame = g_func42Wall - func42Wall0;
 		static std::uint64_t s_lastEnter = 0, s_lastCy = 0;
 		static std::uint64_t s_shWall = 0, s_frWall = 0, s_shCyc = 0, s_frCyc = 0, s_n = 0;
-		static std::uint64_t s_cullCyc = 0, s_cullWall = 0;
+		static std::uint64_t s_cullCyc = 0, s_cullWall = 0, s_func42Wall = 0;
 		const std::uint64_t enter = static_cast<std::uint64_t>(t0.QuadPart);
 		if (s_lastEnter) {
 			s_frWall += enter - s_lastEnter;
@@ -2033,6 +2059,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 			s_shCyc += cy1 - cy0;
 			s_cullCyc += cullCycFrame;
 			s_cullWall += cullWallFrame;
+			s_func42Wall += func42WallFrame;
 			s_n++;
 		}
 		s_lastEnter = enter;
@@ -2046,6 +2073,9 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 			// Split the shadow render-thread CPU into CULL (sub_1412C1600) vs SUBMISSION+setup (remainder).
 			const double cullPctOfShadow = s_shCyc ? 100.0 * s_cullCyc / s_shCyc : 0.0;
 			const double cullMs = 1000.0 * s_cullWall / s_n / f;
+			// Split sub_1412C1600 (cullMs) into Func42 (RENDER) vs Func37+SetCameraData (CULL). func42Ms is
+			// the actual draw/walk; cullMs-func42Ms is the scene-graph cull that fills the accumulator.
+			const double func42Ms = 1000.0 * s_func42Wall / s_n / f;
 			// A/B mode: label this window with the intervention state active for it, then flip for the next.
 			// Alternating lines compare frame time with the intervention ON vs OFF at the same view.
 			static const bool s_skipMode = [] {
@@ -2056,9 +2086,10 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 			const bool windowIntervened = g_intervene.load(std::memory_order_relaxed);
 			const char* interv = !s_abMode ? "baseline" : (windowIntervened ? (s_skipMode ? "SKIP" : "SPIN") : "off");
 			logger::info("[ShadowTiming] ab={} RenderShadowmaps: wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame), "
-						 "render-thread CPU {:.1f}% of frame | CULL {:.3f}ms ({:.1f}% of shadow CPU), "
-						 "SUBMIT+setup {:.1f}%  (n={})",
-				interv, shMs, wallPct, frMs, cpuPct, cullMs, cullPctOfShadow, 100.0 - cullPctOfShadow, s_n);
+						 "render-thread CPU {:.1f}% of frame | sub_1412C1600 {:.3f}ms ({:.1f}% of shadow CPU) = "
+						 "CULL(Func37) {:.3f}ms + RENDER(Func42) {:.3f}ms; setup {:.1f}%  (n={})",
+				interv, shMs, wallPct, frMs, cpuPct, cullMs, cullPctOfShadow, cullMs - func42Ms, func42Ms,
+				100.0 - cullPctOfShadow, s_n);
 			if (s_abMode)
 				g_intervene.store(!windowIntervened, std::memory_order_relaxed);
 			// Accumulator-distinctness (this frame): how many shadow maps, how many DISTINCT accumulators/cameras.
@@ -2080,7 +2111,7 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 					g_shadowDrawIds.size(), uniq.size(), 100.0 * instFrac, g_shadowDrawTotalVerts);
 			}
 			s_shWall = s_frWall = s_shCyc = s_frCyc = s_n = 0;
-			s_cullCyc = s_cullWall = 0;
+			s_cullCyc = s_cullWall = s_func42Wall = 0;
 		}
 		return;
 	}
@@ -2750,11 +2781,15 @@ void ShadowThreaded::InstallHooks()
 	// entirely from our direct-read enumeration -- the engine walk is skipped.
 	if (GetMode() == Mode::kEnumInstance) {
 		Func42Hook::func = REL::Offset(0x12CAC20).address();
+		CullHook::func = REL::Offset(0x12C1600).address();  // time sub_1412C1600 to locate the hidden ~1ms
+		Func43Hook::func = REL::Offset(0x12CAC90).address();
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		DetourAttach(reinterpret_cast<PVOID*>(&Func42Hook::func), reinterpret_cast<PVOID>(Func42Hook::thunk));
+		DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
+		DetourAttach(reinterpret_cast<PVOID*>(&Func43Hook::func), reinterpret_cast<PVOID>(Func43Hook::thunk));
 		DetourTransactionCommit();
-		logger::info("[ShadowThreaded] kEnumInstance: Func42 detour installed (enumeration rebuild)");
+		logger::info("[ShadowThreaded] kEnumInstance: Func42+Cull+Func43 detours installed");
 	}
 
 	// kInstanceOwnVerify: hook Func43 only (no cull hook, no worker pool) so the pre-walk direct-read
@@ -2818,9 +2853,11 @@ void ShadowThreaded::Setup()
 			// CullHook (NiCamera::sub_1412C1600 @ module+0x12C1600) to split cull vs submission. Same
 			// DetourAttach dance as BeginPass -- RelocationID isn't wired for this leaf; SE-1.5.97 offset.
 			CullHook::func = REL::Offset(0x12C1600).address();
+			Func42Hook::func = REL::Offset(0x12CAC20).address();  // split sub_1412C1600 into Func37(cull)/Func42(render)
 			DetourTransactionBegin();
 			DetourUpdateThread(GetCurrentThread());
 			DetourAttach(reinterpret_cast<PVOID*>(&CullHook::func), reinterpret_cast<PVOID>(CullHook::thunk));
+			DetourAttach(reinterpret_cast<PVOID*>(&Func42Hook::func), reinterpret_cast<PVOID>(Func42Hook::thunk));
 			DetourTransactionCommit();
 			// Shadow-instancing payoff diagnostic: hook DrawTriShape to count repeated meshes.
 			if (char ib[8] = {}; GetEnvironmentVariableA("CS_SHADOW_INSTANCE_DIAG", ib, sizeof(ib)) && ib[0] && ib[0] != '0') {
