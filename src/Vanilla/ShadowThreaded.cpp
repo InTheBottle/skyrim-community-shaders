@@ -887,6 +887,11 @@ namespace
 
 	std::atomic<bool>                     g_pcActive{ false };  // inside a kParallelCull RenderShadowmaps walk
 	bool                                  g_inEnumShadowPhase = false;  // kEnumInstance: inside RenderShadowmaps (render thread; scopes Func42Hook to shadows, not main scene)
+	// Batch renderers (accum+0x130) to reset ONCE at frame end, after the whole light loop. Mode-14
+	// directional cascades SHARE one accumulator across N Func42 calls: a per-call reset recycles nodes a
+	// later cascade renders (crash), never resetting leaks the chain into a self-cycle (grows to the cap).
+	// Collect them during the loop, dedup, reset after all cascades have rendered. Render-thread only.
+	std::vector<void*>                    g_enumM3FrameReset;
 	std::uint32_t                         g_pcPoolSize = 6;     // resolved at InstallHooks; pool starts lazily
 	bool                                  g_pcPoolStarted = false;    // render thread only (CullHook)
 	bool                                  g_pcWorkerStarted = false;  // render thread only (serial mode)
@@ -921,6 +926,11 @@ namespace
 	// that freezes the skip-Func42 path (an un-cleared slot head re-inserts a cached pass as its own
 	// successor). It does NOT drain the persistent lists at br+0x78/0xB8/0xE8 (M3 risk #1, probed below).
 	using BatchRendererReset_t = void(__fastcall*)(void*);
+	inline void ResetBatchRenderer(void* a_br)
+	{
+		if (a_br)
+			reinterpret_cast<BatchRendererReset_t>(REL::Offset(0x1306DB0).address())(a_br);
+	}
 
 	// Replicates NiCamera::sub_1412C1600 MINUS the walk (Func42): sets the global camera + accumulator so the
 	// per-map shadow-matrix setup that follows in RenderShadowmap reads correct data. Runs INLINE (serial).
@@ -1691,6 +1701,11 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 			g_inEnumShadowPhase = frame >= s_enumSettleUntil;
 		}
 		callOriginal();
+		// Frame-end reset of shared (mode-14) accumulators: all cascades have now rendered, so free their
+		// chains exactly once -- avoiding both the per-call recycle crash and the never-reset leak.
+		for (void* br : g_enumM3FrameReset)
+			ResetBatchRenderer(br);
+		g_enumM3FrameReset.clear();
 		g_inEnumShadowPhase = false;
 		return;
 	}
@@ -2317,7 +2332,16 @@ namespace
 		// (exterior crash at engine 0x141308707). The engine's own Func42 is synchronized against that
 		// cull; our hook is not. So we fall back to the engine (always correct) for anything but mode 13.
 		const std::uint32_t renderMode = *reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x150);
-		if (renderMode != 13)
+		// Mode 13 (spot, private accumulator, single Func42) is owned by default -- pixel-perfect.
+		// Mode 14 (directional cascades) is OPT-IN via CS_SHADOW_M3_OWN14=1 and still INCOMPLETE: the
+		// frame-end reset (below) fixes the shared-accumulator main-group recycle/leak and renders
+		// pixel-correct on SPARSE exteriors, but dense/realistic scenes still (a) LEAK the persistent
+		// lists (br+0x78/0xB8/0xE8 grow -- sub_141306DB0 doesn't drain them, we skip RenderPersistentPassList)
+		// and (b) CRASH on directional-unique casters (BSInstanceGroup / grass) that RenderShadowInstanced's
+		// single-matrix World assumption can't handle. Owning it fully needs snapshot-by-value + caster-type
+		// gating + persistent-list draining. Until then, off by default -> the engine renders cascades.
+		static const bool s_own14 = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_M3_OWN14", b, sizeof(b)) && b[0] == '1'; }();
+		if (renderMode != 13 && !(renderMode == 14 && s_own14))
 			return false;  // not owned -> caller runs the engine Func42
 
 		auto* const replica = UtilityPassReplica::GetSingleton();
@@ -2361,8 +2385,22 @@ namespace
 
 		// Our own reset: replaces the engine Func42's incremental free -- the load-bearing step the plain
 		// skip path omitted. Pure CPU (no D3D), so it is order-independent w.r.t. the draw above.
-		if (br)
-			reinterpret_cast<BatchRendererReset_t>(REL::Offset(0x1306DB0).address())(br);
+		// Mode 13 (private accumulator, single Func42) resets per-call. Mode 14 (directional) SHARES one
+		// accumulator across N cascade Func42 calls: a per-call reset recycles nodes a later cascade
+		// renders (crash), never resetting leaks the chain (grows to the 2^17 cap). Defer it to frame end
+		// (after the whole light loop), dedup'd, so all cascades render from the intact chains and the
+		// accumulator is freed exactly once.
+		if (br) {
+			if (renderMode == 14) {
+				bool present = false;
+				for (void* p : g_enumM3FrameReset)
+					if (p == br) { present = true; break; }
+				if (!present)
+					g_enumM3FrameReset.push_back(br);
+			} else {
+				ResetBatchRenderer(br);
+			}
+		}
 
 		// Probe: enum count (CONSTANT frame-to-frame == reset healthy) + persistent-list residue (risk #1;
 		// -1 = that slot's list pointer is null). br+0x78/0xB8/0xE8 hold persistent-list objects whose
