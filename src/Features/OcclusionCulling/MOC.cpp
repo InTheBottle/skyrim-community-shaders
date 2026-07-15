@@ -253,6 +253,59 @@ namespace MOC
 			XMMATRIX                        vp{};
 			bool                            pending = false;
 		};
+		// ASYNC verdict machinery: the inline per-caster test cost -11.3% on the cull threads
+		// (render-thread serial walks). Instead, cull threads only APPEND candidates (value-copied
+		// bounds) and read a verdict TABLE built off-thread: HiZPrepass flips the candidate buffer
+		// and hands it to the MOC builder thread, which runs the projection math against the CPU
+		// grids and publishes per-channel open-addressed tables. Verdicts lag one frame (same
+		// staleness class as everything here); a pointer key can recycle across frames -> a wrong
+		// verdict lives ONE frame at worst (conservative bias comes from the depth test itself).
+		struct ShCand
+		{
+			const void* obj;              // key only, never dereferenced off-thread
+			float       cx, cy, cz, r;    // value-copied world bound
+		};
+		struct ShVerdictTable
+		{
+			std::vector<const void*> keys;      // open-addressed, pow2; nullptr = empty
+			std::vector<std::uint8_t> occluded;
+			std::uint32_t             mask = 0;
+
+			void Build(std::size_t a_n)
+			{
+				std::size_t cap = 64;
+				while (cap < a_n * 2)
+					cap <<= 1;
+				keys.assign(cap, nullptr);
+				occluded.assign(cap, 0);
+				mask = static_cast<std::uint32_t>(cap - 1);
+			}
+			void Insert(const void* a_k, bool a_occ)
+			{
+				auto h = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(a_k) >> 4) * 2654435761u;
+				for (std::uint32_t i = h & mask;; i = (i + 1) & mask) {
+					if (!keys[i] || keys[i] == a_k) {
+						keys[i] = a_k;
+						occluded[i] = a_occ ? 1 : 0;
+						return;
+					}
+				}
+			}
+			bool Occluded(const void* a_k) const
+			{
+				if (!mask)
+					return false;
+				auto h = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(a_k) >> 4) * 2654435761u;
+				for (std::uint32_t i = h & mask;; i = (i + 1) & mask) {
+					if (!keys[i])
+						return false;
+					if (keys[i] == a_k)
+						return occluded[i] != 0;
+				}
+			}
+		};
+		constexpr std::uint32_t kShCandCap = 8192;
+
 		struct ShChannel
 		{
 			std::atomic<const void*>                  key{ nullptr };  // map camera ptr; publish AFTER front
@@ -266,6 +319,14 @@ namespace MOC
 			std::atomic<const ShSnap*>                front{ nullptr };
 			int                                       wsnap = 0;
 			int                                       gridW = 0, gridH = 0, fullW = 0, fullH = 0;
+			// async candidates (cull threads append; index = buffer selector, flipped at prepass)
+			std::vector<ShCand>                       cand[2];
+			std::atomic<std::uint32_t>                candN[2]{ { 0 }, { 0 } };
+			std::atomic<int>                          candAppend{ 0 };
+			// async verdicts (builder writes the spare, publishes; cull threads read front)
+			ShVerdictTable                            verd[2];
+			std::atomic<const ShVerdictTable*>        verdFront{ nullptr };
+			int                                       verdW = 0;
 		};
 #pragma warning(pop)
 		ShChannel                           g_shCh[kShChannels];
@@ -283,6 +344,8 @@ namespace MOC
 		};
 		ShPending g_shPending[16];
 		int       g_shPendingN = 0;  // render thread only
+
+		void RunShadowVerdicts();  // builder thread; defined after the projection test below
 
 		const ShChannel* FindShadowChannel(const void* a_key)
 		{
@@ -408,6 +471,7 @@ namespace MOC
 		std::mutex              g_builderMtx;
 		std::condition_variable g_builderCV;
 		bool                    g_builderKick = false;
+		bool                    g_shTestWork = false;  // shadow-HiZ verdict pass requested (HiZPrepass)
 		bool                    g_builderQuit = false;
 		std::vector<GeoEntry>   g_readyList;   // builder-owned prepared list
 		std::atomic<bool>       g_builderBusy{ false };  // true while a kick is being processed
@@ -1402,13 +1466,24 @@ namespace MOC
 		void BuilderLoop()
 		{
 			for (;;) {
+				bool doRaster = false;
+				bool doShadowVerdicts = false;
 				{
 					std::unique_lock lk(g_builderMtx);
-					g_builderCV.wait(lk, [] { return g_builderKick || g_builderQuit; });
+					g_builderCV.wait(lk, [] { return g_builderKick || g_shTestWork || g_builderQuit; });
 					if (g_builderQuit)
 						return;
+					doRaster = g_builderKick;
+					doShadowVerdicts = g_shTestWork;
 					g_builderKick = false;
+					g_shTestWork = false;
 				}
+				// Shadow-HiZ verdict pass (async caster culling): pure CPU, runs here so the cull
+				// threads only pay a hash lookup. Forward-declared; defined near the channel code.
+				if (doShadowVerdicts)
+					RunShadowVerdicts();
+				if (!doRaster)
+					continue;
 				g_builderBusy.store(true, std::memory_order_release);
 
 				// Live mesh-cache rebuild: a simplification setting changed, so free every
@@ -2348,6 +2423,29 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		// The shadow-map captures queued during RenderShadowmaps drain here too: by prepass time
 		// the GPU has long finished the atlas, so the reduces cost no shadow-sequence bubbles.
 		DrainShadowCaptures();
+
+		// Async shadow-caster verdicts: flip each channel's candidate buffer (the next frame's
+		// culls append to the fresh side) and hand the flipped-out set to the builder thread,
+		// which tests + publishes verdict tables off the critical path.
+		if (g_shadowHizMode) {
+			bool any = false;
+			for (auto& ch : g_shCh) {
+				if (!ch.key.load(std::memory_order_relaxed))
+					continue;
+				const int cur = ch.candAppend.load(std::memory_order_relaxed);
+				const int next = cur ^ 1;
+				ch.candN[next].store(0, std::memory_order_relaxed);
+				ch.candAppend.store(next, std::memory_order_release);
+				any = true;
+			}
+			if (any) {
+				{
+					std::scoped_lock lk(g_builderMtx);
+					g_shTestWork = true;
+				}
+				g_builderCV.notify_one();
+			}
+		}
 		if (!g_hizMode)
 			return;
 		auto* ctx = globals::d3d::context;
@@ -2530,6 +2628,8 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 			for (auto& s : ch->ring)
 				if (FAILED(device->CreateTexture2D(&gd, nullptr, s.staging.put())))
 					return;
+			ch->cand[0].resize(kShCandCap);  // pre-size HERE (render thread) -- cull threads only index
+			ch->cand[1].resize(kShCandCap);
 			logger::info("[MOC][ShadowHiZ] channel init: cam={} slice={} atlas {}x{} -> grid {}x{}",
 				a_camKey, a_slice, ch->fullW, ch->fullH, ch->gridW, ch->gridH);
 		}
@@ -2617,62 +2717,102 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 	}
 	}  // namespace
 
+	namespace
+	{
+		// Builder-thread projection test (the exact math the cull threads used to pay inline at
+		// -11.3%): occluded iff the bound's nearest NDC depth is behind the farthest stored depth
+		// over its whole rect. ABSOLUTE world coords (the per-light CameraViewProj is absolute).
+		bool ShTestCandidateOccluded(const ShSnap* a_s, const ShCand& a_c)
+		{
+			const float cx = a_c.cx, cy = a_c.cy, cz = a_c.cz, r = a_c.r;
+			float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
+			for (int i = 0; i < 8; ++i) {
+				const XMVECTOR corner = _mm_setr_ps(
+					cx + ((i & 1) ? r : -r), cy + ((i & 2) ? r : -r), cz + ((i & 4) ? r : -r), 1.0f);
+				const XMVECTOR clip = XMVector4Transform(corner, a_s->vp);
+				const float w = clip.m128_f32[3];
+				if (w < 1e-6f)
+					return false;  // straddles the light near plane: keep
+				const float x = clip.m128_f32[0] / w, y = clip.m128_f32[1] / w, z = clip.m128_f32[2] / w;
+				minX = std::min(minX, x); maxX = std::max(maxX, x);
+				minY = std::min(minY, y); maxY = std::max(maxY, y);
+				minZ = std::min(minZ, z);
+			}
+			if (maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f)
+				return false;  // outside the map frustum: the engine's own cull owns this verdict
+			const float u0 = (minX + 1.0f) * 0.5f, u1 = (maxX + 1.0f) * 0.5f;
+			const float v0 = (1.0f - maxY) * 0.5f, v1 = (1.0f - minY) * 0.5f;
+			const int cx0 = std::clamp(static_cast<int>(u0 * a_s->fullW) / 16, 0, a_s->gridW - 1);
+			const int cx1 = std::clamp(static_cast<int>(u1 * a_s->fullW) / 16, 0, a_s->gridW - 1);
+			const int cy0 = std::clamp(static_cast<int>(v0 * a_s->fullH) / 16, 0, a_s->gridH - 1);
+			const int cy1 = std::clamp(static_cast<int>(v1 * a_s->fullH) / 16, 0, a_s->gridH - 1);
+			if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > 256)
+				return false;
+			float farthest = 0.0f;
+			for (int y = cy0; y <= cy1; ++y) {
+				const float* row = &a_s->grid[static_cast<std::size_t>(y) * a_s->gridW];
+				for (int x = cx0; x <= cx1; ++x)
+					farthest = std::max(farthest, row[x]);
+			}
+			return minZ > farthest + g_shadowHizBias;
+		}
+
+		void RunShadowVerdicts()
+		{
+			// BUILDER THREAD: test the candidate buffer each channel flipped OUT at prepass against
+			// its last-complete grid, publish the verdict table. A straggler cull-thread append can
+			// race the flipped buffer -> one garbage bound tested -> one wrong verdict for a frame
+			// (the depth compare itself is conservative). Same accepted class as the main-view async.
+			for (auto& ch : g_shCh) {
+				if (!ch.key.load(std::memory_order_acquire))
+					continue;
+				const int test = ch.candAppend.load(std::memory_order_acquire) ^ 1;
+				const std::uint32_t n = std::min(ch.candN[test].load(std::memory_order_acquire), kShCandCap);
+				if (ch.cand[test].size() != kShCandCap)
+					continue;  // channel not fully initialized yet
+				const ShSnap* s = ch.front.load(std::memory_order_acquire);
+				ShVerdictTable& vt = ch.verd[ch.verdW];
+				vt.Build(n);
+				if (s && !s->grid.empty()) {
+					for (std::uint32_t i = 0; i < n; ++i) {
+						const ShCand& c = ch.cand[test][i];
+						if (c.obj)
+							vt.Insert(c.obj, ShTestCandidateOccluded(s, c));
+					}
+				}
+				ch.verdFront.store(&vt, std::memory_order_release);
+				ch.verdW ^= 1;
+			}
+		}
+	}
+
 	bool TestShadowCasterHiZ(const void* a_mapCamera, RE::NiAVObject* a_object)
 	{
-		// Cull-thread path: keep (true) unless the caster's whole bound is provably behind
-		// strictly-nearer geometry in this map's last-complete depth. ABSOLUTE world coords --
-		// the engine's per-light CameraViewProj is absolute (SG_BuildMatrix contract).
+		// Cull-thread path, ASYNC: append the candidate (value-copied bound) for the builder's
+		// off-thread test and read the last-published verdict table -- a hash lookup instead of
+		// the inline projection math that cost -11.3% on the serial cull walks.
 		if (!g_shadowHizMode || !a_object)
 			return true;
 		const ShChannel* ch = FindShadowChannel(a_mapCamera);
 		if (!ch)
 			return true;
-		const ShSnap* s = ch->front.load(std::memory_order_acquire);
-		if (!s || s->grid.empty())
-			return true;
 		const auto& b = a_object->worldBound;
 		if (b.radius <= 5.0f)
-			return true;  // tiny casters: not worth the test
+			return true;  // tiny casters: not worth testing
 		if (auto* ref = a_object->GetUserData(); ref && ref->formType == RE::FormType::ActorCharacter)
 			return true;  // never cull actor shadows (skinned bounds lag + most visible artifact)
 
-		// Project the 8 corners of the bound's AABB (center +- r, conservative superset of the
-		// sphere) through the map VP; reject if any corner is at/behind the near plane.
-		const float cx = b.center.x, cy = b.center.y, cz = b.center.z, r = b.radius;
-		float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
-		for (int i = 0; i < 8; ++i) {
-			const XMVECTOR corner = _mm_setr_ps(
-				cx + ((i & 1) ? r : -r), cy + ((i & 2) ? r : -r), cz + ((i & 4) ? r : -r), 1.0f);
-			const XMVECTOR clip = XMVector4Transform(corner, s->vp);
-			const float w = clip.m128_f32[3];
-			if (w < 1e-6f)
-				return true;  // straddles the light near plane: keep
-			const float x = clip.m128_f32[0] / w, y = clip.m128_f32[1] / w, z = clip.m128_f32[2] / w;
-			minX = std::min(minX, x); maxX = std::max(maxX, x);
-			minY = std::min(minY, y); maxY = std::max(maxY, y);
-			minZ = std::min(minZ, z);
-		}
-		if (maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f)
-			return true;  // outside the map frustum: the engine's own cull owns this verdict
+		auto* mch = const_cast<ShChannel*>(ch);
+		const int buf = mch->candAppend.load(std::memory_order_acquire);
+		const std::uint32_t i = mch->candN[buf].fetch_add(1, std::memory_order_relaxed);
+		if (i < kShCandCap && mch->cand[buf].size() == kShCandCap)
+			mch->cand[buf][i] = ShCand{ a_object, b.center.x, b.center.y, b.center.z, b.radius };
 
-		const float u0 = (minX + 1.0f) * 0.5f, u1 = (maxX + 1.0f) * 0.5f;
-		const float v0 = (1.0f - maxY) * 0.5f, v1 = (1.0f - minY) * 0.5f;
-		const int cx0 = std::clamp(static_cast<int>(u0 * s->fullW) / 16, 0, s->gridW - 1);
-		const int cx1 = std::clamp(static_cast<int>(u1 * s->fullW) / 16, 0, s->gridW - 1);
-		const int cy0 = std::clamp(static_cast<int>(v0 * s->fullH) / 16, 0, s->gridH - 1);
-		const int cy1 = std::clamp(static_cast<int>(v1 * s->fullH) / 16, 0, s->gridH - 1);
-		if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > 256)
-			return true;
-		float farthest = 0.0f;
-		for (int y = cy0; y <= cy1; ++y) {
-			const float* row = &s->grid[static_cast<std::size_t>(y) * s->gridW];
-			for (int x = cx0; x <= cx1; ++x)
-				farthest = std::max(farthest, row[x]);
-		}
+		const ShVerdictTable* vt = ch->verdFront.load(std::memory_order_acquire);
 		g_shTested.fetch_add(1, std::memory_order_relaxed);
-		if (minZ > farthest + g_shadowHizBias) {
+		if (vt && vt->Occluded(a_object)) {
 			g_shCulled.fetch_add(1, std::memory_order_relaxed);
-			return false;  // every fragment would fail the depth test: cull
+			return false;
 		}
 		return true;
 	}

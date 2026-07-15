@@ -1171,8 +1171,23 @@ namespace
 std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
 {
 	auto callOriginal = *static_cast<std::int32_t(**)(void*, std::int64_t, void*, std::int32_t)>(a_original);
-	if (!g_claiming && GetMode() != Mode::kCapture)
-		return callOriginal(a1, a2, a3, a4);
+	if (!g_claiming && GetMode() != Mode::kCapture) {
+		// Passthrough (mode 0 / non-claiming modes): still queue the light-space Hi-Z capture --
+		// pure CPU (desc reads + a 64-byte VP copy); the reduce runs later at HiZPrepass.
+		const std::int32_t r0 = callOriginal(a1, a2, a3, a4);
+		if (MOC::ShadowHiZActive()) {
+			auto* const desc = reinterpret_cast<const std::uint8_t*>(a2);
+			const void* cam = *reinterpret_cast<void* const*>(desc + 64);
+			const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(desc + 84);
+			const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(desc + 88);
+			const float* vp = reinterpret_cast<const float*>(REL::Offset(0x30282E0).address());
+			auto* rtPool = reinterpret_cast<std::uint8_t*>(engine::g_renderer.address());
+			auto* atlasSRV = *reinterpret_cast<ID3D11ShaderResourceView**>(rtPool + 152 * 4 + 0x2040);
+			if (cam && target == 4 && slice < 64 && atlasSRV)
+				MOC::HiZShadowCapture(cam, slice, vp, atlasSRV);
+		}
+		return r0;
+	}
 
 	// Open this map's pass bracket, run the original (slice alloc + RT setup + NiCamera walk; the
 	// covered passes flow through CaptureHook, which snapshots the clean per-map render-state block
@@ -2146,6 +2161,17 @@ void ShadowThreaded::Setup()
 		return GetEnvironmentVariableA("CS_SHADOW_TIMING", tb, sizeof(tb)) && tb[0] && tb[0] != '0';
 	}();
 	if (!IsActive()) {
+		// Light-space shadow Hi-Z at mode 0 (CS_SHADOW_HIZ=1): the capture needs ONLY the per-map
+		// detour (pure-CPU queueing in the passthrough path); everything else stays vanilla.
+		const bool shadowHiz = [] {
+			char b[8] = {};
+			return GetEnvironmentVariableA("CS_SHADOW_HIZ", b, sizeof(b)) && b[0] == '1';
+		}();
+		if (shadowHiz && REL::Module::IsSE() && !hooksInstalled) {
+			stl::detour_thunk<RenderShadowmapHook>(REL::RelocationID(100820, 0));
+			hooksInstalled = true;
+			logger::info("[ShadowThreaded] mode 0 + CS_SHADOW_HIZ: per-map detour installed (capture only)");
+		}
 		// Measurement-only (CS_SHADOW_TIMING at mode 0): install JUST the RenderShadowmaps detour so the
 		// mode-0 branch can wall-clock/CPU-time the otherwise-vanilla shadow walk. No other hooks (no
 		// deferred pool, no per-map/BeginPass detours) -> callOriginal() runs pure vanilla = zero behavior
