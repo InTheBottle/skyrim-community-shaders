@@ -61,6 +61,22 @@ namespace
 	std::uintptr_t g_csBase = 0;
 	std::uintptr_t g_csEnd = 0;
 
+	// SkyrimSE.exe image range -- used to validate that an engine caster's geometry vtable points into
+	// the game module. A freed/torn caster's vtable falls outside; rendering it jumps to garbage (the
+	// mode-14 dense-exterior crash at 0x7EEECB80). Set once in EnsureInitialized. InGameModule fails OPEN
+	// while the range is unset (0) so it never wrongly rejects during early init.
+	std::uintptr_t g_gameBase = 0;
+	std::uintptr_t g_gameEnd = 0;
+	inline bool    InGameModule(const void* p)
+	{
+		if (g_gameEnd == 0)
+			return true;
+		const auto a = reinterpret_cast<std::uintptr_t>(p);
+		return a >= g_gameBase && a < g_gameEnd;
+	}
+	// [geom type & 15] -> count of shadow maps ceded to the engine because they held an exotic caster.
+	std::atomic<std::uint64_t> g_unsafeCasterHist[16]{};
+
 	// Set while EITHER window records: drop D3D11 calls whose return address lands inside
 	// the CS module. CS features hook the engine's shader-bind and draw leaves (e.g. the
 	// BeginTechnique VS/PS write-thunks in Hooks.cpp, per-object CB injection) and issue
@@ -796,6 +812,15 @@ void UtilityPassReplica::EnsureInitialized()
 			const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_csBase + dos->e_lfanew);
 			g_csEnd = g_csBase + nt->OptionalHeader.SizeOfImage;
 		}
+	}
+
+	// Game (SkyrimSE.exe) image range -- validate engine caster vtables (freed casters point outside).
+	if (HMODULE gm = GetModuleHandleW(nullptr)) {
+		g_gameBase = reinterpret_cast<std::uintptr_t>(gm);
+		const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(gm);
+		const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_gameBase + dos->e_lfanew);
+		g_gameEnd = g_gameBase + nt->OptionalHeader.SizeOfImage;
+		logger::info("[UtilityPassReplica] game module [{:#x}..{:#x})", g_gameBase, g_gameEnd);
 	}
 
 	BuildEngineCallStub();
@@ -3653,6 +3678,20 @@ bool UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRe
 				if (++chainLen > kMaxPerChain || ++total > kMaxTotal)
 					return false;  // cyclic/oversized chain -> reject the whole enumeration
 				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
+				// Mode-14 safety gate: a freed/torn caster's geometry vtable falls outside the game module
+				// -> rendering it jumps to garbage (the dense-exterior crash at 0x7EEECB80); an exotic
+				// geometry type (grass 4/10, LOD 5/6/9, particle 11, instance-group 14, ...) breaks
+				// RenderShadowInstanced's single-matrix World / the engine's per-type dispatch. Either ->
+				// reject the WHOLE map (return false) so Func42Hook runs the engine Func42, which renders +
+				// frees everything correctly. Per-map fallback (not per-caster skip -- skipping would drop
+				// those shadows). Whole-TRISHAPE (3) + type 8 are the proven-safe owned set.
+				if (!geom || !InGameModule(*reinterpret_cast<void* const*>(geom)))
+					return false;
+				const std::uint8_t gt = geom[0x150];
+				if (gt != 3 && gt != 8) {
+					g_unsafeCasterHist[gt & 15].fetch_add(1, std::memory_order_relaxed);
+					return false;
+				}
 				const bool  wholeTri = geom && geom[0x150] == 3;
 				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
 				if (!modeAlpha && wholeTri && !skinned) {

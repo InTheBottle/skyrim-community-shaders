@@ -754,6 +754,13 @@ namespace
 	// snapshotted per frame by the timing branch. The remainder of RenderShadowmaps is DX11 setup + SUBMISSION.
 	ULONG64       g_cullCyc = 0;
 	std::uint64_t g_cullWall = 0;
+	// M3 phase breakdown (CS_SHADOW_TIMING): per-frame QPC ticks in each stage of OUR owned shadow render,
+	// summed across all maps, reset + logged by the kEnumInstance timing branch. With the total (timed around
+	// callOriginal) this answers vanilla-vs-ours; the group-vs-draw split inside "render" comes from the
+	// existing CS_SHADOW_PHASE timer in RenderShadowInstanced (group = BUILD BATCHES, fill/draw = submit).
+	std::uint64_t g_m3EnumTicks = 0;    // DirectReadEnumerate (chain walk + classify)
+	std::uint64_t g_m3RenderTicks = 0;  // RenderShadowInstanced (group + matrix pack + draw) + remainder replica
+	std::uint64_t g_m3ResetTicks = 0;   // sub_141306DB0 batch-renderer reset
 	// Diagnostic: (camera, accumulator) per shadow cull this frame. If the accumulators are all DISTINCT,
 	// the per-map culls can run in parallel into their own accumulators (Phase B); if shared, need private ones.
 	std::vector<std::pair<void*, void*>> g_cullMapsDiag;
@@ -1700,13 +1707,69 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 				s_enumSettleUntil = frame + 600;
 			g_inEnumShadowPhase = frame >= s_enumSettleUntil;
 		}
+		// CS_SHADOW_TIMING: measure the WHOLE shadow phase (callOriginal = engine light loop + our per-map
+		// Func42Hook render) the same way the mode-0 branch times vanilla, so mode 0 <-> 13 at the same scene
+		// gives vanilla-vs-ours render-thread time; the g_m3* accumulators split OUR cost into enum / render
+		// (build-batches + draw) / reset.
+		static const bool s_m3timing = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_TIMING", b, sizeof(b)) && b[0] && b[0] != '0'; }();
+		if (!s_m3timing) {
+			callOriginal();
+			for (void* br : g_enumM3FrameReset)
+				ResetBatchRenderer(br);
+			g_enumM3FrameReset.clear();
+			g_inEnumShadowPhase = false;
+			return;
+		}
+		LARGE_INTEGER freq, t0, t1;
+		QueryPerformanceFrequency(&freq);
+		ULONG64 cy0 = 0, cy1 = 0;
+		g_m3EnumTicks = g_m3RenderTicks = g_m3ResetTicks = 0;
+		QueryThreadCycleTime(GetCurrentThread(), &cy0);
+		QueryPerformanceCounter(&t0);
 		callOriginal();
-		// Frame-end reset of shared (mode-14) accumulators: all cascades have now rendered, so free their
-		// chains exactly once -- avoiding both the per-call recycle crash and the never-reset leak.
-		for (void* br : g_enumM3FrameReset)
-			ResetBatchRenderer(br);
+		{
+			LARGE_INTEGER r0, r1;
+			QueryPerformanceCounter(&r0);
+			for (void* br : g_enumM3FrameReset)
+				ResetBatchRenderer(br);
+			QueryPerformanceCounter(&r1);
+			g_m3ResetTicks += static_cast<std::uint64_t>(r1.QuadPart - r0.QuadPart);
+		}
+		QueryPerformanceCounter(&t1);
+		QueryThreadCycleTime(GetCurrentThread(), &cy1);
 		g_enumM3FrameReset.clear();
 		g_inEnumShadowPhase = false;
+		{
+			static std::uint64_t s_lastEnter = 0, s_lastCy = 0;
+			static std::uint64_t s_shWall = 0, s_frWall = 0, s_shCyc = 0, s_frCyc = 0, s_n = 0;
+			static std::uint64_t s_enum = 0, s_render = 0, s_reset = 0;
+			const std::uint64_t  enter = static_cast<std::uint64_t>(t0.QuadPart);
+			if (s_lastEnter) {
+				s_frWall += enter - s_lastEnter;
+				s_frCyc += cy0 - s_lastCy;
+				s_shWall += static_cast<std::uint64_t>(t1.QuadPart - t0.QuadPart);
+				s_shCyc += cy1 - cy0;
+				s_enum += g_m3EnumTicks;
+				s_render += g_m3RenderTicks;
+				s_reset += g_m3ResetTicks;
+				s_n++;
+			}
+			s_lastEnter = enter;
+			s_lastCy = cy0;
+			if (s_n >= 128) {
+				const double f = static_cast<double>(freq.QuadPart);
+				const double shMs = 1000.0 * s_shWall / s_n / f;
+				const double frMs = 1000.0 * s_frWall / s_n / f;
+				const double cpuPct = s_frCyc ? 100.0 * s_shCyc / s_frCyc : 0.0;
+				const double wallPct = s_frWall ? 100.0 * s_shWall / s_frWall : 0.0;
+				logger::info("[ShadowTiming] ab=M3 RenderShadowmaps: wall {:.3f}ms/frame ({:.1f}% of {:.3f}ms frame), "
+							 "render-thread CPU {:.1f}% of frame | ours: enum {:.3f}ms render {:.3f}ms reset {:.3f}ms  (n={})",
+					shMs, wallPct, frMs, cpuPct,
+					1000.0 * s_enum / s_n / f, 1000.0 * s_render / s_n / f, 1000.0 * s_reset / s_n / f, s_n);
+				s_shWall = s_frWall = s_shCyc = s_frCyc = s_n = 0;
+				s_enum = s_render = s_reset = 0;
+			}
+		}
 		return;
 	}
 
@@ -2348,9 +2411,21 @@ namespace
 		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
 		static thread_local std::vector<std::uint32_t>     s_techs, s_remTechs;
 		static thread_local std::vector<std::uint8_t>      s_remAlpha;
-		const bool ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem, &s_remTechs, &s_remAlpha);
+		static const bool s_m3timing = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_TIMING", b, sizeof(b)) && b[0] && b[0] != '0'; }();
+		auto qpc = [] { LARGE_INTEGER t; QueryPerformanceCounter(&t); return static_cast<std::uint64_t>(t.QuadPart); };
+		// DirectReadEnumerate returns false when the chain is cyclic/oversized OR (step 3) contains an
+		// exotic/torn caster we can't safely render. Fall back to the ENGINE for the whole map: return
+		// false so Func42Hook runs the real Func42 (renders + frees). Doing this BEFORE the draw + reset/
+		// queue is essential -- otherwise we'd claim+reset a map nobody rendered (silent shadow loss).
+		const std::uint64_t _te = s_m3timing ? qpc() : 0;
+		const bool          ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem, &s_remTechs, &s_remAlpha);
+		if (s_m3timing)
+			g_m3EnumTicks += qpc() - _te;
+		if (!ok)
+			return false;
 
-		if (a_draw && ok && (!s_inst.empty() || !s_rem.empty())) {
+		const std::uint64_t _tr = s_m3timing ? qpc() : 0;
+		if (a_draw && (!s_inst.empty() || !s_rem.empty())) {
 			// At Func42 ENTRY the map's RT/DSV/viewport are still bound (unlike mode 9, which renders
 			// post-walk), so we render straight onto the live state. Save the block + technique caches,
 			// force a clean re-bind, issue our draws, restore. Shadow depth is order-independent (opaque
@@ -2382,6 +2457,8 @@ namespace
 			*engine::g_currentMaterial = savedMaterial;
 			sflags[0] = 0xFFFFFFFFu;  // engine's next SetDirtyStates re-binds onto whatever we left bound
 		}
+		if (s_m3timing)
+			g_m3RenderTicks += qpc() - _tr;
 
 		// Our own reset: replaces the engine Func42's incremental free -- the load-bearing step the plain
 		// skip path omitted. Pure CPU (no D3D), so it is order-independent w.r.t. the draw above.
@@ -2398,7 +2475,10 @@ namespace
 				if (!present)
 					g_enumM3FrameReset.push_back(br);
 			} else {
+				const std::uint64_t _trs = s_m3timing ? qpc() : 0;
 				ResetBatchRenderer(br);
+				if (s_m3timing)
+					g_m3ResetTicks += qpc() - _trs;
 			}
 		}
 
@@ -2411,8 +2491,8 @@ namespace
 				auto* p = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(b) + off);
 				return p ? static_cast<std::int64_t>(*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(p) + 0x24)) : -1;
 			};
-			logger::info("[EnumM3] draw={} ok={} inst={} rem={} flags={:#x} plists[78/B8/E8]={}/{}/{}",
-				a_draw, ok, s_inst.size(), s_rem.size(), a_flags,
+			logger::info("[EnumM3] draw={} rm={} inst={} rem={} flags={:#x} plists[78/B8/E8]={}/{}/{}",
+				a_draw, renderMode, s_inst.size(), s_rem.size(), a_flags,
 				br ? plistCount(br, 0x78) : -1, br ? plistCount(br, 0xB8) : -1, br ? plistCount(br, 0xE8) : -1);
 		}
 		return true;  // we owned this map (rendered? + reset)
