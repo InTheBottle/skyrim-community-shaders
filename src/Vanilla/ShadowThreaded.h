@@ -93,6 +93,17 @@ public:
 		                    //           CaptureHook collects during the walk. diverged=0 proves a self-contained
 		                    //           direct-read can find the same passes without the engine driving the walk,
 		                    //           the prerequisite for skipping the walk + moving traverse+build to workers.
+		kWalkMT = 12,       // CULLING MT (the goal): the per-map WALK runs on worker threads. The night's RE
+		                    //           proved (a) 100+ engine sites read the one global D3D context slot
+		                    //           0x143027EA0 -> raw engine render cannot parallelize; (b) serial-off-
+		                    //           thread (dispatch+join) is STABLE with raw Func42 -> the crash is purely
+		                    //           CONCURRENT immediate-ctx access. So each worker runs the walk with
+		                    //           BeginPass (0x141308030) diverted to BeginPassReplica on its OWN deferred
+		                    //           context (explicit ctx, never the global slot) + a WorkerSeedMap'd private
+		                    //           block. Render thread does the render-thread-only setup (slice/clear/
+		                    //           camera) + block snapshot per map, then fans the walks out; ordered
+		                    //           ExecuteCommandList at the barrier. CS_SHADOW_WALKMT_JOIN=1 forces
+		                    //           dispatch+join (serial validation gate) before enabling concurrency.
 	};
 
 	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }

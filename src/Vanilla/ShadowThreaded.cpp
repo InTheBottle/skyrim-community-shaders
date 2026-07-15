@@ -922,6 +922,58 @@ namespace
 		reinterpret_cast<void(__fastcall*)(void*)>(REL::Offset(0x12966b0).address())(accum);   // SetCurrentAccumulator
 		reinterpret_cast<Func37_t>(REL::Offset(0x12ca100).address())(accum, camera);           // Func37 (stub)
 	}
+	void SeedWideViewport(ID3D11DeviceContext* a_ctx);  // defined below; used by CullWalkMT
+
+	// Snapshot/restore the pre-shadow global render-state around a replay scope (moved up from the
+	// replay region so kWalkMT can use it). ExecuteCommandList(FALSE) clears the immediate context,
+	// so after the replay the block is forced fully dirty + persistent bindings/viewport re-established.
+	struct GlobalStateGuard
+	{
+		std::vector<std::uint8_t> block;
+		std::uint32_t             technique;
+		void*                     shader;
+		void*                     material;
+		std::uint32_t             boneCursor;
+		std::uint64_t             dynVB;
+		std::uint32_t             shadowToken;
+		ID3D11DeviceContext*      immediate;
+		UINT                      vpCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_VIEWPORT            vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT                      scCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_RECT                scs[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+
+		explicit GlobalStateGuard(ID3D11DeviceContext* a_immediate) :
+			block(engine::kBlockBytes), immediate(a_immediate)
+		{
+			std::memcpy(block.data(), reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+			technique = *engine::g_currentTechnique;
+			shader = *engine::g_currentShader;
+			material = *engine::g_currentMaterial;
+			boneCursor = *engine::g_boneCBRingCursor;
+			dynVB = *engine::g_dynVBRingState;
+			shadowToken = *engine::g_shadowGeomToken;
+			immediate->RSGetViewports(&vpCount, vps);
+			immediate->RSGetScissorRects(&scCount, scs);
+		}
+
+		void Restore()
+		{
+			BindPersistentStandalone(immediate);
+			if (vpCount)
+				immediate->RSSetViewports(vpCount, vps);
+			if (scCount)
+				immediate->RSSetScissorRects(scCount, scs);
+			std::memcpy(reinterpret_cast<void*>(engine::S_base.address()), block.data(), engine::kBlockBytes);
+			*engine::g_currentTechnique = technique;
+			*engine::g_currentShader = shader;
+			*engine::g_currentMaterial = material;
+			*engine::g_boneCBRingCursor = boneCursor;
+			*engine::g_dynVBRingState = dynVB;
+			*engine::g_shadowGeomToken = shadowToken;
+			*reinterpret_cast<std::uint32_t*>(engine::S_base.address()) = 0xFFFFFFFFu;  // force re-bind
+		}
+	};
+
 	// The WALK (BSShaderAccumulator::Func42 0x1412CAC20): the 98% cost. Parallel-safe -- FinishAccumulating
 	// uses per-process state, NOT the global camera (verified via xrefs to unk_14302C890). Runs on the pool.
 	void CullWalk(void* accum, std::uint32_t flags)
@@ -931,6 +983,65 @@ namespace
 		pclog("walkEnd", accum);
 	}
 
+	// ==== kWalkMT (mode 12): the WALK on workers via the replica path ====================
+	// The night's RE proved the raw engine walk renders through 100+ readers of the ONE global
+	// context slot 0x143027EA0, so it cannot run concurrently. Here each worker runs Func42 with
+	// BeginPass (0x141308030) diverted to BeginPassReplica on its OWN deferred context (t_worker),
+	// so every draw lands on a private command list -- never the shared immediate context. The
+	// render thread keeps the render-thread-only setup (slice/clear/camera) and snapshots each
+	// map's render-state block for WorkerSeedMap.
+	std::uint32_t                         g_walkMTToken = 0;        // GlobalStateGuard shadowToken for this frame
+	std::mutex                            g_walkMTListMtx;
+	std::vector<winrt::com_ptr<ID3D11CommandList>> g_walkMTLists;   // collected worker command lists
+	std::atomic<int>                      g_walkMTErrors{ 0 };
+
+	// One deferred context + one persistent ShadowWorker per pool thread (lazy, leaked at exit --
+	// the pool threads are persistent). Recording is per-job (WorkerBeginScope..EndScope), so a
+	// thread can process many maps across frames on its stable context.
+	struct WalkMTThreadCtx
+	{
+		winrt::com_ptr<ID3D11DeviceContext> ctx;
+	};
+	WalkMTThreadCtx& WalkMTLocal()
+	{
+		thread_local WalkMTThreadCtx t;
+		if (!t.ctx) {
+			auto* device = globals::d3d::device;
+			if (device)
+				device->CreateDeferredContext(0, t.ctx.put());
+		}
+		return t;
+	}
+
+	// A per-map walk job: seed the private block, run the engine walk with BeginPass diverted to the
+	// worker's deferred context, finish the command list. block is a heap copy owned by the job.
+	void CullWalkMT(void* accum, std::uint32_t flags, std::shared_ptr<std::vector<std::uint8_t>> block)
+	{
+		auto& tl = WalkMTLocal();
+		if (!tl.ctx) {
+			g_walkMTErrors.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+		auto* ctx = tl.ctx.get();
+		auto* worker = UtilityPassReplica::MakeShadowWorker(ctx, g_walkMTToken);
+		UtilityPassReplica::WorkerBeginScope(worker);
+		BindPersistentStandalone(ctx);
+		SeedWideViewport(ctx);
+		UtilityPassReplica::WorkerSeedMap(worker, block->data());
+		pclog("walkStart", accum);
+		reinterpret_cast<Func42_t>(REL::Offset(0x12cac20).address())(accum, flags);
+		pclog("walkEnd", accum);
+		UtilityPassReplica::WorkerEndScope();
+		winrt::com_ptr<ID3D11CommandList> cl;
+		if (FAILED(ctx->FinishCommandList(FALSE, cl.put())))
+			g_walkMTErrors.fetch_add(1, std::memory_order_relaxed);
+		UtilityPassReplica::FreeShadowWorker(worker);
+		if (cl) {
+			std::scoped_lock lk(g_walkMTListMtx);
+			g_walkMTLists.push_back(std::move(cl));
+		}
+	}
+
 	// NiCamera::sub_1412C1600 (0x1412C1600): the per-map cull driver called from NiCamera::Render, right
 	// before Func43 does the draw submission. Timing it separates cull CPU from submission CPU.
 	struct CullHook
@@ -938,7 +1049,9 @@ namespace
 		static std::int32_t thunk(void* a1, void* a2, std::uint32_t a3)
 		{
 			auto* orig = reinterpret_cast<std::int32_t (*)(void*, void*, std::uint32_t)>(func.address());
-			if (ShadowThreaded::GetSingleton()->GetMode() == ShadowThreaded::Mode::kParallelCull) {
+			const auto curMode = ShadowThreaded::GetSingleton()->GetMode();
+			if (curMode == ShadowThreaded::Mode::kParallelCull || curMode == ShadowThreaded::Mode::kWalkMT) {
+				const bool walkMT = curMode == ShadowThreaded::Mode::kWalkMT;
 				// Stage 1 fallback (CS_SHADOW_CULL_SERIAL=1): run on ONE worker + join (serial, validated).
 				static const bool s_serial = [] {
 					char b[8] = {};
@@ -1043,6 +1156,25 @@ namespace
 				// after the end-of-loop barrier.
 				CullSetup(a1, a2, a3);
 				pclog("setupDone", a2);
+				if (walkMT) {
+					// kWalkMT: snapshot the map's render-state block NOW (render thread; RT/DSV/
+					// viewport bound by RenderShadowmap, camera set by CullSetup) for WorkerSeedMap,
+					// then dispatch the walk to the pool where it records via BeginPassReplica onto a
+					// private deferred context. CS_SHADOW_WALKMT_JOIN=1 = dispatch+join (serial gate).
+					auto blockCopy = std::make_shared<std::vector<std::uint8_t>>(engine::kBlockBytes);
+					std::memcpy(blockCopy->data(), reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+					void*         acc = a2;
+					std::uint32_t cf = a3;
+					static const bool s_join = [] {
+						char b[8] = {};
+						return GetEnvironmentVariableA("CS_SHADOW_WALKMT_JOIN", b, sizeof(b)) && b[0] == '1';
+					}();
+					if (s_join)
+						g_cullWorker.RunAndWait([&] { CullWalkMT(acc, cf, blockCopy); });
+					else
+						g_cullPool.Submit([acc, cf, blockCopy] { CullWalkMT(acc, cf, blockCopy); });
+					return 0;
+				}
 				{
 					void* acc = a2;
 					std::uint32_t cf = a3;
@@ -1338,6 +1470,68 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		if ((++frames & 0x3F) == 1)
 			logger::info("[ShadowThreaded][drawStateVerify] frame {}: reflect={} (see [FpVerify] for pairs/diverged)",
 				frames, vanilla::ShaderReflect::WantsCapture() ? 1 : 0);
+		return;
+	}
+
+	if (m == Mode::kWalkMT) {
+		// CULLING MT: the render thread runs the light loop (setup/clear/camera per map, block
+		// snapshot) but dispatches each map's WALK to the pool, where it records via BeginPassReplica
+		// onto a private deferred context (BeginPass diverted -> t_worker ctx, never the shared
+		// immediate slot). Barrier, then execute the collected command lists, then the serial submit.
+		auto* immediate = *engine::g_immediateContext;
+		GlobalStateGuard guard(immediate);
+		g_walkMTToken = guard.shadowToken;
+		{
+			std::scoped_lock lk(g_walkMTListMtx);
+			g_walkMTLists.clear();
+		}
+		g_walkMTErrors.store(0, std::memory_order_relaxed);
+		g_deferredSubmits.clear();
+		g_accumSeenThisFrame.clear();
+		g_accumCountThisFrame.clear();
+		g_curMapDeferred = false;
+		g_pcFrame.fetch_add(1, std::memory_order_relaxed);
+
+		g_ownBeginPass.store(true, std::memory_order_relaxed);  // worker Func42's BeginPass -> BeginPassReplica
+		g_pcActive.store(true, std::memory_order_relaxed);
+		callOriginal();  // CullHook: setup inline + snapshot block + dispatch CullWalkMT; Func43Hook defers submits
+		g_pcActive.store(false, std::memory_order_relaxed);
+		g_cullPool.Wait();                                       // all worker walks recorded their command lists
+		g_ownBeginPass.store(false, std::memory_order_relaxed);
+
+		// Execute the workers' command lists (independent atlas slices -> any order), then restore.
+		{
+			std::scoped_lock lk(g_walkMTListMtx);
+			for (auto& cl : g_walkMTLists)
+				if (cl)
+					immediate->ExecuteCommandList(cl.get(), FALSE);
+		}
+		guard.Restore();
+
+		// Serial submit phase: Func43 = accumulator cleanup (Func38) for shadows; re-establish each
+		// map's camera + accumulator so the cleanup targets the right chains.
+		auto  setCam = reinterpret_cast<SetCameraData_t>(REL::Offset(0xd7bab0).address());
+		auto  setAcc = reinterpret_cast<void(__fastcall*)(void*)>(REL::Offset(0x12966b0).address());
+		auto  func43 = reinterpret_cast<Func43_t>(Func43Hook::func.address());
+		void* camData = reinterpret_cast<void*>(REL::Offset(0x302c890).address());
+		auto  camPtr = reinterpret_cast<void**>(REL::Offset(0x31d0e68).address());
+		for (auto& d : g_deferredSubmits) {
+			setCam(camData, d.camera, d.flags);
+			*camPtr = d.camera;
+			setAcc(d.accum);
+			func43(d.accum, static_cast<std::int64_t>(d.flags));
+		}
+		g_accumSharedLastFrame.clear();
+		for (auto& kv : g_accumCountThisFrame)
+			if (kv.second > 1)
+				g_accumSharedLastFrame.insert(kv.first);
+		g_haveHistogram = true;
+		if ((++frames & 0x3F) == 1) {
+			std::size_t nlists = 0;
+			{ std::scoped_lock lk(g_walkMTListMtx); nlists = g_walkMTLists.size(); }
+			logger::info("[ShadowThreaded][walkMT] frame {}: deferred={} lists={} errors={} atlasHash={:016X}",
+				frames, g_deferredSubmits.size(), nlists, g_walkMTErrors.load(), HashShadowAtlas(4));
+		}
 		return;
 	}
 
@@ -1724,58 +1918,6 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 
 namespace
 {
-	// Snapshot/restore the pre-shadow global render-state around a replay scope. ExecuteCommandList
-	// (RestoreContextState=FALSE) clears the immediate context, so after the replay the engine's
-	// block is forced fully dirty and the persistent bindings + viewport are re-established, exactly
-	// as the kSerial path does. The worker paths never write the global block themselves, but the
-	// walk did and the execute cleared the GPU context, so the same restore is required.
-	struct GlobalStateGuard
-	{
-		std::vector<std::uint8_t> block;
-		std::uint32_t             technique;
-		void*                     shader;
-		void*                     material;
-		std::uint32_t             boneCursor;
-		std::uint64_t             dynVB;
-		std::uint32_t             shadowToken;
-		ID3D11DeviceContext*      immediate;
-		UINT                      vpCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-		D3D11_VIEWPORT            vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-		UINT                      scCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-		D3D11_RECT                scs[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-
-		explicit GlobalStateGuard(ID3D11DeviceContext* a_immediate) :
-			block(engine::kBlockBytes), immediate(a_immediate)
-		{
-			std::memcpy(block.data(), reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
-			technique = *engine::g_currentTechnique;
-			shader = *engine::g_currentShader;
-			material = *engine::g_currentMaterial;
-			boneCursor = *engine::g_boneCBRingCursor;
-			dynVB = *engine::g_dynVBRingState;
-			shadowToken = *engine::g_shadowGeomToken;
-			immediate->RSGetViewports(&vpCount, vps);
-			immediate->RSGetScissorRects(&scCount, scs);
-		}
-
-		void Restore()
-		{
-			BindPersistentStandalone(immediate);
-			if (vpCount)
-				immediate->RSSetViewports(vpCount, vps);
-			if (scCount)
-				immediate->RSSetScissorRects(scCount, scs);
-			std::memcpy(reinterpret_cast<void*>(engine::S_base.address()), block.data(), engine::kBlockBytes);
-			*engine::g_currentTechnique = technique;
-			*engine::g_currentShader = shader;
-			*engine::g_currentMaterial = material;
-			*engine::g_boneCBRingCursor = boneCursor;
-			*engine::g_dynVBRingState = dynVB;
-			*engine::g_shadowGeomToken = shadowToken;
-			*reinterpret_cast<std::uint32_t*>(engine::S_base.address()) = 0xFFFFFFFFu;  // force re-bind
-		}
-	};
-
 	// Seed a wide viewport/scissor on a fresh deferred context; each map's block restore + forced
 	// dirty overrides the viewport per map, but a fresh context needs a non-empty starting rect.
 	void SeedWideViewport(ID3D11DeviceContext* a_ctx)
@@ -2102,9 +2244,10 @@ void ShadowThreaded::InstallHooks()
 	DetourAttach(reinterpret_cast<PVOID*>(&BeginPassHook::func), reinterpret_cast<PVOID>(BeginPassHook::thunk));
 	DetourTransactionCommit();
 
-	// kParallelCull: intercept the per-map cull (sub_1412C1600) + the per-map submit (Func43), spin up the
-	// worker (Stage 1 fallback) + the fan-out pool (Stage 2).
-	if (GetMode() == Mode::kParallelCull) {
+	// kParallelCull / kWalkMT: intercept the per-map cull (sub_1412C1600) + the per-map submit (Func43),
+	// spin up the worker (Stage 1 fallback) + the fan-out pool. kWalkMT additionally uses the always-
+	// installed BeginPass detour (above) to divert the worker walk's draws to BeginPassReplica.
+	if (GetMode() == Mode::kParallelCull || GetMode() == Mode::kWalkMT) {
 		CullHook::func = REL::Offset(0x12C1600).address();
 		Func43Hook::func = REL::Offset(0x12CAC90).address();
 		DetourTransactionBegin();
@@ -2148,7 +2291,7 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if (v >= 0 && v <= 10)
+		if ((v >= 0 && v <= 10) || v == 12)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
