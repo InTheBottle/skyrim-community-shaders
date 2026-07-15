@@ -263,8 +263,11 @@ public:
 	/// are populated (post-cull, pre-Func42; e.g. at RenderShadowmap/CullHook entry -- NOT Func43).
 	/// Returns false (and clears the outputs) if a chain is cyclic/oversized or the layout is
 	/// unreadable -- the caller must then fall back to the engine render for this map.
+	/// Optionally emits the remainder's technique keys + alpha-test flags (parallel to a_remainder)
+	/// so the caller can render each remainder pass via ReplicaRenderPassImmediately.
 	[[nodiscard]] bool DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
-		std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const;
+		std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder,
+		std::vector<std::uint32_t>* a_remTechs = nullptr, std::vector<std::uint8_t>* a_remAlpha = nullptr) const;
 
 	/// Regime-B MULTITHREAD gate for one covered pass: render it via the engine and via the WORKER path
 	/// (private block + full setup/flush reimpl, the exact MT code) from the same state, and diff the

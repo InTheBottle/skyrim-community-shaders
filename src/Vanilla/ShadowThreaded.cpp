@@ -2300,17 +2300,41 @@ namespace
 		auto* const br = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
-		static thread_local std::vector<std::uint32_t>     s_techs;
-		const bool ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem);
+		static thread_local std::vector<std::uint32_t>     s_techs, s_remTechs;
+		static thread_local std::vector<std::uint8_t>      s_remAlpha;
+		const bool ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem, &s_remTechs, &s_remAlpha);
 
-		if (a_draw && ok && !s_inst.empty()) {
-			static thread_local MapWork mw;
-			std::memcpy(mw.block, reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
-			mw.passes.clear();
-			mw.passes.reserve(s_inst.size());
-			for (std::size_t i = 0; i < s_inst.size(); ++i)
-				mw.passes.push_back(CapturedPass{ s_inst[i], s_techs[i], false, a_flags });
-			RenderMapInstanced(mw);
+		if (a_draw && ok && (!s_inst.empty() || !s_rem.empty())) {
+			// At Func42 ENTRY the map's RT/DSV/viewport are still bound (unlike mode 9, which renders
+			// post-walk), so we render straight onto the live state. Save the block + technique caches,
+			// force a clean re-bind, issue our draws, restore. Shadow depth is order-independent (opaque
+			// min/max depth + independent alpha-test), so the hash-bucket enumeration order is fine.
+			auto* const S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+			auto* const sflags = reinterpret_cast<std::uint32_t*>(S);
+			static thread_local std::vector<std::uint8_t> s_saved(engine::kBlockBytes);
+			std::memcpy(s_saved.data(), S, engine::kBlockBytes);
+			const auto  savedTech = *engine::g_currentTechnique;
+			auto* const savedShader = *engine::g_currentShader;
+			auto* const savedMaterial = *engine::g_currentMaterial;
+
+			sflags[0] = 0xFFFFFFFFu;  // force first draw's SetDirtyStates to re-bind RT/DSV/viewport
+			*engine::g_currentTechnique = 0;
+			*engine::g_currentShader = nullptr;
+			*engine::g_currentMaterial = nullptr;
+
+			// Instanceable subset: one DrawIndexedInstanced per (mesh, technique) -- the draw-count cut.
+			if (!s_inst.empty())
+				replica->RenderShadowInstanced(s_inst.data(), s_techs.data(),
+					static_cast<std::uint32_t>(s_inst.size()), a_flags);
+			// Remainder (alpha-test / skinned / non-whole-TRISHAPE): per-pass byte-exact replica.
+			for (std::size_t i = 0; i < s_rem.size(); ++i)
+				replica->ReplicaRenderPassImmediately(s_rem[i], s_remTechs[i], s_remAlpha[i] != 0, a_flags);
+
+			std::memcpy(S, s_saved.data(), engine::kBlockBytes);
+			*engine::g_currentTechnique = savedTech;
+			*engine::g_currentShader = savedShader;
+			*engine::g_currentMaterial = savedMaterial;
+			sflags[0] = 0xFFFFFFFFu;  // engine's next SetDirtyStates re-binds onto whatever we left bound
 		}
 
 		// Our own reset: replaces the engine Func42's incremental free -- the load-bearing step the plain

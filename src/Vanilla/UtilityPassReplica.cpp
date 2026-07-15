@@ -3606,11 +3606,16 @@ static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
 }
 
 bool UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
-	std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const
+	std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder,
+	std::vector<std::uint32_t>* a_remTechs, std::vector<std::uint8_t>* a_remAlpha) const
 {
 	a_instPasses.clear();
 	a_instTechs.clear();
 	a_remainder.clear();
+	if (a_remTechs)
+		a_remTechs->clear();
+	if (a_remAlpha)
+		a_remAlpha->clear();
 	if (!a_accum)
 		return false;
 	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
@@ -3655,6 +3660,10 @@ bool UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRe
 					a_instTechs.push_back(key);
 				} else {
 					a_remainder.push_back(pass);
+					if (a_remTechs)
+						a_remTechs->push_back(key);
+					if (a_remAlpha)
+						a_remAlpha->push_back(modeAlpha ? 1u : 0u);
 				}
 			}
 		}
