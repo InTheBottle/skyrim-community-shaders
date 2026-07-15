@@ -232,7 +232,11 @@ namespace
 	};
 
 	std::vector<MapWork> g_mapWorkList;
-	MapWork*             g_curMap = nullptr;
+	thread_local MapWork* g_curMap = nullptr;  // thread-local: each kInstanceMT worker captures into its own MapWork
+	// kInstanceMT (worker cull+capture, instanced draws on the render thread): the worker runs Func42
+	// with CaptureHook CLAIMING EVERY covered pass (so nothing renders inline on the worker -- inline
+	// render off the render thread AVs), tagging each with how the render thread should draw it.
+	std::atomic<bool>    g_captureClaimAll{ false };
 	bool                 g_claiming = false;         // serial/threaded: claim covered passes for replay
 	bool                 g_concurrentRestrict = false;  // kConcurrent: claim ONLY the thread-safe subset
 	bool                 g_instanceRestrict = false;    // kInstance: claim ONLY the instanceable subset
