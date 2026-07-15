@@ -2309,10 +2309,14 @@ namespace
 		// cascades reuse an accumulator across multiple Func42 calls, so our per-call reset would free a
 		// pass a later call renders -> engine BeginPass AV (observed on the exterior). Fall back to the
 		// engine (safe + correct) for any mode not in the owned set.
+		// renderMode = accum+0x150. Shadow family is 12..17 (spot/dir-cascade/parabolic/VL). We OWN only
+		// the STABLE, single-Func42-call maps -- renderMode 13 (spot; includes a big ~755-caster exterior
+		// map). renderMode 14 (directional cascades) shares ONE accumulator that the parallel cull is still
+		// POPULATING when Func42 runs (observed: caster count swings 2->21->1656 on the same accumulator),
+		// so rendering it feeds BeginPass a pass the concurrent cull is relinking -> dangling-pointer AV
+		// (exterior crash at engine 0x141308707). The engine's own Func42 is synchronized against that
+		// cull; our hook is not. So we fall back to the engine (always correct) for anything but mode 13.
 		const std::uint32_t renderMode = *reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x150);
-		static std::atomic<std::uint64_t> s_modeLog{ 0 };
-		if ((s_modeLog.fetch_add(1, std::memory_order_relaxed) % 240) == 0)
-			logger::info("[EnumM3] renderMode={} (owned set = {{13}})", renderMode);
 		if (renderMode != 13)
 			return false;  // not owned -> caller runs the engine Func42
 
