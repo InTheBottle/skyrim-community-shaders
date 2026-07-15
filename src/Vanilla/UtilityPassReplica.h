@@ -261,7 +261,9 @@ public:
 	/// paired arrays for RenderShadowInstanced; everything else -> a_remainder. Pure CPU, no D3D --
 	/// safe to run on a worker over a per-light PRIVATE accumulator. Must be called while the chains
 	/// are populated (post-cull, pre-Func42; e.g. at RenderShadowmap/CullHook entry -- NOT Func43).
-	void DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
+	/// Returns false (and clears the outputs) if a chain is cyclic/oversized or the layout is
+	/// unreadable -- the caller must then fall back to the engine render for this map.
+	[[nodiscard]] bool DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
 		std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const;
 
 	/// Regime-B MULTITHREAD gate for one covered pass: render it via the engine and via the WORKER path

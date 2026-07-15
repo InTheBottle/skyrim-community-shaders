@@ -3605,25 +3605,33 @@ static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
 	return v6;
 }
 
-void UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
+bool UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
 	std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder) const
 {
 	a_instPasses.clear();
 	a_instTechs.clear();
 	a_remainder.clear();
 	if (!a_accum)
-		return;
+		return false;
 	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
 	if (!br)
-		return;
+		return false;
 	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(br + 8);
 	auto* const tbl = *reinterpret_cast<std::uint8_t**>(br + 0x48);
 	if (!passArrayBase || !tbl)
-		return;
+		return false;
 	const std::uint32_t  cap = *reinterpret_cast<std::uint32_t*>(br + 0x2C);
 	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
 	if (cap == 0 || cap > (1u << 20))
-		return;
+		return false;
+	// passGroupNext chains are engine-owned and can be transiently cyclic/corrupt when read at the
+	// wrong window (e.g. a directional-cascade accumulator mid-reuse, or racing the parallel cull's
+	// tail). An unbounded walk then push_backs until std::bad_alloc (observed crash 2026-07-15). Bound
+	// every chain and the whole accumulator; on trip, bail so the caller falls back to the engine Func42
+	// for this map rather than rendering a corrupt/partial enumeration.
+	constexpr std::size_t kMaxPerChain = 1u << 17;  // 131072 passes/head -- vastly above any real map
+	constexpr std::size_t kMaxTotal = 1u << 19;     // 524288 passes/accumulator budget
+	std::size_t           total = 0;
 	for (std::uint32_t b = 0; b < cap; ++b) {
 		auto* const e = tbl + 16ull * b;
 		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
@@ -3633,9 +3641,12 @@ void UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRe
 		const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(e);       // technique key for this group
 		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
 		for (int slot = 0; slot < 5; ++slot) {
-			const bool modeAlpha = (slot == 1 || slot == 3 || slot == 4);  // v11 alpha-test flag per BeginPass
+			const bool  modeAlpha = (slot == 1 || slot == 3 || slot == 4);  // v11 alpha-test flag per BeginPass
+			std::size_t chainLen = 0;
 			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
 				pass; pass = pass->passGroupNext) {
+				if (++chainLen > kMaxPerChain || ++total > kMaxTotal)
+					return false;  // cyclic/oversized chain -> reject the whole enumeration
 				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
 				const bool  wholeTri = geom && geom[0x150] == 3;
 				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
@@ -3648,6 +3659,7 @@ void UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRe
 			}
 		}
 	}
+	return true;
 }
 
 void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const
@@ -3676,6 +3688,9 @@ void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_
 	if (cap == 0 || cap > (1u << 20))  // sanity bound: guard against a torn/garbage capacity read
 		return;
 	std::uint64_t rawWalked = 0, occupiedBuckets = 0;
+	// Same cyclic-chain guard as DirectReadEnumerate: bound each chain so a torn/reused accumulator
+	// can't spin this diagnostic forever (it feeds counters, not renders, so we just stop early).
+	constexpr std::size_t kMaxPerChain = 1u << 17;
 	for (std::uint32_t b = 0; b < cap; ++b) {
 		auto* const e = tbl + 16ull * b;
 		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
@@ -3687,9 +3702,12 @@ void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_
 		// Modes 1/3/4 carry the alpha-test flag (v11) in BeginPass; modes 0/2 do not. The instanceable
 		// subset is non-alpha-test whole-TRISHAPE non-skinned -- so only modes 0 and 2 can contribute.
 		for (int slot = 0; slot < 5; ++slot) {
-			const bool modeAlpha = (slot == 1 || slot == 3 || slot == 4);
+			const bool  modeAlpha = (slot == 1 || slot == 3 || slot == 4);
+			std::size_t chainLen = 0;
 			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
 				pass; pass = pass->passGroupNext) {
+				if (++chainLen > kMaxPerChain)
+					break;
 				++rawWalked;
 				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
 				const bool  wholeTri = geom && geom[0x150] == 3;

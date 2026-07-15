@@ -93,7 +93,21 @@ public:
 		                    //           CaptureHook collects during the walk. diverged=0 proves a self-contained
 		                    //           direct-read can find the same passes without the engine driving the walk,
 		                    //           the prerequisite for skipping the walk + moving traverse+build to workers.
-		kWalkMT = 12,       // CULLING MT (the goal): the per-map WALK runs on worker threads. The night's RE
+		kEnumInstance = 13, // ENUMERATION REBUILD (docs/development/shadow-enumeration-rebuild.md). At Func42
+		                    //           entry (0x1412CAC20 -- RT/DSV/viewport/camera bound, accumulator populated
+		                    //           by the already-parallel cull), DirectReadEnumerate reads the caster chains
+		                    //           ourselves. M0 proved enumeration == CaptureHook exactly.
+		                    //           VERDICT (2026-07-15): SKIPPING Func42 to render from our enumeration is
+		                    //           NON-VIABLE over the shared accumulator -- Func42's walk frees the pass
+		                    //           nodes incrementally (sub_141307E80 -> NiMemFree, gated m_AutoClearPasses)
+		                    //           with no per-frame bulk pool reset, so skipping corrupts the shared pool
+		                    //           within ~1 frame: a passGroupNext chain cycles and the engine hangs on it
+		                    //           (FREEZE proven, FPS=0). Same wall as kWalkMT. DEFAULT is now the safe
+		                    //           observational path (enumerate+log; engine renders+frees); the skip path is
+		                    //           opt-in (CS_SHADOW_ENUM_SKIP=1) as the harness for the only viable route:
+		                    //           M3 PRIVATE per-light accumulators (own pool+free). The instancing win is
+		                    //           already shipped via kInstance (mode 9), which keeps the engine free intact.
+		kWalkMT = 12,       // CULLING MT (superseded by kEnumInstance): the per-map WALK runs on worker threads. The night's RE
 		                    //           proved (a) 100+ engine sites read the one global D3D context slot
 		                    //           0x143027EA0 -> raw engine render cannot parallelize; (b) serial-off-
 		                    //           thread (dispatch+join) is STABLE with raw Func42 -> the crash is purely

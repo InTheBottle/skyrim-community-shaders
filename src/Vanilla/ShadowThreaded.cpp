@@ -886,6 +886,7 @@ namespace
 	};
 
 	std::atomic<bool>                     g_pcActive{ false };  // inside a kParallelCull RenderShadowmaps walk
+	bool                                  g_inEnumShadowPhase = false;  // kEnumInstance: inside RenderShadowmaps (render thread; scopes Func42Hook to shadows, not main scene)
 	std::uint32_t                         g_pcPoolSize = 6;     // resolved at InstallHooks; pool starts lazily
 	bool                                  g_pcPoolStarted = false;    // render thread only (CullHook)
 	bool                                  g_pcWorkerStarted = false;  // render thread only (serial mode)
@@ -1275,6 +1276,65 @@ namespace
 	// BSShaderAccumulator::Func43 (0x1412CAC90): the per-map SUBMIT, called right after the cull in
 	// NiCamera::Render. For a DEFERRED map (its cull is running on the pool), capture the RT + viewport the
 	// engine bound for this map, record them for the serial submit phase, and SKIP the submit now.
+	bool EnumInstanceRender(void* a_accum, std::uint32_t a_flags);   // defined after RenderMapInstanced
+	void EnumInstanceObserve(void* a_accum, std::uint32_t a_flags);  // safe: enumerate + log, no render
+
+	// BSShaderAccumulator::Func42 (0x1412CAC20): dispatcher -- SetRenderMode(accum+0x150) then
+	// table[renderMode](accum, flags) (0x1431D1C40, runtime-populated), the fused per-map walk+draw+FREE.
+	//
+	// VERDICT (2026-07-15): "skip Func42 + render from our enumeration" is NON-VIABLE over the shared
+	// accumulator. Func42's walk FREES the pass nodes incrementally (BSBatchRenderer::sub_141307E80 ->
+	// NiMemFree, gated on m_AutoClearPasses at br+0x6C), and there is NO per-frame bulk pool reset to
+	// lean on. Skipping it corrupts the shared pass-node pool within ~1 frame: a passGroupNext chain
+	// cycles (our bounded walk rejects it), and handing that chain to the engine Func42 hangs its walk
+	// -- so even a "skip corrupt frame, engine-passthrough next frame" latch FREEZES the game (proven:
+	// FPS=0, log stops, process alive). This is the SAME shared-pass-node-pool wall that blocked kWalkMT.
+	// The instancing win is already delivered by kInstance (mode 9), which keeps the engine's free intact.
+	// A viable skip requires PRIVATE per-light accumulators (own pool + own free) -- the M3/full-ownership
+	// build. See memory: comshaders-culling-mt / comshaders-shadow-full-ownership.
+	//
+	// DEFAULT (safe): enumerate for the proof/log, then let the ENGINE render+free (pool stays healthy).
+	// CS_SHADOW_ENUM_SKIP=1 opts into the proven-freezing skip path, retained only as the harness for the
+	// future private-accumulator work; it latches off on the first rejected chain to avoid the engine hang.
+	inline std::atomic<std::uint32_t> g_enumBadFrame{ 0xFFFFFFFFu };
+
+	struct Func42Hook
+	{
+		static void thunk(void* a1, std::uint32_t a2)  // a1 = accumulator, a2 = flags
+		{
+			// Scope to the shadow phase only: Func42 also renders the MAIN scene / water / etc.;
+			// g_inEnumShadowPhase is set only around RenderShadowmaps' light loop.
+			if (!g_inEnumShadowPhase ||
+				ShadowThreaded::GetSingleton()->GetMode() != ShadowThreaded::Mode::kEnumInstance) {
+				reinterpret_cast<Func42_t>(func.address())(a1, a2);
+				return;
+			}
+			static const bool s_skip = [] {
+				char b[8]{};
+				return GetEnvironmentVariableA("CS_SHADOW_ENUM_SKIP", b, sizeof(b)) && b[0] == '1';
+			}();
+			if (!s_skip) {
+				// Safe default: prove the enumeration (observe + log), then engine renders + frees.
+				EnumInstanceObserve(a1, a2);
+				reinterpret_cast<Func42_t>(func.address())(a1, a2);
+				return;
+			}
+			// Opt-in skip harness (PROVEN to freeze; kept for the private-accumulator build).
+			auto* const         gfx = RE::BSGraphics::State::GetSingleton();
+			const std::uint32_t frame = gfx ? gfx->frameCount : 0;
+			const std::uint32_t bad = g_enumBadFrame.load(std::memory_order_relaxed);
+			if (bad != 0xFFFFFFFFu) {
+				if (frame <= bad)
+					return;  // still inside the corrupt frame: skip, never call engine (cycle would hang)
+				reinterpret_cast<Func42_t>(func.address())(a1, a2);  // later frame: engine renders + frees
+				return;
+			}
+			if (!EnumInstanceRender(a1, a2))
+				g_enumBadFrame.store(frame, std::memory_order_relaxed);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	struct Func43Hook
 	{
 		static void thunk(void* a1, std::int64_t a2)  // a1 = accumulator, a2 = flags
@@ -1390,7 +1450,9 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	std::size_t enumInstN = 0;
 	if (s_enumVerify) {
 		void* accum = *reinterpret_cast<void**>(reinterpret_cast<std::uint8_t*>(a2) + 0x48);
-		UtilityPassReplica::GetSingleton()->DirectReadEnumerate(accum, s_enumInst, s_enumTech, s_enumRem);
+		// A rejected (cyclic/oversized) read yields empty vectors -> enumInstN=0 -> recorded as a
+		// mismatch, which is the correct diagnostic for "this window's chain isn't cleanly readable".
+		(void)UtilityPassReplica::GetSingleton()->DirectReadEnumerate(accum, s_enumInst, s_enumTech, s_enumRem);
 		enumInstN = s_enumInst.size();
 	}
 
@@ -1549,6 +1611,31 @@ void ShadowThreaded::RenderShadowmapsDetour(void* a_original)
 		if ((++frames & 0x3F) == 1)
 			logger::info("[ShadowThreaded][drawStateVerify] frame {}: reflect={} (see [FpVerify] for pairs/diverged)",
 				frames, vanilla::ShaderReflect::WantsCapture() ? 1 : 0);
+		return;
+	}
+
+	if (m == Mode::kEnumInstance) {
+		// Enumeration rebuild: the per-map render is driven entirely by Func42Hook (enumerate +
+		// instanced draw + remainder). The outer detour just runs the light loop; each map's
+		// RenderShadowmap passes through (g_claiming=false) to NiCamera::Render -> Func42 (hooked).
+		// Only take over when fully in-world + settled (enumerating against a half-built load scene
+		// crashes); otherwise g_inEnumShadowPhase stays false -> Func42Hook falls through to vanilla.
+		g_claiming = false;
+		static std::uint32_t s_enumSettleUntil = 0;
+		{
+			auto* gfx = RE::BSGraphics::State::GetSingleton();
+			const std::uint32_t frame = gfx ? gfx->frameCount : 0;
+			auto* ui = RE::UI::GetSingleton();
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			const bool inWorld = player && player->parentCell && player->loadedData && player->loadedData->data3D;
+			const bool menuUp = ui && (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME));
+			const bool compiling = globals::shaderCache && globals::shaderCache->IsCompiling();
+			if (!inWorld || menuUp || compiling || s_enumSettleUntil == 0)
+				s_enumSettleUntil = frame + 600;
+			g_inEnumShadowPhase = frame >= s_enumSettleUntil;
+		}
+		callOriginal();
+		g_inEnumShadowPhase = false;
 		return;
 	}
 
@@ -2094,6 +2181,59 @@ namespace
 		*engine::g_currentMaterial = savedMaterial;
 		sflags[0] = 0xFFFFFFFFu;  // engine's next SetDirtyStates re-binds onto whatever we left bound
 	}
+
+	// kEnumInstance safe default: enumerate at Func42 entry (proves the direct-read finds the caster set)
+	// and log it, but render NOTHING -- the engine Func42 runs afterward to draw + free. Non-destructive:
+	// the shared pool stays healthy, so this never freezes. This is the terminal, shippable state of the
+	// shared-accumulator enumeration experiment (the skip path is proven non-viable; see Func42Hook).
+	void EnumInstanceObserve(void* a_accum, std::uint32_t a_flags)
+	{
+		auto* const replica = UtilityPassReplica::GetSingleton();
+		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
+		static thread_local std::vector<std::uint32_t>     s_techs;
+		const bool  ok = replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem);
+		static std::atomic<std::uint64_t> s_n{ 0 };
+		if ((s_n.fetch_add(1, std::memory_order_relaxed) % 240) == 0)
+			logger::info("[EnumObserve] ok={} inst={} remainder={} flags={:#x} (engine renders+frees)",
+				ok, s_inst.size(), s_rem.size(), a_flags);
+	}
+
+	// kEnumInstance SKIP HARNESS (opt-in, CS_SHADOW_ENUM_SKIP=1; PROVEN to freeze -- see Func42Hook):
+	// render this map from OUR enumeration and skip the engine Func42. Returns true if we rendered from
+	// our enumeration; false (chains cyclic/oversized/unreadable) means the pool is already corrupt.
+	bool EnumInstanceRender(void* a_accum, std::uint32_t a_flags)
+	{
+		auto* const replica = UtilityPassReplica::GetSingleton();
+		static thread_local std::vector<RE::BSRenderPass*> s_inst, s_rem;
+		static thread_local std::vector<std::uint32_t>     s_techs;
+		static std::atomic<std::uint64_t>                  s_n{ 0 }, s_fallback{ 0 };
+		if (!replica->DirectReadEnumerate(a_accum, s_inst, s_techs, s_rem)) {
+			// Guard tripped: the chain was cyclic/oversized (the exact bad_alloc crash of 2026-07-15).
+			// Fall back to the engine render for this map -- and note it, since a persistent fallback
+			// stream is the signature of skipping Func42's chain cleanup (the accumulator leaks/grows).
+			const std::uint64_t fb = s_fallback.fetch_add(1, std::memory_order_relaxed);
+			if ((fb % 60) == 0)
+				logger::warn("[EnumInstance] fallback #{}: enumerate rejected chain (cyclic/oversized) -> engine Func42", fb + 1);
+			return false;
+		}
+
+		// Build a MapWork from the instanceable subset + the currently-bound state block, then reuse
+		// the existing instanced draw path (M1/M2: engine walk suppressed; remainder is next milestone).
+		static thread_local MapWork mw;
+		std::memcpy(mw.block, reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+		mw.passes.clear();
+		mw.passes.reserve(s_inst.size());
+		for (std::size_t i = 0; i < s_inst.size(); ++i)
+			mw.passes.push_back(CapturedPass{ s_inst[i], s_techs[i], false, a_flags });
+		RenderMapInstanced(mw);
+
+		// M2 leak probe: if skipping Func42 leaks (no free), s_inst grows frame-to-frame; if the
+		// per-frame cull reset (ResetCalculatedShadowCasterLights) frees the chains, it stays constant.
+		if ((s_n.fetch_add(1, std::memory_order_relaxed) % 240) == 0)
+			logger::info("[EnumInstance] inst={} remainder={} flags={:#x} (Func42 skipped, instanced-only)",
+				s_inst.size(), s_rem.size(), a_flags);
+		return true;
+	}
 }
 
 void ShadowThreaded::ReplayWorkerSerial()
@@ -2343,6 +2483,17 @@ void ShadowThreaded::InstallHooks()
 		logger::info("[ShadowThreaded] kParallelCull: Cull+Func43 detours installed, pool({}) starts lazily in-world", g_pcPoolSize);
 	}
 
+	// kEnumInstance (enumeration rebuild): hook Func42 (0x1412CAC20) so the per-map render is driven
+	// entirely from our direct-read enumeration -- the engine walk is skipped.
+	if (GetMode() == Mode::kEnumInstance) {
+		Func42Hook::func = REL::Offset(0x12CAC20).address();
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		DetourAttach(reinterpret_cast<PVOID*>(&Func42Hook::func), reinterpret_cast<PVOID>(Func42Hook::thunk));
+		DetourTransactionCommit();
+		logger::info("[ShadowThreaded] kEnumInstance: Func42 detour installed (enumeration rebuild)");
+	}
+
 	// kInstanceOwnVerify: hook Func43 only (no cull hook, no worker pool) so the pre-walk direct-read
 	// runs each map; rendering stays the kInstance path.
 	if (GetMode() == Mode::kInstanceOwnVerify) {
@@ -2371,7 +2522,7 @@ void ShadowThreaded::Setup()
 	char buf[8] = {};
 	if (GetEnvironmentVariableA("CS_SHADOW_MT", buf, sizeof(buf)) && buf[0]) {
 		const int v = atoi(buf);
-		if ((v >= 0 && v <= 10) || v == 12)
+		if ((v >= 0 && v <= 10) || v == 12 || v == 13)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
