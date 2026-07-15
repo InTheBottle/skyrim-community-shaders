@@ -70,15 +70,62 @@ Commit: `2bab55a0` (bounded walk + safe observational default + `CS_SHADOW_ENUM_
 - `MakeShadowWorker` / `WorkerBeginScope` / `WorkerSeedMap` — per-worker private block + deferred
   context (mode 3/4).
 
-## The pivotal RE question (sizes the whole build)
+## The pivotal RE question — ANSWERED: YES, M3 is the SMALL variant
 
-Is there a callable **BSBatchRenderer Clear/Reset** that frees all pass chains back to its own
-pool (recycles the 16B nodes, resets passArray heads + hash table + free-list + counts)?
-- YES → M3 is SMALL: our instanced-draw + remainder, then call reset (keep the pool healthy).
-- NO → M3 is LARGE: construct fully private BSShaderAccumulators, redirect the cull into them,
-  enumerate on workers, reset them ourselves each frame.
+There **is** a callable reset: **`BSBatchRenderer::sub_141306DB0` (0x141306DB0)**, signature
+`void(BSBatchRenderer*)`. Confirmed by decompilation: it iterates the batch renderer's hash
+container (`br+0x20`) and zeroes every live group's 0x30-byte slot-head block (`passArrayBase +
+0x30*groupIdx`), then drains the group-key list (`br+0x60`) back to the global 16B node pool
+(`unk_143490BC0`) via `FUN_141308FE0`, and clears `br+0x58`. It runs under a TLS-local alloc-tag
+guard (`TEB[…]+1896` save/set/restore), so it is safe to call on the render thread. It is the same
+primitive the batch-renderer ctor (0x141306340) and teardown (0x141306C30) use. **No private
+accumulators needed** — we reuse the per-light accumulator the engine already has, render from it,
+then reset it ourselves.
 
-## Architecture
+**Corruption mechanism (exact):** the freeze was a `passGroupNext` **self-cycle**. Shadow-caster
+passes are cached on the shader property (`prop->vtable[0x158]` returns the cached list). If a
+slot head is not cleared, next frame's sorted insert (`Func1`, 0x141306FD0) walks the slot chain,
+breaks immediately at the still-present head `P` (equal depth), and sets `*slotHead = P;
+P->passGroupNext = P` → self-cycle. Our bounded walk rejects it; handing it to the engine hangs
+its walk. Clearing the slot heads (the reset, or the engine's incremental `BeginPass` zeroing)
+makes the next insert start from an empty slot → no cycle. That is why the free is load-bearing.
 
-_(To be filled from the RE plan — staged M3.0 single-light → M3.1 all-lights → M3.2 workers,
-with exact hook addresses, the free/reset mechanism, and per-stage atlas-hash validation gates.)_
+## Architecture (built + validated)
+
+Hook: the existing `kEnumInstance` (mode 13) Func42 detour (0x1412CAC20), scoped to the shadow
+phase (`g_inEnumShadowPhase`) + a 600-frame in-world settle gate. Sub-behavior via env:
+`CS_SHADOW_M3=0a|0b`. `EnumInstanceM3` reads `renderMode = accum+0x150` and returns a "handled"
+bool; the thunk runs the engine Func42 when it returns false.
+
+- **M3.0a** (`CS_SHADOW_M3=0a`, ✅ commit 08a59bf3): skip the engine render, call
+  `sub_141306DB0(br)` only. Gate: game stable, `[EnumM3]` inst count CONSTANT (744, not growing
+  745→1292), persistent lists empty. Proved the reset heals the pool → SMALL variant confirmed.
+- **M3.0b** (`CS_SHADOW_M3=0b`, ✅ commits 2b72500f, 69ffbb30): `DirectReadEnumerate` →
+  `RenderShadowInstanced` (instanceable subset) + `ReplicaRenderPassImmediately` (remainder;
+  DirectReadEnumerate now emits remainder tech+alpha) → `sub_141306DB0` reset. At Func42 entry the
+  map's RT/DSV/viewport are still bound, so we render onto the live state under a block
+  save/force-dirty/restore. Shadow depth is order-independent, so the hash-bucket enumeration order
+  is fine. Gate: same-boot frozen-animation toggle mode 0↔13, scene pixel-diff == the
+  vanilla-vs-vanilla drift floor (interior 0.210 vs 0.205; exterior 5.22 vs 5.20) → pixel-perfect.
+- **renderMode gate** (✅ commit 69ffbb30): shadow maps are a MIX of 13 (spot) / 14 (dir-cascade) /
+  15 (parabolic) in both interiors and exteriors. `EnumInstanceM3` owns ONLY mode 13 and returns
+  false (→ engine) for the rest. Directional cascades reference passes across MULTIPLE Func42 calls,
+  so our per-call reset frees a pass a later call renders → engine `BeginPass` AV (0x141308707) on
+  the exterior. Gating to 13 makes M3.0b crash-free + pixel-correct everywhere.
+
+**Perf:** M3.0b is NEUTRAL vs vanilla on this co-bound RTX-4080 rig (render thread, ~295fps
+interior) — the same co-bound ceiling as all shadow-MT work here; the instanced draw-count cut is
+hidden behind the GPU. The correctness foundation (own render + own free, pixel-perfect) is the
+milestone.
+
+## Remaining
+
+1. **Cascade ownership (mode 14).** Extend M3 to directional cascades — the big exterior sun cost.
+   Needs the cascade-slice reset timing: reset only after the LAST Func42 call for a shared
+   accumulator, or detect the shared reuse. This is where the real exterior draw-count cut lives.
+2. **M3.2 workers.** Move `DirectReadEnumerate` + (mesh,tech) batching onto worker threads; keep
+   the instanced + remainder draws + reset on the render thread. Note the ceiling is small: the
+   enumerate is cheap (~microseconds over ~1400 passes) and the DX11 draws are inherently
+   render-thread-serial (shared immediate context), so the CPU moved off-thread is modest.
+3. **CPU-bound measurement.** Measure M3.0b (+ mode 9) with SSGI off / on a weaker GPU regime,
+   where the instanced draw-count cut can actually surface as FPS.
