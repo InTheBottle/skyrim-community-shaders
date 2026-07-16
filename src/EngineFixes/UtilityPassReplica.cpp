@@ -5,7 +5,6 @@
 #include "State.h"
 #include "Utils/D3D.h"
 
-#include <DirectXPackedVector.h>
 #include <algorithm>
 #include <chrono>
 #include <immintrin.h>
@@ -1320,44 +1319,6 @@ void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t
 // the technique/material caches are invalidated so the engine re-establishes its own VS on the next
 // pass (otherwise a cache hit would draw an engine pass through the still-bound INSTANCED VS).
 
-// COMMAND-VALIDATION state (always-on, negligible cost): pass-conservation invariants checked per map,
-// a ring of the most recent instanced draw commands (devbench-readable), and the throttled F16C-vs-
-// engine-reference pack compare. A nonzero invariantViolations/packMismatches = the instanced submission
-// no longer covers exactly the claimed pass set.
-namespace
-{
-	struct InstValState
-	{
-		std::atomic<std::uint32_t> invariantViolations{ 0 };
-		std::atomic<std::uint32_t> packChecks{ 0 };
-		std::atomic<std::uint32_t> packMismatches{ 0 };
-		std::atomic<std::uint32_t> mapsValidated{ 0 };
-
-		struct Cmd
-		{
-			void*         rd;
-			std::uint32_t tri, n, baseInst, tech;
-			std::uint8_t  fade;
-		};
-		static constexpr std::uint32_t kRing = 64;
-		Cmd                            ring[kRing]{};
-		std::atomic<std::uint32_t>     ringHead{ 0 };
-
-		void Record(void* rd, std::uint32_t tri, std::uint32_t n, std::uint32_t baseInst, std::uint32_t tech, std::uint8_t fade)
-		{
-			const auto h = ringHead.fetch_add(1, std::memory_order_relaxed) % kRing;
-			ring[h] = Cmd{ rd, tri, n, baseInst, tech, fade };
-		}
-	};
-	InstValState g_instVal;
-}
-
-std::array<std::uint32_t, 4> UtilityPassReplica::InstValReport() const
-{
-	return { g_instVal.mapsValidated.load(), g_instVal.invariantViolations.load(),
-		g_instVal.packChecks.load(), g_instVal.packMismatches.load() };
-}
-
 void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
 	std::uint32_t a_count, std::uint32_t a_renderFlags)
 {
@@ -1370,20 +1331,7 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	// NOTE: the engine's SetupGeometry builds b2 World = transpose(SG_BuildMatrix(geom+0x7C)) with NO
 	// CameraPosAdjust subtraction (UtilityPassReplica.cpp ~2338-2342); our instance pack does the same, so
 	// instWorld already equals b2 byte-exact. The shadow VS uses absolute World + the absolute per-light
-	// CameraViewProj -- do NOT make instWorld light-relative (that breaks the match). The over-bright bug is
-	// elsewhere; the b12@DRAW probe below reads b12 at ACTUAL draw time to check for mid-loop clobber.
-
-	// DIAGNOSTIC accounting: where do the claimed passes go? (capture showed our instanced draws never
-	// reach the GPU -- ~2/3 of shadow geometry missing). Reset per map call; logged at the end.
-	static struct
-	{
-		std::uint32_t claimed, groupedPasses, groups, drawn, instSum, fbGroups, fbPasses,
-			dropType, dropRd, dropTech, dropMap, nullIL, logIL;
-	} s_acct{};
-	s_acct.claimed = a_count;
-	s_acct.groupedPasses = s_acct.groups = s_acct.drawn = s_acct.instSum = 0;
-	s_acct.fbGroups = s_acct.fbPasses = s_acct.dropType = s_acct.dropRd = 0;
-	s_acct.dropTech = s_acct.dropMap = s_acct.nullIL = 0;
+	// CameraViewProj -- do NOT make instWorld light-relative (that breaks the match).
 
 	// ---- group by (rendererData, technique): same mesh + technique => one instanced draw ----
 	struct Group
@@ -1406,15 +1354,12 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	for (std::uint32_t i = 0; i < a_count; ++i) {
 		auto* geom = reinterpret_cast<std::uint8_t*>(a_passes[i]->geometry);
 		if (geom[0x150] != 3) {  // whole-TRISHAPE only (sub-index / skinned excluded)
-			++s_acct.dropType;
 			continue;
 		}
 		auto* rd = *reinterpret_cast<engine::TriShapeData**>(geom + 0x138);
 		if (!rd) {
-			++s_acct.dropRd;
 			continue;
 		}
-		++s_acct.groupedPasses;
 
 		// Per-object shadow FADE (distance crossfade): SetupGeometry, for accumulationHint==10 casters,
 		// selects depth-stencil variant 11 (a stencil-dither fade state) with stencil-ref = fade*31. That
@@ -1507,7 +1452,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	{
 		D3D11_MAPPED_SUBRESOURCE mappedAll{};
 		if (FAILED(ctx->Map(s_instVB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedAll))) {
-			++s_acct.dropMap;
 			return;
 		}
 		auto* outBase = reinterpret_cast<std::uint8_t*>(mappedAll.pData);
@@ -1539,34 +1483,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 8), _mm_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT));
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 16), _mm_cvtps_ph(r2, _MM_FROUND_TO_NEAREST_INT));
 				_mm_storel_epi64(reinterpret_cast<__m128i*>(out + 24), _mm_cvtps_ph(r3, _MM_FROUND_TO_NEAREST_INT));
-				if (i == 0) {
-					// Validate the inlined SG_BuildMatrix + F16C pack against the engine (SG_BuildMatrix ->
-					// SG_MatrixTranspose -> XMConvertFloatToHalf) for the first N groups. diverge=0 proves the
-					// inline is byte-exact with the engine path it replaces.
-					static std::atomic<int> s_refChecks{ 256 };
-					if (s_refChecks.fetch_sub(1, std::memory_order_relaxed) > 0) {
-						alignas(16) float           mref[16], wref[16];
-						DirectX::PackedVector::HALF href[16];
-						EngineCall<void>(reinterpret_cast<void*>(engine::SG_BuildMatrix.address()), static_cast<void*>(mref), static_cast<const void*>(geom + 0x7C));
-						if (std::memcmp(mref, m44, 64) != 0) {
-							g_instVal.packMismatches.fetch_add(1, std::memory_order_relaxed);
-							static std::atomic<bool> s_bm{ false };
-							if (!s_bm.exchange(true))
-								logger::warn("[InstVal] inlined SG_BuildMatrix DIVERGES from engine (geom {:p})", static_cast<void*>(geom));
-						}
-						EngineCall<void>(reinterpret_cast<void*>(engine::SG_MatrixTranspose.address()), static_cast<void*>(wref), static_cast<const void*>(m44));
-						for (int j = 0; j < 16; ++j)
-							href[j] = DirectX::PackedVector::XMConvertFloatToHalf(wref[j]);
-						if (std::memcmp(href, out, 32) != 0) {
-							g_instVal.packMismatches.fetch_add(1, std::memory_order_relaxed);
-							static std::atomic<bool> s_logged{ false };
-							if (!s_logged.exchange(true))
-								logger::warn("[InstVal] F16C instance pack DIVERGES from engine-reference scalar path (geom {:p})", static_cast<void*>(geom));
-						} else {
-							g_instVal.packChecks.fetch_add(1, std::memory_order_relaxed);
-						}
-					}
-				}
 			}
 		}
 		ctx->Unmap(s_instVB.get(), 0);
@@ -1590,9 +1506,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 
 	// INSTANCED flag bit (ShaderCache::UtilityShaderFlags::Instanced). ORed onto each group's real descriptor.
 	constexpr std::uint32_t kInstancedFlag = 1u << 30;
-
-	using DirectX::PackedVector::HALF;
-	using DirectX::PackedVector::XMConvertFloatToHalf;
 
 	// Draw loop over the (tech, fade)-sorted groups. Per-(tech,fade) RUN setup is hoisted -- BeginTechnique,
 	// instanced-VS fetch, alpha/geometry setup, VS override happen ONCE per run (was per group: ~1.7k
@@ -1634,7 +1547,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			WsTechnique() = 0;
 			WsMaterial() = nullptr;
 			if (!FlushSetupTechniqueReplica(ctx, nullptr, nullptr, S, shader, static_cast<std::int32_t>(g.tech))) {
-				++s_acct.dropTech;
 				runFallback = true;  // no valid technique state: render this run's groups per-pass
 				instVS = nullptr;
 			} else {
@@ -1675,13 +1587,10 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			// Per-pass fallback (technique failed or instanced VS still compiling). ReplicaRenderPassImmediately
 			// does its own full per-pass setup and clobbers the hoisted state, so the run stays non-live and any
 			// following (tech,fade) change re-runs the full setup above.
-			++s_acct.fbGroups;
-			s_acct.fbPasses += n;
 			for (std::uint32_t i = 0; i < n; ++i)
 				ReplicaRenderPassImmediately(g.passes[i], g.tech, false, a_renderFlags);
 			continue;
 		}
-		++s_acct.groups;
 
 		// 3. renderStateVertexDesc = meshDesc | VA_INSTANCEDATA (slot-1 presence bit only); IL + topology dirty.
 		auto& vertexDesc = *reinterpret_cast<std::uint64_t*>(S + 0x340);
@@ -1706,46 +1615,9 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		UINT          offsets[2] = { 0u, 0u };
 		EngineCallV<19, void>(ctx, rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0u);          // IASetIndexBuffer
 		EngineCallV<18, void>(ctx, 0u, 2u, vbs, strides, offsets);                      // IASetVertexBuffers
-		// DIAGNOSTIC (first draws only): null IL would silently drop the draw in D3D11/DXVK.
-		if (s_acct.logIL < 4) {
-			ID3D11InputLayout* il = nullptr;
-			ctx->IAGetInputLayout(&il);
-			if (!il)
-				++s_acct.nullIL;
-			else
-				il->Release();
-			++s_acct.logIL;
-			logger::info("[InstIL] meshDesc|inst={:016X} vsDesc={:016X} key={:016X} il={} tri={} n={} base={}",
-				vertexDesc, *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
-				vertexDesc & *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
-				il ? "OK" : "NULL", triCount, n, g.baseInst);
-		}
 		EngineCallV<20, void>(ctx, 3u * triCount, n, 0u, 0, g.baseInst);                // DrawIndexedInstanced
-		g_instVal.Record(rd, triCount, n, g.baseInst, g.tech, g.fade);
-		++s_acct.drawn;
-		s_acct.instSum += n;
 	}
 	closeRun();
-
-	// COMMAND-VALIDATION invariants (pass conservation): every claimed pass must land in exactly one
-	// bucket. A violation means the instanced submission dropped or duplicated shadow casters.
-	//   grouped == instSum (instanced) + fbPasses (per-pass fallback)
-	//   claimed == grouped + dropType + dropRd
-	//   drawn   == groups (one DrawIndexedInstanced per surviving group)
-	{
-		g_instVal.mapsValidated.fetch_add(1, std::memory_order_relaxed);
-		const bool ok = (s_acct.groupedPasses == s_acct.instSum + s_acct.fbPasses) &&
-		                (s_acct.claimed == s_acct.groupedPasses + s_acct.dropType + s_acct.dropRd) &&
-		                (s_acct.drawn == s_acct.groups);
-		if (!ok) {
-			g_instVal.invariantViolations.fetch_add(1, std::memory_order_relaxed);
-			static std::atomic<bool> s_logged{ false };
-			if (!s_logged.exchange(true))
-				logger::warn("[InstVal] PASS-CONSERVATION VIOLATION: claimed={} grouped={} instSum={} fb={} dropType={} dropRd={} drawn={} groups={}",
-					s_acct.claimed, s_acct.groupedPasses, s_acct.instSum, s_acct.fbPasses,
-					s_acct.dropType, s_acct.dropRd, s_acct.drawn, s_acct.groups);
-		}
-	}
 
 	// Invalidate the technique/material caches so the engine re-binds its OWN VS on the next pass
 	// instead of hitting the cache and drawing through the still-bound INSTANCED VS.
@@ -1753,15 +1625,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	WsTechnique() = 0;
 	WsMaterial() = nullptr;
 
-	// Full per-map accounting: every claimed pass must land in exactly one bucket (drawn instances +
-	// fallback passes + drops). Any deficit = silently lost shadow casters (the under-occlusion bug).
-	static std::atomic<int> s_acctLogs{ 48 };  // first 48 map calls of the session
-	if (s_acctLogs.fetch_sub(1, std::memory_order_relaxed) > 0) {
-		logger::info("[InstAcct] claimed={} grouped={} groups={} drawn={} instSum={} fb={}/{}p dropType={} dropRd={} dropTech={} dropMap={} nullIL={}",
-			s_acct.claimed, s_acct.groupedPasses, s_acct.groups, s_acct.drawn, s_acct.instSum,
-			s_acct.fbGroups, s_acct.fbPasses, s_acct.dropType, s_acct.dropRd, s_acct.dropTech,
-			s_acct.dropMap, s_acct.nullIL);
-	}
 }
 
 void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_alphaTest, std::uint32_t a_renderFlags)

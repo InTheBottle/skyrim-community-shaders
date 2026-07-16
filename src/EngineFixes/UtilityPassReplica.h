@@ -2,7 +2,6 @@
 
 #include <d3d11_1.h>
 
-#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -74,12 +73,6 @@ public:
 	 *         a_passes / a_techniques are parallel arrays; a_count entries; a_renderFlags is the map's flags. */
 	void RenderShadowInstanced(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
 		std::uint32_t a_count, std::uint32_t a_renderFlags);
-
-	/** @brief Instanced-path command-validation counters (always-on, negligible cost):
-	 *         { mapsValidated, invariantViolations, packChecks, packMismatches }. Nonzero
-	 *         violations/mismatches = the instanced submission no longer covers exactly the
-	 *         claimed pass set (dropped/duplicated casters or a broken FP16 pack). */
-	[[nodiscard]] std::array<std::uint32_t, 4> InstValReport() const;
 
 	/** @brief True when the pass is inside the replica's current RE coverage:
 	 *         non-custom TRISHAPE / SUB_INDEX_TRISHAPE geometry plus skinned passes on
