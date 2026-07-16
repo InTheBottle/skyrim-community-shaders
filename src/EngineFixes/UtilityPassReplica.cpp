@@ -10,7 +10,6 @@
 #include <chrono>
 #include <immintrin.h>
 #include <intrin.h>
-#include <mutex>
 #include <unordered_map>
 #include <winrt/base.h>
 
@@ -109,10 +108,6 @@ namespace engine
 	// SRV caches, vertex desc, current shaders, topology, camera data, blend-extra).
 	inline REL::Relocation<std::uint8_t*> S_base{ REL::Offset(0x3027EB0) };
 	constexpr std::uint32_t               kSnapshotBytes = 0x5D8;
-	// The engine's "current context" pointer slot (state-pool[926] == 0x143027EA0). BSGraphics::
-	// Renderer::SetShader/SetPixelShader bind VS/PS on *this* slot, so temporarily swapping it to a
-	// worker's deferred context routes BeginTechnique's binds onto the worker's command list.
-	inline REL::Relocation<ID3D11DeviceContext**> g_engineCtxSlot{ REL::Offset(0x3027EA0) };
 	// BSBatchRenderer::sub_141307DD0 -- advances the batch-group iterator; returns whether more
 	// groups remain. BeginPassReplica calls it verbatim (pure iterator logic, no D3D11).
 	inline REL::Relocation<std::uint8_t (*)(void*, void*, void*, void*)> BatchAdvance{ REL::Offset(0x1307DD0) };
@@ -193,37 +188,11 @@ namespace engine
 	using SetDirtyStates_t = void (*)(bool);
 	inline REL::Relocation<SetDirtyStates_t> SetDirtyStates{ REL::Offset(0xD705B0) };
 
-	// --- SetDirtyStates reimplementation support (FlushDirtyStatesReplica) ---
-	// The state-object pool is the qword array AT 0x1430261B0 (ctx = pool[926], alpha CB =
-	// pool[783]); the RT/DSV pool base is the pointer STORED AT 0x143025F00 (disasm-
-	// verified). Both are read-only shared. The 0x5D8 render-state block is passed in.
-	inline REL::Relocation<std::uint8_t*> g_statePool{ REL::Offset(0x30261B0) };   // qword array base
-	inline REL::Relocation<std::uint8_t*> g_rtPoolPtr{ REL::Offset(0x3025F00) };   // *(u8**) = RT pool base
-	inline REL::Relocation<float*>        g_slopeBiasTable{ REL::Offset(0x3026180) };  // unk_143026180
-	inline REL::Relocation<const void*>   g_blendFactor{ REL::Offset(0x1E07168) };  // unk_141E07168 (4 floats)
-	// Input-layout cache (BSTScatterTable at 0x141E07140; node stride 24: key@0, IL*@+8,
-	// next@+16). Read walk is lock-free + thread-safe while nobody inserts/grows. In
-	// compare mode the engine window pre-warms this SAME pass, so the replica walk hits;
-	// the create/insert fallback (engine helpers) is faithful for the rare standalone miss.
-	inline REL::Relocation<std::uint8_t*>  g_ilTable{ REL::Offset(0x1E07140) };     // table struct
-	inline REL::Relocation<std::uint32_t*> g_ilCapacity{ REL::Offset(0x1E07144) };  // +4; mask = cap-1
-	inline REL::Relocation<std::uintptr_t*> g_ilBase{ REL::Offset(0x1E07160) };     // +0x20 bucket base
-	inline REL::Relocation<std::uintptr_t> g_ilSentinel{ REL::Offset(0x1E07150) };  // +0x10 end-of-chain
-	using ILHash_t = void (*)(std::uint64_t*, std::uint64_t);
-	inline REL::Relocation<ILHash_t> ILHash{ REL::Offset(0xC06570) };               // pure CRC hash
-	using ILCreate_t = void* (*)(std::uint64_t);
-	inline REL::Relocation<ILCreate_t> ILCreate{ REL::Offset(0xD70F90) };           // create ID3D11InputLayout
-	using ILInsert_t = bool (*)(void*, std::uintptr_t, std::uint32_t, std::uint64_t*, void**);
-	inline REL::Relocation<ILInsert_t> ILInsert{ REL::Offset(0xD730E0) };           // scatter-table insert
-	using ILGrow_t = void (*)(void*);
-	inline REL::Relocation<ILGrow_t> ILGrow{ REL::Offset(0xD73F70) };               // grow/rehash
-
-	// --- Per-pass setup reimplementation support (FlushSetupTechnique/Material/GeometryReplica).
+	// --- Per-pass setup reimplementation support (FlushSetupTechnique/GeometryReplica).
 	//     These reimplement BSUtilityShader::SetupTechnique/Material/Geometry ctx-parameterized
 	//     so a worker can fill+bind its OWN PerTechnique/Material/Geometry CBs on its own context.
 	//     The CBs are owned by the current VS/PS shader objects (*0x1430281F8 / *0x143028200 =
 	//     block+0x348 / +0x350); at N=1 the shared shader CBs are passed for byte-identical parity.
-	inline REL::Relocation<std::uint32_t*> g_utilMaterialFillIndex{ REL::Offset(0x1E0DFF0) };  // dword_141E0DFF0
 	// SetupTechnique helpers + data
 	inline REL::Relocation<std::uint32_t (*)(std::uint32_t)> UtilVSIndex{ REL::Offset(0x1334900) };
 	inline REL::Relocation<std::uint32_t (*)(std::uint32_t)> UtilPSIndex{ REL::Offset(0x1334970) };
@@ -299,45 +268,6 @@ namespace engine
 
 namespace
 {
-	// Per-worker private render state for the multithreaded shadow recorder. A worker
-	// thread records one shadow map from ITS OWN state; each field points at a private
-	// buffer/cache/context. At N=1 (single-threaded validation) t_worker is null and the
-	// accessors below fall through to the engine globals, so the parity gate stays green
-	// while the plumbing is proven. Set t_worker for the duration of a worker's map record.
-	struct ShadowWorkerState
-	{
-		std::uint8_t*        block = nullptr;      // 0x5D8 render-state block (FlushDirtyStates)
-		ID3D11DeviceContext* ctx = nullptr;        // deferred context to record into
-		std::uint32_t*       technique = nullptr;  // g_currentTechnique cache
-		RE::BSShader**       shader = nullptr;     // g_currentShader cache
-		void**               material = nullptr;   // g_currentMaterial cache
-		std::uint32_t*       shadowToken = nullptr;  // g_shadowGeomToken (dword_141E10660) cache
-		std::uint32_t*       techFlags = nullptr;  // shader+0x90 (technique flags) -- shared singleton scratch
-		std::uint32_t*       techSub = nullptr;    // shader+0x94 (technique & 0x7F)
-		std::uint8_t*        dsvDirty = nullptr;   // g_dsvDirty (0x1430284C2), OUT-of-block DSV-rebind flag
-		// Per-worker PerGeometry constant buffers. The engine's VS/PS PerGeometry CBs live on the
-		// SHARED BSUtilityShader singleton (*(vsSh+0x38) / *(psSh+0x30)); N workers Map(WRITE_DISCARD)
-		// of the SAME buffer from their own deferred contexts crash DXVK's D3D11DeferredContext::
-		// MapBuffer (cross-context discard of one buffer). Each worker maps its OWN copy instead.
-		winrt::com_ptr<ID3D11Buffer> vsGeomCB;  // lazy, sized from the shared buffer's desc
-		winrt::com_ptr<ID3D11Buffer> psGeomCB;
-	};
-	thread_local ShadowWorkerState* t_worker = nullptr;
-	std::atomic<std::uint64_t>      g_walkMTSkippedSkinned{ 0 };  // skinned passes skipped on workers (kWalkMT measurement gate)
-
-	// Lazily create a per-worker copy of a shared PerGeometry CB (matching the shared buffer's
-	// desc) so the worker's deferred-context Map(WRITE_DISCARD) never touches the shared buffer.
-	inline ID3D11Buffer* EnsureWorkerGeomCB(winrt::com_ptr<ID3D11Buffer>& a_dst, ID3D11Buffer* a_src)
-	{
-		if (!a_src)
-			return nullptr;
-		if (!a_dst) {
-			D3D11_BUFFER_DESC bd{};
-			a_src->GetDesc(&bd);
-			globals::d3d::device->CreateBuffer(&bd, nullptr, a_dst.put());
-		}
-		return a_dst ? a_dst.get() : a_src;
-	}
 
 	// BeginPass-level command/orchestration compare (kOwnBeginPassVerify). During a compare, one run
 	// of the engine's BeginPass and one of BeginPassReplica each append the (pass,key,alpha,flags)
@@ -356,22 +286,16 @@ namespace
 	std::uint64_t                            g_bpCompareGroups = 0;    // pure-covered groups compared
 	std::uint64_t                            g_bpCompareDiverged = 0;  // of those, how many diverged
 
-	// Accessors: return the worker's private state when a worker is active, else the engine
-	// global (identical object at N=1). The replica render path reads/writes through these
-	// so the exact same code drives the render-thread compare and a worker's private record.
-	// (Skinned passes' bone-CB / dyn-VB rings are NOT yet worker-private -- static-TRISHAPE
-	// maps thread first; skinned stays on the serial remainder until those rings are split.)
-	inline std::uint8_t*        WsBlock() { return t_worker ? t_worker->block : reinterpret_cast<std::uint8_t*>(engine::S_base.address()); }
-	inline ID3D11DeviceContext* WsCtx() { return t_worker ? t_worker->ctx : globals::d3d::context; }
-	inline std::uint32_t&       WsTechnique() { return t_worker ? *t_worker->technique : *engine::g_currentTechnique; }
-	inline RE::BSShader*&       WsShader() { return t_worker ? *t_worker->shader : *engine::g_currentShader; }
-	inline void*&               WsMaterial() { return t_worker ? *t_worker->material : *reinterpret_cast<void**>(engine::g_currentMaterial.address()); }
-	inline std::uint32_t&       WsShadowToken() { return t_worker ? *t_worker->shadowToken : *engine::g_shadowGeomToken; }
-	// Technique flags live on the SHARED singleton BSUtilityShader (shader+0x90/0x94); a worker reads
-	// its OWN cell so concurrent per-pass technique stamps don't tear. At N=1 the cell is null so the
-	// read falls through to the shared object -- identical to before, byte-exact.
-	inline std::uint32_t        WsTechFlags(std::uint8_t* a_shader) { return t_worker ? *t_worker->techFlags : *reinterpret_cast<std::uint32_t*>(a_shader + 0x90); }
-	inline std::uint8_t&        WsDsvDirty() { return t_worker ? *t_worker->dsvDirty : *engine::g_dsvDirty; }
+	// Render-state accessors. The multithreaded shadow-worker path was removed, so these now read
+	// the engine globals directly (the N=1 render-thread state the replica always ran on).
+	inline std::uint8_t*        WsBlock() { return reinterpret_cast<std::uint8_t*>(engine::S_base.address()); }
+	inline ID3D11DeviceContext* WsCtx() { return globals::d3d::context; }
+	inline std::uint32_t&       WsTechnique() { return *engine::g_currentTechnique; }
+	inline RE::BSShader*&       WsShader() { return *engine::g_currentShader; }
+	inline void*&               WsMaterial() { return *reinterpret_cast<void**>(engine::g_currentMaterial.address()); }
+	inline std::uint32_t&       WsShadowToken() { return *engine::g_shadowGeomToken; }
+	inline std::uint32_t        WsTechFlags(std::uint8_t* a_shader) { return *reinterpret_cast<std::uint32_t*>(a_shader + 0x90); }
+	inline std::uint8_t&        WsDsvDirty() { return *engine::g_dsvDirty; }
 }
 
 // Install the RenderPassImmediately detour (the seam ShadowThreaded's instancing path rides to observe
@@ -529,7 +453,6 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 }
 
-
 bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 {
 	// Stage A coverage: unskinned, non-custom-render, plain TRISHAPE geometry. Anything
@@ -573,26 +496,6 @@ bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 	return true;
 }
 
-namespace
-{
-	// Forward declarations: the per-pass setup reimplementations are defined below (same TU /
-	// anonymous namespace) but called from ReplicaRenderPassImmediately here.
-	int  CsSetupMask();
-	void FlushSetupMaterialReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, std::uint8_t*, std::uint8_t*);
-	bool FlushSetupTechniqueReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, std::int32_t);
-	void FlushSetupGeometryReplica(ID3D11DeviceContext*, ID3D11Buffer*, ID3D11Buffer*, std::uint8_t*, RE::BSShader*, RE::BSRenderPass*);
-	// Block-only helpers (no context/CB): reimplement the two engine alpha-state functions against
-	// a caller-supplied block S. They hardcode the global block (0x143027EB0), so a worker needs
-	// its OWN copy. Wired behind CsSetupMask bit 8; validated byte-exact via the parity gate at N=1.
-	void SetupGeomAlphaBlendReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3, bool a4);
-	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3);
-	// Block-only reimpls of the two engine restore vfuncs (wired behind CsSetupMask bit 16). They
-	// hardcode the global block + g_shadowGeomToken; a worker restores its OWN block/token cache so
-	// per-pass change detection stays private. Validated byte-exact via the parity gate at N=1.
-	void RestoreTechniqueReplica(std::uint8_t* S, std::uint8_t* shader, std::uint32_t a_technique);
-	void RestoreGeometryReplica(std::uint8_t* S, std::uint8_t* shader, RE::BSRenderPass* a_pass);
-}
-
 void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
 {
 	// ---- RenderPassImmediately body (1.5.97 0x141308440), replicated ----
@@ -600,9 +503,7 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 	auto* geom = a_pass->geometry;
 
 	// Technique cache: BeginPass only when the technique or shader changed. 0x5C006076
-	// never caches (the engine forces re-setup for that sentinel technique). The caches
-	// are per-worker (BeginPass zeroes them) -- read/write through the worker accessors so
-	// a worker uses its OWN caches; at N=1 these alias the engine globals.
+	// never caches (the engine forces re-setup for that sentinel technique).
 	const bool cached = WsTechnique() == a_technique &&
 	                    a_technique != 0x5C006076 &&
 	                    shader == WsShader();
@@ -610,24 +511,13 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		*engine::g_debugTechnique = a_technique;
 		// BeginPass (0x1413086C0): RestoreTechnique on the outgoing shader, clear the
 		// caches, SetupTechnique on the incoming one, then re-stamp the caches.
-		if (auto* prev = WsShader()) {
-			if (CsSetupMask() & 16)
-				RestoreTechniqueReplica(WsBlock(), reinterpret_cast<std::uint8_t*>(prev), WsTechnique());
-			else
-				EngineCallV<3, void>(prev, WsTechnique());  // RestoreTechnique
-		}
+		if (auto* prev = WsShader())
+			EngineCallV<3, void>(prev, WsTechnique());  // RestoreTechnique
 		WsShader() = nullptr;
 		WsTechnique() = 0;
 		WsMaterial() = nullptr;
-		if (CsSetupMask() & 2) {
-			// PerTechnique CBs resolved inside (block+0x348/0x350 are only set by BeginTechnique).
-			if (!FlushSetupTechniqueReplica(WsCtx(), nullptr, nullptr, WsBlock(),
-					shader, static_cast<std::int32_t>(a_technique)))
-				return;  // engine bails the whole pass on setup failure
-		} else {
-			if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
-				return;  // engine bails the whole pass on setup failure
-		}
+		if (!EngineCallV<2, bool>(shader, a_technique))  // SetupTechnique
+			return;                                      // engine bails the whole pass on setup failure
 		WsShader() = shader;
 		WsTechnique() = a_technique;
 	}
@@ -637,22 +527,10 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 												  reinterpret_cast<const std::uint8_t*>(a_pass->shaderProperty) + 0x78) :
 	                                          nullptr;
 	if (material != WsMaterial()) {
-		if (material) {
-			if (CsSetupMask() & 1) {
-				auto* Sb = WsBlock();
-				auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sb + 0x348);
-				auto* psSh = *reinterpret_cast<std::uint8_t**>(Sb + 0x350);
-				FlushSetupMaterialReplica(WsCtx(),
-					vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x28) : nullptr,
-					psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x20) : nullptr,
-					Sb, reinterpret_cast<std::uint8_t*>(shader), reinterpret_cast<std::uint8_t*>(material));
-			} else {
-				EngineCallV<4, void>(shader, material);  // SetupMaterial
-			}
-		}
+		if (material)
+			EngineCallV<4, void>(shader, material);  // SetupMaterial
 		WsMaterial() = material;
 	}
-
 
 	// ucCurrentMeshLODLevel: the walk stamps the pass's LOD index onto the geometry.
 	auto* geomBytes = reinterpret_cast<std::uint8_t*>(geom);
@@ -660,17 +538,7 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 
 	// ---- geometry dispatch (RenderPassImmediately tail, 1.5.97 0x1413084C5) ----
 	if (*reinterpret_cast<void**>(geomBytes + 0x130)) {
-		// SKINNED pass. Its bone-palette upload runs through the engine's skin Render vfunc, which
-		// Maps the SHARED bone-CB / dyn-VB ring -- not a swappable per-object buffer -- so on a
-		// worker thread it races the immediate context / CS thread (crash in DeferredContext::
-		// MapBuffer, then hang in updateVertexBufferBindings). kWalkMT keeps skinned on the serial
-		// remainder (the design's plan); for the MEASUREMENT gate the worker SKIPS skinned passes
-		// (temporarily drops actor/creature shadows on worker-rendered maps) so the concurrent
-		// static-TRISHAPE path can be timed. g_walkMTSkippedSkinned counts what was dropped.
-		if (t_worker) {
-			g_walkMTSkippedSkinned.fetch_add(1, std::memory_order_relaxed);
-			return;
-		}
+		// SKINNED pass: the bone-palette upload runs through the engine's skin Render vfunc.
 		ReplicaRenderSkinned(a_pass, a_alphaTest, a_renderFlags);
 		return;
 	}
@@ -685,45 +553,19 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 
 	const bool alphaTest = a_alphaTest || *engine::g_useEarlyZ != 0;
 
-	// ShaderSetup (0x141309F80): alpha-blend + alpha-test-ref setup, then SetupGeometry. The two
-	// alpha helpers hardcode the global block; bit 8 routes them through the block-parameterized
-	// reimplementations (WsBlock) so a worker mutates its OWN block.
-	const bool alphaReimpl = (CsSetupMask() & 8) != 0;
+	// ShaderSetup (0x141309F80): alpha-blend + alpha-test-ref setup, then SetupGeometry.
 	if (shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
 		if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), a_pass->passEnum)) {
 			auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass);
-			if (alphaReimpl)
-				SetupGeomAlphaBlendReplica(WsBlock(), alphaProp, a_pass->shaderProperty, alphaTest);
-			else
-				EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
-					alphaProp, a_pass->shaderProperty, alphaTest);
+			EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader,
+				alphaProp, a_pass->shaderProperty, alphaTest);
 		}
 		if (alphaTest) {
-			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass)) {
-				if (alphaReimpl)
-					SetAlphaTestRefReplica(WsBlock(), alphaProp, a_pass->shaderProperty);
-				else
-					EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
-			}
+			if (auto* alphaProp = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), a_pass))
+				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
 		}
 	}
-	if (CsSetupMask() & 4) {
-		auto* Sg = WsBlock();
-		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
-		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
-		auto* vsCB = vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr;
-		auto* psCB = psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr;
-		// A worker Maps its OWN PerGeometry CB copies so N deferred contexts never
-		// Map(WRITE_DISCARD) the same shared BSUtilityShader buffer -- that crashed DXVK's
-		// D3D11DeferredContext::MapBuffer. Lazy-mirror the shared buffer's desc on first use.
-		if (t_worker) {
-			vsCB = EnsureWorkerGeomCB(t_worker->vsGeomCB, vsCB);
-			psCB = EnsureWorkerGeomCB(t_worker->psGeomCB, psCB);
-		}
-		FlushSetupGeometryReplica(WsCtx(), vsCB, psCB, Sg, shader, a_pass);
-	} else {
-		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
-	}
+	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
 
 	// ---- Draw dispatch (0x141307160) on GeometryType (geom+0x150) ----
 	auto* rd = *reinterpret_cast<engine::TriShapeData**>(geomBytes + 0x138);
@@ -754,626 +596,12 @@ void UtilityPassReplica::ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, 
 		break;
 	}
 
-	if (CsSetupMask() & 16)
-		RestoreGeometryReplica(WsBlock(), reinterpret_cast<std::uint8_t*>(shader), a_pass);
-	else
-		EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
+	EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
 	*tlsTag = savedTlsTag;
 }
 
-// BSGraphics::SetDirtyStates 0x140D705B0 reimplemented against a caller-supplied render-
-// state block (S = the 0x5D8 block, 0x143027EB0 for N=1) + context. A worker thread needs
-// this to flush its PRIVATE state to its OWN deferred context; the engine's version hard-
-// codes the global block + global context (*(0x143027EA0)), which cannot be shared across
-// threads. Byte-exact transcription (see docs/development/shadow-keystone-re.md): the
-// state-object pool (array @0x1430261B0), RT pool (*(0x143025F00)), slope-bias table, blend
-// factor and input-layout cache are read-only shared globals; context calls route through
-// the out-of-module stub (EngineCallV) so the compare recorder captures them exactly as it
-// captures the engine's. Main-word branches emit in the engine's order
-// RT -> DS -> raster(+bias) -> viewport -> blend -> alphaCB -> IL -> topology (viewport
-// AFTER raster because the bias branch re-raises the viewport bit), then the five per-stage
-// mask loops. Validated by CS_UTIL_RE_CSFLUSH=1 + the parity gate showing 0 divergence.
 namespace
 {
-	void FlushDirtyStatesReplica(std::uint8_t* S, ID3D11DeviceContext* ctx, bool a1)
-	{
-		const auto u16 = [&](std::size_t o) { return *reinterpret_cast<std::uint16_t*>(S + o); };
-		const auto u32 = [&](std::size_t o) { return *reinterpret_cast<std::uint32_t*>(S + o); };
-		const auto i32 = [&](std::size_t o) { return *reinterpret_cast<std::int32_t*>(S + o); };
-		const auto f32 = [&](std::size_t o) { return *reinterpret_cast<float*>(S + o); };
-		const auto u64 = [&](std::size_t o) { return *reinterpret_cast<std::uint64_t*>(S + o); };
-		const auto setU32 = [&](std::size_t o, std::uint32_t v) { *reinterpret_cast<std::uint32_t*>(S + o) = v; };
-		// dword_143027EBC[N] lives at S + 0x0C + 4N.
-		const auto ebc = [&](int n) { return static_cast<std::size_t>(0x0C + 4 * n); };
-
-		auto* pool = reinterpret_cast<std::uintptr_t*>(engine::g_statePool.address());  // qword array
-		auto* rtBase = *reinterpret_cast<std::uint8_t**>(engine::g_rtPoolPtr.address());
-
-		std::uint16_t dirty = u16(0);
-		if (dirty == 0)
-			goto perStage;
-
-		// -- bit0 0x0001 render targets / DSV --
-		if (dirty & 1) {
-			std::uint32_t numViews = 0;
-			std::uintptr_t rtvs[8] = {};
-			if (i32(ebc(13)) == -1) {  // MRT
-				for (numViews = 0; numViews < 8; ++numViews) {
-					const std::int32_t idx = i32(0x18 + 4 * numViews);  // RT index[i]
-					if (idx == -1)
-						break;
-					const std::uintptr_t rtv = *reinterpret_cast<std::uintptr_t*>(rtBase + 48 * idx + 0xA58);
-					rtvs[numViews] = rtv;
-					if (u32(0x48 + 4 * numViews) == 0) {  // clear-flag[i]
-						EngineCallV<50, void>(ctx, reinterpret_cast<void*>(rtv), rtBase + 0x2768);  // ClearRTV
-						setU32(0x48 + 4 * numViews, 4);
-					}
-				}
-			} else {  // single DSV
-				numViews = 1;
-				const std::uintptr_t rtv = *reinterpret_cast<std::uintptr_t*>(
-					rtBase + 8 * (static_cast<std::size_t>(i32(ebc(14))) + 8 * static_cast<std::size_t>(i32(ebc(13)))) + 0x26D0);
-				rtvs[0] = rtv;
-				if (u32(ebc(24)) == 0) {
-					EngineCallV<50, void>(ctx, reinterpret_cast<void*>(rtv), rtBase + 0x2768);  // ClearRTV
-					setU32(ebc(24), 4);
-				}
-			}
-			// DSV clear (flag [23]); depth = [12]; stencil 0. rtBase+0x22 is the DSV byte.
-			const std::uint32_t clearMode = u32(ebc(23));
-			if (clearMode <= 2 || clearMode == 6)
-				*reinterpret_cast<std::uint8_t*>(rtBase + 0x22) = 0;
-			std::uintptr_t dsv = 0;
-			if (i32(ebc(11)) != -1) {
-				const std::size_t dsIdx = static_cast<std::size_t>(i32(ebc(12))) + 19 * static_cast<std::size_t>(i32(ebc(11)));
-				dsv = *reinterpret_cast<std::uint8_t*>(rtBase + 0x22) ?
-				          *reinterpret_cast<std::uintptr_t*>(rtBase + 8 * dsIdx + 0x1FF0) :
-				          *reinterpret_cast<std::uintptr_t*>(rtBase + 8 * dsIdx + 0x1FB0);
-				if (dsv) {
-					std::int32_t flags = -1;
-					switch (clearMode) {
-					case 0: case 6: flags = 3; break;
-					case 2: flags = 2; break;
-					case 1: flags = 1; break;
-					default: flags = -1; break;
-					}
-					if (flags != -1) {
-						EngineCallV<53, void>(ctx, reinterpret_cast<void*>(dsv), flags, i32(ebc(12)), 0);  // ClearDSV
-						setU32(ebc(23), 4);
-					}
-				}
-			}
-			EngineCallV<33, void>(ctx, numViews, rtvs, reinterpret_cast<void*>(dsv));  // OMSetRenderTargets
-			dirty = u16(0);
-		}
-
-		// -- bits2,3 0x000C depth-stencil state --
-		if (dirty & 0xC) {
-			EngineCallV<36, void>(ctx,
-				reinterpret_cast<void*>(pool[40 * u32(0x88) + u32(0x90)]),  // 40*F38 + F40
-				u32(0x94));                                                  // ref F44
-			dirty = u16(0);
-		}
-
-		// -- bits4,5,6,12 0x1070 rasterizer (+ depth bias) --
-		if (dirty & 0x1070) {
-			EngineCallV<43, void>(ctx,
-				reinterpret_cast<void*>(pool[72 * u32(0x98) + 240 + 24 * u32(0x9C) + 2 * u32(0xA0) + u32(0xA4)]));  // RSSetState
-			dirty = u16(0);
-			if (dirty & 0x40) {
-				// Target bias is flt_143028470[0]/[1] = S+0x5C0/0x5C4 (in-block); the slope
-				// subtraction uses the shared table unk_143026180 (g_slopeBiasTable).
-				float v14 = f32(0x84);  // [30]
-				if (f32(0x80) != f32(0x5C0) || f32(0x84) != f32(0x5C4)) {
-					v14 = f32(0x5C4);
-					*reinterpret_cast<float*>(S + 0x80) = f32(0x5C0);
-					*reinterpret_cast<float*>(S + 0x84) = f32(0x5C4);
-					setU32(0, u32(0) | 2);
-					dirty = u16(0);
-				}
-				const std::uint32_t slopeIdx = u32(0xA0);  // dword_143027F50
-				if (slopeIdx != 0) {
-					v14 = v14 - engine::g_slopeBiasTable.get()[slopeIdx];
-					*reinterpret_cast<float*>(S + 0x84) = v14;
-					setU32(0, u32(0) | 2);
-					dirty = u16(0);
-				}
-			}
-		}
-
-		// -- bit1 0x0002 viewport (AFTER raster) --
-		if (dirty & 2) {
-			EngineCallV<44, void>(ctx, 1u, S + 0x70);  // RSSetViewports (&[25])
-			dirty = u16(0);
-		}
-
-		// -- bit7 0x0080 blend --
-		if (dirty & 0x80) {
-			EngineCallV<35, void>(ctx,
-				reinterpret_cast<void*>(pool[52 * u32(0xA8) + 384 + 26 * u32(0xAC) + 2 * u32(0xB0) + static_cast<std::int32_t>(f32(0x5D0))]),
-				engine::g_blendFactor.get(), 0xFFFFFFFFu);  // OMSetBlendState
-			dirty = u16(0);
-		}
-
-		// -- bits8,9 0x0300 alpha CB --
-		if (dirty & 0x300) {
-			D3D11_MAPPED_SUBRESOURCE mapped{};
-			auto* alphaCB = reinterpret_cast<ID3D11Resource*>(pool[783]);
-			EngineCallV<14, HRESULT>(ctx, alphaCB, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);  // Map
-			if (mapped.pData)
-				*reinterpret_cast<float*>(mapped.pData) = u32(0xB4) /*F64*/ ? f32(0xB8) /*F68*/ : 0.0f;
-			EngineCallV<15, void>(ctx, alphaCB, 0u);  // Unmap
-			dirty = u16(0);
-		}
-
-		// -- bit10 0x0400 input layout (only if a1==0) --
-		if (!a1 && (dirty & 0x400)) {
-			const std::uint64_t key = u64(0x340) & *reinterpret_cast<std::uint64_t*>(u64(0x348) + 72);
-			std::uint64_t       hash = 0;
-			engine::ILHash(&hash, key);
-			void*                il = nullptr;
-			const std::uintptr_t base = *engine::g_ilBase;
-			bool                 found = false;
-			if (base) {
-				std::uintptr_t node = base + 24 * (hash & (*engine::g_ilCapacity - 1));
-				if (*reinterpret_cast<std::uintptr_t*>(node + 16)) {  // occupied
-					while (*reinterpret_cast<std::uint64_t*>(node) != key) {
-						node = *reinterpret_cast<std::uintptr_t*>(node + 16);
-						if (node == engine::g_ilSentinel.address())
-							goto ilMiss;
-					}
-					il = *reinterpret_cast<void**>(node + 8);
-					found = true;
-				}
-			}
-		ilMiss:
-			if (!found) {
-				// Faithful engine fallback (only hit on a genuine standalone miss; in compare
-				// mode the engine window pre-warmed this key). NOTE: mutates the shared cache
-				// -- for threading, pre-warm so this path is never taken.
-				il = engine::ILCreate(key);
-				if (il || key != 0x300000000407ull) {
-					std::uint64_t h2 = 0;
-					engine::ILHash(&h2, key);
-					std::uint64_t k2 = key;
-					while (!engine::ILInsert(engine::g_ilTable.get(), *engine::g_ilBase, static_cast<std::uint32_t>(h2), &k2, &il))
-						engine::ILGrow(engine::g_ilTable.get());
-				}
-			}
-			if (t_worker) {
-				static std::atomic<int> s_ilDbg{ 8 };
-				if (s_ilDbg.fetch_sub(1, std::memory_order_relaxed) > 0)
-					logger::warn("[ILDBG] worker key={:016X} found={} il={}", key, found, il);
-			}
-			EngineCallV<17, void>(ctx, il);  // IASetInputLayout
-			dirty = u16(0);
-		}
-
-		// -- bit11 0x0800 topology --
-		if (dirty & 0x800) {
-			EngineCallV<24, void>(ctx, u32(0x358));  // IASetPrimitiveTopology (dword_143028070[102])
-			dirty = u16(0);
-		}
-
-		// main-word writeback: keep only IL bit if a1, else clear.
-		setU32(0, a1 ? (u32(0) & 0x400) : 0);
-
-	perStage:
-		// CS UAV (block+0x14), PS SAMP (+0x08), PS SRV (+0x04), CS SAMP (+0x10), CS SRV (+0x0C).
-		for (std::uint32_t m = u32(0x14); m; m = u32(0x14)) {
-			unsigned long b;
-			_BitScanForward(&b, m);
-			setU32(0x14, m & ~(1u << b));
-			EngineCallV<68, void>(ctx, b, 1u, S + 0x1C0 + 4 * (2 * b + 80), reinterpret_cast<const std::uint32_t*>(nullptr));  // CSSetUAV
-		}
-		for (std::uint32_t m = u32(0x08); m; m = u32(0x08)) {
-			unsigned long b;
-			_BitScanForward(&b, m);
-			setU32(0x08, m & ~(1u << b));
-			EngineCallV<10, void>(ctx, b, 1u, &pool[5 * u32(0xBC + 4 * b) + 748 + u32(0xFC + 4 * b)]);  // PSSetSamplers
-		}
-		for (std::uint32_t m = u32(0x04); m; m = u32(0x04)) {
-			unsigned long b;
-			_BitScanForward(&b, m);
-			setU32(0x04, m & ~(1u << b));
-			EngineCallV<8, void>(ctx, b, 1u, reinterpret_cast<void*>(S + 0x140 + 8 * b));  // PSSetShaderResources (qword_143027FF0)
-		}
-		for (std::uint32_t m = u32(0x10); m; m = u32(0x10)) {
-			unsigned long b;
-			_BitScanForward(&b, m);
-			setU32(0x10, m & ~(1u << b));
-			EngineCallV<70, void>(ctx, b, 1u, &pool[5 * u32(0x1C0 + 4 * b) + 748 + u32(0x1C0 + 4 * (b + 16))]);  // CSSetSamplers
-		}
-		for (std::uint32_t m = u32(0x0C); m; m = u32(0x0C)) {
-			unsigned long b;
-			_BitScanForward(&b, m);
-			setU32(0x0C, m & ~(1u << b));
-			EngineCallV<67, void>(ctx, b, 1u, S + 0x1C0 + 4 * (2 * b + 32));  // CSSetShaderResources
-		}
-	}
-
-	// CS_UTIL_RE_CSFLUSH=1 routes the replica's state flush through the CS reimplementation
-	// (FlushDirtyStatesReplica) instead of the engine's SetDirtyStates, so the parity gate
-	// can prove them byte-identical before the reimpl backs the multithreaded per-map driver.
-	bool CsFlushRequested()
-	{
-		return t_worker != nullptr;  // a bound worker MUST flush onto its own context
-	}
-
-	// CS_UTIL_RE_CSSETUP bitmask: 1=SetupMaterial, 2=SetupTechnique, 4=SetupGeometry route
-	// through the CS reimplementation (validate each byte-exact via the parity gate before
-	// it backs the private-CB worker path).
-	int CsSetupMask()
-	{
-		return t_worker ? 31 : 0;  // a bound worker MUST use every block-parameterized reimpl
-	}
-
-	// BSEffectShader::SetupGeometryAlphaBlending (1.5.97 0x14131F440) reimplemented against a
-	// caller-supplied block S. Selects a blend-state index from the NiAlphaProperty flags and
-	// stamps the block's blend dirty bits + change-detection caches (S+0 main word, S+0xA8 mode
-	// cache, S+0xB4 flag cache). Byte-exact transcription; engine writes 0x143027EB0/F58/F64.
-	void SetupGeomAlphaBlendReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3, bool a4)
-	{
-		auto& main = *reinterpret_cast<std::uint32_t*>(S + 0x00);       // MEMORY[0x143027EB0]
-		auto& modeCache = *reinterpret_cast<std::uint32_t*>(S + 0xA8);  // unk_143027F58
-		auto& flagCache = *reinterpret_cast<std::uint32_t*>(S + 0xB4);  // unk_143027F64
-
-		bool v4 = false, v5 = false, v6 = false;
-		if (a2) {
-			if (a4)
-				v6 = (a2->alphaFlags & 0x200) != 0;
-			if (a2->alphaFlags & 1) {
-				v4 = true;
-				v5 = true;
-			}
-		}
-		if (a3 && a3->alpha >= 1.0f && !v4) {
-			if (v6) {
-				std::uint32_t v7 = main;
-				if (modeCache) {
-					v7 = main | 0x80;
-					modeCache = 0;
-					main |= 0x80;
-				}
-				if (flagCache != 1) {
-					flagCache = 1;
-					main = v7 | 0x100;
-				}
-			} else if (modeCache) {
-				modeCache = 0;
-				main |= 0x80;
-			}
-			return;
-		}
-
-		std::uint32_t v10 = 0;
-		const auto label37 = [&] {  // set mode dirty (|0x80), fall through to label39
-			v10 = main | 0x80;
-			main |= 0x80;
-		};
-		const auto label39 = [&] {
-			if (flagCache != static_cast<std::uint32_t>(v6)) {
-				flagCache = static_cast<std::uint32_t>(v6);
-				main = v10 | 0x100;
-			}
-		};
-		bool did37 = false;
-
-		if (!v5) {
-			if (modeCache != 1) {
-				modeCache = 1;
-				label37();
-				did37 = true;
-			}
-			// else: fall to label38 (v10 = main)
-		} else {
-			const std::uint16_t v8 = a2->alphaFlags;
-			const std::uint16_t v9 = (v8 >> 1) & 0xF;  // src blend factor
-			int target = -1;                           // which modeCache value / label to apply
-			bool toL31 = false, toL18 = false;
-			if (v9 == 6) {
-				if ((v8 & 0x1E0) == 0xE0)
-					toL18 = true;
-				else if ((v8 & 0x1E0) == 0)
-					toL31 = true;
-			}
-			if (!toL18 && !toL31) {
-				if (!v9 && (v8 & 0x1E0) == 0) {
-					toL31 = true;
-				} else if ((v9 != 1 || (v8 & 0x1E0) != 0x40) && (v9 != 4 || (v8 & 0x1E0) != 0x20)) {
-					if (v9 != 6 || (v8 & 0x1E0) != 0x120) {
-						if (v9 == 4 && (v8 & 0x1E0) == 0xE0)
-							target = 3;
-						// else label38
-					} else {
-						toL31 = true;
-					}
-				} else {
-					target = 4;
-				}
-			}
-			if (toL18) {
-				if (modeCache != 1) {
-					modeCache = 1;
-					label37();
-					did37 = true;
-				}
-			} else if (toL31) {
-				if (modeCache != 2) {
-					modeCache = 2;
-					label37();
-					did37 = true;
-				}
-			} else if (target == 3) {
-				if (modeCache != 3) {
-					modeCache = 3;
-					label37();
-					did37 = true;
-				}
-			} else if (target == 4) {
-				if (modeCache != 4) {
-					modeCache = 4;
-					label37();
-					did37 = true;
-				}
-			}
-		}
-		if (!did37)
-			v10 = main;  // label38
-		label39();
-	}
-
-	// BSEffectShader::SetAlphaTestRef (1.5.97 0x14131F2A0) reimplemented against a caller-supplied
-	// block S. Computes the alpha-test reference (threshold * material-alpha / 255) and, when it
-	// changed, raises the alpha-CB dirty bit (0x200) + updates the cache (S+0xB8). Byte-exact.
-	void SetAlphaTestRefReplica(std::uint8_t* S, RE::NiAlphaProperty* a2, RE::BSShaderProperty* a3)
-	{
-		auto& main = *reinterpret_cast<std::uint32_t*>(S + 0x00);   // MEMORY[0x143027EB0]
-		auto& refCache = *reinterpret_cast<float*>(S + 0xB8);      // unk_143027F68 is a 4-byte FLOAT (movss)
-		// Reproduce the engine's ALL-single-precision sequence exactly (0x14131F2A0):
-		//   v4     = (int)truncate((float)alphaThreshold * material.alpha)      ; mulss + cvttss2si
-		//   newRef = (float)v4 * (1/255 as float, dword_141540648 = 0x3B808081) ; cvtsi2ss + mulss
-		//   if (cache != newRef) raise 0x200 + store                            ; ucomiss + movss
-		// (0.0039215689 in the decompile was a MISREAD double; a double intermediate diverged by a ULP,
-		// and an 8-byte store clobbered the adjacent field at S+0xBC -> load crash.)
-		const __m128 thr = _mm_cvtsi32_ss(_mm_setzero_ps(), static_cast<int>(a2->alphaThreshold));  // (float)threshold
-		const __m128 prod = _mm_mul_ss(thr, _mm_set_ss(a3 ? a3->alpha : 1.0f));
-		const int    v4 = _mm_cvtt_ss2si(prod);
-		const float  newRef = _mm_cvtss_f32(_mm_mul_ss(_mm_cvtsi32_ss(_mm_setzero_ps(), v4), _mm_set_ss(1.0f / 255.0f)));
-		if (refCache != newRef) {
-			main |= 0x200;
-			refCache = newRef;
-		}
-	}
-
-	// BSUtilityShader::RestoreGeometry (vf7, 1.5.97 0x141310300) reimplemented against a caller-
-	// supplied block S + the worker's shadow-geom-token cache. Resets the per-pass geometry dirty
-	// caches so the next pass's SetupGeometry re-emits from a clean baseline. Byte-exact.
-	void RestoreGeometryReplica(std::uint8_t* S, std::uint8_t* shader, RE::BSRenderPass* a_pass)
-	{
-		const auto u32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
-		auto&               main = u32(0x00);
-		const std::uint32_t v2 = WsTechFlags(shader);
-		std::uint32_t       v3 = main;
-		if (v2 & 0x100000) {
-			if (u32(0xA0)) {
-				v3 = main | 0x40;
-				u32(0xA0) = 0;
-				main |= 0x40;
-			}
-			if (u32(0x88) != 3) {
-				u32(0x88) = 3;
-				const std::uint32_t v4 = v3 | 4;
-				v3 &= ~4u;
-				if (u32(0x8C) != 3)
-					v3 = v4;
-				main = v3;
-			}
-		}
-		if ((v2 & 0x1200) != 0x1200 && a_pass->accumulationHint == 10 &&
-			*reinterpret_cast<std::uint64_t*>(S + 0x90) != 0xFF00000000ull) {
-			v3 |= 8u;
-			*reinterpret_cast<std::uint64_t*>(S + 0x90) = 0xFF00000000ull;
-			main = v3;
-		}
-		std::uint32_t&      token = WsShadowToken();
-		const std::uint32_t t = token;
-		if (t != 13) {
-			if (u32(0xB0) != t) {
-				u32(0xB0) = t;
-				main = v3 | 0x80;
-			}
-			token = 13;
-		}
-	}
-
-	// BSUtilityShader::RestoreTechnique (vf3, 1.5.97 0x14130DD80) reimplemented against a caller-
-	// supplied block S. Resets the RT/DS-binding dirty caches (S+4, S+0x150..0x170) and the raster
-	// caches when the technique's flag bits require it. Byte-exact; tail FUN_14131FCE0 is a no-op.
-	void RestoreTechniqueReplica(std::uint8_t* S, std::uint8_t* shader, std::uint32_t a_technique)
-	{
-		const auto u32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
-		const auto u64 = [&](std::size_t o) -> std::uint64_t& { return *reinterpret_cast<std::uint64_t*>(S + o); };
-		auto&      main = u32(0x00);
-		auto&      dirty4 = u32(0x04);  // unk_143027EB4
-		std::uint32_t v4;
-		if ((a_technique & 0x1E00000) != 0) {
-			std::uint32_t v3 = dirty4;
-			if (u64(0x150)) {  // unk_143028000 (RTV cache 0)
-				v3 = dirty4 | 4;
-				u64(0x150) = 0;
-				dirty4 |= 4u;
-			}
-			if (u64(0x158)) {  // unk_143028008
-				v3 |= 8u;
-				u64(0x158) = 0;
-				dirty4 = v3;
-			}
-			if (u64(0x160)) {  // unk_143028010
-				v3 |= 0x10u;
-				u64(0x160) = 0;
-				dirty4 = v3;
-			}
-			if (u64(0x170)) {  // unk_143028020
-				u64(0x170) = 0;
-				dirty4 = v3 | 0x40;
-			}
-			v4 = main;
-			if (u32(0xA4)) {  // unk_143027F54
-				v4 = main | 0x1000;
-				u32(0xA4) = 0;
-				main |= 0x1000;
-			}
-			if (((a_technique - 43) & 0x2000) != 0) {
-				if (u32(0xB4)) {  // unk_143027F64
-					u32(0xB4) = 0;
-					main = v4 | 0x100;
-				}
-				const std::int32_t dsIdx = EngineCall<std::int32_t>(reinterpret_cast<void*>(engine::GetDepthStencilTargetMain.address()));
-				v4 = main;
-				const std::uint64_t tgt = *reinterpret_cast<std::uint64_t*>(
-					engine::g_dsTargetTable.address() + 152 * static_cast<std::size_t>(dsIdx));
-				if (u64(0x150) == tgt) {
-					dirty4 |= 4u;
-					v4 = main | 1;
-					u64(0x150) = 0;
-					main |= 1;
-					WsDsvDirty() = 0;  // unk_1430284C2 (OUT-of-block DSV dirty byte); worker cell under MT
-				}
-				if (u32(0x88) != 3) {  // unk_143027F38
-					u32(0x88) = 3;
-					const std::uint32_t v6 = v4 | 4;
-					v4 &= ~4u;
-					if (u32(0x8C) != 3)  // unk_143027F3C
-						v4 = v6;
-					main = v4;
-				}
-				if (u32(0xA0)) {  // dword_143027F50
-					v4 |= 0x40u;
-					u32(0xA0) = 0;
-					main = v4;
-				}
-			}
-		} else {
-			v4 = main;
-		}
-		if ((WsTechFlags(shader) & 0x1200) == 0x1200) {
-			if (u64(0x90) != 0xFF00000000ull) {  // unk_143027F40
-				v4 |= 8u;
-				u64(0x90) = 0xFF00000000ull;
-				main = v4;
-			}
-			if (u32(0xB0) != 1) {  // unk_143027F60
-				u32(0xB0) = 1;
-				main = v4 | 0x80;
-			}
-		}
-	}
-
-	// BSUtilityShader::SetupMaterial (vf4, 1.5.97 0x14130E890) reimplemented against a caller-
-	// supplied render-state block (S = the 0x5D8 block, 0x143027EB0 at N=1), context, and the
-	// VS/PS PerMaterial constant buffers. Maps both PerMaterial CBs (WRITE_DISCARD), fills them
-	// from the material (a2), stamps the block's PS SRV/sampler dirty bits + caches, then binds
-	// VS slot 1 / PS slot 1. Byte-exact transcription; context calls via EngineCallV so the
-	// compare recorder captures them exactly as it captures the engine's.
-	void FlushSetupMaterialReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3D11Buffer* psCB,
-		std::uint8_t* S, std::uint8_t* shader /*a1*/, std::uint8_t* material /*a2*/)
-	{
-		auto* vsShader = *reinterpret_cast<std::uint8_t**>(S + 0x348);  // *0x1430281F8
-		auto* psShader = *reinterpret_cast<std::uint8_t**>(S + 0x350);  // *0x143028200
-
-		const auto mU8 = [&](std::size_t o) { return *reinterpret_cast<std::uint8_t*>(material + o); };
-		const auto mU32 = [&](std::size_t o) { return *reinterpret_cast<std::uint32_t*>(material + o); };
-		const auto mF32 = [&](std::size_t o) { return *reinterpret_cast<float*>(material + o); };
-		const auto mPtr = [&](std::size_t o) { return *reinterpret_cast<std::uint8_t**>(material + o); };
-		const auto sU32 = [&](std::size_t o) -> std::uint32_t& { return *reinterpret_cast<std::uint32_t*>(S + o); };
-		const auto sPtr = [&](std::size_t o) -> std::uint8_t*& { return *reinterpret_cast<std::uint8_t**>(S + o); };
-
-		void* vsMapped = nullptr;
-		void* psMapped = nullptr;
-		if (vsCB) {
-			D3D11_MAPPED_SUBRESOURCE m{};
-			EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &m);
-			vsMapped = m.pData;
-		}
-		if (psShader && psCB) {
-			D3D11_MAPPED_SUBRESOURCE m{};
-			EngineCallV<14, HRESULT>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u, D3D11_MAP_WRITE_DISCARD, 0u, &m);
-			psMapped = m.pData;
-		}
-
-		const std::uint32_t flags = WsTechFlags(shader);
-		if ((flags & 2) != 0 && (flags & 0x2040280) != 0) {
-			const std::uint32_t idx = *engine::g_utilMaterialFillIndex;
-			auto*               vd = reinterpret_cast<std::uint8_t*>(vsMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(vsShader + 0x51));
-			*reinterpret_cast<std::uint32_t*>(vd + 0) = mU32(8ull * idx + 0x0C);
-			*reinterpret_cast<std::uint32_t*>(vd + 4) = mU32(8ull * idx + 0x10);
-			*reinterpret_cast<std::uint32_t*>(vd + 8) = mU32(8ull * idx + 0x1C);
-			*reinterpret_cast<std::uint32_t*>(vd + 12) = mU32(8ull * idx + 0x20);
-
-			if ((flags & 0x2040080) != 0) {
-				std::uint32_t v14 = 0;
-				std::uint8_t* v15 = nullptr;
-				if (EngineCallV<7, std::uint32_t>(material) == 2) {
-					v14 = mU32(0x70);
-					v15 = mPtr(0x48);
-				} else if (EngineCallV<7, std::uint32_t>(material) == 1) {
-					v14 = mU8(0x80);
-					v15 = mPtr(0x58);
-				}
-
-				if ((flags & 0x20000000) != 0) {
-					auto* pd = reinterpret_cast<std::uint8_t*>(psMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(psShader + 0x43));
-					*reinterpret_cast<float*>(pd + 0) = mF32(0x48) * mF32(0x6C);
-					*reinterpret_cast<float*>(pd + 4) = mF32(0x4C) * mF32(0x6C);
-					*reinterpret_cast<float*>(pd + 8) = mF32(0x50) * mF32(0x6C);
-					*reinterpret_cast<std::uint32_t*>(pd + 12) = mU32(0x54);
-
-					auto*         tex7 = *reinterpret_cast<std::uint8_t**>(mPtr(0x60) + 0x48);
-					std::uint8_t* srv7 = tex7 ? *reinterpret_cast<std::uint8_t**>(tex7 + 0x10) : nullptr;
-					if (sPtr(0x178) != srv7) {
-						sU32(0x04) |= 0x80;
-						sPtr(0x178) = srv7;
-					}
-					if (sU32(0xD8) != 0) { sU32(0x08) |= 0x80; sU32(0xD8) = 0; }
-					if (sU32(0x118) != 1) { sU32(0x08) |= 0x80; sU32(0x118) = 1; }
-				}
-
-				auto*         tex0 = *reinterpret_cast<std::uint8_t**>(v15 + 0x48);
-				std::uint8_t* srv0 = tex0 ? *reinterpret_cast<std::uint8_t**>(tex0 + 0x10) : nullptr;
-				if (sPtr(0x140) != srv0) {
-					sU32(0x04) |= 1;
-					sPtr(0x140) = srv0;
-				}
-				if (sU32(0xBC) != v14) { sU32(0x08) |= 1; sU32(0xBC) = v14; }
-				if (sU32(0xFC) != 3) { sU32(0x08) |= 1; sU32(0xFC) = 3; }
-			}
-
-			if ((flags & 0x200) != 0) {
-				auto*         tex1 = *reinterpret_cast<std::uint8_t**>(mPtr(0x48) + 0x48);
-				std::uint8_t* srv1 = tex1 ? *reinterpret_cast<std::uint8_t**>(tex1 + 0x10) : nullptr;
-				if (sPtr(0x148) != srv1) {
-					sU32(0x04) |= 2;
-					sPtr(0x148) = srv1;
-				}
-				if (sU32(0xC0) != mU32(0x70)) { sU32(0x08) |= 2; sU32(0xC0) = mU32(0x70); }
-				if (sU32(0x100) != 3) { sU32(0x08) |= 2; sU32(0x100) = 3; }
-				auto* pd = reinterpret_cast<std::uint8_t*>(psMapped) + 4u * (*reinterpret_cast<std::uint8_t*>(psShader + 0x41));
-				*reinterpret_cast<std::uint32_t*>(pd) = mU32(0x84);
-			}
-		}
-
-		if (psShader) {
-			if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);
-			if (psCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(psCB), 0u);
-			EngineCallV<7, void>(ctx, 1u, 1u, &vsCB);
-			EngineCallV<16, void>(ctx, 1u, 1u, &psCB);
-		} else {
-			if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);
-			EngineCallV<7, void>(ctx, 1u, 1u, &vsCB);
-		}
-	}
-
 // The anonymous namespace opened above stays open through the next two definitions; it closes
 // after FlushSetupGeometryReplica, before the UtilityPassReplica class-method definitions.
 
@@ -1437,36 +665,15 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 	                ((v2 & 0x80) != 0) ||
 	                ((v2 & 0x14000) == 0x10000);
 
-	// BeginTechnique binds VS/PS on the engine's global context slot (0x143027EA0) and writes the
-	// global VS/PS shader-object slots (block+0x348/0x350). For a worker that is fatal two ways: the
-	// binds land on the shared IMMEDIATE context (used by every worker thread -> not thread-safe ->
-	// the garbage-VS AV) and the global slots tear across workers. Under one mutex, temporarily point
-	// the global context slot at the worker's OWN deferred context so the binds record onto the
-	// worker's command list, and read back the resolved shader objects while still holding the lock.
-	// At N=1 (t_worker==null) nothing is swapped or locked -> byte-exact.
-	static std::mutex s_beginTechMutex;
-	bool              v59;
-	std::uint8_t*     gvs;
-	std::uint8_t*     gps;
-	{
-		std::unique_lock<std::mutex> lk;
-		ID3D11DeviceContext*         savedCtx = nullptr;
-		if (t_worker) {
-			lk = std::unique_lock<std::mutex>(s_beginTechMutex);
-			savedCtx = *engine::g_engineCtxSlot;
-			*engine::g_engineCtxSlot = ctx;  // ctx == WsCtx() == this worker's deferred context
-		}
-		v59 = EngineCall<bool>(reinterpret_cast<void*>(engine::BeginTechnique.address()), a1, vsIndex, psIndex, !v6);
-		gvs = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x348);
-		gps = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x350);
-		if (t_worker)
-			*engine::g_engineCtxSlot = savedCtx;
-	}
+	// BeginTechnique (0x14131FBD0) internally VS/PS-binds on the engine's global context slot and
+	// writes the global VS/PS shader-object slots (block+0x348/0x350); read those back for the fills.
+	const bool    v59 = EngineCall<bool>(reinterpret_cast<void*>(engine::BeginTechnique.address()), a1, vsIndex, psIndex, !v6);
+	std::uint8_t* gvs = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x348);
+	std::uint8_t* gps = *reinterpret_cast<std::uint8_t**>(engine::S_base.address() + 0x350);
 	if (!v59)
 		return false;
 
-	// Propagate BeginTechnique's resolved VS/PS shader objects (read from the GLOBAL block under the
-	// lock above) into the caller's block S so a worker with a PRIVATE block sees them; no-op at N=1.
+	// Propagate BeginTechnique's resolved VS/PS shader objects into the caller's block S.
 	auto* vs = gvs;
 	auto* ps = gps;
 	*reinterpret_cast<std::uint8_t**>(S + 0x348) = vs;
@@ -1496,15 +703,9 @@ bool FlushSetupTechniqueReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID
 		}
 	}
 
-	// Technique flags on the shader object (BSShader+0x90 / +0x94). Keep the shared-object write (an
-	// engine consumer / N=1 reads it) AND mirror into the worker's cell so concurrent workers read
-	// their OWN technique flags instead of the last writer's.
+	// Technique flags on the shader object (BSShader+0x90 / +0x94); the engine consumer reads them.
 	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x90) = static_cast<std::uint32_t>(v2);
 	*reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(a1) + 0x94) = static_cast<std::uint32_t>(v2 & 0x7F);
-	if (t_worker) {
-		*t_worker->techFlags = static_cast<std::uint32_t>(v2);
-		*t_worker->techSub = static_cast<std::uint32_t>(v2 & 0x7F);
-	}
 
 	// The engine reloads [shader+0x20]/[shader+0x18] lazily at each fill site; hoisting here is
 	// equivalent because pDataVS is consumed only in VS fills (vs always present) and pDataPS
@@ -1823,12 +1024,8 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 
 		EngineCall<void>(reinterpret_cast<void*>(engine::SG_ShadowFill.address()), static_cast<void*>(pass), 0);                 // FUN_14130f960 (pure CPU)
 		// SG_SetupShadowLightParams reads ONLY arg3+8 (the PS PerGeometry CB base) and writes the CB.
-		// At N=1 pass the real slot (v9 = PS+0x30, whose +8 = PS+0x38 = psMapped) -> byte-exact. A
-		// worker passes a PRIVATE {pad, psMapped} slot so the helper writes ITS OWN buffer instead of
-		// the shared PS+0x38 the other workers overwrite (verified: no other v9 offset is read).
-		void* psCbSlotFake[2] = { nullptr, psMapped };
-		void* shadowLightArg = t_worker ? static_cast<void*>(psCbSlotFake) : static_cast<void*>(v9);
-		EngineCall<void>(reinterpret_cast<void*>(engine::SG_SetupShadowLightParams.address()), static_cast<void*>(pass), 0, shadowLightArg);  // 0x14130fbe0 (pure CPU)
+		// v9 = PS+0x30, whose +8 = PS+0x38 = psMapped -> byte-exact.
+		EngineCall<void>(reinterpret_cast<void*>(engine::SG_SetupShadowLightParams.address()), static_cast<void*>(pass), 0, static_cast<void*>(v9));  // 0x14130fbe0 (pure CPU)
 
 		// lodFade constant -> VS CB[VS+0x55].x and PS CB[PS+0x48].z (raw dword copy)
 		const u32 v32 = v30[0x63] ? *reinterpret_cast<u32*>(engine::SG_c283B88.address()) : 1287568416u;  // dword_141667CD0
@@ -1845,21 +1042,10 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 		}
 
 		if (!(tech & 0x200000)) {
-			// spot/point sub-branch. FUN_140d70100 builds a D3D11_RECT and calls RSSetScissorRects on
-			// the engine's GLOBAL context slot (*0x143027EA0) -- which, from N worker threads, both
-			// races and lands on the shared immediate context (the scissor never reaches the worker's
-			// command list). A worker binds the identical rect on ITS OWN deferred context instead; at
-			// N=1 the engine call is used verbatim (byte-exact; the recorder does not track scissor).
-			if (t_worker) {
-				const std::int32_t sl = static_cast<std::int32_t>(U(v30, 0x544));
-				const std::int32_t st = static_cast<std::int32_t>(U(v30, 0x550));
-				const D3D11_RECT   rect{ sl, st, sl + static_cast<std::int32_t>(U(v30, 0x548)), st + static_cast<std::int32_t>(U(v30, 0x54C)) };
-				ctx->RSSetScissorRects(1, &rect);
-			} else {
-				EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorFromBBox.address()),
-					reinterpret_cast<void*>(engine::g_renderer.address()),
-					U(v30, 0x544), U(v30, 0x550), U(v30, 0x548), U(v30, 0x54C));   // FUN_140d70100(scissor,left,bottom,right,top)
-			}
+			// spot/point sub-branch. FUN_140d70100 builds a D3D11_RECT and calls RSSetScissorRects.
+			EngineCall<void>(reinterpret_cast<void*>(engine::SG_ScissorFromBBox.address()),
+				reinterpret_cast<void*>(engine::g_renderer.address()),
+				U(v30, 0x544), U(v30, 0x550), U(v30, 0x548), U(v30, 0x54C));   // FUN_140d70100(scissor,left,bottom,right,top)
 
 			// camera-relative view-depth falloff -> VS CB[VS+0x55].z. cam (*0x1431D0F88), the light
 			// (v30->light._ptr) and the view frustum (*0x1431D0E68) are all engine objects that can
@@ -2108,7 +1294,7 @@ void FlushSetupGeometryReplica(ID3D11DeviceContext* ctx, ID3D11Buffer* vsCB, ID3
 	if (vsCB) EngineCallV<15, void>(ctx, reinterpret_cast<ID3D11Resource*>(vsCB), 0u);  // Unmap VS CB
 	{ ID3D11Buffer* vb = vsCB; EngineCallV<7, void>(ctx, 2u, 1u, &vb); }                 // VSSetConstantBuffers slot 2
 }
-}  // anonymous namespace (opened before CsFlushRequested; spans the three setup reimpls)
+}  // anonymous namespace (spans CbOrScratch/IsCanonicalPtr + the two FlushSetup*Replica reimpls)
 
 void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t a_startIndex, std::uint32_t a_triCount)
 {
@@ -2116,8 +1302,7 @@ void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t
 	// and topology change detection into the dirty word, state flush, then unconditional
 	// IB/VB binds and the indexed draw (the engine does NOT cache the IB/VB binds here).
 	auto* rd = static_cast<engine::TriShapeData*>(a_rendererData);
-	// vertexDesc (S+0x340), state flags (S+0), topology (S+0x358) live in the worker's
-	// render-state block; at N=1 WsBlock() is the engine global block.
+	// vertexDesc (S+0x340), state flags (S+0), topology (S+0x358) live in the engine render-state block.
 	auto* const   S = WsBlock();
 	auto&         vertexDesc = *reinterpret_cast<std::uint64_t*>(S + 0x340);
 	auto&         stateFlags = *reinterpret_cast<std::uint32_t*>(S + 0);
@@ -2131,10 +1316,7 @@ void UtilityPassReplica::DrawTriShapeReplica(void* a_rendererData, std::uint32_t
 		stateFlags |= 0x800;  // DIRTY_PRIMITIVE_TOPO
 	}
 	auto* ctx = WsCtx();
-	if (CsFlushRequested())
-		FlushDirtyStatesReplica(S, ctx, false);
-	else
-		EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
+	EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
 
 	const UINT stride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
 	const UINT offset = 0;
@@ -2639,23 +1821,7 @@ void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_a
 				EngineCall<void>(reinterpret_cast<void*>(engine::SetupAlphaTestRef.address()), shader, alphaProp, a_pass->shaderProperty);
 		}
 	}
-	if (CsSetupMask() & 4) {
-		auto* Sg = WsBlock();
-		auto* vsSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x348);
-		auto* psSh = *reinterpret_cast<std::uint8_t**>(Sg + 0x350);
-		auto* vsCB = vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr;
-		auto* psCB = psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr;
-		// A worker Maps its OWN PerGeometry CB copies so N deferred contexts never
-		// Map(WRITE_DISCARD) the same shared BSUtilityShader buffer -- that crashed DXVK's
-		// D3D11DeferredContext::MapBuffer. Lazy-mirror the shared buffer's desc on first use.
-		if (t_worker) {
-			vsCB = EnsureWorkerGeomCB(t_worker->vsGeomCB, vsCB);
-			psCB = EnsureWorkerGeomCB(t_worker->psGeomCB, psCB);
-		}
-		FlushSetupGeometryReplica(WsCtx(), vsCB, psCB, Sg, shader, a_pass);
-	} else {
-		EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
-	}
+	EngineCallV<6, void>(shader, a_pass, a_renderFlags);  // SetupGeometry
 
 	// Draw-struct layout verified against the dispatcher disasm at 0x141308A05.
 	const auto lodByte = reinterpret_cast<const std::uint8_t*>(a_pass)[0x1E];
