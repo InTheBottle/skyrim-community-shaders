@@ -6,7 +6,7 @@
 #include <d3d11_1.h>
 
 #include "Globals.h"
-#include "Vanilla/UtilityPassReplica.h"
+#include "UtilityPassReplica.h"
 
 #include "ShadowMapCache.h"
 
