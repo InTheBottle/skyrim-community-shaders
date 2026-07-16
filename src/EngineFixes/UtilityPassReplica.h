@@ -48,8 +48,6 @@ public:
 		return &singleton;
 	}
 
-	[[nodiscard]] bool HooksInstalled() const { return hooksInstalled; }
-
 	/** @brief Install the RenderPassImmediately detour (the seam ShadowInstancingFix's instancing
 	 *         path rides to observe each utility pass and offer it to the shadow-capture hook) once. */
 	void EnsureInitialized();

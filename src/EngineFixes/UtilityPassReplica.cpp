@@ -48,15 +48,6 @@ namespace
 		return EngineCall<R>(vt[IDX], static_cast<void*>(a_obj), a_args...);
 	}
 
-	// Unsupported-reason tally (diagnostic): which CanReplicate gate sends a pass to the
-	// engine fallback. [0]=no-geom [1]=skinned [2]=custom [3]=non-trishape [4]=no-rd [5]=stencil.
-	std::atomic<std::uint64_t> g_unsupReason[6]{};
-
-	// GeometryType histogram (geom+0x150) of fallback passes outside the covered
-	// {TRISHAPE, SUB_INDEX_TRISHAPE} set, so remaining coverage work targets what
-	// actually occurs in-game.
-	std::atomic<std::uint64_t> g_geomTypeHist[16]{};
-
 	inline bool EngineCaller(const void* a_ret)
 	{
 		const auto a = reinterpret_cast<std::uintptr_t>(a_ret);
@@ -98,19 +89,10 @@ namespace engine
 	inline REL::Relocation<std::uint8_t*>  g_useEarlyZ{ REL::Offset(0x302C8E5) };
 	inline REL::Relocation<void**>         g_skyShaderInstance{ REL::Offset(0x32336C0) };
 
-	// RendererShadowState (S) fields the replicated DrawTriShape touches.
-	inline REL::Relocation<std::uint32_t*> S_stateUpdateFlags{ REL::Offset(0x3027EB0) };
-	inline REL::Relocation<std::uint64_t*> S_vertexDesc{ REL::Offset(0x30281F0) };       // S+0x340
-	inline REL::Relocation<std::uint32_t*> S_topology{ REL::Offset(0x3028208) };         // S+0x358
-	// Snapshot span for compare mode: S+0x00 .. S+0x5D8 covers every field the utility
-	// setup path reads or writes (dirty words, RT/depth/raster/blend modes, sampler and
-	// SRV caches, vertex desc, current shaders, topology, camera data, blend-extra).
+	// The 0x5D8 render-state block base (S+0x00 .. S+0x5D8): every field the utility setup path reads
+	// or writes (dirty words, RT/depth/raster/blend modes, sampler and SRV caches, vertex desc,
+	// current shaders, topology, camera data, blend-extra). DrawTriShape reads S+0x340/+0x358 off it.
 	inline REL::Relocation<std::uint8_t*> S_base{ REL::Offset(0x3027EB0) };
-	constexpr std::uint32_t               kSnapshotBytes = 0x5D8;
-	// BSBatchRenderer::sub_141307DD0 -- advances the batch-group iterator; returns whether more
-	// groups remain. BeginPassReplica calls it verbatim (pure iterator logic, no D3D11).
-	inline REL::Relocation<std::uint8_t (*)(void*, void*, void*, void*)> BatchAdvance{ REL::Offset(0x1307DD0) };
-	inline REL::Relocation<std::uint8_t*> g_beginPassFlagE5D{ REL::Offset(0x31D0E5D) };  // unk_1431D0E5D
 
 	// Cross-pass shadow token written by SetupGeometry (0x14130EC70) and read+reset by
 	// RestoreTechnique (0x141310300) to decide the alpha-blend dirty bit. It lives well
@@ -121,19 +103,6 @@ namespace engine
 
 	// BSGraphics::Renderer singleton (first arg of the draw leaves).
 	inline REL::Relocation<std::uint8_t*> g_renderer{ REL::Offset(0x3028490) };
-
-	// Bone-palette CB ring cursor (0x143027A00, values 0..3): GetID3D11Resource
-	// (0x140D6FFD0) hands out one of four 3840-byte dynamic CBs (0x143027A08..20) per
-	// bone upload and advances this cursor. The compare harness must restore it before
-	// the replica window or the double-render binds DIFFERENT (content-identical) ring
-	// CBs and every skinned pass false-diffs on the buffer pointer.
-	inline REL::Relocation<std::uint32_t*> g_boneCBRingCursor{ REL::Offset(0x3027A00) };
-
-	// Dynamic-VB ring state (0x143025F30, one qword: LO = ring-buffer index 0..2, HI =
-	// byte offset into the 4MB buffer). FUN_140D6C8A0 allocates skinned dynamic-shape
-	// slices here; restoring it lets the replica re-map the same slice (rewriting
-	// byte-identical data under WRITE_NO_OVERWRITE) so the recorded bind offsets match.
-	inline REL::Relocation<std::uint64_t*> g_dynVBRingState{ REL::Offset(0x3025F30) };
 
 	// Engine TLS index (0x143497408): the render path stamps per-thread markers into the
 	// module TLS block -- +1896 is the memory-context tag the standard path sets to 26,
@@ -203,9 +172,6 @@ namespace engine
 	inline REL::Relocation<std::uint8_t*>  g_mainRTDesc{ REL::Offset(0x302BB20) };
 	inline REL::Relocation<float*>         g_utilDepthConst{ REL::Offset(0x1E0DF04) };
 	inline REL::Relocation<std::uint8_t*>  g_dsvDirty{ REL::Offset(0x30284C2) };          // OUT of 0x5D8 block
-	// DS-target table base (unk_14302A4D0 = g_renderer+0x2040); entry i (the depth resource ptr of
-	// target i) is at +152*i. RestoreTechnique compares the bound-RTV cache (S+0x150) against it.
-	inline REL::Relocation<std::uint8_t*>  g_dsTargetTable{ REL::Offset(0x302A4D0) };
 	inline REL::Relocation<std::uint8_t*>  g_focusShadowEnable{ REL::Offset(0x1E0DE43) };
 	inline REL::Relocation<std::uint32_t*> g_focusShadowCount{ REL::Offset(0x31D0FB8) };
 	inline REL::Relocation<std::uint8_t**> g_viewCamera{ REL::Offset(0x31D0E68) };
@@ -268,23 +234,6 @@ namespace engine
 namespace
 {
 
-	// BeginPass-level command/orchestration compare (kOwnBeginPassVerify). During a compare, one run
-	// of the engine's BeginPass and one of BeginPassReplica each append the (pass,key,alpha,flags)
-	// they dispatch to this sink -- the engine passes via OnRenderPassImmediately, the replica passes
-	// via BeginPassReplica's loop. Comparing the two sequences + the block delta + the group-advance
-	// proves the reimplemented orchestration matches (per-pass DX11 is already byte-exact). Non-null
-	// only for the duration of one captured run; null on the normal render path (zero overhead).
-	struct VerifyPassRec
-	{
-		const void*   pass;
-		std::uint32_t tech;
-		std::uint8_t  alpha;
-		std::uint32_t flags;
-	};
-	thread_local std::vector<VerifyPassRec>* t_bpSeqSink = nullptr;
-	std::uint64_t                            g_bpCompareGroups = 0;    // pure-covered groups compared
-	std::uint64_t                            g_bpCompareDiverged = 0;  // of those, how many diverged
-
 	// Render-state accessors. The multithreaded shadow-worker path was removed, so these now read
 	// the engine globals directly (the N=1 render-thread state the replica always ran on).
 	inline std::uint8_t*        WsBlock() { return reinterpret_cast<std::uint8_t*>(engine::S_base.address()); }
@@ -340,16 +289,6 @@ void UtilityPassReplica::InstallHooks()
 
 void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
 {
-	// BeginPass-compare engine run: the engine's BeginPass reaches every pass through this detour.
-	// Record what it dispatched (to diff against BeginPassReplica's sequence) and render via the
-	// real function -- no settle gate, no per-pass compare, no capture hook. This branch is active
-	// only while BeginPassCompare has armed the sink; the normal render path never enters it.
-	if (t_bpSeqSink) {
-		t_bpSeqSink->push_back({ a_pass, a_technique, static_cast<std::uint8_t>(a_alphaTest), a_renderFlags });
-		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		return;
-	}
-
 	// Only utility passes are in scope; everything else is always the engine's.
 	const bool isUtility = a_pass && a_pass->shader &&
 	                       a_pass->shader->shaderType.get() == RE::BSShader::Type::Utility;
@@ -426,43 +365,30 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 {
 	// Stage A coverage: unskinned, non-custom-render, plain TRISHAPE geometry. Anything
-	// else takes the engine path whole-pass (never mid-pass) and is tallied for coverage.
+	// else takes the engine path whole-pass (never mid-pass).
 	auto* geom = a_pass->geometry;
-	if (!geom) {
-		g_unsupReason[0].fetch_add(1, std::memory_order_relaxed);
+	if (!geom)
 		return false;
-	}
 	const auto* geomBytes = reinterpret_cast<const std::uint8_t*>(geom);
-	// STENCIL_ABOVE_WATER releases the bound PS on first use -- running it twice in
-	// compare mode would double-Release. Excluded until the replica owns that path.
+	// STENCIL_ABOVE_WATER releases the bound PS on first use, so it stays whole-pass engine
+	// until the replica owns that path.
 	const std::uint32_t f = a_pass->passEnum - 0x2B;
-	if ((f & 0x1200) == 0x1200) {
-		g_unsupReason[5].fetch_add(1, std::memory_order_relaxed);
+	if ((f & 0x1200) == 0x1200)
 		return false;
-	}
 	if (*reinterpret_cast<void* const*>(geomBytes + 0x130)) {  // skin instance
 		// Skinned coverage (Stage B): the static skin-instance Render branch. The
 		// dynamic bone-setter branch (geometry vfunc 54 non-zero) routes into the full
 		// Draw dispatch and stays whole-pass engine until that path is replicated.
-		if (EngineCallV<54, std::uint64_t>(const_cast<RE::BSGeometry*>(geom)) != 0) {
-			g_unsupReason[1].fetch_add(1, std::memory_order_relaxed);
+		if (EngineCallV<54, std::uint64_t>(const_cast<RE::BSGeometry*>(geom)) != 0)
 			return false;
-		}
 		return true;
 	}
-	if (geomBytes[0x109] & 8) {  // needs-custom-render
-		g_unsupReason[2].fetch_add(1, std::memory_order_relaxed);
+	if (geomBytes[0x109] & 8)  // needs-custom-render
 		return false;
-	}
-	if (geomBytes[0x150] != 3 && geomBytes[0x150] != 8) {  // TRISHAPE / SUB_INDEX_TRISHAPE
-		g_unsupReason[3].fetch_add(1, std::memory_order_relaxed);
-		g_geomTypeHist[geomBytes[0x150] & 15].fetch_add(1, std::memory_order_relaxed);
+	if (geomBytes[0x150] != 3 && geomBytes[0x150] != 8)  // TRISHAPE / SUB_INDEX_TRISHAPE
 		return false;
-	}
-	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138)) {  // rendererData
-		g_unsupReason[4].fetch_add(1, std::memory_order_relaxed);
+	if (!*reinterpret_cast<void* const*>(geomBytes + 0x138))  // rendererData
 		return false;
-	}
 	return true;
 }
 
