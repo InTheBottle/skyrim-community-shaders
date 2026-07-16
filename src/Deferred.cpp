@@ -644,14 +644,9 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	// func() is the whole engine RenderShadowmaps driver -- every shadow-caster depth draw + its nested CS
-	// per-draw hooks fire inside this window (render thread). Bracket it so State::Draw can skip the wasted
-	// per-draw feature binds for depth-only shadow passes. Clear before EarlyPrepasses so prepass draws
-	// aren't treated as shadow passes.
-	globals::state->inShadowPass = true;
+	// Advance the staggered shadow-map cache's round-robin before the engine's RenderShadowmaps driver runs.
 	ShadowMapCache::BeginFrame();
 	func();
-	globals::state->inShadowPass = false;
 	globals::deferred->EarlyPrepasses();
 };
 

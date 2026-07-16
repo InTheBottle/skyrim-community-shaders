@@ -71,9 +71,6 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
-	// When set (by the dev bench REST bridge), per-type frame timing is populated even
-	// with the performance overlay closed, so automated A/B runs can read it headless.
-	std::atomic<bool> benchForceFrameTiming{ false };
 
 	enum ConfigMode
 	{
@@ -308,14 +305,6 @@ public:
 	bool inWorld = false;
 	bool activeReflections = false;
 
-	// True only while the engine RenderShadowmaps driver runs (depth-only atlas passes). Set/cleared in
-	// Deferred::Main_RenderShadowMaps around the driver call; render-thread only, same contract as inWorld.
-	// Shadow depth passes don't light/shade, so per-draw feature SRV binds are wasted on their ~7314 casters.
-	bool inShadowPass = false;
-	// A/B gate (CS_SHADOW_SKIP_PERDRAW, read once at init): when true, skip the wasted per-draw feature
-	// work during inShadowPass. Default off until pixel-validated byte-exact; enable with =1.
-	bool shadowSkipPerDraw = false;
-
 	// Cached menu open states, updated once per frame in Reset().
 	// Avoids repeated IsMenuOpen calls (each constructs a BSFixedString).
 	bool isMainMenuOpen = false;
@@ -401,17 +390,6 @@ public:
 	// Off-thread readers (MCP listener, future telemetry) must read this
 	// instead of touching frameCount directly to avoid a data race.
 	std::atomic<uint32_t> frameCountAtomic{ 0 };
-
-	// Per-frame engine draw-submission tally (BSGraphics::SetDirtyStates fires
-	// once before every engine draw; compute dispatches excluded). Incremented
-	// on the render thread only; published to the atomic at Reset() for
-	// off-thread readers (devbench inspect).
-	uint32_t drawSubmitsThisFrame = 0;
-	std::atomic<uint32_t> drawSubmitsLastFrame{ 0 };
-	// Same tally split by the active BSShader technique type (index 0 = None =
-	// draws outside any BSShader technique, e.g. post/UI).
-	uint32_t drawSubmitsByTypeThisFrame[RE::BSShader::Type::Total + 1] = {};
-	std::atomic<uint32_t> drawSubmitsByTypeLastFrame[RE::BSShader::Type::Total + 1] = {};
 
 	// Skyrim constants
 	D3D_FEATURE_LEVEL featureLevel;

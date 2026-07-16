@@ -434,14 +434,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
-	auto* state = globals::state;
-	if (!isCompute) {
-		++state->drawSubmitsThisFrame;
-		const auto* shader = state->currentShader;
-		const std::uint32_t type = shader ? static_cast<std::uint32_t>(shader->shaderType.underlying()) : 0u;
-		++state->drawSubmitsByTypeThisFrame[type <= RE::BSShader::Type::Total ? type : 0u];
-	}
-	state->Draw();
+	globals::state->Draw();
 }
 
 void Hooks::BSBatchRenderer_RenderPassImmediately1::thunk(RE::BSRenderPass* pass, uint32_t technique, bool alphaTest, uint32_t renderFlags)
