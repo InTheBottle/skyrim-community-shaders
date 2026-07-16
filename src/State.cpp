@@ -7,6 +7,8 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "ShadowDeferred.h"
+#include "Vanilla/LocalLightShadowCache.h"
+#include "Vanilla/ShadowMapCache.h"
 #include "Vanilla/ShadowThreaded.h"
 #include "Vanilla/UtilityPassReplica.h"
 #include "Features/CSEditor.h"
@@ -83,29 +85,36 @@ void State::Draw()
 			}
 		}
 
-		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
-			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
-			terrainBlending.TerrainShaderHacks();
-		}
+		// Per-draw feature SRV binds are pure lighting/material state that DEPTH-ONLY shadow passes never
+		// sample -- ~17% of the shadow phase is spent on them across ~7314 casters (render-thread IP sampler).
+		// Skip them during the shadow phase. Safe for ALL caster classes (Utility/Grass/DistantTree): none of
+		// these bind anything a depth shader reads. permutationCB->Update and the RenderShadowmask capture
+		// below stay reachable (the latter fires DURING the shadow phase for volumetric shadows / height fog).
+		if (!(inShadowPass && shadowSkipPerDraw)) {
+			if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
+				ZoneScopedN("TerrainBlending::TerrainShaderHacks");
+				terrainBlending.TerrainShaderHacks();
+			}
 
-		if (cloudShadows.loaded) {
-			ZoneScopedN("CloudShadows::SkyShaderHacks");
-			cloudShadows.SkyShaderHacks();
-		}
+			if (cloudShadows.loaded) {
+				ZoneScopedN("CloudShadows::SkyShaderHacks");
+				cloudShadows.SkyShaderHacks();
+			}
 
-		if (terrainHelper.loaded) {
-			ZoneScopedN("TerrainHelper::SetShaderResources");
-			terrainHelper.SetShaderResources(context);
-		}
+			if (terrainHelper.loaded) {
+				ZoneScopedN("TerrainHelper::SetShaderResources");
+				terrainHelper.SetShaderResources(context);
+			}
 
-		if (skin.loaded) {
-			ZoneScopedN("Skin::SetShaderResources");
-			skin.SetShaderResources(context);
-		}
+			if (skin.loaded) {
+				ZoneScopedN("Skin::SetShaderResources");
+				skin.SetShaderResources(context);
+			}
 
-		if (truePBR.loaded) {
-			ZoneScopedN("TruePBR::SetShaderResources");
-			truePBR.SetShaderResources(context);
+			if (truePBR.loaded) {
+				ZoneScopedN("TruePBR::SetShaderResources");
+				truePBR.SetShaderResources(context);
+			}
 		}
 
 		if (permutationData != permutationDataPrevious) {
@@ -257,6 +266,12 @@ void State::Reset()
 
 void State::Setup()
 {
+	// A/B gate for the per-draw shadow-phase feature-skip (off by default until pixel-validated byte-exact).
+	if (char b[8] = {}; GetEnvironmentVariableA("CS_SHADOW_SKIP_PERDRAW", b, sizeof(b)) && b[0] && b[0] != '0') {
+		shadowSkipPerDraw = true;
+		logger::info("[State] CS_SHADOW_SKIP_PERDRAW=1: skipping per-draw feature binds for shadow depth passes");
+	}
+
 	// Detect Moon and Stars mod for compatibility adjustments
 	moonAndStarsLoaded = GetModuleHandle(L"po3_MoonMod.dll") != nullptr;
 	if (moonAndStarsLoaded)
@@ -282,6 +297,10 @@ void State::Setup()
 	// Multithreaded shadow-map recording (fan-out across worker contexts). Inert unless
 	// CS_SHADOW_MT=1; see src/ShadowThreaded.h.
 	ShadowThreaded::GetSingleton()->Setup();
+
+	// Local-light (spot/point) shadow-map caching/profiler. Inert unless
+	// CS_LIGHTSHADOW_PROF=1; see src/Vanilla/LocalLightShadowCache.h.
+	LocalLightShadowCache::Install();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();

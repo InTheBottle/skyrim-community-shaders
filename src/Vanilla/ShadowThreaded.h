@@ -147,6 +147,7 @@ public:
 	std::atomic<bool> stateValSelftest{ false };
 	[[nodiscard]] std::array<std::uint32_t, 6> StateValReport() const;
 
+
 	/** @brief DrawWorld::RenderShadowmaps (0x1412E3480) detour body: arm the capture hook,
 	 *         run the original walk (the covered passes flow through the hook), disarm, report. */
 	void RenderShadowmapsDetour(void* a_original);
@@ -167,7 +168,8 @@ private:
 	void ReplayWorkerSerial();  // kWorkerSerial: one ShadowWorker, render thread.
 	void ReplayConcurrent();    // kConcurrent: workerCount threads, one deferred context each.
 
-	std::atomic<Mode> mode{ Mode::kOff };
+	std::atomic<Mode> mode{ Mode::kInstance };  // default-ON perf lever (+16.8% DXVK interior, byte-exact;
+	                                            // env CS_SHADOW_MT overrides, =0 restores vanilla shadows)
 	bool              hooksInstalled = false;
 	std::uint64_t     frames = 0;
 	std::uint32_t     workerCount = 2;  // CS_SHADOW_MT_WORKERS (kConcurrent)

@@ -5,6 +5,8 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Vanilla/LocalLightShadowCache.h"
+#include "Vanilla/ShadowMapCache.h"
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
@@ -643,7 +645,16 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
+	// func() is the whole engine RenderShadowmaps driver -- every shadow-caster depth draw + its nested CS
+	// per-draw hooks fire inside this window (render thread). Bracket it so State::Draw can skip the wasted
+	// per-draw feature binds for depth-only shadow passes. Clear before EarlyPrepasses so prepass draws
+	// aren't treated as shadow passes.
+	globals::state->inShadowPass = true;
+	LocalLightShadowCache::BeginShadowFrame();
+	ShadowMapCache::BeginFrame();
 	func();
+	LocalLightShadowCache::EndShadowFrame();
+	globals::state->inShadowPass = false;
 	globals::deferred->EarlyPrepasses();
 };
 

@@ -308,6 +308,14 @@ public:
 	bool inWorld = false;
 	bool activeReflections = false;
 
+	// True only while the engine RenderShadowmaps driver runs (depth-only atlas passes). Set/cleared in
+	// Deferred::Main_RenderShadowMaps around the driver call; render-thread only, same contract as inWorld.
+	// Shadow depth passes don't light/shade, so per-draw feature SRV binds are wasted on their ~7314 casters.
+	bool inShadowPass = false;
+	// A/B gate (CS_SHADOW_SKIP_PERDRAW, read once at init): when true, skip the wasted per-draw feature
+	// work during inShadowPass. Default off until pixel-validated byte-exact; enable with =1.
+	bool shadowSkipPerDraw = false;
+
 	// Cached menu open states, updated once per frame in Reset().
 	// Avoids repeated IsMenuOpen calls (each constructs a BSFixedString).
 	bool isMainMenuOpen = false;

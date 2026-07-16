@@ -23,7 +23,10 @@
 #include "Features/OcclusionCulling/MOC.h"
 #include "ShaderReflect.h"
 
+#include "ShadowMapCache.h"
+
 #include <RE/B/BSRenderPass.h>
+#include <RE/N/NiAVObject.h>
 
 // Multithreaded shadow rendering, built on the byte-exact UtilityPassReplica. Two levels of the
 // shadow-map walk are bracketed:
@@ -1598,6 +1601,18 @@ namespace
 std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
 {
 	auto callOriginal = *static_cast<std::int32_t(**)(void*, std::int64_t, void*, std::int32_t)>(a_original);
+	// Shadow-map rate probe (env CS_SHADOW_MAPRATE=1): count EVERY detour entry, before any branch, so
+	// the devbench Updates()/Reuses() per-second rate answers "how much per-frame shadow work is there?".
+	// Off by default so it never pollutes mode 1's Capture/Blit counters. Measured Dragonsreach: ~420/s
+	// atlas maps, ~210/s local; Whiterun ext: ~392/s atlas, 0 local (all sun cascades).
+	static const bool s_mapRate = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_MAPRATE", b, sizeof(b)) && b[0] == '1'; }();
+	if (s_mapRate) {
+		auto* const         d = reinterpret_cast<const std::uint8_t*>(a2);
+		const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(d + 84);
+		void* const         accum = *reinterpret_cast<void* const*>(d + 0x48);
+		const std::uint32_t rmode = accum ? *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const std::uint8_t*>(accum) + 0x150) : 0u;
+		ShadowMapCache::NotePassthroughMap(target, rmode);
+	}
 	if (!g_claiming && GetMode() != Mode::kCapture) {
 		// Passthrough (mode 0 / non-claiming modes): still queue the light-space Hi-Z capture --
 		// pure CPU (desc reads + a 64-byte VP copy); the reduce runs later at HiZPrepass.
@@ -1615,6 +1630,11 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 		}
 		return r0;
 	}
+
+	// NOTE: skipping callOriginal for a reused map (to remove the per-map walk) is NOT viable -- it
+	// orphans the engine's load-bearing INCREMENTAL pass-node free (Func42 -> sub_141307E80 /
+	// m_AutoClearPasses), corrupting the shared pass-node pool within ~1 frame -> hang (the documented
+	// culling-mt wall). Mode 1/2 keep the walk and only skip the static-caster instanced draws below.
 
 	// Open this map's pass bracket, run the original (slice alloc + RT setup + NiCamera walk; the
 	// covered passes flow through CaptureHook, which snapshots the clean per-map render-state block
@@ -1671,8 +1691,42 @@ std::int32_t ShadowThreaded::RenderShadowmapDetour(void* a1, std::int64_t a2, vo
 	// Per-map replay: execute this map's claimed passes NOW, while its view globals are current.
 	if (GetMode() == Mode::kWorkerSerial && g_curMap)
 		ReplayOneMap(*g_curMap);
-	else if ((GetMode() == Mode::kInstance || GetMode() == Mode::kInstanceOwnVerify) && g_curMap)
-		RenderMapInstanced(*g_curMap);
+	else if ((GetMode() == Mode::kInstance || GetMode() == Mode::kInstanceOwnVerify) && g_curMap) {
+		// Staggered shadow-map updates (ShadowMapCache): render ONE unit per frame, blit the cached
+		// slice for every other unit. Reuses the proven byte-exact whole-map blit + split-copy; the
+		// round-robin schedule decides which unit is fresh. Off (mode 0) -> unchanged mode-9 replay.
+		// renderMode is valid HERE (callOriginal ran Func42): 13 spot / 14 dir-cascade / 15 point.
+		auto* const         desc = reinterpret_cast<const std::uint8_t*>(a2);
+		const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(desc + 84);
+		const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(desc + 88);
+		void* const         accum = *reinterpret_cast<void* const*>(desc + 0x48);
+		const std::uint32_t rmode = accum ? *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(accum) + 0x150) : 0u;
+		void* const         camera = *reinterpret_cast<void* const*>(desc + 64);
+		const int           smcMode = ShadowMapCache::GetMode();
+		// mode 1 = local (spot 13 / point 15); mode 2 also staggers directional cascades (14). Mode 3
+		// (pinned-skip) is handled pre-callOriginal above; here it just renders normally (the active map).
+		const bool          eligible = (smcMode == 1 || smcMode == 2) && target == 4 && slice < 64 && camera &&
+			((rmode == 13 || rmode == 15) || (smcMode == 2 && rmode == 14)) && ShadowMapCache::EnsureCache();
+		if (!eligible) {
+			RenderMapInstanced(*g_curMap);
+		} else {
+			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
+			auto* const         ctx = *engine::g_immediateContext;
+			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
+			if (ShadowMapCache::ShouldRender(camera, rmode, desc)) {
+				RenderMapInstanced(*g_curMap);                 // this unit's turn -> render fresh + cache
+				ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before reading it
+				ShadowMapCache::Capture(ctx, camera, slice, port);
+			} else {
+				ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before writing it
+				if (!ShadowMapCache::Blit(ctx, camera, slice, port)) {
+					RenderMapInstanced(*g_curMap);             // no valid cache -> render + capture
+					ShadowMapCache::Capture(ctx, camera, slice, port);
+				}
+			}
+			S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
+		}
+	}
 
 	if (s_walkSplit) {
 		QueryPerformanceCounter(&_w2);
@@ -2454,6 +2508,7 @@ namespace
 		sflags[0] = 0xFFFFFFFFu;  // engine's next SetDirtyStates re-binds onto whatever we left bound
 	}
 
+
 	// kEnumInstance safe default: enumerate at Func42 entry (proves the direct-read finds the caster set)
 	// and log it, but render NOTHING -- the engine Func42 runs afterward to draw + free. Non-destructive:
 	// the shared pool stays healthy, so this never freezes. This is the terminal, shippable state of the
@@ -2924,6 +2979,7 @@ std::array<std::uint32_t, 6> ShadowThreaded::StateValReport() const
 		g_stateValidator.exitCheckedFrames, g_stateValidator.boundaryDiffs };
 }
 
+
 void ShadowThreaded::Setup()
 {
 	char buf[8] = {};
@@ -2931,6 +2987,20 @@ void ShadowThreaded::Setup()
 		const int v = atoi(buf);
 		if ((v >= 0 && v <= 10) || v == 12 || v == 13)
 			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
+	}
+	// Staggered shadow-map updates (ShadowMapCache): default-ON local-light stagger (mode 1, +4.8% median
+	// live; runs inside kInstance). Re-renders one local shadow-map unit per frame + blits every other
+	// unit's cached depth -- correct because local maps are light-space; a dynamic caster under a reused
+	// map lags by up to (unit-count-1) frames (subtle at interior fps). env CS_SHADOW_STAGGER overrides:
+	// 0 = off, 1 = local only (default), 2 = also stagger directional cascades. Runtime lever = devbench.
+	{
+		int staggerMode = 1;  // default local-light stagger on
+		if (char sg[8] = {}; GetEnvironmentVariableA("CS_SHADOW_STAGGER", sg, sizeof(sg)) && sg[0]) {
+			const int m = atoi(sg);
+			staggerMode = (m >= 0 && m <= 2) ? m : 1;
+		}
+		ShadowMapCache::SetMode(staggerMode);
+		logger::info("[ShadowMapCache] staggered shadow updates mode={} (needs kInstance shadow path)", staggerMode);
 	}
 	if (char wc[8] = {}; GetEnvironmentVariableA("CS_SHADOW_MT_WORKERS", wc, sizeof(wc)) && wc[0]) {
 		const int n = atoi(wc);

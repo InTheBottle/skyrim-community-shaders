@@ -1,6 +1,8 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
 #include "ShadowDeferred.h"
+#include "Vanilla/LocalLightShadowCache.h"
+#include "Vanilla/ShadowMapCache.h"
 #include "Vanilla/ShadowThreaded.h"
 #include "Vanilla/UtilityPassReplica.h"
 
@@ -770,6 +772,43 @@ namespace
 				{ "boundaryDiffs", r[5] },  // exit-boundary diffs vs vanilla (informational; self-test target)
 			};
 		}
+		// Runtime toggle for the shadow per-draw feature-bind skip (CS_SHADOW_SKIP_PERDRAW).
+		// `skipperdraw` with optional {"enable":true|false} sets it and returns the current value.
+		// Enables a same-boot interleaved A/B without a reboot (avoids cross-boot noise/rig warming).
+		if (action == "skipperdraw") {
+			if (globals::state && a_args.contains("enable"))
+				globals::state->shadowSkipPerDraw = a_args["enable"].get<bool>();
+			return json{
+				{ "action", "skipperdraw" },
+				{ "enabled", globals::state ? globals::state->shadowSkipPerDraw : false },
+			};
+		}
+		// Ceiling-measurement toggle for local-light (spot/point) shadow caching.
+		// `skiplocal` with optional {"enable":true|false} skips local-light shadow
+		// renders entirely (shadows go stale -- upper-bound FPS measurement only).
+		if (action == "skiplocal") {
+			if (a_args.contains("enable"))
+				LocalLightShadowCache::SetSkipLocal(a_args["enable"].get<bool>());
+			return json{
+				{ "action", "skiplocal" },
+				{ "enabled", LocalLightShadowCache::GetSkipLocal() },
+			};
+		}
+		// Staggered shadow-map updates (ShadowMapCache): {"mode": 0 off / 1 local lights / 2 also
+		// directional cascades}. Renders ONE shadow-map unit per frame, blits the cached slice for the
+		// rest (interiors: one local light/frame; exteriors: one cascade/frame). Needs CS_SHADOW_MT=9.
+		if (action == "stagger") {
+			if (a_args.contains("mode"))
+				ShadowMapCache::SetMode(a_args["mode"].get<int>());
+			return json{
+				{ "action", "stagger" },
+				{ "mode", ShadowMapCache::GetMode() },
+				{ "shadowMt", static_cast<std::uint32_t>(st->GetMode()) },
+				{ "units", ShadowMapCache::Units() },
+				{ "updates", ShadowMapCache::Updates() },
+				{ "reuses", ShadowMapCache::Reuses() },
+			};
+		}
 		// Instanced-path command-validation counters (always-on): pass-conservation invariants +
 		// the F16C-pack-vs-engine-reference compare. Nonzero violations/mismatches = broken submission.
 		if (action == "instval") {
@@ -782,7 +821,7 @@ namespace
 				{ "packMismatches", r[3] },
 			};
 		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "stateval", "instval" }) } };
+		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "stateval", "instval", "skipperdraw", "skiplocal", "stagger" }) } };
 	}
 
 	void ShadowMtToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)

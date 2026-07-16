@@ -1,0 +1,233 @@
+#include "ShadowMapCache.h"
+
+#include "Globals.h"
+#include "Util.h"
+#include "Utils/D3D.h"
+
+#include <RE/N/NiAVObject.h>
+
+namespace ShadowMapCache
+{
+	namespace
+	{
+		constexpr std::uint32_t kLayers = 64;      // >= max concurrent shadow-map slices
+		constexpr std::uint32_t kEvictAfter = 240; // drop a unit not seen for ~4s (light despawned/moved)
+
+		// Shadow depth atlas = depth-stencil target 4. The SRV lives on the renderer object at
+		// stride 152/target, base 0x2040 (same access ShadowThreaded uses).
+		REL::Relocation<std::uint8_t*> g_renderer{ REL::Offset(0x3028490) };
+
+		ID3D11ShaderResourceView* AtlasSRV()
+		{
+			auto* rtPool = reinterpret_cast<std::uint8_t*>(g_renderer.address());
+			return *reinterpret_cast<ID3D11ShaderResourceView**>(rtPool + 152 * 4 + 0x2040);
+		}
+		ID3D11Resource* AtlasResource()
+		{
+			auto* srv = AtlasSRV();
+			if (!srv)
+				return nullptr;
+			static winrt::com_ptr<ID3D11Resource> s_res;  // cached; the atlas resource is fixed for the process
+			if (!s_res)
+				srv->GetResource(s_res.put());
+			return s_res.get();
+		}
+
+		int g_mode = 0;
+
+		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
+		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
+
+		// Per-CAMERA private cache layer (each shadow map owns a slice-sized layer).
+		std::unordered_map<void*, std::uint32_t> g_layerOf;
+		std::uint32_t                            g_nextLayer = 0;
+		bool                                     g_layerValid[kLayers] = {};
+
+		// Round-robin UNITS. A unit groups maps that update together (a point light's two halves share
+		// a unit; each spot and each cascade is its own). Keyed so a moved light becomes a new unit.
+		struct Unit
+		{
+			std::uint32_t index = 0;
+			std::uint32_t lastFrame = 0;
+		};
+		std::unordered_map<std::uint64_t, Unit> g_unitOf;
+		std::uint32_t                           g_nextUnit = 0;
+		std::uint32_t                           g_frame = 0;
+		std::uint32_t                           g_activeUnit = 0;
+
+		std::atomic<std::uint64_t> g_updates{ 0 }, g_reuses{ 0 };
+
+		inline std::uint64_t Fnv(std::uint64_t h, std::uint32_t v)
+		{
+			h ^= v;
+			h *= 0x100000001b3ull;
+			return h;
+		}
+		inline std::uint32_t Bits(float f)
+		{
+			std::uint32_t u;
+			std::memcpy(&u, &f, 4);
+			return u;
+		}
+
+		// A unit's key: directional cascades key on the camera pointer (one cascade per unit);
+		// local lights key on the shadow camera's WORLD POSITION so a point light's two hemisphere
+		// cameras (same position) share a unit and update together, and a moved light gets a new key.
+		std::uint64_t UnitKey(void* a_camera, std::uint32_t a_rmode)
+		{
+			if (a_rmode == 14) {
+				const auto p = reinterpret_cast<std::uintptr_t>(a_camera);
+				return Fnv(Fnv(0xcbf29ce484222325ull, static_cast<std::uint32_t>(p)), static_cast<std::uint32_t>(p >> 32));
+			}
+			std::uint64_t h = 0xcbf29ce484222325ull;
+			if (a_camera) {
+				const RE::NiPoint3 t = reinterpret_cast<RE::NiAVObject*>(a_camera)->world.translate;
+				h = Fnv(h, Bits(t.x));
+				h = Fnv(h, Bits(t.y));
+				h = Fnv(h, Bits(t.z));
+			}
+			return h;
+		}
+
+		std::uint32_t LayerFor(void* a_camera)
+		{
+			auto it = g_layerOf.find(a_camera);
+			if (it != g_layerOf.end())
+				return it->second;
+			if (g_nextLayer >= kLayers)
+				return UINT32_MAX;
+			const std::uint32_t l = g_nextLayer++;
+			g_layerOf.emplace(a_camera, l);
+			return l;
+		}
+
+		// Copy one map's port sub-rect, split into vertical halves so no single CopySubresourceRegion
+		// spans a full D16 subresource (proven DXVK quirk: full-subresource copies of the shadow
+		// Texture2DArray corrupt; sub-region copies are byte-exact).
+		void CopyPort(ID3D11DeviceContext* a_ctx, ID3D11Resource* a_dst, std::uint32_t a_dstSub,
+			ID3D11Resource* a_src, std::uint32_t a_srcSub, const std::int32_t* a_port)
+		{
+			const std::int32_t pl = a_port[0], pr = a_port[1], pt = a_port[2], pb = a_port[3];
+			const UINT         bl = static_cast<UINT>(std::min(pl, pr)), br = static_cast<UINT>(std::max(pl, pr));
+			const UINT         bt = static_cast<UINT>(std::min(pt, pb)), bb = static_cast<UINT>(std::max(pt, pb));
+			if (br <= bl || bb <= bt) {  // degenerate port -> whole-subresource split in two
+				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, 0, 0, 0, a_src, a_srcSub, nullptr);
+				return;
+			}
+			const UINT midY = bt + (bb - bt) / 2u;
+			if (midY > bt) {
+				const D3D11_BOX b{ bl, bt, 0, br, midY, 1 };
+				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, bt, 0, a_src, a_srcSub, &b);
+			}
+			if (bb > midY) {
+				const D3D11_BOX b{ bl, midY, 0, br, bb, 1 };
+				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, midY, 0, a_src, a_srcSub, &b);
+			}
+		}
+	}
+
+	void SetMode(int a_mode) { g_mode = a_mode; }
+	int  GetMode() { return g_mode; }
+
+	void NotePassthroughMap(std::uint32_t a_target, std::uint32_t a_rmode)
+	{
+		if (a_target != 4)
+			return;
+		g_updates.fetch_add(1, std::memory_order_relaxed);  // every shadow-atlas map the engine renders
+		if (a_rmode == 13 || a_rmode == 15)
+			g_reuses.fetch_add(1, std::memory_order_relaxed);  // local (spot/point) shadow maps only
+	}
+	std::uint64_t Updates() { return g_updates.load(std::memory_order_relaxed); }
+	std::uint64_t Reuses() { return g_reuses.load(std::memory_order_relaxed); }
+	std::uint64_t Units() { return g_nextUnit; }
+
+	void BeginFrame()
+	{
+		++g_frame;
+		// Evict units not seen recently so despawned/moved lights don't hold round-robin slots.
+		if ((g_frame & 63) == 0) {
+			for (auto it = g_unitOf.begin(); it != g_unitOf.end();) {
+				if (g_frame - it->second.lastFrame > kEvictAfter)
+					it = g_unitOf.erase(it);
+				else
+					++it;
+			}
+		}
+		g_activeUnit = g_nextUnit ? (g_frame % g_nextUnit) : 0;
+	}
+
+	bool EnsureCache()
+	{
+		if (g_cacheTex)
+			return true;
+		if (!globals::d3d::device)
+			return false;
+		auto* atlasRes = AtlasResource();
+		winrt::com_ptr<ID3D11Texture2D> atlas;
+		if (!atlasRes || FAILED(atlasRes->QueryInterface(IID_PPV_ARGS(atlas.put()))))
+			return false;
+		D3D11_TEXTURE2D_DESC d{};
+		atlas->GetDesc(&d);
+		g_cacheDesc = d;
+		D3D11_TEXTURE2D_DESC cd = d;  // mirror format/dims -> copy-compatible
+		cd.ArraySize = kLayers;
+		cd.Usage = D3D11_USAGE_DEFAULT;
+		cd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		cd.CPUAccessFlags = 0;
+		cd.MiscFlags = 0;
+		if (FAILED(globals::d3d::device->CreateTexture2D(&cd, nullptr, g_cacheTex.put()))) {
+			logger::error("[ShadowMapCache] CreateTexture2D failed (fmt={} {}x{})", static_cast<std::uint32_t>(d.Format), d.Width, d.Height);
+			return false;
+		}
+		Util::SetResourceName(g_cacheTex.get(), "ShadowMapCache::Slices");
+		logger::info("[ShadowMapCache] slice cache: atlas fmt={} {}x{} -> {} layers", static_cast<std::uint32_t>(d.Format), d.Width, d.Height, kLayers);
+		return true;
+	}
+
+	bool ShouldRender(void* a_camera, std::uint32_t a_rmode, const std::uint8_t*)
+	{
+		const std::uint64_t key = UnitKey(a_camera, a_rmode);
+		auto [it, inserted] = g_unitOf.try_emplace(key, Unit{ g_nextUnit, g_frame });
+		if (inserted) {
+			++g_nextUnit;
+			return true;  // new unit -> no cache yet
+		}
+		it->second.lastFrame = g_frame;
+		if (it->second.index == g_activeUnit)
+			return true;  // this unit's turn
+		// Not this unit's turn: reuse only if this exact map has a valid cached layer.
+		auto lit = g_layerOf.find(a_camera);
+		return lit == g_layerOf.end() || !g_layerValid[lit->second];
+	}
+
+	void Capture(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
+	{
+		auto* atlas = AtlasResource();
+		if (!g_cacheTex || !a_ctx || !atlas)
+			return;
+		const std::uint32_t layer = LayerFor(a_camera);
+		if (layer == UINT32_MAX)
+			return;
+		const UINT atlasSub = D3D11CalcSubresource(0, a_slice, g_cacheDesc.MipLevels);
+		const UINT cacheSub = D3D11CalcSubresource(0, layer, g_cacheDesc.MipLevels);
+		CopyPort(a_ctx, g_cacheTex.get(), cacheSub, atlas, atlasSub, a_port);
+		g_layerValid[layer] = true;
+		g_updates.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
+	{
+		auto* atlas = AtlasResource();
+		if (!g_cacheTex || !a_ctx || !atlas)
+			return false;
+		auto it = g_layerOf.find(a_camera);
+		if (it == g_layerOf.end() || !g_layerValid[it->second])
+			return false;
+		const UINT atlasSub = D3D11CalcSubresource(0, a_slice, g_cacheDesc.MipLevels);
+		const UINT cacheSub = D3D11CalcSubresource(0, it->second, g_cacheDesc.MipLevels);
+		CopyPort(a_ctx, atlas, atlasSub, g_cacheTex.get(), cacheSub, a_port);
+		g_reuses.fetch_add(1, std::memory_order_relaxed);
+		return true;
+	}
+
+}
