@@ -4,7 +4,6 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "DrawState.h"
 
 #include <DirectXPackedVector.h>
 #include <algorithm>
@@ -30,109 +29,16 @@
 
 namespace
 {
-	using Recorded = UtilityPassReplica::RecordedCall;
-	using Kind = UtilityPassReplica::RecordedCall::Kind;
-
-	// Active recording sink (render thread only; null = recorder disarmed and every
-	// hook below is a single-branch passthrough).
-	std::vector<Recorded>* g_sink = nullptr;
-
-	// DIAGNOSTIC: when CS_UTIL_RE_DUMP is set (to any non-zero value), snapshot each recorded CB
-	// Map's written dwords onto the RecordedCall so DiffWindows can report the exact engine-vs-
-	// replica dword for a content-hash divergence -- the rerunnable "find the deviating field" tool.
-	std::uint32_t g_dumpMapSize = 0;
-
-	// WRITE_DISCARD maps opened inside the current window: mapped pointer + size, so the
-	// matching Unmap can hash the bytes the caller wrote. The utility window maps at most
-	// a few buffers (geometry CB, technique CB, dynamic VB), so a tiny fixed table does.
-	struct OpenMap
-	{
-		ID3D11Resource* resource = nullptr;
-		const void*     data = nullptr;
-		std::uint32_t   size = 0;
-	};
-	std::array<OpenMap, 8> g_openMaps{};
-
-	// CommunityShaders.dll address range. The baseline captures only GAME-ENGINE-originated
-	// D3D11 calls: CS features hook the engine's draw leaves and inject their own CBs/binds
-	// (e.g. a per-object 64B CB from CommunityShaders.dll+0xAD56F). Those are CS overlays,
-	// not the engine command stream we're replicating, so a call whose return address lands
-	// inside our own module is not recorded. Set once at Setup.
+	// CommunityShaders.dll address range, established at EnsureInitialized via the &EngineCaller
+	// module anchor.
 	std::uintptr_t g_csBase = 0;
 	std::uintptr_t g_csEnd = 0;
 
-	// SkyrimSE.exe image range -- used to validate that an engine caster's geometry vtable points into
-	// the game module. A freed/torn caster's vtable falls outside; rendering it jumps to garbage (the
-	// mode-14 dense-exterior crash at 0x7EEECB80). Set once in EnsureInitialized. InGameModule fails OPEN
-	// while the range is unset (0) so it never wrongly rejects during early init.
-	std::uintptr_t g_gameBase = 0;
-	std::uintptr_t g_gameEnd = 0;
-	inline bool    InGameModule(const void* p)
-	{
-		if (g_gameEnd == 0)
-			return true;
-		const auto a = reinterpret_cast<std::uintptr_t>(p);
-		return a >= g_gameBase && a < g_gameEnd;
-	}
-	// [geom type & 15] -> count of shadow maps ceded to the engine because they held an exotic caster.
-	std::atomic<std::uint64_t> g_unsafeCasterHist[16]{};
-
-	// Set while EITHER window records: drop D3D11 calls whose return address lands inside
-	// the CS module. CS features hook the engine's shader-bind and draw leaves (e.g. the
-	// BeginTechnique VS/PS write-thunks in Hooks.cpp, per-object CB injection) and issue
-	// D3D11 calls from CS code on the REAL render -- those are overlays on top of the
-	// engine command stream and fire identically in both windows, so symmetric filtering
-	// keeps the diff exact. The replica's own engine-equivalent calls (engine helpers,
-	// vfuncs, and its hand-coded draw leaf) are routed through an executable stub OUTSIDE
-	// the module image (see EngineCall) so their return addresses do not match the filter;
-	// engine-internal TAIL-CALLED binds also inherit the stub's return address, which is
-	// what makes the symmetric filter sound (a direct call from CS would mis-attribute
-	// them as CS injections).
-	bool g_filterCs = false;
-
-	// The out-of-module call stub. Forwards the four register args untouched plus the
-	// 5th/6th STACK args (IASetVertexBuffers takes six) into a fresh frame, then calls
-	// the target from the slot at +0x28. Compare mode is single-threaded (owner gate),
-	// so one slot suffices.
-	std::uint8_t* g_stub = nullptr;
-	void**        g_stubSlot = nullptr;
-	bool          g_stubActive = false;
-
-	void BuildEngineCallStub()
-	{
-		auto* mem = static_cast<std::uint8_t*>(
-			VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-		if (!mem)
-			return;
-		static constexpr std::uint8_t kStub[] = {
-			0x48, 0x83, 0xEC, 0x38,              // +0x00 sub  rsp, 38h
-			0x48, 0x8B, 0x44, 0x24, 0x60,        // +0x04 mov  rax, [rsp+60h]   (caller 5th arg)
-			0x48, 0x89, 0x44, 0x24, 0x20,        // +0x09 mov  [rsp+20h], rax
-			0x48, 0x8B, 0x44, 0x24, 0x68,        // +0x0E mov  rax, [rsp+68h]   (caller 6th arg)
-			0x48, 0x89, 0x44, 0x24, 0x28,        // +0x13 mov  [rsp+28h], rax
-			0xFF, 0x15, 0x0A, 0x00, 0x00, 0x00,  // +0x18 call qword ptr [rip+0Ah]  (slot @ +0x28)
-			0x48, 0x83, 0xC4, 0x38,              // +0x1E add  rsp, 38h
-			0xC3,                                // +0x22 ret
-			0xCC, 0xCC, 0xCC, 0xCC, 0xCC,        // +0x23 pad to +0x28
-		};
-		static_assert(sizeof(kStub) == 0x28);
-		std::memcpy(mem, kStub, sizeof(kStub));
-		g_stub = mem;
-		g_stubSlot = reinterpret_cast<void**>(mem + 0x28);
-	}
-
-	// Call an engine function (or D3D11 vfunc) the way the engine would: when the replica
-	// window is recording, indirect through the out-of-module stub so downstream
-	// tail-called D3D11 binds carry a non-CS return address; otherwise a direct call.
-	// The stub forwards up to six args (four register + two stack).
+	// Call an engine function (or D3D11 vfunc) the way the engine would: a plain direct call.
 	template <class R, class... Args>
 	inline R EngineCall(const void* a_fn, Args... a_args)
 	{
 		using Fn = R (*)(Args...);
-		if (g_stubActive && g_stub) {
-			*g_stubSlot = const_cast<void*>(a_fn);
-			return reinterpret_cast<Fn>(g_stub)(a_args...);
-		}
 		return reinterpret_cast<Fn>(const_cast<void*>(a_fn))(a_args...);
 	}
 
@@ -159,303 +65,6 @@ namespace
 		return a < g_csBase || a >= g_csEnd;  // true = not inside CommunityShaders.dll
 	}
 
-	inline void Record(Kind a_kind, std::uint16_t a_slot, std::uint64_t a_a, std::uint64_t a_b = 0, std::uint64_t a_c = 0)
-	{
-		if (g_sink)
-			g_sink->push_back(Recorded{ a_kind, a_slot, a_a, a_b, a_c });
-	}
-
-	inline std::uint64_t HashBytes(const void* a_data, std::uint32_t a_size)
-	{
-		// FNV-1a 64. The comparison only needs equality, not cryptographic strength.
-		const auto*   p = static_cast<const std::uint8_t*>(a_data);
-		std::uint64_t h = 0xcbf29ce484222325ull;
-		for (std::uint32_t i = 0; i < a_size; ++i) {
-			h ^= p[i];
-			h *= 0x100000001b3ull;
-		}
-		return h;
-	}
-
-	inline std::uint64_t HashPointers(ID3D11Buffer* const* a_ptrs, UINT a_count)
-	{
-		return HashBytes(a_ptrs, static_cast<std::uint32_t>(a_count * sizeof(void*)));
-	}
-
-	// ---------------------------------------------------------------------------
-	// Immediate-context vtable detours. Indices are the standard ID3D11DeviceContext
-	// layout (Map=14/Unmap=15).
-	// Every thunk records iff a window is armed, then forwards.
-	// ---------------------------------------------------------------------------
-
-	struct VSSetConstantBuffers_Hook  // vfunc 7
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kVSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
-			func(ctx, slot, n, bufs);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct PSSetShaderResources_Hook  // vfunc 8
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kPSSetShaderResources, static_cast<std::uint16_t>(slot), n,
-					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
-			func(ctx, slot, n, views);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct PSSetShader_Hook  // vfunc 9
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11PixelShader* ps, ID3D11ClassInstance* const* inst, UINT n)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kPSSetShader, 0, reinterpret_cast<std::uint64_t>(ps));
-			func(ctx, ps, inst, n);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct PSSetSamplers_Hook  // vfunc 10
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kPSSetSamplers, static_cast<std::uint16_t>(slot), n,
-					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
-			func(ctx, slot, n, samplers);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VSSetShader_Hook  // vfunc 11
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11VertexShader* vs, ID3D11ClassInstance* const* inst, UINT n)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kVSSetShader, 0, reinterpret_cast<std::uint64_t>(vs));
-			func(ctx, vs, inst, n);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct DrawIndexed_Hook  // vfunc 12
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT indexCount, UINT startIndex, INT baseVertex)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kDrawIndexed, 0, indexCount, startIndex, static_cast<std::uint64_t>(static_cast<std::int64_t>(baseVertex)));
-			// Regime-B draw-state fingerprint (no-op unless the shadow driver armed capture on this thread).
-			vanilla::DrawStateValidator::GetSingleton()->OnDrawIndexed(ctx, indexCount, startIndex, baseVertex);
-			func(ctx, indexCount, startIndex, baseVertex);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct Map_Hook  // vfunc 14
-	{
-		static HRESULT __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11Resource* res, UINT sub, D3D11_MAP mapType, UINT flags, D3D11_MAPPED_SUBRESOURCE* mapped)
-		{
-			const HRESULT hr = func(ctx, res, sub, mapType, flags, mapped);
-			if (g_sink && SUCCEEDED(hr) && mapped && mapped->pData &&
-				(mapType == D3D11_MAP_WRITE_DISCARD || mapType == D3D11_MAP_WRITE_NO_OVERWRITE)) {
-				// Zero the mapped window (cap = hash window) so UNWRITTEN bytes hash
-				// identically in both windows. The engine leaves flag-gated constants
-				// unwritten in freshly renamed DISCARD memory -- stale ring garbage that
-				// differs between the engine and replica maps and false-diffs the content
-				// hash. The GPU-visible change is benign: those constants were undefined
-				// garbage anyway (the shader permutation doesn't read them).
-				if (mapType == D3D11_MAP_WRITE_DISCARD && mapped->RowPitch && mapped->RowPitch <= 4096)
-					std::memset(mapped->pData, 0, mapped->RowPitch);
-				if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress()))) {
-					for (auto& slotEntry : g_openMaps) {
-						if (!slotEntry.resource) {
-							slotEntry = OpenMap{ res, mapped->pData, mapped->RowPitch };
-							break;
-						}
-					}
-				}
-			}
-			return hr;
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct Unmap_Hook  // vfunc 15
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11Resource* res, UINT sub)
-		{
-			if (g_sink) {
-				for (auto& slotEntry : g_openMaps) {
-					if (slotEntry.resource == res) {
-						// Hash what the caller wrote between Map and Unmap: this is the
-						// "same data" half of command equality for constant buffers and
-						// dynamic vertex data. Cap the hash window to keep compare mode
-						// cheap; CBs are <= 4 KB, dynamic VB chunks can be larger but
-						// their leading bytes diverge immediately when wrong.
-						const std::uint32_t n = std::min<std::uint32_t>(slotEntry.size ? slotEntry.size : 256u, 4096u);
-						if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress()))) {
-							Record(Kind::kMapDiscardData, 0, reinterpret_cast<std::uint64_t>(res), n, HashBytes(slotEntry.data, n));
-							// When dumping is enabled, snapshot the written dwords onto the record so
-							// DiffWindows can pinpoint the exact diverging dword for any diverging Map.
-							if (g_dumpMapSize && g_sink && !g_sink->empty()) {
-								const auto* p = static_cast<const std::uint32_t*>(slotEntry.data);
-								g_sink->back().mapData = std::make_shared<std::vector<std::uint32_t>>(p, p + n / 4);
-							}
-						}
-						slotEntry = OpenMap{};
-						break;
-					}
-				}
-			}
-			func(ctx, res, sub);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct PSSetConstantBuffers_Hook  // vfunc 16
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kPSSetConstantBuffers, static_cast<std::uint16_t>(slot), n, HashPointers(bufs, n));
-			func(ctx, slot, n, bufs);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct IASetInputLayout_Hook  // vfunc 17
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11InputLayout* layout)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kIASetInputLayout, 0, reinterpret_cast<std::uint64_t>(layout));
-			func(ctx, layout);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct IASetVertexBuffers_Hook  // vfunc 18
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11Buffer* const* bufs, const UINT* strides, const UINT* offsets)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kIASetVertexBuffers, static_cast<std::uint16_t>(slot), HashPointers(bufs, n),
-					HashBytes(strides, n * 4u), HashBytes(offsets, n * 4u));
-			func(ctx, slot, n, bufs, strides, offsets);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct IASetIndexBuffer_Hook  // vfunc 19
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, DXGI_FORMAT fmt, UINT offset)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kIASetIndexBuffer, 0, reinterpret_cast<std::uint64_t>(buf), fmt, offset);
-			func(ctx, buf, fmt, offset);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct IASetPrimitiveTopology_Hook  // vfunc 24
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, D3D11_PRIMITIVE_TOPOLOGY topo)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kIASetPrimitiveTopology, 0, topo);
-			func(ctx, topo);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VSSetShaderResources_Hook  // vfunc 25
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11ShaderResourceView* const* views)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kVSSetShaderResources, static_cast<std::uint16_t>(slot), n,
-					HashBytes(views, static_cast<std::uint32_t>(n * sizeof(void*))));
-			func(ctx, slot, n, views);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VSSetSamplers_Hook  // vfunc 26
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT slot, UINT n, ID3D11SamplerState* const* samplers)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kVSSetSamplers, static_cast<std::uint16_t>(slot), n,
-					HashBytes(samplers, static_cast<std::uint32_t>(n * sizeof(void*))));
-			func(ctx, slot, n, samplers);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct OMSetRenderTargets_Hook  // vfunc 33
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kOMSetRenderTargets, 0, n,
-					HashBytes(rtvs, static_cast<std::uint32_t>(n * sizeof(void*))), reinterpret_cast<std::uint64_t>(dsv));
-			func(ctx, n, rtvs, dsv);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct OMSetBlendState_Hook  // vfunc 35
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11BlendState* state, const FLOAT blendFactor[4], UINT sampleMask)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kOMSetBlendState, 0, reinterpret_cast<std::uint64_t>(state),
-					blendFactor ? HashBytes(blendFactor, 16) : 0, sampleMask);
-			func(ctx, state, blendFactor, sampleMask);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct OMSetDepthStencilState_Hook  // vfunc 36
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, UINT stencilRef)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kOMSetDepthStencilState, 0, reinterpret_cast<std::uint64_t>(state), stencilRef);
-			func(ctx, state, stencilRef);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct RSSetState_Hook  // vfunc 43
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, ID3D11RasterizerState* state)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kRSSetState, 0, reinterpret_cast<std::uint64_t>(state));
-			func(ctx, state);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct RSSetViewports_Hook  // vfunc 44
-	{
-		static void __stdcall thunk(ID3D11DeviceContext* ctx, UINT n, const D3D11_VIEWPORT* viewports)
-		{
-			if (g_sink && (!g_filterCs || EngineCaller(_ReturnAddress())))
-				Record(Kind::kRSSetViewports, 0, n, viewports ? HashBytes(viewports, n * sizeof(D3D11_VIEWPORT)) : 0);
-			func(ctx, n, viewports);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	// ---------------------------------------------------------------------------
 	// RenderPassImmediately detour (SE REL::ID 100854, 1.5.97 0x141308440).
 	// ---------------------------------------------------------------------------
@@ -473,31 +82,6 @@ namespace
 		}
 	};
 
-	const char* KindName(Kind a_kind)
-	{
-		switch (a_kind) {
-		case Kind::kVSSetShader: return "VSSetShader";
-		case Kind::kPSSetShader: return "PSSetShader";
-		case Kind::kVSSetConstantBuffers: return "VSSetConstantBuffers";
-		case Kind::kPSSetConstantBuffers: return "PSSetConstantBuffers";
-		case Kind::kVSSetShaderResources: return "VSSetShaderResources";
-		case Kind::kPSSetShaderResources: return "PSSetShaderResources";
-		case Kind::kVSSetSamplers: return "VSSetSamplers";
-		case Kind::kPSSetSamplers: return "PSSetSamplers";
-		case Kind::kIASetInputLayout: return "IASetInputLayout";
-		case Kind::kIASetVertexBuffers: return "IASetVertexBuffers";
-		case Kind::kIASetIndexBuffer: return "IASetIndexBuffer";
-		case Kind::kIASetPrimitiveTopology: return "IASetPrimitiveTopology";
-		case Kind::kOMSetRenderTargets: return "OMSetRenderTargets";
-		case Kind::kOMSetBlendState: return "OMSetBlendState";
-		case Kind::kOMSetDepthStencilState: return "OMSetDepthStencilState";
-		case Kind::kRSSetState: return "RSSetState";
-		case Kind::kRSSetViewports: return "RSSetViewports";
-		case Kind::kMapDiscardData: return "MapDiscardData";
-		case Kind::kDrawIndexed: return "DrawIndexed";
-		}
-		return "?";
-	}
 }
 
 // ---------------------------------------------------------------------------------
@@ -790,18 +374,14 @@ namespace
 	inline std::uint8_t&        WsDsvDirty() { return t_worker ? *t_worker->dsvDirty : *engine::g_dsvDirty; }
 }
 
-// Bring up the recorder/replica infrastructure (module range, engine-call stub, RenderPassImmediately
-// detour + immediate-context recorder vfuncs) exactly once. Idempotent and mode-independent: the
-// ShadowThreaded BeginPass-ownership modes need the RenderPassImmediately trampoline (for the uncovered
-// engine fallback) and the OnRenderPassImmediately detour (to observe the engine's dispatch) even when
-// CS_UTIL_RE_MODE is off, so they call this directly. With mode kOff, OnRenderPassImmediately is a thin
-// passthrough for the rest of the game.
+// Install the RenderPassImmediately detour (the seam ShadowThreaded's instancing path rides to observe
+// each utility pass and offer it to the shadow-capture hook) exactly once. Idempotent.
 void UtilityPassReplica::EnsureInitialized()
 {
 	if (hooksInstalled)
 		return;
 
-	// Establish our own module range so the recorder can exclude CS-originated calls.
+	// Establish our own module range (used by EngineCaller); anchored on &EngineCaller.
 	{
 		HMODULE mod = nullptr;
 		if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -814,36 +394,7 @@ void UtilityPassReplica::EnsureInitialized()
 		}
 	}
 
-	// Game (SkyrimSE.exe) image range -- validate engine caster vtables (freed casters point outside).
-	if (HMODULE gm = GetModuleHandleW(nullptr)) {
-		g_gameBase = reinterpret_cast<std::uintptr_t>(gm);
-		const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(gm);
-		const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_gameBase + dos->e_lfanew);
-		g_gameEnd = g_gameBase + nt->OptionalHeader.SizeOfImage;
-		logger::info("[UtilityPassReplica] game module [{:#x}..{:#x})", g_gameBase, g_gameEnd);
-	}
-
-	BuildEngineCallStub();
-
-	engineWindow.reserve(64);
-	replicaWindow.reserve(64);
 	InstallHooks();
-}
-
-void UtilityPassReplica::Setup()
-{
-	char buf[8] = {};
-	if (GetEnvironmentVariableA("CS_UTIL_RE_MODE", buf, sizeof(buf)) && buf[0]) {
-		const int v = atoi(buf);
-		if (v >= 0 && v <= 2)
-			mode.store(static_cast<Mode>(v), std::memory_order_relaxed);
-	}
-	if (!IsActive())
-		return;
-
-	EnsureInitialized();
-	logger::info("[UtilityPassReplica] active, mode={} ({})", static_cast<std::uint32_t>(GetMode()),
-		GetMode() == Mode::kCompare ? "compare" : "replace");
 }
 
 void UtilityPassReplica::InstallHooks()
@@ -863,50 +414,8 @@ void UtilityPassReplica::InstallHooks()
 
 	stl::detour_thunk<RenderPassImmediately_Hook>(REL::RelocationID(100854, 107644));
 
-	stl::detour_vfunc<7, VSSetConstantBuffers_Hook>(context);
-	stl::detour_vfunc<8, PSSetShaderResources_Hook>(context);
-	stl::detour_vfunc<9, PSSetShader_Hook>(context);
-	stl::detour_vfunc<10, PSSetSamplers_Hook>(context);
-	stl::detour_vfunc<11, VSSetShader_Hook>(context);
-	stl::detour_vfunc<12, DrawIndexed_Hook>(context);
-	stl::detour_vfunc<14, Map_Hook>(context);
-	stl::detour_vfunc<15, Unmap_Hook>(context);
-	stl::detour_vfunc<16, PSSetConstantBuffers_Hook>(context);
-	stl::detour_vfunc<17, IASetInputLayout_Hook>(context);
-	stl::detour_vfunc<18, IASetVertexBuffers_Hook>(context);
-	stl::detour_vfunc<19, IASetIndexBuffer_Hook>(context);
-	stl::detour_vfunc<24, IASetPrimitiveTopology_Hook>(context);
-	stl::detour_vfunc<25, VSSetShaderResources_Hook>(context);
-	stl::detour_vfunc<26, VSSetSamplers_Hook>(context);
-	stl::detour_vfunc<33, OMSetRenderTargets_Hook>(context);
-	stl::detour_vfunc<35, OMSetBlendState_Hook>(context);
-	stl::detour_vfunc<36, OMSetDepthStencilState_Hook>(context);
-	stl::detour_vfunc<43, RSSetState_Hook>(context);
-	stl::detour_vfunc<44, RSSetViewports_Hook>(context);
-
 	hooksInstalled = true;
-	logger::info("[UtilityPassReplica] installed RenderPassImmediately detour + 20 context recorder hooks");
-}
-
-void UtilityPassReplica::BeginWindow(std::vector<RecordedCall>& a_sink)
-{
-	a_sink.clear();
-	g_openMaps.fill({});
-	g_sink = &a_sink;
-	g_filterCs = true;
-	static const bool s_dumpInit = [] {
-		char buf[16] = {};
-		if (GetEnvironmentVariableA("CS_UTIL_RE_DUMP", buf, sizeof(buf)))
-			g_dumpMapSize = static_cast<std::uint32_t>(strtoul(buf, nullptr, 16));
-		return true;
-	}();
-	(void)s_dumpInit;
-}
-
-void UtilityPassReplica::EndWindow()
-{
-	g_sink = nullptr;
-	g_filterCs = false;
+	logger::info("[UtilityPassReplica] installed RenderPassImmediately detour");
 }
 
 void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
@@ -1010,94 +519,6 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 	if (!CanReplicate(a_pass)) {
 		++passesUnsupported;
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		return;
-	}
-
-	if (GetMode() == Mode::kCompare) {
-		// Snapshot the cross-pass state the pass mutates (batch caches + the whole
-		// RendererShadowState span) so the REPLICA window starts from the exact state
-		// the ENGINE window started from -- otherwise the engine run warms the caches
-		// and the replica legitimately emits fewer calls (cache hits), breaking equality.
-		static std::vector<std::uint8_t> s_snapshot(engine::kSnapshotBytes);
-		std::memcpy(s_snapshot.data(), engine::S_base.address() ? reinterpret_cast<void*>(engine::S_base.address()) : nullptr, engine::kSnapshotBytes);
-		const auto savedTechnique = *engine::g_currentTechnique;
-		auto* const savedShader = *engine::g_currentShader;
-		auto* const savedMaterial = *engine::g_currentMaterial;
-
-		// The engine window's SetupTechnique overwrites the current technique flag stored on
-		// the shader object (BSShader+0x90). RestoreTechnique/SetupMaterial read that flag,
-		// and the replica's RestoreTechnique reads it BEFORE its own SetupTechnique rewrites
-		// it -- so it must see the pre-engine value, not the one the engine window left. This
-		// field lives on the shader object, outside the RendererShadowState span, so snapshot
-		// the outgoing and incoming shaders' flags explicitly.
-		auto flagAt = [](void* s) -> std::uint32_t* {
-			return s ? reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(s) + 0x90) : nullptr;
-		};
-		auto* const     outFlag = flagAt(savedShader);
-		auto* const     inFlag = flagAt(a_pass->shader);
-		const std::uint32_t savedOutFlag = outFlag ? *outFlag : 0u;
-		const std::uint32_t savedInFlag = inFlag ? *inFlag : 0u;
-		const std::uint32_t savedShadowGeomToken = *engine::g_shadowGeomToken;
-		const std::uint32_t savedBoneCBRingCursor = *engine::g_boneCBRingCursor;
-		const std::uint64_t savedDynVBRingState = *engine::g_dynVBRingState;
-
-		// Regime-B fingerprint-soundness verify (opt-in via CS_RE_REFLECT): capture the engine's and the
-		// replica's per-draw effective-state fingerprints for this pass and diff them. Byte-exact commands
-		// MUST yield identical fingerprints -- this proves the fingerprint is deterministic + correctly
-		// built before it is trusted to gate MT. The Get*/staging-read capture adds no records to the
-		// command windows (Get*/CopyResource unhooked; MAP_READ ignored by the recorder).
-		auto* const ds = vanilla::DrawStateValidator::GetSingleton();
-		const bool  fpv = ds->FpVerifyActive();
-		thread_local std::vector<vanilla::DrawFingerprint> s_fpE, s_fpR;
-		if (fpv) {
-			s_fpE.clear();
-			ds->SetFingerprintSink(&s_fpE);
-		}
-
-		// Ground truth first: the engine renders and we record its command window
-		// (BeginWindow arms the symmetric CS-injection filter).
-		BeginWindow(engineWindow);
-		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		EndWindow();
-		if (fpv)
-			ds->SetFingerprintSink(nullptr);
-
-		// Restore pre-engine state, then the replica issues its own window from the
-		// same starting point. Depth-only work is idempotent, so the double render is
-		// visually harmless; the diff is the mechanical proof of command equality.
-		std::memcpy(reinterpret_cast<void*>(engine::S_base.address()), s_snapshot.data(), engine::kSnapshotBytes);
-		*engine::g_currentTechnique = savedTechnique;
-		*engine::g_currentShader = savedShader;
-		*engine::g_currentMaterial = savedMaterial;
-		if (outFlag)
-			*outFlag = savedOutFlag;
-		if (inFlag)
-			*inFlag = savedInFlag;
-		*engine::g_shadowGeomToken = savedShadowGeomToken;
-		// Re-mapping the same ring CBs is safe: WRITE_DISCARD renames, and the replica
-		// writes byte-identical palettes.
-		*engine::g_boneCBRingCursor = savedBoneCBRingCursor;
-		*engine::g_dynVBRingState = savedDynVBRingState;
-
-		// Replica window: same symmetric filter; the replica's engine-equivalent calls
-		// go through the out-of-module stub (g_stubActive) so they and the engine's
-		// tail-called binds survive the filter while CS-hook injections drop out
-		// exactly as they did in the engine window.
-		if (fpv) {
-			s_fpR.clear();
-			ds->SetFingerprintSink(&s_fpR);
-		}
-		g_stubActive = true;
-		BeginWindow(replicaWindow);
-		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		EndWindow();
-		g_stubActive = false;
-		if (fpv)
-			ds->SetFingerprintSink(nullptr);
-
-		DiffWindows(a_pass, a_technique);
-		if (fpv)
-			ds->CompareFingerprints(s_fpE, s_fpR, a_pass, a_technique);
 		return;
 	}
 
@@ -1579,11 +1000,7 @@ namespace
 	// can prove them byte-identical before the reimpl backs the multithreaded per-map driver.
 	bool CsFlushRequested()
 	{
-		static const bool s_on = [] {
-			char buf[8] = {};
-			return GetEnvironmentVariableA("CS_UTIL_RE_CSFLUSH", buf, sizeof(buf)) && buf[0] == '1';
-		}();
-		return s_on || t_worker != nullptr;  // a bound worker MUST flush onto its own context
+		return t_worker != nullptr;  // a bound worker MUST flush onto its own context
 	}
 
 	// CS_UTIL_RE_CSSETUP bitmask: 1=SetupMaterial, 2=SetupTechnique, 4=SetupGeometry route
@@ -1591,11 +1008,7 @@ namespace
 	// it backs the private-CB worker path).
 	int CsSetupMask()
 	{
-		static const int s_mask = [] {
-			char buf[16] = {};
-			return GetEnvironmentVariableA("CS_UTIL_RE_CSSETUP", buf, sizeof(buf)) ? atoi(buf) : 0;
-		}();
-		return t_worker ? 31 : s_mask;  // a bound worker MUST use every block-parameterized reimpl
+		return t_worker ? 31 : 0;  // a bound worker MUST use every block-parameterized reimpl
 	}
 
 	// BSEffectShader::SetupGeometryAlphaBlending (1.5.97 0x14131F440) reimplemented against a
@@ -2810,63 +2223,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	// CameraViewProj -- do NOT make instWorld light-relative (that breaks the match). The over-bright bug is
 	// elsewhere; the b12@DRAW probe below reads b12 at ACTUAL draw time to check for mid-loop clobber.
 
-	// DIAGNOSTIC (per-map projection probe): classify the map (directional vs local) and log the projection
-	// b12 will carry (m_ViewProjMat source @ camera block 0x1430282E0) + the bound VS permutation id. Row 3
-	// distinguishes ortho (0,0,0,1) / perspective (.,.,1,0) / scale-bias placeholder; vsId tells us whether
-	// the per-map permutation selection is working (directional vs spot/point should differ).
-	{
-		static std::atomic<int> s_mapDbg{ 0 };
-		if (s_mapDbg.load() < 16) {
-			s_mapDbg.fetch_add(1);
-			auto*               boundVS = *reinterpret_cast<std::uint8_t**>(S + 0x348);
-			const std::uint32_t vsId = boundVS ? *reinterpret_cast<std::uint32_t*>(boundVS) : 0u;
-			const auto*         vp = reinterpret_cast<const float*>(REL::Offset(0x30282E0).address());
-			logger::info("[MapProj] tech={:08X} dir={} count={} vsId={:08X} vpR0=({:.4f},{:.4f},{:.4f},{:.4f}) vpR3=({:.3f},{:.3f},{:.3f},{:.3f})",
-				a_techniques[0], (a_techniques[0] & 0x200000u) != 0u, a_count, vsId,
-				vp[0], vp[1], vp[2], vp[3], vp[12], vp[13], vp[14], vp[15]);
-		}
-	}
-
-	// DEFINITIVE diagnostic: read b12's ACTUAL GPU CameraViewProj. Call at the TOP (engine-left state) AND
-	// right before DrawIndexedInstanced (post FlushSetupGeometry/SetDirtyStates). If TOP is the per-map light
-	// projection but DRAW is the MAIN camera, an engine call in the group loop clobbers b12 -> the instanced
-	// draws project with the main camera (matches "inst looks main-camera-like / over-bright"). c8=float[32].
-	auto readB12 = [&](const char* tag) {
-		static std::atomic<int> s_b12Dbg{ 0 };
-		if (s_b12Dbg.load() >= 24)
-			return;
-		s_b12Dbg.fetch_add(1);
-		auto* b12 = *reinterpret_cast<ID3D11Buffer**>(REL::Offset(0x3027E88).address());
-		if (!b12 || !globals::d3d::device)
-			return;
-		D3D11_BUFFER_DESC bd{};
-		b12->GetDesc(&bd);
-		static winrt::com_ptr<ID3D11Buffer> s_stg;
-		static UINT                         s_stgSize = 0;
-		if (!s_stg || s_stgSize < bd.ByteWidth) {
-			s_stg = nullptr;
-			D3D11_BUFFER_DESC sd = bd;
-			sd.Usage = D3D11_USAGE_STAGING;
-			sd.BindFlags = 0;
-			sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-			sd.MiscFlags = 0;
-			sd.StructureByteStride = 0;
-			if (SUCCEEDED(globals::d3d::device->CreateBuffer(&sd, nullptr, s_stg.put())))
-				s_stgSize = bd.ByteWidth;
-		}
-		if (!s_stg)
-			return;
-		ctx->CopyResource(s_stg.get(), b12);
-		D3D11_MAPPED_SUBRESOURCE m{};
-		if (SUCCEEDED(ctx->Map(s_stg.get(), 0, D3D11_MAP_READ, 0, &m)) && m.pData) {
-			const float* f = reinterpret_cast<const float*>(m.pData);  // c8=float[32], c40=float[160]
-			logger::info("[b12@{}] tech={:08X} VP_R0=({:.4f},{:.4f},{:.4f},{:.4f}) VP_R3=({:.2f},{:.2f},{:.2f},{:.2f}) PosAdj=({:.1f},{:.1f},{:.1f})",
-				tag, a_techniques[0], f[32], f[33], f[34], f[35], f[44], f[45], f[46], f[47], f[160], f[161], f[162]);
-			ctx->Unmap(s_stg.get(), 0);
-		}
-	};
-	readB12("TOP");
-
 	// DIAGNOSTIC accounting: where do the claimed passes go? (capture showed our instanced draws never
 	// reach the GPU -- ~2/3 of shadow geometry missing). Reset per map call; logged at the end.
 	static struct
@@ -2878,14 +2234,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	s_acct.groupedPasses = s_acct.groups = s_acct.drawn = s_acct.instSum = 0;
 	s_acct.fbGroups = s_acct.fbPasses = s_acct.dropType = s_acct.dropRd = 0;
 	s_acct.dropTech = s_acct.dropMap = s_acct.nullIL = 0;
-
-	// PHASE TIMING (env CS_SHADOW_PHASE=1): where does the per-map shadow submission time go?
-	static struct { double group, fill, draw; std::uint64_t calls; } s_phase{};
-	static const bool s_phaseOn = [] { char b[8]{}; return GetEnvironmentVariableA("CS_SHADOW_PHASE", b, sizeof(b)) && b[0] == '1'; }();
-	static double s_qpcToMs = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return 1000.0 / static_cast<double>(f.QuadPart); }();
-	LARGE_INTEGER _pt0{}, _pt1{}, _pt2{}, _pt3{};
-	if (s_phaseOn)
-		QueryPerformanceCounter(&_pt0);
 
 	// ---- group by (rendererData, technique): same mesh + technique => one instanced draw ----
 	struct Group
@@ -2972,9 +2320,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 			return groups[a].tech < groups[b].tech;
 		return groups[a].fade < groups[b].fade;
 	});
-
-	if (s_phaseOn)
-		QueryPerformanceCounter(&_pt1);
 
 	// ---- instance VB: one dynamic buffer sized for ALL of this map's instances (32 bytes each), filled
 	// with ONE Map(DISCARD); each group draws from its baseInst via DrawIndexedInstanced's
@@ -3077,9 +2422,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 		ctx->Unmap(s_instVB.get(), 0);
 	}
 
-	if (s_phaseOn)
-		QueryPerformanceCounter(&_pt2);
-
 	// The INSTANCED Utility VS is fetched PER GROUP below (each group's exact permutation, not a hardcoded
 	// one): the engine's shadow VS for a group can be plain RENDER_SHADOWMAP, the parabolic point-light
 	// variant (RenderShadowmapPb), the clamped variant, or carry vertex-format / tree-wind-animation flags.
@@ -3101,16 +2443,6 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 
 	using DirectX::PackedVector::HALF;
 	using DirectX::PackedVector::XMConvertFloatToHalf;
-
-	// A/B gate: CS_INST_FALLBACK=1 renders each claimed pass NON-instanced via ReplicaRenderPassImmediately
-	// (per-pass, immediate ctx) instead of the instanced draw -- isolates the instanced DRAW from the shared
-	// immediate-ctx path. If this matches vanilla but the instanced path does not, the bug is the instanced draw.
-	static const bool s_forceFallback = [] { char b[8] = {}; return GetEnvironmentVariableA("CS_INST_FALLBACK", b, sizeof(b)) && b[0] && b[0] != '0'; }();
-	// Default = FlushSetupGeometryReplica (last structurally-OK state). CS_INST_SETUP_ENGINE=1 swaps in the
-	// real engine SetupGeometry per group for A/B (tested 2026-07-13: made mode 9 WORSE -- streaking).
-	static const bool s_setupReplica = [] { char b[8] = {}; return !(GetEnvironmentVariableA("CS_INST_SETUP_ENGINE", b, sizeof(b)) && b[0] && b[0] != '0'); }();
-	// CS_INST_ALPHA=1 enables the per-group SetupGeometryAlphaBlending mirror (A/B; no measured effect).
-	static const bool s_alphaSetup = [] { char b[8] = {}; return GetEnvironmentVariableA("CS_INST_ALPHA", b, sizeof(b)) && b[0] && b[0] != '0'; }();
 
 	// Draw loop over the (tech, fade)-sorted groups. Per-(tech,fade) RUN setup is hoisted -- BeginTechnique,
 	// instanced-VS fetch, alpha/geometry setup, VS override happen ONCE per run (was per group: ~1.7k
@@ -3161,32 +2493,21 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 				//    compile and the run renders per-pass until the instanced VS is ready.
 				auto* boundVS = *reinterpret_cast<RE::BSGraphics::VertexShader**>(S + 0x348);
 				instVS = boundVS ? ShaderCache::Instance().GetVertexShader(*shader, boundVS->id | kInstancedFlag) : nullptr;
-				if (!instVS || !instVS->shader || s_forceFallback) {
+				if (!instVS || !instVS->shader) {
 					runFallback = true;
 				} else {
-					// Mirror ReplayOnePass' per-object alpha/depth setup (A/B-gated; no measured effect).
-					if (s_alphaSetup && shader != *reinterpret_cast<RE::BSShader**>(engine::g_skyShaderInstance.address())) {
-						if ((a_renderFlags & 4) && !EngineCall<bool>(reinterpret_cast<void*>(engine::IsGrassShadowBlacklist.address()), g.passes[0]->passEnum)) {
-							const bool alphaTest0 = *engine::g_useEarlyZ != 0;
-							auto*      ap = EngineCall<RE::NiAlphaProperty*>(reinterpret_cast<void*>(engine::GetNiProperty.address()), g.passes[0]);
-							EngineCall<void>(reinterpret_cast<void*>(engine::SetupGeometryAlphaBlending.address()), shader, ap, g.passes[0]->shaderProperty, alphaTest0);
-						}
-					}
-
 					// Per-geometry setup once per run, on the run's first pass, while the engine shadow VS is
 					// bound: establishes (1) the shadow-FADE depth-stencil token (uniform per run -- fade is in
 					// the sort key) and (2) the per-LIGHT scissor (SG_ScissorFromBBox; per light == per map, so
 					// uniform across every group here). Also writes b2 World (IGNORED -- the instanced VS reads
 					// World from the stream) and the ShadowFadeParam.z falloff (SHADOWMASK-only; harmless).
-					if (s_setupReplica) {
+					{
 						auto* vsSh = *reinterpret_cast<std::uint8_t**>(S + 0x348);
 						auto* psSh = *reinterpret_cast<std::uint8_t**>(S + 0x350);
 						FlushSetupGeometryReplica(ctx,
 							vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
 							psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
 							S, shader, g.passes[0]);
-					} else {
-						EngineCallV<6, void>(shader, g.passes[0], a_renderFlags);  // engine SetupGeometry
 					}
 
 					// Override the bound VS with the INSTANCED permutation; the b2 CB stays bound at slot 2.
@@ -3249,26 +2570,12 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 				vertexDesc & *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::uint8_t*>(instVS) + 0x48),
 				il ? "OK" : "NULL", triCount, n, g.baseInst);
 		}
-		readB12("DRAW");  // throttled b12 probe
 		EngineCallV<20, void>(ctx, 3u * triCount, n, 0u, 0, g.baseInst);                // DrawIndexedInstanced
 		g_instVal.Record(rd, triCount, n, g.baseInst, g.tech, g.fade);
 		++s_acct.drawn;
 		s_acct.instSum += n;
 	}
 	closeRun();
-
-	if (s_phaseOn) {
-		QueryPerformanceCounter(&_pt3);
-		s_phase.group += static_cast<double>(_pt1.QuadPart - _pt0.QuadPart) * s_qpcToMs;
-		s_phase.fill += static_cast<double>(_pt2.QuadPart - _pt1.QuadPart) * s_qpcToMs;
-		s_phase.draw += static_cast<double>(_pt3.QuadPart - _pt2.QuadPart) * s_qpcToMs;
-		if ((++s_phase.calls % 256) == 0) {
-			logger::info("[ShadowPhase] per-256-calls avg(ms): group={:.4f} fill={:.4f} draw={:.4f} total={:.4f} (this map: passes={})",
-				s_phase.group / 256.0, s_phase.fill / 256.0, s_phase.draw / 256.0,
-				(s_phase.group + s_phase.fill + s_phase.draw) / 256.0, a_count);
-			s_phase.group = s_phase.fill = s_phase.draw = 0.0;
-		}
-	}
 
 	// COMMAND-VALIDATION invariants (pass conservation): every claimed pass must land in exactly one
 	// bucket. A violation means the instanced submission dropped or duplicated shadow casters.
@@ -3384,617 +2691,3 @@ void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_a
 	EngineCallV<7, void>(shader, a_pass, a_renderFlags);  // RestoreGeometry
 }
 
-void UtilityPassReplica::DiffWindows(RE::BSRenderPass* a_pass, std::uint32_t a_technique)
-{
-	// Validated state (village + Riverwood + Whiterun interior, in motion): 1.1M+ passes,
-	// zero structural divergence across all three classes. The only observed diff class
-	// is a one-shot CS shader-cache transition: an async compile finishing BETWEEN the
-	// two windows flips the BeginTechnique PS thunk from its engine-fallback bind
-	// (recorded) to CS substitution (filtered), so the engine window carries one extra
-	// PSSetShader exactly once per compile completion. Benign and self-identifying.
-	++passesCompared;
-	// Coverage/di­vergence heartbeat so long runs report progress without a debugger.
-	if ((passesCompared & 0x3FFF) == 0) {
-		logger::info("[UtilityPassReplica] divergedByClass tri={} subIndex={} skinned={}",
-			divergedByClass[0], divergedByClass[1], divergedByClass[2]);
-		logger::info("[UtilityPassReplica] compared={} diverged={} unsupported={} (noGeom={} skin={} custom={} nonTri={} noRD={} stencil={})",
-			passesCompared, passesDiverged, passesUnsupported,
-			g_unsupReason[0].load(std::memory_order_relaxed), g_unsupReason[1].load(std::memory_order_relaxed),
-			g_unsupReason[2].load(std::memory_order_relaxed), g_unsupReason[3].load(std::memory_order_relaxed),
-			g_unsupReason[4].load(std::memory_order_relaxed), g_unsupReason[5].load(std::memory_order_relaxed));
-		std::string detail = "uncoveredGeomTypes[";
-		for (int i = 0; i < 16; ++i)
-			if (const auto n = g_geomTypeHist[i].load(std::memory_order_relaxed))
-				detail += fmt::format(" {}:{}", i, n);
-		detail += " ]";
-		logger::info("[UtilityPassReplica] {}", detail);
-	}
-	const bool sameSize = engineWindow.size() == replicaWindow.size();
-	bool identical = sameSize;
-	std::size_t firstDiff = 0;
-	std::uint32_t firstField = 0;  // 0=kind 1=slot 2=a 3=b 4=c
-	if (sameSize) {
-		for (std::size_t i = 0; i < engineWindow.size(); ++i) {
-			const auto& e = engineWindow[i];
-			const auto& r = replicaWindow[i];
-			if (e.kind != r.kind || e.slot != r.slot || e.a != r.a || e.b != r.b || e.c != r.c) {
-				identical = false;
-				firstDiff = i;
-				firstField = e.kind != r.kind ? 0 : e.slot != r.slot ? 1 :
-				             e.a != r.a          ? 2 :
-				             e.b != r.b          ? 3 :
-				                                   4;
-				break;
-			}
-		}
-	}
-	if (identical)
-		return;
-
-	++passesDiverged;
-	// Class the divergence so each coverage stage gets its own dump budget and count:
-	// skinned (geom+0x130), sub-index (type 8), plain trishape.
-	const auto* gb = reinterpret_cast<const std::uint8_t*>(a_pass->geometry);
-	const int   cls = *reinterpret_cast<void* const*>(gb + 0x130) ? 2 : (gb[0x150] == 8 ? 1 : 0);
-	++divergedByClass[cls];
-
-	// Pinpoint the FIRST divergence since the last reset for the rerunnable parity gate
-	// (the log dump budget can run out; this single record always survives to be queried).
-	if (!firstDivergeCaptured) {
-		firstDivergeCaptured = true;
-		firstDivergeClass = static_cast<std::uint32_t>(cls);
-		firstDivergeTechnique = a_technique;
-		firstDivergeEngineCalls = engineWindow.size();
-		firstDivergeReplicaCalls = replicaWindow.size();
-		firstDivergeSizeMismatch = !sameSize;
-		firstDivergeIndex = firstDiff;
-		firstDivergeField = firstField;
-	}
-	if (dumpBudgetByClass[cls] == 0)
-		return;
-	--dumpBudgetByClass[cls];
-
-	static constexpr const char* kClassNames[3] = { "trishape", "subindex", "skinned" };
-	logger::warn("[UtilityPassReplica][DIFF] class={} pass={} technique=0x{:X} engineCalls={} replicaCalls={} firstDiff={}",
-		kClassNames[cls], static_cast<const void*>(a_pass), a_technique, engineWindow.size(), replicaWindow.size(),
-		sameSize ? std::to_string(firstDiff) : "size-mismatch");
-	if (sameSize && firstDiff < engineWindow.size()) {
-		const auto& ec = engineWindow[firstDiff];
-		const auto& rc = replicaWindow[firstDiff];
-		logger::warn("[UtilityPassReplica][DIFF-CALL] field={} E(kind={} slot={} a={:X} b={:X} c={:X}) R(kind={} slot={} a={:X} b={:X} c={:X})",
-			firstField, static_cast<int>(ec.kind), ec.slot, ec.a, ec.b, ec.c,
-			static_cast<int>(rc.kind), rc.slot, rc.a, rc.b, rc.c);
-	}
-	// If the first diverging call is a Map with snapshotted dwords (dump enabled), report the
-	// exact diverging dword offsets and engine-vs-replica values -- the precise field to fix.
-	if (sameSize && firstDiff < engineWindow.size()) {
-		const auto& e = engineWindow[firstDiff];
-		const auto& r = replicaWindow[firstDiff];
-		if (e.kind == Kind::kMapDiscardData && e.mapData && r.mapData) {
-			const auto& ev = *e.mapData;
-			const auto& rv = *r.mapData;
-			std::string s;
-			for (std::size_t k = 0; k < std::max(ev.size(), rv.size()); ++k) {
-				const std::uint32_t evk = k < ev.size() ? ev[k] : 0;
-				const std::uint32_t rvk = k < rv.size() ? rv[k] : 0;
-				if (evk != rvk)
-					s += fmt::format(" dw{}: E={:08X} R={:08X};", k, evk, rvk);
-			}
-			logger::warn("[UtilityPassReplica][DIFF-DWORDS]{}", s);
-		}
-	}
-	const std::size_t n = std::max(engineWindow.size(), replicaWindow.size());
-	for (std::size_t i = 0; i < n && i < 64; ++i) {
-		const auto* e = i < engineWindow.size() ? &engineWindow[i] : nullptr;
-		const auto* r = i < replicaWindow.size() ? &replicaWindow[i] : nullptr;
-		const bool  same = e && r && e->kind == r->kind && e->slot == r->slot && e->a == r->a && e->b == r->b && e->c == r->c;
-		logger::warn("  [{:2}]{} E:{:<22} s={} a={:X} b={:X} c={:X} | R:{:<22} s={} a={:X} b={:X} c={:X}",
-			i, same ? " " : "*",
-			e ? KindName(e->kind) : "-", e ? e->slot : 0, e ? e->a : 0, e ? e->b : 0, e ? e->c : 0,
-			r ? KindName(r->kind) : "-", r ? r->slot : 0, r ? r->a : 0, r ? r->b : 0, r ? r->c : 0);
-	}
-}
-
-UtilityPassReplica::ValidationReport UtilityPassReplica::GetValidationReport() const
-{
-	ValidationReport rep;
-	rep.compared = passesCompared;
-	rep.diverged = passesDiverged;
-	rep.divergedTrishape = divergedByClass[0];
-	rep.divergedSubIndex = divergedByClass[1];
-	rep.divergedSkinned = divergedByClass[2];
-	rep.unsupported = passesUnsupported;
-	rep.haveFirstDiverge = firstDivergeCaptured;
-	rep.firstClass = firstDivergeClass;
-	rep.firstTechnique = firstDivergeTechnique;
-	rep.firstEngineCalls = firstDivergeEngineCalls;
-	rep.firstReplicaCalls = firstDivergeReplicaCalls;
-	rep.firstSizeMismatch = firstDivergeSizeMismatch;
-	rep.firstDiffIndex = firstDivergeIndex;
-	rep.firstDiffField = firstDivergeField;
-	return rep;
-}
-
-void UtilityPassReplica::ResetValidation()
-{
-	passesCompared = 0;
-	passesDiverged = 0;
-	divergedByClass[0] = divergedByClass[1] = divergedByClass[2] = 0;
-	dumpBudgetByClass[0] = 8;
-	dumpBudgetByClass[1] = 24;
-	dumpBudgetByClass[2] = 24;
-	passesUnsupported = 0;
-	firstDivergeCaptured = false;
-	firstDivergeClass = 0;
-	firstDivergeTechnique = 0;
-	firstDivergeEngineCalls = 0;
-	firstDivergeReplicaCalls = 0;
-	firstDivergeSizeMismatch = false;
-	firstDivergeIndex = 0;
-	firstDivergeField = 0;
-}
-
-// ============================================================================================
-// Concurrent shadow fan-out worker binding.
-//
-// A ShadowWorker owns a PRIVATE 0x5D8 render-state block + technique/material/shadow-token cache
-// cells. When bound as the calling thread's t_worker, the byte-exact setup pipeline (forced to
-// CS_UTIL_RE_CSSETUP=31 + flush reimpl via CsSetupMask/CsFlushRequested) reads/writes ONLY this
-// worker's state and records onto its deferred context -- no shared mutable state across threads
-// (skinned passes, whose bone-CB/dyn-VB rings are still global, stay on the serial remainder).
-// ============================================================================================
-#pragma warning(push)
-#pragma warning(disable : 4324)  // structure padded due to alignas(16) on `block`
-class UtilityPassReplica::ShadowWorker
-{
-public:
-	ShadowWorkerState               state;
-	alignas(16) std::uint8_t        block[engine::kSnapshotBytes]{};
-	std::uint32_t                   technique = 0;
-	RE::BSShader*                   shader = nullptr;
-	void*                           material = nullptr;
-	std::uint32_t                   shadowToken = 0;
-	std::uint32_t                   techFlags = 0;
-	std::uint32_t                   techSub = 0;
-	std::uint8_t                    dsvDirty = 0;
-};
-#pragma warning(pop)
-
-UtilityPassReplica::ShadowWorker* UtilityPassReplica::MakeShadowWorker(ID3D11DeviceContext* a_ctx, std::uint32_t a_initToken)
-{
-	auto* w = new ShadowWorker();
-	w->shadowToken = a_initToken;
-	w->state.block = w->block;
-	w->state.ctx = a_ctx;
-	w->state.technique = &w->technique;
-	w->state.shader = &w->shader;
-	w->state.material = &w->material;
-	w->state.shadowToken = &w->shadowToken;
-	w->state.techFlags = &w->techFlags;
-	w->state.techSub = &w->techSub;
-	w->state.dsvDirty = &w->dsvDirty;
-	return w;
-}
-
-void UtilityPassReplica::FreeShadowWorker(ShadowWorker* a_worker)
-{
-	delete a_worker;
-}
-
-void UtilityPassReplica::WorkerSeedMap(ShadowWorker* a_worker, const std::uint8_t* a_mapBlock)
-{
-	// Seed the map's clean RT/viewport/depth block, then force a full re-bind on the first pass and
-	// reset the technique/material change-detection caches so the first replayed pass runs a full
-	// BeginPass/SetupTechnique (a stale cache-hit would skip setup and bind a stale VS/PS pointer).
-	std::memcpy(a_worker->block, a_mapBlock, engine::kSnapshotBytes);
-	*reinterpret_cast<std::uint32_t*>(a_worker->block) = 0xFFFFFFFFu;  // force all main-word dirty bits
-	a_worker->technique = 0;
-	a_worker->shader = nullptr;
-	a_worker->material = nullptr;
-	a_worker->techFlags = 0;
-	a_worker->techSub = 0;
-	a_worker->dsvDirty = 0;
-}
-
-void UtilityPassReplica::WorkerBeginScope(ShadowWorker* a_worker)
-{
-	t_worker = &a_worker->state;
-}
-
-void UtilityPassReplica::WorkerEndScope()
-{
-	t_worker = nullptr;
-}
-
-// ============================================================================================
-// BSBatchRenderer::BeginPass (SE 1.5.97 0x141308030), reimplemented 1:1. Owns the per-group DX11
-// state setup + the m_PassGroupNext pass loop + the RestoreTechnique cleanup, driving the passes
-// through ReplicaRenderPassImmediately. Structural fields on the batch renderer (a1): hash table
-// base @+0x48, capacity @+0x2C, sentinel @+0x38, pass-array base @+8, "release passes" flag @+0x6C.
-// Group-state caches in the render-state block: main @S+0, unk_143027F4C @S+0x9C, F5C @S+0xAC,
-// F64 @S+0xB4. v11 is the alpha-test flag threaded into RenderPassImmediately.
-// ============================================================================================
-// Hash-table lookup shared by BeginPassReplica and BeginPassCompare: resolve the batch-group id v6
-// for a key. Table base @a1+0x48, capacity (pow2) @a1+0x2C, sentinel @a1+0x38; entries {key@0,val@4,
-// next@8} stride 16. Returns 0 (the default group) on miss, matching the engine.
-static std::uint32_t BeginPassGroupId(std::uint8_t* a1, std::uint32_t key)
-{
-	std::uint32_t v6 = 0;
-	if (auto tbl = *reinterpret_cast<std::uintptr_t*>(a1 + 0x48)) {
-		std::uintptr_t e = tbl + 16ull * (key & (*reinterpret_cast<std::uint32_t*>(a1 + 0x2C) - 1));
-		if (*reinterpret_cast<std::uintptr_t*>(e + 8)) {
-			const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(a1 + 0x38);
-			bool                 hit = true;
-			while (*reinterpret_cast<std::uint32_t*>(e) != key) {
-				e = *reinterpret_cast<std::uintptr_t*>(e + 8);
-				if (e == sentinel) { hit = false; break; }
-			}
-			if (hit)
-				v6 = *reinterpret_cast<std::uint32_t*>(e + 4);
-		}
-	}
-	return v6;
-}
-
-bool UtilityPassReplica::DirectReadEnumerate(void* a_accum, std::vector<RE::BSRenderPass*>& a_instPasses,
-	std::vector<std::uint32_t>& a_instTechs, std::vector<RE::BSRenderPass*>& a_remainder,
-	std::vector<std::uint32_t>* a_remTechs, std::vector<std::uint8_t>* a_remAlpha) const
-{
-	a_instPasses.clear();
-	a_instTechs.clear();
-	a_remainder.clear();
-	if (a_remTechs)
-		a_remTechs->clear();
-	if (a_remAlpha)
-		a_remAlpha->clear();
-	if (!a_accum)
-		return false;
-	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
-	if (!br)
-		return false;
-	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(br + 8);
-	auto* const tbl = *reinterpret_cast<std::uint8_t**>(br + 0x48);
-	if (!passArrayBase || !tbl)
-		return false;
-	const std::uint32_t  cap = *reinterpret_cast<std::uint32_t*>(br + 0x2C);
-	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
-	if (cap == 0 || cap > (1u << 20))
-		return false;
-	// passGroupNext chains are engine-owned and can be transiently cyclic/corrupt when read at the
-	// wrong window (e.g. a directional-cascade accumulator mid-reuse, or racing the parallel cull's
-	// tail). An unbounded walk then push_backs until std::bad_alloc (observed crash 2026-07-15). Bound
-	// every chain and the whole accumulator; on trip, bail so the caller falls back to the engine Func42
-	// for this map rather than rendering a corrupt/partial enumeration.
-	constexpr std::size_t kMaxPerChain = 1u << 17;  // 131072 passes/head -- vastly above any real map
-	constexpr std::size_t kMaxTotal = 1u << 19;     // 524288 passes/accumulator budget
-	std::size_t           total = 0;
-	for (std::uint32_t b = 0; b < cap; ++b) {
-		auto* const e = tbl + 16ull * b;
-		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
-			continue;
-		if (!*reinterpret_cast<std::uintptr_t*>(e + 8))
-			continue;
-		const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(e);       // technique key for this group
-		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
-		for (int slot = 0; slot < 5; ++slot) {
-			const bool  modeAlpha = (slot == 1 || slot == 3 || slot == 4);  // v11 alpha-test flag per BeginPass
-			std::size_t chainLen = 0;
-			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
-				pass; pass = pass->passGroupNext) {
-				if (++chainLen > kMaxPerChain || ++total > kMaxTotal)
-					return false;  // cyclic/oversized chain -> reject the whole enumeration
-				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
-				// Mode-14 safety gate: a freed/torn caster's geometry vtable falls outside the game module
-				// -> rendering it jumps to garbage (the dense-exterior crash at 0x7EEECB80); an exotic
-				// geometry type (grass 4/10, LOD 5/6/9, particle 11, instance-group 14, ...) breaks
-				// RenderShadowInstanced's single-matrix World / the engine's per-type dispatch. Either ->
-				// reject the WHOLE map (return false) so Func42Hook runs the engine Func42, which renders +
-				// frees everything correctly. Per-map fallback (not per-caster skip -- skipping would drop
-				// those shadows). Whole-TRISHAPE (3) + type 8 are the proven-safe owned set.
-				if (!geom || !InGameModule(*reinterpret_cast<void* const*>(geom)))
-					return false;
-				const std::uint8_t gt = geom[0x150];
-				if (gt != 3 && gt != 8) {
-					g_unsafeCasterHist[gt & 15].fetch_add(1, std::memory_order_relaxed);
-					return false;
-				}
-				const bool  wholeTri = geom && geom[0x150] == 3;
-				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
-				if (!modeAlpha && wholeTri && !skinned) {
-					a_instPasses.push_back(pass);
-					a_instTechs.push_back(key);
-				} else {
-					a_remainder.push_back(pass);
-					if (a_remTechs)
-						a_remTechs->push_back(key);
-					if (a_remAlpha)
-						a_remAlpha->push_back(modeAlpha ? 1u : 0u);
-				}
-			}
-		}
-	}
-	return true;
-}
-
-void UtilityPassReplica::DirectReadInstanceableCount(void* a_accum, std::uint64_t& a_instanceable, std::uint64_t& a_other) const
-{
-	a_instanceable = 0;
-	a_other = 0;
-	if (!a_accum)
-		return;
-	// BSShaderAccumulator + 0x130 -> BSBatchRenderer (CommonLib batchRenderer; RE _pad_8[296]).
-	auto* const br = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<std::uint8_t*>(a_accum) + 0x130);
-	if (!br)
-		return;
-	// renderPass inline PassGroup[] base (stride 0x30) -- same as BeginPassReplica's passArrayBase.
-	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(br + 8);
-	if (!passArrayBase)
-		return;
-	// renderPassMap scatter table: entries @ br+0x48, capacity (power-of-two) @ br+0x2C, end-sentinel @
-	// br+0x38 (exact offsets proven by BeginPassGroupId). Each 16B entry = {key(tech)@0, groupIdx@4,
-	// next@8}; a slot with next==0 is empty. Iterating every bucket visits each stored entry once
-	// (collision chains resolve within the same array), enumerating all active (technique, group) pairs.
-	auto* const tbl = *reinterpret_cast<std::uint8_t**>(br + 0x48);
-	if (!tbl)
-		return;
-	const std::uint32_t  cap = *reinterpret_cast<std::uint32_t*>(br + 0x2C);
-	const std::uintptr_t sentinel = *reinterpret_cast<std::uintptr_t*>(br + 0x38);
-	if (cap == 0 || cap > (1u << 20))  // sanity bound: guard against a torn/garbage capacity read
-		return;
-	std::uint64_t rawWalked = 0, occupiedBuckets = 0;
-	// Same cyclic-chain guard as DirectReadEnumerate: bound each chain so a torn/reused accumulator
-	// can't spin this diagnostic forever (it feeds counters, not renders, so we just stop early).
-	constexpr std::size_t kMaxPerChain = 1u << 17;
-	for (std::uint32_t b = 0; b < cap; ++b) {
-		auto* const e = tbl + 16ull * b;
-		if (reinterpret_cast<std::uintptr_t>(e) == sentinel)
-			continue;
-		if (!*reinterpret_cast<std::uintptr_t*>(e + 8))  // empty slot
-			continue;
-		++occupiedBuckets;
-		const std::uint32_t groupIdx = *reinterpret_cast<std::uint32_t*>(e + 4);
-		// Modes 1/3/4 carry the alpha-test flag (v11) in BeginPass; modes 0/2 do not. The instanceable
-		// subset is non-alpha-test whole-TRISHAPE non-skinned -- so only modes 0 and 2 can contribute.
-		for (int slot = 0; slot < 5; ++slot) {
-			const bool  modeAlpha = (slot == 1 || slot == 3 || slot == 4);
-			std::size_t chainLen = 0;
-			for (auto* pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (slot + 6ll * groupIdx));
-				pass; pass = pass->passGroupNext) {
-				if (++chainLen > kMaxPerChain)
-					break;
-				++rawWalked;
-				auto* const geom = reinterpret_cast<std::uint8_t*>(pass->geometry);
-				const bool  wholeTri = geom && geom[0x150] == 3;
-				const bool  skinned = geom && *reinterpret_cast<void* const*>(geom + 0x130);
-				if (!modeAlpha && wholeTri && !skinned)
-					++a_instanceable;
-				else
-					++a_other;
-			}
-		}
-	}
-	(void)occupiedBuckets;
-	(void)rawWalked;
-	// FINDING (2026-07-14, mode-10 harness): at Func43 ENTRY this reads occBuckets=10 (the technique
-	// registry persists) but rawWalked=0 -- the renderPass hash-array chains are EMPTY -- and the
-	// geometryGroups[16] pass-lists are empty too. The batchRenderer holds NO materialized passes before
-	// the walk: RenderBatches (0x1412CCE40) materializes each group's passes, walks them, and clears them
-	// transiently, per group. So there is no clean pre-walk point to direct-read; the passes exist only
-	// DURING the walk (which is exactly where CaptureHook taps them). The skip-walk + direct-read design
-	// in shadow-walk-parallelization.md is therefore invalid at this hook point -- parallelizing the walk
-	// needs either capture-during-walk (serial) or MT-the-walk (global-state localization), not a
-	// self-contained pre-walk read. Function retained for a future correct hook point (e.g. mid-walk).
-}
-
-std::uint8_t UtilityPassReplica::BeginPassReplica(void* a_batchRenderer, void* a2, void* a3, void* a4, std::uint32_t a5)
-{
-	auto* const   a1 = reinterpret_cast<std::uint8_t*>(a_batchRenderer);
-	const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(a2);
-	auto* const   groupPtr = reinterpret_cast<std::int32_t*>(a3);
-
-	// --- 1. hash-table lookup: batch-group id v6 for this key ---
-	const std::uint32_t v6 = BeginPassGroupId(a1, key);
-
-	// --- 2. per-group DX11 state setup (block dirty bits + change caches) ---
-	std::uint8_t* const S = t_worker ? t_worker->block : reinterpret_cast<std::uint8_t*>(engine::S_base.address());
-	auto&               main = *reinterpret_cast<std::uint32_t*>(S + 0x00);
-	auto&               f4C = *reinterpret_cast<std::uint32_t*>(S + 0x9C);
-	auto&               f5C = *reinterpret_cast<std::uint32_t*>(S + 0xAC);
-	auto&               f64 = *reinterpret_cast<std::uint32_t*>(S + 0xB4);
-	const std::uint8_t  e5D = *engine::g_beginPassFlagE5D;
-	const std::int32_t  grp = *groupPtr;
-	const bool          noBlend = (a5 & 0x108) == 0;
-	bool                v11 = false;  // alpha-test flag passed to RenderPassImmediately
-
-	if (grp == 0) {
-		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
-		if (f64) { f64 = 0; main |= 0x100; }
-		if (f5C) { f5C = 0; main |= 0x80; }
-	} else if (grp == 2) {
-		if (noBlend && f4C) { f4C = 0; main |= 0x20; }
-		if (f64) { f64 = 0; main |= 0x100; }
-		if (f5C) { f5C = 0; main |= 0x80; }
-	} else if (grp == 3) {
-		if (noBlend && f4C) { f4C = 0; main |= 0x20; }
-		if (f64 != 1) { f64 = 1; main |= 0x100; }
-		v11 = true;
-		if (e5D && f5C != 1) { f5C = 1; main |= 0x80; }
-	} else if (grp == 1) {
-		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
-		if (f64 != 1) { f64 = 1; main |= 0x100; }
-		v11 = true;
-		if (e5D && f5C != 1) { f5C = 1; main |= 0x80; }
-	} else if (grp == 4) {
-		if (noBlend && f4C != 1) { f4C = 1; main |= 0x20; }
-		if (f64 != 1) { f64 = 1; main |= 0x100; }
-		v11 = true;
-		if (f5C) { f5C = 0; main |= 0x80; }
-	}
-
-	// --- 3. pass loop: head of (group, bucket) chain, walk m_PassGroupNext, render each ---
-	auto* const passArrayBase = *reinterpret_cast<std::uint8_t**>(a1 + 8);
-	auto*       pass = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (grp + 6ll * v6));
-	while (pass) {
-		// Same coverage split as mode-2's OnRenderPassImmediately: the replica owns the passes it can
-		// reproduce byte-for-byte (CanReplicate) and hands everything else -- skinned-dynamic, stencil,
-		// custom-render, non-trishape -- to the engine's RenderPassImmediately whole-pass. Both paths
-		// share the g_currentShader/technique/material caches, so interleaving is state-consistent.
-		if (t_bpSeqSink)  // verify capture: record the dispatch (see BeginPassCompare)
-			t_bpSeqSink->push_back({ pass, key, static_cast<std::uint8_t>(v11), a5 });
-		if (CanReplicate(pass))
-			ReplicaRenderPassImmediately(pass, key, v11, a5);
-		else
-			RenderPassImmediately_Hook::Engine(pass, key, v11, a5);
-		pass = pass->passGroupNext;  // 0x30
-	}
-
-	// --- 4. cleanup: release the group's pass list (when the renderer owns them), RestoreTechnique
-	//        on the last shader, reset the current shader/technique/material caches. ---
-	if (*reinterpret_cast<std::uint8_t*>(a1 + 0x6C)) {
-		auto* const bucket = passArrayBase + 48ull * v6;
-		*reinterpret_cast<std::uint32_t*>(bucket + 40) &= ~(1u << grp);
-		*reinterpret_cast<std::uintptr_t*>(bucket + 8ull * grp) = 0;
-	}
-	if (auto* curShader = WsShader()) {
-		RestoreTechniqueReplica(S, reinterpret_cast<std::uint8_t*>(curShader), WsTechnique());
-	}
-	WsShader() = nullptr;
-	WsTechnique() = 0;
-	WsMaterial() = nullptr;
-	if (f5C) { f5C = 0; main |= 0x80; }
-
-	// --- 5. advance the batch iterator (pure engine logic, no DX11) + return "more groups remain" ---
-	++*groupPtr;
-	return engine::BatchAdvance(a1, a2, a3, a4);
-}
-
-// ============================================================================================
-// BeginPass-level orchestration compare (kOwnBeginPassVerify). NON-DESTRUCTIVE: the engine's BeginPass
-// pops-and-FREES the group's list nodes on the release path (sub_141307E80 via BatchAdvance), so it
-// must run exactly once -- a double execution would double-free and desync the caller's group loop.
-// Instead we compute the replica's EXPECTED dispatch by reading the (still-intact) pass chain, then run
-// the engine ONCE for real while recording its ACTUAL per-pass dispatch, and diff:
-//   the ordered (pass, key=technique, alphaTest=v11, renderFlags) sequence.
-// A match proves BeginPassReplica's hash lookup + m_PassGroupNext walk + v11 derivation select exactly
-// the passes the engine does. The per-pass DX11 (already byte-exact via the RenderPassImmediately
-// compare), the group-state block writes and the cleanup are transcribed 1:1 from the decompile and
-// exercised under mode-5 rendering; this mode adds the deterministic enumeration proof on top.
-// ============================================================================================
-std::uint8_t UtilityPassReplica::BeginPassCompare(void* a1v, void* a2, void* a3, void* a4, std::uint32_t a5, BeginPassFn a_engine)
-{
-	auto* const         a1 = reinterpret_cast<std::uint8_t*>(a1v);
-	const std::uint32_t key = *reinterpret_cast<std::uint32_t*>(a2);
-	const std::int32_t  grp = *reinterpret_cast<std::int32_t*>(a3);
-
-	// Replica's EXPECTED dispatch, computed by pure reads before the engine consumes the chain. v11
-	// (the alpha-test flag threaded into RenderPassImmediately) depends only on the group index -- true
-	// for groups 1/3/4 -- exactly as the group-state machine sets it.
-	thread_local std::vector<VerifyPassRec> replicaSeq, engineSeq;
-	replicaSeq.clear();
-	const std::uint8_t  v11 = (grp == 1 || grp == 3 || grp == 4) ? 1u : 0u;
-	const std::uint32_t v6 = BeginPassGroupId(a1, key);
-	auto* const         passArrayBase = *reinterpret_cast<std::uint8_t**>(a1 + 8);
-	for (auto* p = *reinterpret_cast<RE::BSRenderPass**>(passArrayBase + 8ull * (grp + 6ll * v6)); p; p = p->passGroupNext)
-		replicaSeq.push_back({ p, key, v11, a5 });
-
-	// Engine's ACTUAL dispatch: run it once (renders + advances + may free nodes). Each pass flows
-	// through OnRenderPassImmediately, which appends to engineSeq while the sink is armed.
-	engineSeq.clear();
-	t_bpSeqSink = &engineSeq;
-	const std::uint8_t ret = static_cast<std::uint8_t>(reinterpret_cast<std::uintptr_t>(a_engine(a1v, a2, a3, a4, a5)));
-	t_bpSeqSink = nullptr;
-
-	// Diff the two sequences element-by-element.
-	bool        diverged = engineSeq.size() != replicaSeq.size();
-	std::size_t firstDiff = SIZE_MAX;
-	if (!diverged) {
-		for (std::size_t i = 0; i < engineSeq.size(); ++i) {
-			const auto& e = engineSeq[i];
-			const auto& r = replicaSeq[i];
-			if (e.pass != r.pass || e.tech != r.tech || e.alpha != r.alpha || e.flags != r.flags) {
-				diverged = true;
-				firstDiff = i;
-				break;
-			}
-		}
-	}
-
-	++g_bpCompareGroups;
-	if (diverged) {
-		++g_bpCompareDiverged;
-		if (g_bpCompareDiverged <= 32)  // cap log spam; first 32 divergences suffice to debug
-			logger::warn("[BeginPassCompare] DIVERGE grp={} key={:#x} v11={} seq(engine={},replica={}) firstDiff={}",
-				grp, key, v11, engineSeq.size(), replicaSeq.size(),
-				firstDiff == SIZE_MAX ? -1 : static_cast<int>(firstDiff));
-	}
-	return ret;
-}
-
-void UtilityPassReplica::GetBeginPassCompareStats(std::uint64_t& a_groups, std::uint64_t& a_diverged) const
-{
-	a_groups = g_bpCompareGroups;
-	a_diverged = g_bpCompareDiverged;
-}
-
-// ============================================================================================
-// Regime-B MULTITHREAD draw-state gate. For one covered shadow pass, render it two ways from the SAME
-// starting state and diff the per-draw effective-state fingerprints:
-//   (E) the engine's RenderPassImmediately, and
-//   (T) the WORKER path -- ReplicaRenderPassImmediately under a ShadowWorker with its PRIVATE 0x5D8
-//       block + private caches + the full setup/flush reimplementation (CsSetupMask=31), exactly the
-//       code the real N-thread MT runs, seeded (all-dirty) as on a fresh context.
-// The worker renders on the IMMEDIATE context here (staging CB reads are legal), but the fingerprint is
-// context-blind and the worker forces all-state-dirty regardless of context -- so T is bit-identical to
-// what the worker would produce on its deferred context. E==T therefore proves the worker path binds the
-// same effective state (used CB bytes + all pipeline objects) the engine does, per draw. This is the
-// gate that lets the MT path be optimized freely (order/context/buffer-identity independent). Same frame,
-// deterministic, no frozen scene. The double render is depth-idempotent.
-// ============================================================================================
-void UtilityPassReplica::VerifyPassDrawStateThreaded(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
-{
-	auto* const ds = vanilla::DrawStateValidator::GetSingleton();
-	auto* const S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
-
-	// A private worker on the immediate context, created once (draw-state-equivalent to a deferred worker).
-	static ShadowWorker* s_verifyWorker = nullptr;
-	if (!s_verifyWorker)
-		s_verifyWorker = MakeShadowWorker(globals::d3d::context, 0);
-	if (!s_verifyWorker)
-		return;
-
-	// Snapshot the PRE-PASS block: the map's state + the group state BeginPass just set. This seeds the
-	// worker's private block (it must render from the SAME starting state as the engine). The engine
-	// render is left to evolve S normally (its per-pass dirty tracking must carry into the next pass), so
-	// we do NOT restore S -- only rewind the SHARED bone/dyn-VB ring cursors the worker's maps advance.
-	static thread_local std::vector<std::uint8_t> snap;
-	snap.assign(S, S + engine::kSnapshotBytes);
-
-	thread_local std::vector<vanilla::DrawFingerprint> fpE, fpT;
-
-	// (E) engine render on the immediate context -> fingerprint list E (this is the real inline render;
-	// S evolves to its correct post-render state and is left there for the next pass).
-	fpE.clear();
-	ds->SetFingerprintSink(&fpE);
-	RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
-	ds->SetFingerprintSink(nullptr);
-	const std::uint32_t postBone = *engine::g_boneCBRingCursor;
-	const std::uint64_t postDyn = *engine::g_dynVBRingState;
-
-	// (T) worker path: PRIVATE block seeded (all-dirty) from the pre-pass snapshot, rendered on the
-	// immediate context via the exact MT code. The worker uses private caches (WsShader/WsTechFlags), so
-	// it doesn't disturb the engine's global shader/technique/material caches or the shader +0x90 flags.
-	WorkerSeedMap(s_verifyWorker, snap.data());
-	fpT.clear();
-	ds->SetFingerprintSink(&fpT);
-	WorkerBeginScope(s_verifyWorker);
-	ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
-	WorkerEndScope();
-	ds->SetFingerprintSink(nullptr);
-
-	// Undo only the worker's shared-ring advance (skinned casters map the bone/dyn-VB rings); everything
-	// else the worker touched was private, and S/caches stay at the engine's post-render values.
-	*engine::g_boneCBRingCursor = postBone;
-	*engine::g_dynVBRingState = postDyn;
-
-	ds->CompareFingerprints(fpE, fpT, a_pass, a_technique);
-}

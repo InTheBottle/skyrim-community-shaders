@@ -626,15 +626,9 @@ namespace Hooks
 			stl::detour_vfunc<8, IDXGISwapChain_Present>(globals::d3d::swapChain);
 
 			auto shaderCache = globals::shaderCache;
-			// Capture DXBC bytecode (ptr->blob in ShaderBytecodeMap) when dumping OR when the vanilla
-			// RE draw-state validator needs it (CS_RE_REFLECT): it reflects the bound game shaders at
-			// draw time to mask constant-buffer comparison to the shader-used byte ranges. Installed
-			// here (device ready, before the game loads its shadow shaders) so no shader is missed.
-			static const bool wantReflect = [] {
-				char b[8]{};
-				return GetEnvironmentVariableA("CS_RE_REFLECT", b, sizeof(b)) && b[0] && b[0] != '0';
-			}();
-			if (shaderCache->IsDump() || wantReflect) {
+			// Capture DXBC bytecode (ptr->blob in ShaderBytecodeMap) when dumping. Installed here (device
+			// ready, before the game loads its shadow shaders) so no shader is missed.
+			if (shaderCache->IsDump()) {
 				stl::detour_vfunc<12, ID3D11Device_CreateVertexShader>(globals::d3d::device);
 				stl::detour_vfunc<15, ID3D11Device_CreatePixelShader>(globals::d3d::device);
 			}

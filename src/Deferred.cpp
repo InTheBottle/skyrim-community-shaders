@@ -5,7 +5,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "Vanilla/ShadowMapCache.h"
+#include "EngineFixes/ShadowMapCache.h"
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"

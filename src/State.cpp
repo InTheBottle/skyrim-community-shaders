@@ -6,7 +6,6 @@
 
 #include "Deferred.h"
 #include "FeatureIssues.h"
-#include "Vanilla/ShadowThreaded.h"
 #include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
 #include "Features/ExponentialHeightFog.h"
@@ -281,10 +280,6 @@ void State::Setup()
 
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
-
-	// Multithreaded shadow-map recording (fan-out across worker contexts). Inert unless
-	// CS_SHADOW_MT=1; see src/ShadowThreaded.h.
-	ShadowThreaded::GetSingleton()->Setup();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();

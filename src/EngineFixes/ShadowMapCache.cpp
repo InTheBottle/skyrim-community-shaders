@@ -14,7 +14,7 @@ namespace ShadowMapCache
 		constexpr std::uint32_t kEvictAfter = 240; // drop a unit not seen for ~4s (light despawned/moved)
 
 		// Shadow depth atlas = depth-stencil target 4. The SRV lives on the renderer object at
-		// stride 152/target, base 0x2040 (same access ShadowThreaded uses).
+		// stride 152/target, base 0x2040 (same access the shadow-instancing detour uses).
 		REL::Relocation<std::uint8_t*> g_renderer{ REL::Offset(0x3028490) };
 
 		ID3D11ShaderResourceView* AtlasSRV()
@@ -33,8 +33,6 @@ namespace ShadowMapCache
 			return s_res.get();
 		}
 
-		int g_mode = 0;
-
 		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
 		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
 
@@ -44,7 +42,7 @@ namespace ShadowMapCache
 		bool                                     g_layerValid[kLayers] = {};
 
 		// Round-robin UNITS. A unit groups maps that update together (a point light's two halves share
-		// a unit; each spot and each cascade is its own). Keyed so a moved light becomes a new unit.
+		// a unit; each spot is its own). Keyed so a moved light becomes a new unit.
 		struct Unit
 		{
 			std::uint32_t index = 0;
@@ -54,8 +52,6 @@ namespace ShadowMapCache
 		std::uint32_t                           g_nextUnit = 0;
 		std::uint32_t                           g_frame = 0;
 		std::uint32_t                           g_activeUnit = 0;
-
-		std::atomic<std::uint64_t> g_updates{ 0 }, g_reuses{ 0 };
 
 		inline std::uint64_t Fnv(std::uint64_t h, std::uint32_t v)
 		{
@@ -70,15 +66,11 @@ namespace ShadowMapCache
 			return u;
 		}
 
-		// A unit's key: directional cascades key on the camera pointer (one cascade per unit);
-		// local lights key on the shadow camera's WORLD POSITION so a point light's two hemisphere
-		// cameras (same position) share a unit and update together, and a moved light gets a new key.
-		std::uint64_t UnitKey(void* a_camera, std::uint32_t a_rmode)
+		// A local light's unit key is the shadow camera's WORLD POSITION so a point light's two
+		// hemisphere cameras (same position) share a unit and update together, and a moved light gets
+		// a new key.
+		std::uint64_t UnitKey(void* a_camera, std::uint32_t)
 		{
-			if (a_rmode == 14) {
-				const auto p = reinterpret_cast<std::uintptr_t>(a_camera);
-				return Fnv(Fnv(0xcbf29ce484222325ull, static_cast<std::uint32_t>(p)), static_cast<std::uint32_t>(p >> 32));
-			}
 			std::uint64_t h = 0xcbf29ce484222325ull;
 			if (a_camera) {
 				const RE::NiPoint3 t = reinterpret_cast<RE::NiAVObject*>(a_camera)->world.translate;
@@ -125,21 +117,6 @@ namespace ShadowMapCache
 			}
 		}
 	}
-
-	void SetMode(int a_mode) { g_mode = a_mode; }
-	int  GetMode() { return g_mode; }
-
-	void NotePassthroughMap(std::uint32_t a_target, std::uint32_t a_rmode)
-	{
-		if (a_target != 4)
-			return;
-		g_updates.fetch_add(1, std::memory_order_relaxed);  // every shadow-atlas map the engine renders
-		if (a_rmode == 13 || a_rmode == 15)
-			g_reuses.fetch_add(1, std::memory_order_relaxed);  // local (spot/point) shadow maps only
-	}
-	std::uint64_t Updates() { return g_updates.load(std::memory_order_relaxed); }
-	std::uint64_t Reuses() { return g_reuses.load(std::memory_order_relaxed); }
-	std::uint64_t Units() { return g_nextUnit; }
 
 	void BeginFrame()
 	{
@@ -212,7 +189,6 @@ namespace ShadowMapCache
 		const UINT cacheSub = D3D11CalcSubresource(0, layer, g_cacheDesc.MipLevels);
 		CopyPort(a_ctx, g_cacheTex.get(), cacheSub, atlas, atlasSub, a_port);
 		g_layerValid[layer] = true;
-		g_updates.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
@@ -226,8 +202,6 @@ namespace ShadowMapCache
 		const UINT atlasSub = D3D11CalcSubresource(0, a_slice, g_cacheDesc.MipLevels);
 		const UINT cacheSub = D3D11CalcSubresource(0, it->second, g_cacheDesc.MipLevels);
 		CopyPort(a_ctx, atlas, atlasSub, g_cacheTex.get(), cacheSub, a_port);
-		g_reuses.fetch_add(1, std::memory_order_relaxed);
 		return true;
 	}
-
 }
