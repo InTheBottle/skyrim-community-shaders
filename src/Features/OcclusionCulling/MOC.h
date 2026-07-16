@@ -1,15 +1,15 @@
 #pragma once
 
 // -----------------------------------------------------------------------------
-// Masked Occlusion Culling (MOC) — CommunityShaders port of Nukem9's SkyrimSETest
-// MOC integration. V1 architecture: a single global MaskedOcclusionCulling
-// instance (1280x720), no threaded merger, no meshoptimizer LOD-simplify.
+// GPU Hi-Z occlusion for CommunityShaders. Each frame the scene depth is max-reduced
+// into a coarse grid on the GPU and read back (HiZPrepass); the cull walk projects each
+// object's bounds and rejects those provably behind the nearest grid cell (HiZTestRect).
 //
 // SE 1.5.97 ONLY (SKYRIM flat, not VR).
 //
 // The `fplanes` SIMD frustum/sphere/AABB helper below is copied verbatim from
-// Nukem's MOC.h — it is engine-agnostic (pure DirectXMath + SSE/AVX intrinsics).
-// Everything else is re-implemented against RE:: (CommonLibSSE-NG) types.
+// Nukem's MOC.h — it is engine-agnostic (pure DirectXMath + SSE/AVX intrinsics), used for
+// the near-plane frustum fallback. Everything else is against RE:: (CommonLibSSE-NG) types.
 // -----------------------------------------------------------------------------
 
 #include <cstdint>
