@@ -89,9 +89,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				EngineFix::InstallOnPostPostLoadFixes();
 				FrameAnnotations::OnPostPostLoad();
 
-				// Occlusion Culling (Nukem MOC port) — installs its BSCullingProcess
-				// hooks here (SE-only, inert unless CS_OCCLUSION=1). Not routed through
-				// the Feature loader (no shaders/ini); direct install like EngineFix.
+				// Occlusion Culling (GPU Hi-Z) — installs its BSCullingProcess hooks
+				// here (SE-only, default-on). Not routed through the Feature loader
+				// (no shaders/ini); direct install like EngineFix.
 				OcclusionCulling::GetSingleton()->PostPostLoad();
 
 				auto shaderCache = globals::shaderCache;

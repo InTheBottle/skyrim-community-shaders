@@ -406,12 +406,9 @@ void UtilityPassReplica::InstallHooks()
 		logger::info("[UtilityPassReplica] SE-only; not installing on this runtime");
 		return;
 	}
-	auto* context = globals::d3d::context;
-	if (!context) {
-		logger::warn("[UtilityPassReplica] no immediate context at setup; hooks not installed");
-		return;
-	}
 
+	// Pure code detour (RelocationID) -- installable at kPostPostLoad, before the D3D device
+	// exists. The replica's D3D resources are created lazily on the first shadow-map walk.
 	stl::detour_thunk<RenderPassImmediately_Hook>(REL::RelocationID(100854, 107644));
 
 	hooksInstalled = true;
