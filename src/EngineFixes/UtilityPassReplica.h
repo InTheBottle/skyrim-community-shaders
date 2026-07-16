@@ -81,8 +81,8 @@ public:
 		return true;
 	}
 
-	/** @brief Install the RenderPassImmediately detour (the seam ShadowThreaded's instancing path
-	 *         rides to observe each utility pass and offer it to the shadow-capture hook) once. */
+	/** @brief Install the RenderPassImmediately detour (the seam ShadowInstancingFix's instancing
+	 *         path rides to observe each utility pass and offer it to the shadow-capture hook) once. */
 	void EnsureInitialized();
 
 	/** @brief RenderPassImmediately detour body. Routes utility passes per mode;
@@ -118,7 +118,7 @@ public:
 	[[nodiscard]] bool CanReplicate(RE::BSRenderPass* a_pass) const;
 
 	/**
-	 * @brief Shadow-capture hook (ShadowThreaded fan-out). While set, OnRenderPassImmediately
+	 * @brief Shadow-capture hook (ShadowInstancingFix fan-out). While set, OnRenderPassImmediately
 	 *        offers each utility pass to the hook BEFORE its own mode logic. Return true to
 	 *        signal "the caller took ownership of this pass" -- the replica then skips its
 	 *        inline render entirely (the worker pool will replay it later). Return false to

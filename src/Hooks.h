@@ -1,9 +1,9 @@
 #pragma once
 
 /** @brief Non-throwing lookup of a shader's captured DXBC bytecode, keyed by the ID3D11 shader
- *         pointer (populated by the CreateVertexShader/CreatePixelShader capture hooks). Returns
- *         false if the shader was not captured. Used by vanilla::ShaderReflect to reflect the bound
- *         shader at draw time. Safe to call concurrently after capture (read-only lookup). */
+ *         pointer (populated by the CreateVertexShader/CreatePixelShader capture hooks when the
+ *         shader cache is dumping). Returns false if the shader was not captured. Safe to call
+ *         concurrently after capture (read-only lookup). */
 bool TryGetShaderBytecode(void* a_shader, const std::uint8_t*& a_data, std::size_t& a_len);
 
 namespace Hooks
