@@ -2,19 +2,14 @@
 
 #include "Feature.h"
 
-#include <RE/B/BSTEvent.h>
-#include <RE/M/MenuOpenCloseEvent.h>
-
 // -----------------------------------------------------------------------------
-// OcclusionCulling — CommunityShaders Feature wrapper around the MOC port.
+// OcclusionCulling — CommunityShaders Feature wrapper around the GPU Hi-Z port.
 //
-// V1: installs a hook on BSCullingProcess so that (a) once per frame, before the
-// main cull walk, the MOC depth buffer is rebuilt from large static occluders, and
-// (b) each processed scene object is occlusion-tested and skipped if provably
-// hidden. Everything is gated behind the feature settings AND the env var
-// CS_OCCLUSION=1 (off by default).
-//
-// SE 1.5.97 ONLY.
+// Installs hooks on BSCullingProcess so that (a) once per frame, before the main
+// cull walk, the camera Hi-Z snapshot's view/projection is loaded, and (b) each
+// processed scene object is occlusion-tested against the GPU-reduced Hi-Z depth
+// and skipped if provably hidden. Distant small objects are additionally dropped
+// from the shadow maps. Default-on; SE 1.5.97 ONLY.
 // -----------------------------------------------------------------------------
 
 struct OcclusionCulling : public Feature
@@ -27,72 +22,24 @@ struct OcclusionCulling : public Feature
 
 	struct Settings
 	{
-		bool  EnableOcclusionTesting = true;
-		bool  EnableOccluderRendering = true;
-		float OccluderMaxDistance = 20000.0f;
-		float OccluderFirstLevelMinSize = 200.0f;
-		// Raster budget per frame, closest-first (not a MOC library limit). With the
-		// threaded raster + simplified meshes the default covers typical scenes fully.
-		std::int32_t MaxOccludersPerFrame = 384;
-		// Occluder mesh simplification, all live-rebuilt on change. Mode: 0=off,
-		// 1=quality (meshopt_simplify), 2=sloppy, 3=prune. Options = meshopt_SimplifyX
-		// bitmask (LockBorder|Sparse|ErrorAbsolute|Prune, quality mode only).
-		int          SimplifyMode = 1;
-		float        SimplifyStrength = 0.25f;  // base target as a fraction of the index count
-		float        SimplifyError = 1e-2f;     // target error (relative unless ErrorAbsolute)
-		unsigned int SimplifyOptions = 0;
-		bool         BuildRuntimeLODs = true;   // distance LODs (off = base mesh at all distances)
+		bool EnableOcclusionTesting = true;
 		// Only objects with at least this world-bound radius are occlusion-tested.
 		float OccluderTestMinRadius = 0.0f;
-		// Neutralize vanilla occlusion planes: MOC is the only occlusion mechanism.
-		bool ExclusiveOcclusion = false;
-		bool CullTreeLOD = false;   // measured net cost at open venues; enable for dense forests
-		bool TreeOccluders = false;  // measured net cost at open venues; enable for dense forests
-		bool AlphaTestedOccluders = false;
-		// Rasterize distant terrain LOD as occluders. Off: the coarse LOD terrain is not
-		// conservative (can over-occlude); the heightmap-built loaded grid is always used.
-		bool TerrainLODOccluders = false;
-		// Move the occlusion test off the scene-list cull walk (builder pre-tests a snapshot,
-		// Process1 reads a cache). Keeps the test cost out of the Utility barrier. Experimental.
-		bool AsyncOcclusionTest = false;
-		// Two distance-scaled small-object culls (radius < min + slope*camDist), never actors.
-		// VISIBLE: drops the mesh from the main view (pops in motion -> off by default).
-		bool  CullSmallVisible = false;
-		float SmallVisibleMinSize = 0.0f;
-		float SmallVisibleSlope = 0.012f;
-		// SHADOWS: drops the object's shadow only (mesh still renders); cuts shadow-map
-		// draws = the bulk of Utility. Safe (invisible) -> on by default.
+		// Distance-scaled small-object SHADOW cull (radius < min + slope*camDist), never actors.
+		// Drops the object's shadow only (mesh still renders); cuts shadow-map draws = the bulk
+		// of Utility. Safe (invisible) -> on by default.
 		bool  CullSmallShadows = true;
 		float SmallShadowMinSize = 0.0f;
 		float SmallShadowSlope = 0.03f;  // measured: nets Utility down ~0.3ms vs occlusion-off
-		// Gather leaf gate: occluder meshes smaller than this are not rasterized.
-		float OccluderMinLeafSize = 100.0f;
 	};
 
 	Settings settings;
 
-	// Master runtime gate, driven by the CS_OCCLUSION=1 env var (read once at load).
-	// When false, the installed hooks are inert pass-throughs.
-	bool envEnabled = false;
-
-	// DIAGNOSTIC (env CS_MOC_FORCE_CULL, never persisted): force-cull % of kept objects.
-	std::int32_t diagForceCullPercent = 0;
-
 	virtual std::string GetName() override { return "Occlusion Culling"; }
 	virtual std::string GetShortName() override { return "OcclusionCulling"; }
 
-	/** @brief Installs the BSCullingProcess hooks and creates the MOC instance. */
+	/** @brief Installs the BSCullingProcess hooks and initializes the Hi-Z runtime. */
 	virtual void PostPostLoad() override;
-
-	/** @brief Render-thread hook: env-gated verification dumps (CS_MOC_DUMP=1). */
-	virtual void Prepass() override;
-
-	/** @brief Menu open/close sink: quiesces the builder before scene teardown (loading screens). */
-	class MenuEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-	{
-	public:
-		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override;
-	};
 
 	virtual void DrawSettings() override;
 
