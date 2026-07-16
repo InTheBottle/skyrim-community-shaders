@@ -18,106 +18,51 @@
 #include <immintrin.h>
 #include <smmintrin.h>
 
-class MaskedOcclusionCulling;
-struct ID3D11ShaderResourceView;
-
 namespace RE
 {
 	class NiCamera;
 	class NiAVObject;
-	class BSMultiBoundAABB;
 }
 
 namespace MOC
 {
-	// --- Runtime settings (mirrors Nukem's ui::opt::*). The OcclusionCulling
+	// --- Runtime settings consumed by the Hi-Z occlusion path. The OcclusionCulling
 	//     Feature writes these from its serialized settings; MOC reads them. ---
-	extern bool          EnableOcclusionTesting;     // gate for TestObject()
-	extern bool          EnableOccluderRendering;    // gate for occluder rasterization
-	extern float         OccluderMaxDistance;        // 2D distance cap for occluder gather (default 20000)
-	extern float         OccluderFirstLevelMinSize;  // min worldBound radius of a top-level occluder (default 200)
-	extern std::uint32_t MaxOccludersPerFrame;       // raster budget, closest-first (default 512; not a library limit)
-	extern int           SimplifyMode;               // 0=off 1=quality 2=sloppy 3=prune (live-rebuild)
-	extern float         SimplifyStrength;           // base simplify target as fraction of index count
-	extern float         SimplifyError;              // target error (relative unless ErrorAbsolute option)
-	extern unsigned int  SimplifyOptions;            // meshopt_SimplifyX bitmask (quality mode only)
-	extern bool          BuildRuntimeLODs;           // build+use distance LODs (off = base mesh everywhere)
+	extern bool          EnableOcclusionTesting;     // master gate for TestObject/TestMultiBound
 	extern float         OccluderTestMinRadius;      // min world-bound radius for per-object tests
-	extern bool          ExclusiveOcclusion;         // neutralize vanilla occlusion planes (MOC is the only occlusion)
-	extern float         OccluderMinLeafSize;        // gather leaf gate: skip occluder meshes smaller than this
-	extern std::int32_t  DiagForceCullPercent;       // DIAGNOSTIC: force-cull % of kept objects (perf probe)
-	extern bool          CullTreeLODGroups;          // occlusion-test distant-tree LOD instance groups
-	extern bool          TreeOccluders;              // rasterize opaque tree parts (trunks) as occluders
-	extern bool          AlphaTestedOccluders;       // treat alpha-TESTED geometry as solid occluders (blended never)
-	extern bool          TerrainLODOccluders;        // rasterize distant terrain LOD (.btr) -- not conservative; off
-	extern bool          AsyncOcclusionTest;         // test off the cull-walk barrier (builder pre-tests, cache lookup)
-	extern bool          CullSmallVisible;           // main-view distance-scaled small-object cull (mesh stops rendering)
-	extern float         SmallVisibleMinSize;        // visible cull: base bound-radius threshold at the camera
-	extern float         SmallVisibleSlope;          // visible cull: threshold growth per unit of camera distance
 	extern bool          CullSmallShadows;           // shadow-map distance-scaled small-caster cull (shadow only)
 	extern float         SmallShadowMinSize;         // shadow cull: base bound-radius threshold at the camera
 	extern float         SmallShadowSlope;           // shadow cull: threshold growth per unit of camera distance
 
-	/** @brief Create the global MOC instance (1280x720). Safe to call once; no-op if already initialized. */
+	/** @brief Mark the occlusion feature live. Hi-Z GPU resources are created lazily. */
 	void Init();
 
-	/** @brief Destroy the MOC instance and free all cached converted vertex/index buffers. */
+	/** @brief Release the Hi-Z GPU resources and clear the initialized flag. */
 	void Shutdown();
 
-	/** @brief True once Init() has successfully created the MOC instance. */
+	/** @brief True once Init() has run. */
 	bool IsInitialized();
 
 	/**
-	 * @brief Clear the depth buffer, gather large static occluders visible to @p a_camera,
-	 *        sort them front-to-back, and rasterize them into the MOC depth buffer.
-	 *
-	 * Runs synchronously on the calling (cull) thread in V1. Must complete before any
-	 * TestObject() call for the same frame.
+	 * @brief Main-scene per-frame Hi-Z step: gate the pass by main-camera identity, CAS-claim the
+	 *        frame, and load the published depth snapshot's matrices into the shared test globals.
+	 * @return true if this pass is the main world view and occlusion testing is active.
 	 */
 	bool BuildOccluders(RE::NiCamera* a_camera);
 
 	/**
-	 * @brief Kick this frame's occluder raster from the earliest point of the
-	 *        frame (Main::DrawWorld_PreRender entry), so it completes before the
-	 *        first occlusion test instead of stalling the cull threads. Safe to
-	 *        call redundantly: the per-frame CAS claim makes later calls no-ops.
-	 */
-	void KickBuild();
-
-	/**
-	 * @brief Hi-Z GPU occlusion frame step (CS_MOC_HIZ / moc_hiz.flag): max-reduce this frame's
-	 *        scene depth into a coarse grid on the GPU, harvest the oldest staging-ring readback
-	 *        into the CPU snapshot the cull tests against, and queue this frame's copy.
-	 *        RENDER THREAD ONLY (immediate context) -- called from Deferred::PrepassPasses,
-	 *        after the frame's depth is populated. No-op unless Hi-Z mode is enabled.
+	 * @brief Hi-Z GPU occlusion frame step: max-reduce this frame's scene depth into a coarse
+	 *        grid on the GPU, harvest the oldest staging-ring readback into the CPU snapshot the
+	 *        cull tests against, and queue this frame's copy. RENDER THREAD ONLY (immediate
+	 *        context) -- called from Deferred::PrepassPasses after the frame's depth is populated.
 	 */
 	void HiZPrepass();
-
-	/**
-	 * @brief Light-space Hi-Z: reduce + ring-readback one just-rendered shadow-map atlas slice.
-	 *        RENDER THREAD ONLY, call right after the map renders (its slice complete, VP live).
-	 *        Perspective maps only (parabolic VPs are rejected by a classifier). No-op unless
-	 *        CS_SHADOW_HIZ=1. @param a_camKey the map's NiCamera (stable per light, channel key);
-	 *        @param a_vp16 the map's ABSOLUTE view-proj (16 floats); @param a_atlasSRV the whole
-	 *        shadow-atlas SRV (per-slice SRV is derived internally).
-	 */
-	void HiZShadowCapture(const void* a_camKey, std::uint32_t a_slice, const float* a_vp16, ID3D11ShaderResourceView* a_atlasSRV);
-
-	/**
-	 * @brief Cull-thread test: false = the caster's whole bound is provably behind strictly-nearer
-	 *        geometry in @p a_mapCamera's last-complete shadow depth (depth-test-equivalent cull).
-	 *        true = keep (also for actors, tiny bounds, near-plane straddles, unknown cameras).
-	 */
-	bool TestShadowCasterHiZ(const void* a_mapCamera, RE::NiAVObject* a_object);
-
-	/** @brief True when CS_SHADOW_HIZ=1 armed the light-space caster culling. */
-	bool ShadowHiZActive();
 
 	/**
 	 * @brief Occlusion query for a scene object.
 	 * @return true if the object may be visible (keep it), false if provably occluded.
 	 *         Returns true (conservative) for all early-outs (not initialized, testing
-	 *         disabled, app-culled, tiny/near bounds, behind near plane).
+	 *         disabled, app-culled, tiny/near bounds, no Hi-Z snapshot yet).
 	 */
 	bool TestObject(RE::NiAVObject* a_object);
 
@@ -129,76 +74,16 @@ namespace MOC
 	bool TestMultiBound(void* a_multiBound);
 
 	/**
-	 * @brief Occlusion query for one instance-group world AABB (distant-tree LOD).
-	 *        Called from the BSMultiStreamInstanceTriShape::OnVisible post-hook for
-	 *        groups the engine's frustum test kept.
-	 * @return true if possibly visible; false if provably occluded.
-	 */
-	bool TestInstanceGroup(RE::BSMultiBoundAABB* a_aabb);
-
-	/**
-	 * @brief True when @p a_camera is one of the two main-view cull cameras (render
-	 *        camera or frozen cull camera) -- the same dual-camera gate BuildOccluders
-	 *        uses. For hooks that see a NiCullingProcess rather than a process instance.
-	 */
-	bool IsMainViewCamera(const RE::NiCamera* a_camera);
-
-	/**
-	 * @brief True only for the RENDER camera (the scene-list accumulation culls on
-	 *        job threads). The frozen cull camera's per-pass subtree walks run ON
-	 *        THE RENDER THREAD interleaved with draw submission -- testing there
-	 *        bills MOC CPU to the utility/lighting windows while adding little
-	 *        (accumulation already decided the pass lists).
+	 * @brief True only for the RENDER camera (the scene-list accumulation cull); the gate that
+	 *        restricts occlusion testing to the main view.
 	 */
 	bool IsSceneListCamera(const RE::NiCamera* a_camera);
 
 	/** @brief True for the sun shadow-gather camera (stage-1 caster pre-gather). */
 	bool IsSunGatherCamera(const RE::NiCamera* a_camera);
 
-	/** @brief Main-view small-object cull -- drops the mesh (keep=true; never actors/kAlwaysDraw). */
-	bool TestSmallVisible(RE::NiAVObject* a_object);
-
-	/** @brief Async-path occlusion test: records the object and returns the builder's cached verdict (keep on miss). */
-	bool TestObjectCached(RE::NiAVObject* a_object);
-
-	/** @brief Flip the async candidate snapshot; call once/frame from the DrawWorld_PreRender kick. */
-	void BeginAsyncTestFrame();
-
 	/** @brief Small-caster shadow cull -- drops the shadow only (keep=true; never actors/kAlwaysDraw). */
 	bool TestShadowCasterSmall(RE::NiAVObject* a_object);
-
-	/**
-	 * @brief Block until the builder thread is idle (spin+yield, bounded). Call when a
-	 *        scene teardown is imminent (loading screen opening): a gather in flight
-	 *        races freed scene-graph nodes otherwise.
-	 */
-	void QuiesceBuilder();
-
-	/**
-	 * @brief Invalidate the cached converted/simplified occluder meshes so the builder
-	 *        re-converts them with the current simplification settings. Call after a
-	 *        SimplifyMode / Strength / Error / Options change to rebuild the active geometry
-	 *        live. Thread-safe (sets a flag the builder processes on its next kick).
-	 */
-	void RebuildOccluderMeshCache();
-
-	/** @brief Drop the cached converted verts/indices for a torn-down BSGraphics::TriShape. */
-	void RemoveCachedGeometry(void* a_rendererData);
-
-	/** @brief The main world NiCamera (WorldScenegraph -> CameraRoot -> Camera), or nullptr. */
-	RE::NiCamera* GetMainCamera();
-
-	/** @brief The engine's frozen cull camera (identifies main-scene cull passes). */
-	RE::NiCamera* GetCullCamera();
-
-	/** @brief Rasterize the current software depth buffer into the debug RGBA8 texture. */
-	void UpdateDebugView();
-
-	/** @brief RENDER-THREAD-ONLY, env-gated (CS_MOC_DUMP=1): dump MOC + game depth PNGs/bins. */
-	void DumpDebugImages();
-
-	/** @brief SRV of the debug depth texture (for ImGui::Image); null until Init. */
-	void* GetDebugSRV();
 
 	// -------------------------------------------------------------------------
 	// fplanes — verbatim from Nukem9 MOC.h (engine-agnostic SIMD frustum tester).
