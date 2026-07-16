@@ -32,19 +32,10 @@ namespace RE
  *    on the same immediate context. Cross-pass caches therefore stay coherent with
  *    passes the engine still renders itself -- any single pass can be flipped between
  *    engine and replica without disturbing its neighbours.
- *  - Modes (CS_UTIL_RE_MODE):
- *      0 = off       : engine renders everything (shipping behaviour, hooks inert).
- *      1 = compare   : per utility pass, the engine renders (commands recorded), then
- *                      the replica renders the same pass (commands recorded). Depth-only
- *                      passes are idempotent, so the double-render is visually harmless;
- *                      the two command windows are diffed immediately and any divergence
- *                      is logged with full pass identity. This is the mechanical
- *                      "exactly identical" check, per pass, in situ.
- *      2 = replace   : the replica renders utility passes INSTEAD of the engine (the
- *                      "switch off game code" proof). Non-utility passes untouched.
- *  - The D3D11CommandRecorder detours the immediate-context vtable entries the pass
- *    window can touch and records normalized (call, args, data-hash) tuples while a
- *    per-pass window is open. Zero overhead when no window is armed (single bool).
+ *  - The replica is driven by ShadowInstancingFix through the shadow-capture hook: during the
+ *    shadow-map walk it offers each utility pass to the hook, which claims the instanceable subset
+ *    for the batched replay (RenderShadowInstanced) and leaves the rest to the engine. Outside the
+ *    walk (no hook armed) the hooks are inert and the engine renders everything.
  *
  * All engine-derived constants cite their 1.5.97 address; see
  * docs/development/utility-pass-re.md for the full RE dossier.
@@ -58,35 +49,14 @@ public:
 		return &singleton;
 	}
 
-	enum class Mode : std::uint32_t
-	{
-		kOff = 0,
-		kCompare = 1,
-		kReplace = 2,
-	};
-
-	[[nodiscard]] Mode GetMode() const { return mode.load(std::memory_order_relaxed); }
-	[[nodiscard]] bool IsActive() const { return GetMode() != Mode::kOff; }
 	[[nodiscard]] bool HooksInstalled() const { return hooksInstalled; }
-
-	/** @brief Runtime mode switch (devbench A/B): only meaningful when the hooks were
-	 *         installed at Setup (launch with CS_UTIL_RE_MODE != 0); the detour reads the
-	 *         mode per pass, so flipping mid-session is safe -- a frame split between
-	 *         engine and replica passes stays coherent because both share all state. */
-	bool SetMode(Mode a_mode)
-	{
-		if (!hooksInstalled)
-			return false;
-		mode.store(a_mode, std::memory_order_relaxed);
-		return true;
-	}
 
 	/** @brief Install the RenderPassImmediately detour (the seam ShadowInstancingFix's instancing
 	 *         path rides to observe each utility pass and offer it to the shadow-capture hook) once. */
 	void EnsureInitialized();
 
-	/** @brief RenderPassImmediately detour body. Routes utility passes per mode;
-	 *         forwards everything else to the engine untouched. */
+	/** @brief RenderPassImmediately detour body. Offers utility passes to the shadow-capture hook
+	 *         during the shadow-map walk; forwards everything else to the engine untouched. */
 	void OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
 
 	/**
@@ -119,7 +89,7 @@ public:
 
 	/**
 	 * @brief Shadow-capture hook (ShadowInstancingFix fan-out). While set, OnRenderPassImmediately
-	 *        offers each utility pass to the hook BEFORE its own mode logic. Return true to
+	 *        offers each utility pass to the hook BEFORE its own coverage logic. Return true to
 	 *        signal "the caller took ownership of this pass" -- the replica then skips its
 	 *        inline render entirely (the worker pool will replay it later). Return false to
 	 *        let the replica render the pass normally (observe-only capture). The hook runs on
@@ -143,9 +113,6 @@ private:
 	 *         ring upload, skin-instance Render vfunc, RestoreGeometry. */
 	void ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_alphaTest, std::uint32_t a_renderFlags);
 
-	std::atomic<Mode>              mode{ Mode::kOff };
 	std::atomic<ShadowCaptureHook> shadowCaptureHook{ nullptr };
 	bool                           hooksInstalled = false;
-
-	std::uint64_t passesUnsupported = 0;  ///< outside replica coverage -> engine fallback
 };

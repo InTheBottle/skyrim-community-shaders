@@ -358,10 +358,9 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
-	// When the UtilityPassReplica mode is off we still proceed IF a shadow-capture hook is armed
-	// (ShadowThreaded arms it only during the shadow-map walk, so main-scene utility passes are
-	// unaffected). This is the seam the draw-state/MT modes ride even without CS_UTIL_RE_MODE set.
-	if (GetMode() == Mode::kOff && !shadowCaptureHook.load(std::memory_order_acquire)) {
+	// Proceed only when a shadow-capture hook is armed (ShadowInstancingFix arms it only during the
+	// shadow-map walk, so main-scene utility passes are unaffected). Otherwise the engine renders.
+	if (!shadowCaptureHook.load(std::memory_order_acquire)) {
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
@@ -406,51 +405,23 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		return;
 	}
 
-	// Shadow-capture fan-out (ShadowThreaded). While a shadow-map walk is being captured, offer
-	// each utility pass to the hook; if it claims ownership (worker pool will replay it), skip the
-	// inline render here entirely. Otherwise fall through to the normal per-mode path.
+	// Shadow-capture fan-out (ShadowInstancingFix). While a shadow-map walk is being captured, offer
+	// each utility pass to the hook; if it claims ownership (the instanced replay renders it later),
+	// skip the inline render here entirely. Otherwise fall through to the CanReplicate + engine render.
 	if (auto hook = shadowCaptureHook.load(std::memory_order_acquire)) {
 		if (hook(a_pass, a_technique, a_alphaTest, a_renderFlags, CanReplicate(a_pass)))
 			return;
 	}
 
-	// The smoke test showed utility passes arriving from TWO threads (loading-screen
-	// renderer vs main render thread). The recorder windows are single-threaded state,
-	// so only one thread may compare at a time; a contender just renders via the engine.
-	static std::atomic<std::uint32_t> s_compareOwner{ 0 };
-	const std::uint32_t               tid = GetCurrentThreadId();
-	if (GetMode() == Mode::kCompare) {
-		std::uint32_t expected = 0;
-		if (!s_compareOwner.compare_exchange_strong(expected, tid, std::memory_order_acquire) && expected != tid) {
-			RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
-			return;
-		}
-	}
-	struct OwnerRelease
-	{
-		std::atomic<std::uint32_t>* owner;
-		~OwnerRelease()
-		{
-			if (owner)
-				owner->store(0, std::memory_order_release);
-		}
-	} ownerRelease{ GetMode() == Mode::kCompare ? &s_compareOwner : nullptr };
-
-	// Outside current replica coverage: whole-pass engine render, tallied.
+	// Outside current replica coverage: whole-pass engine render.
 	if (!CanReplicate(a_pass)) {
-		++passesUnsupported;
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
 
-	// Mode::kReplace: the engine is switched off for this pass. If we reached here in kOff (a covered
-	// pass a capture hook declined to claim -- not expected, since the verify hook claims all covered
-	// passes), fall back to the engine rather than replacing, so the hook-armed kOff seam never silently
-	// swaps rendering.
-	if (GetMode() == Mode::kReplace)
-		ReplicaRenderPassImmediately(a_pass, a_technique, a_alphaTest, a_renderFlags);
-	else
-		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	// A covered pass the capture hook declined to claim (the skinned / alpha-test / sub-index casters
+	// the instanced replay leaves on the engine's serial remainder): render it inline via the engine.
+	RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 }
 
 bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
