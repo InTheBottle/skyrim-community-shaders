@@ -1,11 +1,5 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
-#include "ShadowDeferred.h"
-#include "Vanilla/LocalLightShadowCache.h"
-#include "Vanilla/ShadowMapCache.h"
-#include "Vanilla/ShadowThreaded.h"
-#include "Vanilla/UtilityPassReplica.h"
-
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
 // DEVBENCH_BRIDGE_ENABLED (set by CMake when the devbench-api port is available);
 // otherwise this file compiles to an empty Install(). Inert at runtime when no
@@ -348,25 +342,11 @@ namespace
 			return json{
 				{ "plugin", "CommunityShaders" },
 				{ "frame_count", EnqueuedFrame() },
-				{ "draw_submits", globals::state ? globals::state->drawSubmitsLastFrame.load(std::memory_order_relaxed) : 0u },
-				{ "draw_submits_by_type", [] {
-					 static constexpr const char* kTypeNames[] = { "none", "grass", "sky", "water", "bloodsplatter",
-						 "imagespace", "lighting", "effect", "utility", "distanttree", "particle", "total_enum" };
-					 json byType = json::object();
-					 if (globals::state)
-						 for (std::size_t i = 0; i <= RE::BSShader::Type::Total; ++i)
-							 byType[kTypeNames[i]] = globals::state->drawSubmitsByTypeLastFrame[i].load(std::memory_order_relaxed);
-					 return byType;
-				 }() },
 				{ "frame_time_by_type", [] {
 					 static constexpr const char* kTypeNames[] = { "none", "grass", "sky", "water", "bloodsplatter",
 						 "imagespace", "lighting", "effect", "utility", "distanttree", "particle", "total_enum" };
 					 json byType = json::object();
 					 if (globals::state) {
-						 // Per-type timing is otherwise only populated while the perf overlay is
-						 // on screen; flip this so headless A/B runs read it. Sticky after the
-						 // first poll -- a few QueryPerformanceCounter calls per draw.
-						 globals::state->benchForceFrameTiming.store(true, std::memory_order_relaxed);
 						 for (std::size_t i = 0; i <= RE::BSShader::Type::Total; ++i)
 							 byType[kTypeNames[i]] = globals::state->smoothFrameTimePerType[i];
 					 }
@@ -635,200 +615,6 @@ namespace
 		return json{ { "error", "unknown action (save|load|reset)" }, { "action", action } };
 	}
 
-	/**
-	 * @brief Processes DevBench settings tool requests (save, load, reset).
-	 */
-	json BuildUtilReResult(const json& a_args)
-	{
-		auto* replica = UtilityPassReplica::GetSingleton();
-		const std::string action = a_args.value("action", std::string{ "get" });
-		if (action == "get") {
-			return json{
-				{ "mode", static_cast<std::uint32_t>(replica->GetMode()) },
-				{ "hooksInstalled", replica->HooksInstalled() },
-			};
-		}
-		if (action == "set") {
-			if (!a_args.contains("mode"))
-				return json{ { "error", "missing required parameter 'mode'" } };
-			const auto m = a_args["mode"].get<std::uint32_t>();
-			if (m > 2)
-				return json{ { "error", "mode must be 0 (off), 1 (compare) or 2 (replace)" } };
-			if (!replica->SetMode(static_cast<UtilityPassReplica::Mode>(m)))
-				return json{ { "error", "hooks not installed -- launch with CS_UTIL_RE_MODE set" } };
-			return json{ { "action", "set" }, { "mode", m } };
-		}
-		// Rerunnable vanilla-parity validation gate: `reset` zeroes the compare counters so
-		// a fresh run starts clean; `stats` reads back the structural-divergence report with
-		// the first-diverging-pass pinpoint (class + technique + call index + field). A gate
-		// script (tools/shadow-parity.ps1) does: set mode 1 -> reset -> run N frames in
-		// motion -> stats -> assert diverged==0, and on failure the pinpoint names the pass.
-		if (action == "reset") {
-			replica->ResetValidation();
-			return json{ { "action", "reset" }, { "mode", static_cast<std::uint32_t>(replica->GetMode()) } };
-		}
-		if (action == "stats") {
-			const auto r = replica->GetValidationReport();
-			static constexpr const char* kClassNames[3] = { "trishape", "subindex", "skinned" };
-			static constexpr const char* kFieldNames[5] = { "kind", "slot", "a", "b", "c" };
-			json out{
-				{ "mode", static_cast<std::uint32_t>(replica->GetMode()) },
-				{ "compared", r.compared },
-				{ "diverged", r.diverged },
-				{ "divergedTrishape", r.divergedTrishape },
-				{ "divergedSubIndex", r.divergedSubIndex },
-				{ "divergedSkinned", r.divergedSkinned },
-				{ "unsupported", r.unsupported },
-				{ "parity", r.diverged == 0 },
-			};
-			if (r.haveFirstDiverge) {
-				out["firstDivergingPass"] = json{
-					{ "class", r.firstClass < 3 ? kClassNames[r.firstClass] : "?" },
-					{ "technique", fmt::format("0x{:X}", r.firstTechnique) },
-					{ "engineCalls", r.firstEngineCalls },
-					{ "replicaCalls", r.firstReplicaCalls },
-					{ "sizeMismatch", r.firstSizeMismatch },
-					{ "diffIndex", r.firstDiffIndex },
-					{ "diffField", r.firstDiffField < 5 ? kFieldNames[r.firstDiffField] : "?" },
-				};
-			}
-			return out;
-		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "reset", "stats" }) } };
-	}
-
-	void UtilReToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
-	{
-		RunHandler(&BuildUtilReResult, a_argsJson, a_sink, a_write);
-	}
-
-	json BuildShadowDeferredResult(const json& a_args)
-	{
-		auto* sd = ShadowDeferred::GetSingleton();
-		const std::string action = a_args.value("action", std::string{ "get" });
-		if (action == "get") {
-			return json{
-				{ "mode", static_cast<std::uint32_t>(sd->GetMode()) },
-				{ "hooksInstalled", sd->HooksInstalled() },
-			};
-		}
-		if (action == "set") {
-			if (!a_args.contains("mode"))
-				return json{ { "error", "missing required parameter 'mode'" } };
-			const auto m = a_args["mode"].get<std::uint32_t>();
-			if (m > 1)
-				return json{ { "error", "mode must be 0 (engine) or 1 (deferred)" } };
-			if (!sd->SetMode(static_cast<ShadowDeferred::Mode>(m)))
-				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_DEFERRED=1" } };
-			return json{ { "action", "set" }, { "mode", m } };
-		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set" }) } };
-	}
-
-	void ShadowDeferredToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
-	{
-		RunHandler(&BuildShadowDeferredResult, a_argsJson, a_sink, a_write);
-	}
-
-	json BuildShadowMtResult(const json& a_args)
-	{
-		auto* st = ShadowThreaded::GetSingleton();
-		const std::string action = a_args.value("action", std::string{ "get" });
-		if (action == "get") {
-			return json{
-				{ "mode", static_cast<std::uint32_t>(st->GetMode()) },
-				{ "hooksInstalled", st->HooksInstalled() },
-			};
-		}
-		if (action == "set") {
-			if (!a_args.contains("mode"))
-				return json{ { "error", "missing required parameter 'mode'" } };
-			const auto m = a_args["mode"].get<std::uint32_t>();
-			if (m > 9)
-				return json{ { "error", "mode must be 0..9" } };
-			if (!st->SetMode(static_cast<ShadowThreaded::Mode>(m)))
-				return json{ { "error", "hooks not installed -- launch with CS_SHADOW_MT>=1" } };
-			return json{ { "action", "set" }, { "mode", m } };
-		}
-		// Post-RenderShadowmaps state validation (leak detector). `stateval` with optional
-		// {"enable":true|false} arms/disarms it and always returns the counters. Protocol: arm, hold
-		// mode 0 for >=8 frames (baseline learn), switch to the replica mode, read back -- nonzero
-		// divergences/canaryHits = our path leaks state into the rest of the frame.
-		if (action == "stateval") {
-			if (a_args.contains("enable"))
-				st->stateValidationRequested.store(a_args["enable"].get<bool>(), std::memory_order_relaxed);
-			if (a_args.contains("selftest"))
-				st->stateValSelftest.store(a_args["selftest"].get<bool>(), std::memory_order_relaxed);
-			const auto r = st->StateValReport();
-			return json{
-				{ "action", "stateval" },
-				{ "enabled", st->stateValidationRequested.load(std::memory_order_relaxed) },
-				{ "selftest", st->stateValSelftest.load(std::memory_order_relaxed) },
-				{ "baselineFrames", r[0] },
-				{ "checkedFrames", r[1] },
-				{ "divergences", r[2] },  // PERSISTENT leaks (rare, dangerous)
-				{ "canaryHits", r[3] },
-				{ "exitCheckedFrames", r[4] },
-				{ "boundaryDiffs", r[5] },  // exit-boundary diffs vs vanilla (informational; self-test target)
-			};
-		}
-		// Runtime toggle for the shadow per-draw feature-bind skip (CS_SHADOW_SKIP_PERDRAW).
-		// `skipperdraw` with optional {"enable":true|false} sets it and returns the current value.
-		// Enables a same-boot interleaved A/B without a reboot (avoids cross-boot noise/rig warming).
-		if (action == "skipperdraw") {
-			if (globals::state && a_args.contains("enable"))
-				globals::state->shadowSkipPerDraw = a_args["enable"].get<bool>();
-			return json{
-				{ "action", "skipperdraw" },
-				{ "enabled", globals::state ? globals::state->shadowSkipPerDraw : false },
-			};
-		}
-		// Ceiling-measurement toggle for local-light (spot/point) shadow caching.
-		// `skiplocal` with optional {"enable":true|false} skips local-light shadow
-		// renders entirely (shadows go stale -- upper-bound FPS measurement only).
-		if (action == "skiplocal") {
-			if (a_args.contains("enable"))
-				LocalLightShadowCache::SetSkipLocal(a_args["enable"].get<bool>());
-			return json{
-				{ "action", "skiplocal" },
-				{ "enabled", LocalLightShadowCache::GetSkipLocal() },
-			};
-		}
-		// Staggered shadow-map updates (ShadowMapCache): {"mode": 0 off / 1 local lights / 2 also
-		// directional cascades}. Renders ONE shadow-map unit per frame, blits the cached slice for the
-		// rest (interiors: one local light/frame; exteriors: one cascade/frame). Needs CS_SHADOW_MT=9.
-		if (action == "stagger") {
-			if (a_args.contains("mode"))
-				ShadowMapCache::SetMode(a_args["mode"].get<int>());
-			return json{
-				{ "action", "stagger" },
-				{ "mode", ShadowMapCache::GetMode() },
-				{ "shadowMt", static_cast<std::uint32_t>(st->GetMode()) },
-				{ "units", ShadowMapCache::Units() },
-				{ "updates", ShadowMapCache::Updates() },
-				{ "reuses", ShadowMapCache::Reuses() },
-			};
-		}
-		// Instanced-path command-validation counters (always-on): pass-conservation invariants +
-		// the F16C-pack-vs-engine-reference compare. Nonzero violations/mismatches = broken submission.
-		if (action == "instval") {
-			const auto r = UtilityPassReplica::GetSingleton()->InstValReport();
-			return json{
-				{ "action", "instval" },
-				{ "mapsValidated", r[0] },
-				{ "invariantViolations", r[1] },
-				{ "packChecks", r[2] },
-				{ "packMismatches", r[3] },
-			};
-		}
-		return json{ { "error", "unknown action" }, { "supported", json::array({ "get", "set", "stateval", "instval", "skipperdraw", "skiplocal", "stagger" }) } };
-	}
-
-	void ShadowMtToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
-	{
-		RunHandler(&BuildShadowMtResult, a_argsJson, a_sink, a_write);
-	}
-
 	void SettingsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
@@ -876,18 +662,6 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, or reset the GLOBAL Community Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after communityshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
 		dvb->RegisterTool("communityshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
-
-		static constexpr const char* utilreDesc =
-			R"({"description":"Runtime control + rerunnable vanilla-parity validation for the UtilityPassReplica (the utility passes ARE the shadow passes). Requires CS_UTIL_RE_MODE set at boot. get: { mode, hooksInstalled }. set: params mode 0|1|2 (0=off/engine, 1=compare/double-render+diff, 2=replace/replica) -- next-pass, safe mid-session. reset: zero the compare counters for a fresh run. stats: structural-divergence report { compared, diverged, divergedTrishape/SubIndex/Skinned, unsupported, parity, firstDivergingPass{class,technique,diffIndex,diffField,...} } -- the gate reads parity==true. Validation flow: set mode 1 -> reset -> advance N frames in motion -> stats.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set","reset","stats"]},"mode":{"type":"integer"}}}})";
-		dvb->RegisterTool("communityshaders.utilre", utilreDesc, &UtilReToolHandler, nullptr);
-
-		static constexpr const char* shadowDeferredDesc =
-			R"({"description":"Runtime mode switch for ShadowDeferred (runs the engine's shadow-map commands on a private deferred context). Requires launching with CS_SHADOW_DEFERRED=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0|1 (0=engine renders shadows, 1=deferred replica) -- takes effect next frame, safe mid-session; used for single-session engine-vs-deferred screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
-		dvb->RegisterTool("communityshaders.shadowdeferred", shadowDeferredDesc, &ShadowDeferredToolHandler, nullptr);
-
-		static constexpr const char* shadowMtDesc =
-			R"({"description":"Runtime mode switch for ShadowThreaded (shadow-map reimplementation / MT). Requires launching with CS_SHADOW_MT>=1 (detour installs at boot). get: returns { mode, hooksInstalled }. set: params mode 0..9 (0=engine renders shadows = VANILLA, 5=BeginPassReplica full ownership, 7=draw-state MT verify, 9=shadow instancing) -- takes effect next frame, safe mid-session; used for single-session engine-vs-replica screenshot A/B.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"mode":{"type":"integer"}}}})";
-		dvb->RegisterTool("communityshaders.shadowmt", shadowMtDesc, &ShadowMtToolHandler, nullptr);
 	}
 }
 

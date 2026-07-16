@@ -5,7 +5,6 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "Vanilla/LocalLightShadowCache.h"
 #include "Vanilla/ShadowMapCache.h"
 
 #include "Features/DynamicCubemaps.h"
@@ -650,10 +649,8 @@ void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 	// per-draw feature binds for depth-only shadow passes. Clear before EarlyPrepasses so prepass draws
 	// aren't treated as shadow passes.
 	globals::state->inShadowPass = true;
-	LocalLightShadowCache::BeginShadowFrame();
 	ShadowMapCache::BeginFrame();
 	func();
-	LocalLightShadowCache::EndShadowFrame();
 	globals::state->inShadowPass = false;
 	globals::deferred->EarlyPrepasses();
 };

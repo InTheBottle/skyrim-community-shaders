@@ -6,11 +6,7 @@
 
 #include "Deferred.h"
 #include "FeatureIssues.h"
-#include "ShadowDeferred.h"
-#include "Vanilla/LocalLightShadowCache.h"
-#include "Vanilla/ShadowMapCache.h"
 #include "Vanilla/ShadowThreaded.h"
-#include "Vanilla/UtilityPassReplica.h"
 #include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
 #include "Features/ExponentialHeightFog.h"
@@ -286,21 +282,9 @@ void State::Setup()
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
 
-	// Utility-pass RE replica (baseline reverse engineering). Inert unless
-	// CS_UTIL_RE_MODE=1/2; see src/UtilityPassReplica.h.
-	UtilityPassReplica::GetSingleton()->Setup();
-
-	// Shadow-map commands on a deferred context (Stage D). Inert unless
-	// CS_SHADOW_DEFERRED=1; see src/ShadowDeferred.h.
-	ShadowDeferred::GetSingleton()->Setup();
-
 	// Multithreaded shadow-map recording (fan-out across worker contexts). Inert unless
 	// CS_SHADOW_MT=1; see src/ShadowThreaded.h.
 	ShadowThreaded::GetSingleton()->Setup();
-
-	// Local-light (spot/point) shadow-map caching/profiler. Inert unless
-	// CS_LIGHTSHADOW_PROF=1; see src/Vanilla/LocalLightShadowCache.h.
-	LocalLightShadowCache::Install();
 
 	// Load per-weather settings after features are setup
 	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();
