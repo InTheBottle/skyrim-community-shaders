@@ -195,11 +195,15 @@ namespace
 	}
 
 	// Z-prepass instancing is byte-exact + terrain-safe + visually inert (validated: frozen serial-vs-instanced
-	// A/B == TAA-jitter baseline, correct in motion), BUT measured a ~1.5% FPS LOSS on the RTX 4080 reference
-	// rig: the frame is GPU-bound, so collapsing the z-prepass draw calls (a render-thread/CPU saving) does not
-	// convert to FPS while the capture/fill/emit overhead costs. It only pays when the frame is render-thread-
-	// bound (weak CPU / very heavy modlist). Default OFF -- the detour is not installed below -- so it never
-	// regresses the default; flip to true to enable it for a CPU-bound setup.
+	// A/B == TAA-jitter baseline, correct in motion). BUT a direct render-thread CPU measurement of the depth
+	// pass showed it is a **CPU LOSS of ~360us/frame** (instanced 940us vs serial 580us), NOT a saving: the
+	// instanceable statics here are unique solids (rocks/cliffs/buildings) with LOW duplication, so 664 casters
+	// collapse into many groups (little draw-call reduction) while the per-pass capture + per-group emit
+	// overhead is paid on all of them. Instancing only pays at a HIGH collapse ratio -- the same mesh stamped
+	// many times, i.e. TREE FOLIAGE. Enabling this whole-TRISHAPE-solid path pays for the win requires:
+	// (1) admitting alpha-test foliage (per-group base-texture + alpha-ref bind; design ready) and (2) a
+	// min-instance-count threshold so only high-duplication groups instance. Until that lands this stays
+	// default OFF -- the detour is not installed below, zero overhead, zero effect.
 	constexpr bool kEnableDepthPrepassInstancing = false;
 
 	// Main_RenderDepth (RelID 100421) detour = the z-prepass instanced bracket. Runs INSIDE the function
