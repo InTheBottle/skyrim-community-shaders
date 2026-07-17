@@ -92,6 +92,14 @@ public:
 	uint probeArrayDims[3] = { 256, 256, 128 };
 	float occlusionDistance = 10000.f;
 
+	// The occlusion raster is amortized over an N x N world-tile grid: SetViewFrustum restricts the
+	// ortho frustum to one tile per frame, so full coverage takes N*N frames. Higher N distributes
+	// the per-frame occlusion cost further (fewer objects rastered per frame) AND sharpens occlusion
+	// (a smaller world area maps to the full-res occlusion map), at the cost of slower AO convergence
+	// in motion (a newly entered area re-accumulates over N*N-frame cycles). N = 2 is the original
+	// 4-quadrant cadence; 3 spreads the work 2.25x further.
+	uint occlusionTilesPerAxis = 3;
+
 	// cached variables
 	bool queuedResetSkylighting = true;
 	bool inOcclusion = false;

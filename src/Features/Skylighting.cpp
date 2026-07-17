@@ -445,14 +445,22 @@ void Skylighting::SetViewFrustum::thunk(RE::NiCamera* a_camera, RE::NiFrustum* a
 	auto& skylighting = globals::features::skylighting;
 
 	if (skylighting.inOcclusion) {
-		uint corner = skylighting.frameCount % 4;
+		// Amortize the occlusion raster over an N x N world-tile grid (one tile per frame). N = 2
+		// reproduces the original 4-quadrant split exactly; larger N distributes the work over more
+		// frames. tile order is row-major (tx fastest); the r2 sun-disc accumulation is
+		// schedule-independent so any coverage order integrates an unbiased sample set.
+		const uint n = skylighting.occlusionTilesPerAxis < 1u ? 1u : skylighting.occlusionTilesPerAxis;
+		const uint tile = skylighting.frameCount % (n * n);
+		const uint tx = tile % n;
+		const uint ty = tile / n;
 
-		float frustumSize = a_frustum->fTop;
+		const float fullExtent = a_frustum->fTop;  // symmetric ortho half-extent [-fullExtent, fullExtent]
+		const float invN = 1.0f / static_cast<float>(n);
 
-		a_frustum->fBottom = (corner == 0 || corner == 1) ? -frustumSize : 0.0f;
-		a_frustum->fLeft = (corner == 0 || corner == 2) ? -frustumSize : 0.0f;
-		a_frustum->fRight = (corner == 1 || corner == 3) ? frustumSize : 0.0f;
-		a_frustum->fTop = (corner == 2 || corner == 3) ? frustumSize : 0.0f;
+		a_frustum->fLeft = fullExtent * (-1.0f + 2.0f * static_cast<float>(tx) * invN);
+		a_frustum->fRight = fullExtent * (-1.0f + 2.0f * static_cast<float>(tx + 1) * invN);
+		a_frustum->fBottom = fullExtent * (-1.0f + 2.0f * static_cast<float>(ty) * invN);
+		a_frustum->fTop = fullExtent * (-1.0f + 2.0f * static_cast<float>(ty + 1) * invN);
 	}
 
 	func(a_camera, a_frustum);
