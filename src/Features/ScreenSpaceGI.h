@@ -15,6 +15,13 @@ public:
 	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 
+	// Screen Space GI is the single largest GPU cost of the whole feature set: its passes sum to
+	// ~1.1 ms of full-screen compute (measured +52% FPS when off in a GPU-bound scene). Ship it
+	// disabled by default so the base install stays GPU-light; users who want indirect lighting
+	// re-enable it from the "Disable at Boot" menu, and that saved choice overrides this default
+	// (State.cpp only applies IsDisabledByDefault when the feature has no explicit user entry).
+	virtual bool IsDisabledByDefault() const override { return true; }
+
 	/** @brief Returns a localized description and list of key features for the UI summary panel. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
