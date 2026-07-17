@@ -1,5 +1,6 @@
 ﻿#include "EngineFix.h"
 
+#include "EngineFixes/GrassCull.h"
 #include "EngineFixes/ShadowInstancingFix.h"
 #include "EngineFixes/ShadowmapCascadeCullingFix.h"
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
@@ -9,11 +10,13 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 	static ShadowmapCascadeCullingFix shadowmapCascadeCullingFix;
 	static ShadowmapRasterizerFix shadowmapRasterizerFix;
 	static ShadowInstancingFix shadowInstancingFix;
+	static GrassCull grassCull;
 
 	static std::vector<EngineFix*> fixes = {
 		&shadowmapCascadeCullingFix,
 		&shadowmapRasterizerFix,
-		&shadowInstancingFix
+		&shadowInstancingFix,
+		&grassCull
 	};
 
 	return fixes;

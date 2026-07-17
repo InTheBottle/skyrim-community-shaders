@@ -1,6 +1,7 @@
 #include "MOC.h"
 
 #include "Globals.h"
+#include "State.h"
 #include "Utils/D3D.h"
 
 #include <d3dcompiler.h>
@@ -90,8 +91,13 @@ namespace MOC
 		winrt::com_ptr<ID3D11ComputeShader>       g_hizCS;
 		winrt::com_ptr<ID3D11Texture2D>           g_hizGridTex;
 		winrt::com_ptr<ID3D11UnorderedAccessView> g_hizGridUAV;
+		winrt::com_ptr<ID3D11ShaderResourceView>  g_hizGridSRV;  // read-side for GPU consumers (grass cull)
 		int                                       g_hizGridW = 0, g_hizGridH = 0, g_hizFullW = 0, g_hizFullH = 0;
 		bool                                      g_hizInitTried = false, g_hizReady = false;
+		// Frame index of the most recent reduce into g_hizGridTex. GPU consumers (grass cull) read the
+		// GPU grid a frame after it was built (the texture is overwritten later in the same frame at
+		// HiZPrepass), so they require an exact one-frame lag -- (currentFrame - g_hizGridFrame == 1).
+		std::atomic<std::uint64_t>                g_hizGridFrame{ 0 };
 
 		// Sun shadow-gather camera (the small-caster SHADOW cull runs only on that pass).
 		std::atomic<const RE::NiCamera*> g_sunGatherCam{ nullptr };
@@ -282,13 +288,16 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 			gd.Format = DXGI_FORMAT_R32_FLOAT;
 			gd.SampleDesc = { 1, 0 };
 			gd.Usage = D3D11_USAGE_DEFAULT;
-			gd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+			gd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;  // SRV for GPU consumers (grass cull)
 			if (FAILED(device->CreateTexture2D(&gd, nullptr, g_hizGridTex.put())))
 				return false;
 			Util::SetResourceName(g_hizGridTex.get(), "OcclusionCulling::HiZGrid");
 			if (FAILED(device->CreateUnorderedAccessView(g_hizGridTex.get(), nullptr, g_hizGridUAV.put())))
 				return false;
 			Util::SetResourceName(g_hizGridUAV.get(), "OcclusionCulling::HiZGrid UAV");
+			if (FAILED(device->CreateShaderResourceView(g_hizGridTex.get(), nullptr, g_hizGridSRV.put())))
+				return false;
+			Util::SetResourceName(g_hizGridSRV.get(), "OcclusionCulling::HiZGrid SRV");
 
 			gd.Usage = D3D11_USAGE_STAGING;
 			gd.BindFlags = 0;
@@ -504,6 +513,20 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		return g_init;
 	}
 
+	bool GetHiZGridForCompute(ID3D11ShaderResourceView*& a_srv, int& a_gridW, int& a_gridH,
+		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame)
+	{
+		if (!g_hizReady || !g_hizGridSRV)
+			return false;
+		a_srv = g_hizGridSRV.get();
+		a_gridW = g_hizGridW;
+		a_gridH = g_hizGridH;
+		a_fullW = g_hizFullW;
+		a_fullH = g_hizFullH;
+		a_buildFrame = g_hizGridFrame.load(std::memory_order_acquire);
+		return true;
+	}
+
 	RE::NiCamera* GetMainCamera()
 	{
 		// The engine's own main-render camera slot: Main::spWorldRoot (REL::ID 517006, ==
@@ -648,6 +671,9 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 				slot.posAdjust = cam->world.translate;
 				slot.pending = true;
 				g_hizWrite = (g_hizWrite + 1) % kHizRing;
+				// Stamp the frame this grid was reduced -- GPU consumers gate on a one-frame lag.
+				g_hizGridFrame.store(globals::state->frameCountAtomic.load(std::memory_order_relaxed),
+					std::memory_order_release);
 			}
 		}
 	}

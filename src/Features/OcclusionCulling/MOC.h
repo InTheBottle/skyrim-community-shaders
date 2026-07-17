@@ -14,6 +14,8 @@
 #include <immintrin.h>
 #include <smmintrin.h>
 
+struct ID3D11ShaderResourceView;
+
 namespace RE
 {
 	class NiCamera;
@@ -42,6 +44,16 @@ namespace MOC
 
 	/** @brief True once Init() has run. */
 	bool IsInitialized();
+
+	/**
+	 * @brief Expose the GPU Hi-Z grid (max-reduced post-z-prepass depth, STANDARD Z near=0/far=1) for
+	 *        a GPU consumer's own cull dispatch (grass). Returns the grid SRV, its cell/full dims, and
+	 *        the frame it was reduced. Grass reads it a frame late (the texture is overwritten later in
+	 *        the same frame at HiZPrepass), so callers gate on (currentFrame - a_buildFrame == 1).
+	 * @return false if the Hi-Z grid is not yet allocated.
+	 */
+	bool GetHiZGridForCompute(ID3D11ShaderResourceView*& a_srv, int& a_gridW, int& a_gridH,
+		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame);
 
 	/**
 	 * @brief Main-scene per-frame Hi-Z step: gate the pass by main-camera identity, CAS-claim the
