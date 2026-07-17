@@ -84,9 +84,14 @@ namespace
 		// alpha-blend geometry setup, so alpha-tested casters (foliage) and SUB_INDEX stay inline.
 		if (g_instanceRestrict) {
 			const bool wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
-			if (!wholeTri || a_alphaTest) {
+			// TreeAnim casters read per-object wind (TreeParams) from b2, which the instanced path does
+			// NOT fill -- every instance would inherit passes[0]'s wind -> wrong animated depth. Keep them
+			// serial (technique bit 1u<<26 == ShaderCache UtilityShaderFlags::TreeAnim). Latent for shadows
+			// (no such caster observed) but load-bearing once the z-prepass / occlusion brackets reuse this.
+			const bool treeAnim = (a_technique & (1u << 26)) != 0;
+			if (!wholeTri || a_alphaTest || treeAnim) {
 				++g_curMap->unsupported;
-				return false;  // serial remainder (alpha-test / sub-index render inline)
+				return false;  // serial remainder (alpha-test / tree-anim / sub-index render inline)
 			}
 		}
 		// Capture the map's clean render-state block at the FIRST covered pass -- while the engine's

@@ -561,6 +561,16 @@ namespace SShaderCache
 			defines[lastIndex++] = { "RENDER_DEPTH", nullptr };
 		}
 
+		// Instancing: per-object World comes from the per-instance vertex stream instead of b2. Applies
+		// to ANY utility depth technique (RenderShadowmap OR RenderDepth for the z-prepass / occlusion),
+		// so it is hoisted out of the RenderShadowmap-only branch. The Instanced bit (1u<<30) is above
+		// the engine flag space and is set only by the instanced emit (GetVertexShader(id |
+		// kInstancedFlag)); serial passes never carry it and keep the non-instanced VS, so this only
+		// adds the extra instanced variant to the cache -- it cannot alter any serial shader.
+		if (descriptor & static_cast<uint32_t>(Instanced)) {
+			defines[lastIndex++] = { "INSTANCED", nullptr };
+		}
+
 		if (descriptor & static_cast<uint32_t>(OpaqueEffect)) {
 			defines[lastIndex++] = { "OPAQUE_EFFECT", nullptr };
 
@@ -578,10 +588,7 @@ namespace SShaderCache
 				if (descriptor & static_cast<uint32_t>(RenderShadowmapPb)) {
 					defines[lastIndex++] = { "RENDER_SHADOWMAP_PB", nullptr };
 				}
-				// Shadow instancing: per-object World comes from the instance vertex stream, not b2.
-				if (descriptor & static_cast<uint32_t>(Instanced)) {
-					defines[lastIndex++] = { "INSTANCED", nullptr };
-				}
+				// (INSTANCED define hoisted above so it also covers RenderDepth instanced draws.)
 			} else if (descriptor &
 					   static_cast<uint32_t>(AdditionalAlphaMask)) {
 				defines[lastIndex++] = { "ADDITIONAL_ALPHA_MASK", nullptr };
