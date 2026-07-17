@@ -103,7 +103,6 @@ namespace MOC
 		XMMATRIX     g_viewProj = XMMatrixIdentity();
 		RE::NiPoint3 g_posAdjust{ 0.0f, 0.0f, 0.0f };
 		XMVECTOR     g_posAdjustV = _mm_setzero_ps();  // (x, y, z, 0)
-		fplanes      g_frustum{};
 
 		// Once-per-frame build coordination: one of the concurrent main-scene culls CAS-claims
 		// the frame and publishes the snapshot load; losers skip testing until published.
@@ -133,6 +132,10 @@ namespace MOC
 				return true;
 			if (a_maxX < -1.0f || a_minX > 1.0f || a_maxY < -1.0f || a_minY > 1.0f)
 				return true;  // fully off-screen in the snapshot's view: keep
+			if (a_objNdcZMin > 0.9995f)
+				return true;  // sky-dome / far-plane distance: the depth range is compressed to ~1.0 there
+				              // so the coarse grid can't reliably occlude, and sky/cloud objects are never
+				              // occluded -- keep (prevents distant clouds/atmosphere vanishing).
 			// NDC -> UV (y flips) -> grid-cell range (cells cover 16px blocks of the full res).
 			const float u0 = (a_minX + 1.0f) * 0.5f, u1 = (a_maxX + 1.0f) * 0.5f;
 			const float v0 = (1.0f - a_maxY) * 0.5f, v1 = (1.0f - a_minY) * 0.5f;
@@ -333,11 +336,12 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 			const float minW = minVert.m128_f32[3];
 
 			if (minW < 0.00000001f) {
-				// Behind/straddling the near plane: fall back to the frustum verdict so
-				// MOC-exclusive culling reproduces vanilla frustum culls (see TestSphere).
-				const XMVECTOR center = _mm_sub_ps(_mm_setr_ps(a_object->center.x, a_object->center.y, a_object->center.z, 0.0f), g_posAdjustV);
-				const XMVECTOR halfExtents = _mm_setr_ps(a_object->size.x, a_object->size.y, a_object->size.z, 0.0f);
-				return g_frustum.AABBInFrustum(center, halfExtents);
+				// Straddling the near plane: this object is very close to the camera. Hi-Z occlusion
+				// is ADDITIVE (the engine's own frustum cull already ran this frame), so KEEP it --
+				// never re-test a near object against the 1-frame-stale snapshot frustum, which
+				// over-culls close geometry (the ground right in front of you, a nearby tree) during
+				// camera motion. Close objects are almost never occluded and catastrophic if dropped.
+				return true;
 			}
 
 			static const std::uint32_t sBBxInd[8] = { 1, 0, 0, 1, 1, 1, 0, 0 };
@@ -392,13 +396,10 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 
 			const float closestSpherePointW = closestPoint.m128_f32[3];
 			if (closestSpherePointW < 0.000001f) {
-				// Behind/straddling the near plane: TestRect can't decide. For MOC-exclusive
-				// culling this must match the ENGINE's frustum verdict, not blanket-keep:
-				// a sphere fully outside the view frustum (incl. behind the camera) is
-				// culled exactly like vanilla frustum culling would.
-				const XMVECTOR sphere = _mm_setr_ps(
-					c.x - g_posAdjust.x, c.y - g_posAdjust.y, c.z - g_posAdjust.z, sphereRadius);
-				return g_frustum.SphereInFrustum(sphere);
+				// Straddling the near plane: keep. Hi-Z occlusion is additive (the engine's frustum
+				// cull already ran), so never re-test a near object against the 1-frame-stale snapshot
+				// frustum -- that over-culls close geometry (ground/nearby trees) during camera motion.
+				return true;
 			}
 
 			XMVECTOR viewEye = { g_view.r[0].m128_f32[3], g_view.r[1].m128_f32[3], g_view.r[2].m128_f32[3], 0.0f };
@@ -563,7 +564,6 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		g_viewProj = snap->viewProj;
 		g_posAdjust = snap->posAdjust;
 		g_posAdjustV = snap->posAdjustV;
-		g_frustum.CreateFromViewProjMatrix(g_viewProj);
 
 		// Identify the sun shadow-gather camera (dirLight = ShadowSceneNode+0x210, gather cam
 		// +0x578; IDA 2026-07-11) so the small-caster SHADOW cull runs on that pass and nowhere
