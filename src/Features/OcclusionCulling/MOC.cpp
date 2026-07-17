@@ -98,6 +98,10 @@ namespace MOC
 		// GPU grid a frame after it was built (the texture is overwritten later in the same frame at
 		// HiZPrepass), so they require an exact one-frame lag -- (currentFrame - g_hizGridFrame == 1).
 		std::atomic<std::uint64_t>                g_hizGridFrame{ 0 };
+		// Camera near/far the grid depth was projected with (published under g_hizGridFrame's release).
+		// A GPU consumer reconstructs the grid's NDC-z from its own reliable view-space depth (clip.w) as
+		// far/(far-near)*(1-near/w) -- matching the depth buffer exactly without sharing the projection.
+		float                                     g_hizNear = 0.0f, g_hizFar = 0.0f;
 
 		// Sun shadow-gather camera (the small-caster SHADOW cull runs only on that pass).
 		std::atomic<const RE::NiCamera*> g_sunGatherCam{ nullptr };
@@ -514,7 +518,7 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 	}
 
 	bool GetHiZGridForCompute(ID3D11ShaderResourceView*& a_srv, int& a_gridW, int& a_gridH,
-		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame)
+		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame, float& a_near, float& a_far)
 	{
 		if (!g_hizReady || !g_hizGridSRV)
 			return false;
@@ -523,7 +527,9 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		a_gridH = g_hizGridH;
 		a_fullW = g_hizFullW;
 		a_fullH = g_hizFullH;
-		a_buildFrame = g_hizGridFrame.load(std::memory_order_acquire);
+		a_buildFrame = g_hizGridFrame.load(std::memory_order_acquire);  // acquire pairs with the release store
+		a_near = g_hizNear;
+		a_far = g_hizFar;
 		return true;
 	}
 
@@ -671,7 +677,11 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 				slot.posAdjust = cam->world.translate;
 				slot.pending = true;
 				g_hizWrite = (g_hizWrite + 1) % kHizRing;
-				// Stamp the frame this grid was reduced -- GPU consumers gate on a one-frame lag.
+				// Publish the camera near/far the depth was projected with (for GPU-side NDC-z reconstruction),
+				// then stamp the build frame (release) -- GPU consumers gate on a one-frame lag.
+				const RE::NiFrustum& fr = cam->GetRuntimeData2().viewFrustum;
+				g_hizNear = fr.fNear;
+				g_hizFar = fr.fFar;
 				g_hizGridFrame.store(globals::state->frameCountAtomic.load(std::memory_order_relaxed),
 					std::memory_order_release);
 			}

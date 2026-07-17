@@ -32,25 +32,29 @@ struct BatchDesc
 cbuffer CullParams : register(b0)
 {
 	row_major float4x4 CameraViewProj;      // this frame's camera view-proj (frustum / distance / thinning)
-	row_major float4x4 PrevCameraViewProj;  // last frame's view-proj (Hi-Z reproject; grid is last frame's)
+	row_major float4x4 PrevCameraViewProj;  // last frame's view-proj (Hi-Z reproject into the previous grid)
 	float g_RadiusWorld;                    // conservative clump bounding radius (world units)
-	float g_DistanceEnd;                    // hard-cull clumps past this clip.w (0 = disabled)
-	float g_ThinStart;                      // clip.w where stochastic thinning begins
-	float g_ThinEnd;                        // clip.w of maximum thinning
+	float g_DistanceEnd;                // hard-cull clumps past this clip.w (0 = disabled)
+	float g_ThinStart;                  // clip.w where stochastic thinning begins
+	float g_ThinEnd;                    // clip.w of maximum thinning
 	uint  g_BatchCount;
-	float g_ThinMax;                        // max fraction thinned at g_ThinEnd (0..1; 0 = disabled)
-	uint  g_HiZValid;                       // 1 = sample the frame-lagged Hi-Z grid (t3)
+	float g_ThinMax;                    // max fraction thinned at g_ThinEnd (0..1; 0 = disabled)
+	uint  g_HiZValid;                   // 1 = sample this-frame's Hi-Z grid (t3); set only on the forward burst
 	uint  g_HiZGridW;
 	uint  g_HiZGridH;
 	uint  g_HiZFullW;
 	uint  g_HiZFullH;
-	float g_HiZBias;                        // NDC-z slack; keep grass within this of the cell's farthest depth
+	float g_HiZMargin;                  // world-units a clump must be BEHIND the tip cell's occluder to cull
+	float g_HiZNear;                    // camera near/far the grid depth used -> reconstruct grid NDC-z from clip.w
+	float g_HiZFar;
+	float g_HiZHeight;                  // blade height: sample the grid at the clump's TIP cell (base + up*height)
+	float g_HiZPad;
 };
 
 StructuredBuffer<GrassInstance> g_Instances : register(t0);  // concatenated engine instance streams (mirrored)
 StructuredBuffer<BatchDesc>     g_Batches   : register(t1);  // per-batch offsets/count
 StructuredBuffer<float4x4>      g_World     : register(t2);  // per-batch STATIC World (row-major; engine b2 c8)
-Texture2D<float>                g_HiZGrid   : register(t3);  // OcclusionCulling Hi-Z grid: farthest depth / 16px, LAST frame
+Texture2D<float>                g_HiZGrid   : register(t3);  // OcclusionCulling Hi-Z grid: farthest depth / 16px, THIS frame
 RWByteAddressBuffer             g_Compacted : register(u0);  // survivors (also a vertex buffer)
 RWStructuredBuffer<uint>        g_Counters  : register(u1);  // per-batch survivor counts (reset to 0 each frame)
 
@@ -105,28 +109,38 @@ float Hash13(float3 p3)
 			visible = false;
 	}
 
-	// 4. Frame-lagged Hi-Z occlusion. The grid is LAST frame's max-reduced scene depth (grass is in the
-	//    z-prepass, so THIS frame's grid would self-occlude); reproject the STATIC clump with LAST frame's VP
-	//    into that grid and drop it if it is behind the farthest occluder in its screen cell. STANDARD Z
-	//    (near=0/far=1): the grid holds the farthest (max) depth, so occluded == clumpNdcZ > cellMax + bias
-	//    (mirrors the OcclusionCulling HiZTestRect). A 3x3 cell neighbourhood takes the MAX (most conservative)
-	//    to absorb one-frame camera motion + coarse 16px cells; over-cull only thins grass -- the z-prepass and
-	//    forward pass cull identically, so a dropped clump is never a hole.
-	if (visible && g_HiZValid != 0) {
-		const float4 pclip = mul(PrevCameraViewProj, float4(worldPos, 1.0));
-		if (pclip.w > 0.0) {
-			const float  objZ = pclip.z / pclip.w;
-			const float2 pndc = pclip.xy / pclip.w;
-			const float2 uv = float2(pndc.x * 0.5 + 0.5, 0.5 - pndc.y * 0.5);
-			if (objZ <= 0.9995 && all(uv >= 0.0) && all(uv <= 1.0)) {  // skip sky/far + last-frame-offscreen
-				const int2 c = int2(uv * float2(g_HiZFullW, g_HiZFullH)) / 16;
+	// 4. Hi-Z occlusion (FORWARD burst only; THIS frame's grid, exact -> no frame-lag / no flicker). A grass
+	//    clump's blades poke UPWARD, so its topmost ("tip") screen cell holds the FARTHEST background over the
+	//    whole clump. Cull only if the clump depth is behind even the tip cell's farthest surface: then it is
+	//    behind everything across its footprint = invisible = HOLE-PROOF, and a clump poking into open sky /
+	//    distant terrain keeps itself. Testing the BASE cell instead over-culls ~everything (the base is buried
+	//    in neighbouring blades) and leaves grass-shaped holes. No view-distance term -> no moving stripes.
+	//    objZ is reconstructed from the reliable view-space distance w via the grid's own near/far
+	//    (far/(far-near)*(1-near/w)) -- exact match to the depth buffer, unlike the frustum matrix's clip.z.
+	// Reproject the STATIC clump with LAST frame's VP (the grid is last frame's) so a turning camera still
+	// lands it on the right cell. Clump distance is last frame's view-space w (prevClip.w); the tip cell is
+	// last frame's screen position of the blade top.
+	const float4 prevClip = mul(PrevCameraViewProj, float4(worldPos, 1.0));
+	const float  pw = prevClip.w;
+	if (visible && g_HiZValid != 0 && pw > g_HiZNear) {
+		const float  objZ = (g_HiZFar / (g_HiZFar - g_HiZNear)) * (1.0 - g_HiZNear / pw);  // clump NDC depth (prev)
+		const float4 tipClip = mul(PrevCameraViewProj, float4(worldPos + float3(0.0, 0.0, g_HiZHeight), 1.0));
+		if (objZ <= 0.9995 && tipClip.w > g_HiZNear) {
+			const float2 tuv = float2(tipClip.x / tipClip.w * 0.5 + 0.5, 0.5 - tipClip.y / tipClip.w * 0.5);
+			if (all(tuv >= 0.0) && all(tuv <= 1.0)) {  // tip on-screen (else keep -- conservative)
+				const int2 c = int2(tuv * float2(g_HiZFullW, g_HiZFullH)) / 16;
 				float      cellMax = 0.0;
 				[unroll] for (int dy = -1; dy <= 1; ++dy)
 					[unroll] for (int dx = -1; dx <= 1; ++dx) {
 						const int2 cc = clamp(c + int2(dx, dy), int2(0, 0), int2(g_HiZGridW - 1, g_HiZGridH - 1));
 						cellMax = max(cellMax, g_HiZGrid.Load(int3(cc, 0)));
 					}
-				if (objZ > cellMax + g_HiZBias)
+				// Compare in VIEW SPACE (world units), not saturated NDC: linearize the tip cell's farthest
+				// visible depth to its camera distance, and cull only if the clump is >= g_HiZMargin behind it
+				// (behind a solid occluder, not just neighbouring grass). Stable frame-to-frame; hole-free
+				// because the tip cell holds the farthest background over the whole clump.
+				const float wOcc = g_HiZNear / max(1.0 - cellMax * (g_HiZFar - g_HiZNear) / g_HiZFar, 1e-6);
+				if (pw > wOcc + g_HiZMargin)
 					visible = false;
 			}
 		}

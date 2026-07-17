@@ -53,7 +53,7 @@ namespace MOC
 	 * @return false if the Hi-Z grid is not yet allocated.
 	 */
 	bool GetHiZGridForCompute(ID3D11ShaderResourceView*& a_srv, int& a_gridW, int& a_gridH,
-		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame);
+		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame, float& a_near, float& a_far);
 
 	/**
 	 * @brief Main-scene per-frame Hi-Z step: gate the pass by main-camera identity, CAS-claim the
