@@ -55,6 +55,9 @@ namespace MOC
 	bool GetHiZGridForCompute(ID3D11ShaderResourceView*& a_srv, int& a_gridW, int& a_gridH,
 		int& a_fullW, int& a_fullH, std::uint64_t& a_buildFrame, float& a_near, float& a_far);
 
+	/** @brief Main render camera near/far planes (for a GPU consumer to reconstruct view depth). */
+	bool GetCameraNearFar(float& a_near, float& a_far);
+
 	/**
 	 * @brief Main-scene per-frame Hi-Z step: gate the pass by main-camera identity, CAS-claim the
 	 *        frame, and load the published depth snapshot's matrices into the shared test globals.

@@ -546,6 +546,19 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		return static_cast<RE::BSSceneGraph*>(root)->GetRuntimeData().camera.get();
 	}
 
+	bool GetCameraNearFar(float& a_near, float& a_far)
+	{
+		auto* cam = GetMainCamera();
+		if (!cam)
+			return false;
+		const RE::NiFrustum& fr = cam->GetRuntimeData2().viewFrustum;
+		if (!(fr.fFar > fr.fNear) || fr.fNear <= 0.0f)
+			return false;
+		a_near = fr.fNear;
+		a_far = fr.fFar;
+		return true;
+	}
+
 	bool BuildOccluders(RE::NiCamera* a_camera)
 	{
 		if (!g_init)

@@ -109,22 +109,17 @@ float Hash13(float3 p3)
 			visible = false;
 	}
 
-	// 4. Hi-Z occlusion (FORWARD burst only; THIS frame's grid, exact -> no frame-lag / no flicker). A grass
-	//    clump's blades poke UPWARD, so its topmost ("tip") screen cell holds the FARTHEST background over the
-	//    whole clump. Cull only if the clump depth is behind even the tip cell's farthest surface: then it is
-	//    behind everything across its footprint = invisible = HOLE-PROOF, and a clump poking into open sky /
-	//    distant terrain keeps itself. Testing the BASE cell instead over-culls ~everything (the base is buried
-	//    in neighbouring blades) and leaves grass-shaped holes. No view-distance term -> no moving stripes.
-	//    objZ is reconstructed from the reliable view-space distance w via the grid's own near/far
-	//    (far/(far-near)*(1-near/w)) -- exact match to the depth buffer, unlike the frustum matrix's clip.z.
-	// Reproject the STATIC clump with LAST frame's VP (the grid is last frame's) so a turning camera still
-	// lands it on the right cell. Clump distance is last frame's view-space w (prevClip.w); the tip cell is
-	// last frame's screen position of the blade top.
-	const float4 prevClip = mul(PrevCameraViewProj, float4(worldPos, 1.0));
-	const float  pw = prevClip.w;
+	// 4. Hi-Z occlusion vs THIS frame's OPAQUE-ONLY occluder grid (built at the first grass draw, before grass
+	//    is drawn -> holds only terrain/trees/rocks). A clump is culled only when it is behind a SOLID surface,
+	//    never behind neighbouring grass (grass isn't in the grid), and the grid is this-frame so there is no
+	//    frame-lag/flicker. A grass clump's blades poke UPWARD, so its topmost ("tip") screen cell holds the
+	//    FARTHEST background over the whole clump: cull only if the clump is behind even the tip cell's farthest
+	//    surface (behind everything across its footprint) -> HOLE-PROOF, and a clump poking past the occluder
+	//    keeps itself. Clump distance is this frame's view-space w (pw); the tip cell is its blade-top screen pos.
+	const float pw = w;  // this frame's view-space distance (from the frustum clip above)
 	if (visible && g_HiZValid != 0 && pw > g_HiZNear) {
-		const float  objZ = (g_HiZFar / (g_HiZFar - g_HiZNear)) * (1.0 - g_HiZNear / pw);  // clump NDC depth (prev)
-		const float4 tipClip = mul(PrevCameraViewProj, float4(worldPos + float3(0.0, 0.0, g_HiZHeight), 1.0));
+		const float  objZ = (g_HiZFar / (g_HiZFar - g_HiZNear)) * (1.0 - g_HiZNear / pw);  // clump NDC depth
+		const float4 tipClip = mul(CameraViewProj, float4(worldPos + float3(0.0, 0.0, g_HiZHeight), 1.0));
 		if (objZ <= 0.9995 && tipClip.w > g_HiZNear) {
 			const float2 tuv = float2(tipClip.x / tipClip.w * 0.5 + 0.5, 0.5 - tipClip.y / tipClip.w * 0.5);
 			if (all(tuv >= 0.0) && all(tuv <= 1.0)) {  // tip on-screen (else keep -- conservative)

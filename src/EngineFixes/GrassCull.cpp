@@ -40,11 +40,13 @@ namespace
 	// Cull clumps whose view depth (clip.w) exceeds this -- past the grass fade-out they are fully alpha-faded
 	// (invisible) yet still drawn, so removing them is free visually. Generous so only invisible grass is cut.
 	constexpr float         kDistanceCullEnd = 8192.0f;
-	// Stochastic distance thinning (a distinct LOD technique, NOT occlusion): from kThinStart to kThinEnd,
-	// drop up to kThinMax of clumps. OFF for now (kThinMax=0) -- to be exposed as an OcclusionCulling option.
+	// Stochastic distance thinning LOD (the shipped grass-density optimisation; a distinct technique from Hi-Z
+	// occlusion, which is left opt-in/off). From kThinStart to kThinEnd, drop up to kThinMax of clumps with a
+	// smooth distance ramp. Position-hashed so each clump's keep/drop is STABLE across frames (no flicker) and
+	// spatially uncorrelated -- a gradual density falloff with distance, no hard band. Artifact-free (+~8%).
 	constexpr float         kThinStart = 3000.0f;
 	constexpr float         kThinEnd = 8000.0f;
-	constexpr float         kThinMax = 0.0f;
+	constexpr float         kThinMax = 0.6f;
 	// Capacity must exceed worst-case loaded density -- dense-grass exteriors reach ~1000 batches / ~725k
 	// instances, and hitting either cap forces ResetSlots() to churn every frame (batches never stay captured,
 	// so they flip between culled and full = flickering/disappearing grass). Sized ~3-4x the observed worst
@@ -122,8 +124,18 @@ namespace
 		return s_on.load(std::memory_order_relaxed);
 	}
 
-	winrt::com_ptr<ID3D11ComputeShader> g_cullCS, g_argsCS;
+	winrt::com_ptr<ID3D11ComputeShader> g_cullCS, g_argsCS, g_occReduceCS;
 	std::unique_ptr<ConstantBuffer>     g_cullCB, g_argsCB;
+	// OPAQUE-ONLY Hi-Z occluder grid, built THIS frame at the first grass draw (opaque depth is done, grass is
+	// not yet drawn -> the grid holds only solid occluders, so grass is culled behind trees/terrain but NEVER
+	// behind neighbouring grass, and there is no frame-lag). g_occTemp is a copy of the pre-grass scene depth.
+	winrt::com_ptr<ID3D11Texture2D>           g_occTemp;
+	winrt::com_ptr<ID3D11ShaderResourceView>  g_occTempSRV;
+	winrt::com_ptr<ID3D11Texture2D>           g_occGrid;
+	winrt::com_ptr<ID3D11UnorderedAccessView> g_occGridUAV;
+	winrt::com_ptr<ID3D11ShaderResourceView>  g_occGridSRV;
+	int                                       g_occFullW = 0, g_occFullH = 0, g_occGridW = 0, g_occGridH = 0;
+	bool                                      g_occInitTried = false, g_occReady = false;
 	// Shared inputs (both bursts read these).
 	winrt::com_ptr<ID3D11Buffer>             g_concat, g_desc, g_world;
 	winrt::com_ptr<ID3D11ShaderResourceView> g_concatSRV, g_descSRV, g_worldSRV;
@@ -195,7 +207,9 @@ namespace
 				Util::CompileShader(L"Data\\Shaders\\GrassCull\\GrassCullCS.hlsl", {}, "cs_5_0")));
 			g_argsCS.attach(static_cast<ID3D11ComputeShader*>(
 				Util::CompileShader(L"Data\\Shaders\\GrassCull\\GrassCullArgsCS.hlsl", {}, "cs_5_0")));
-			if (!g_cullCS || !g_argsCS) {
+			g_occReduceCS.attach(static_cast<ID3D11ComputeShader*>(
+				Util::CompileShader(L"Data\\Shaders\\GrassCull\\GrassHiZReduceCS.hlsl", {}, "cs_5_0")));
+			if (!g_cullCS || !g_argsCS || !g_occReduceCS) {
 				g_initFailed = true;
 				return false;
 			}
@@ -274,6 +288,107 @@ namespace
 		g_maxCount = 0;
 	}
 
+	// Lazily create the opaque-occluder-grid resources from the kMAIN scene-depth's runtime format/size:
+	// a same-format copy target g_occTemp (+ a depth-read SRV) and the R32F max-reduced grid g_occGrid.
+	bool EnsureOccGrid()
+	{
+		if (g_occReady)
+			return true;
+		if (g_occInitTried)
+			return false;
+		auto* device = globals::d3d::device;
+		auto* renderer = globals::game::renderer;
+		if (!device || !renderer)
+			return false;
+		ID3D11Texture2D* depthTex =
+			renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture;
+		if (!depthTex)
+			return false;
+		g_occInitTried = true;
+
+		D3D11_TEXTURE2D_DESC dd{};
+		depthTex->GetDesc(&dd);
+		if (dd.SampleDesc.Count > 1)
+			return false;  // MSAA depth unsupported
+		DXGI_FORMAT srvFmt;
+		switch (dd.Format) {
+		case DXGI_FORMAT_R24G8_TYPELESS:
+		case DXGI_FORMAT_D24_UNORM_S8_UINT:    srvFmt = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; break;
+		case DXGI_FORMAT_R32G8X24_TYPELESS:
+		case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: srvFmt = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS; break;
+		case DXGI_FORMAT_R32_TYPELESS:
+		case DXGI_FORMAT_D32_FLOAT:            srvFmt = DXGI_FORMAT_R32_FLOAT; break;
+		case DXGI_FORMAT_R16_TYPELESS:
+		case DXGI_FORMAT_D16_UNORM:            srvFmt = DXGI_FORMAT_R16_UNORM; break;
+		default:                               return false;  // unknown depth format -> no occ grid
+		}
+
+		D3D11_TEXTURE2D_DESC td = dd;  // same format/size for CopyResource
+		td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		td.MiscFlags = 0;
+		td.CPUAccessFlags = 0;
+		td.Usage = D3D11_USAGE_DEFAULT;
+		if (FAILED(device->CreateTexture2D(&td, nullptr, g_occTemp.put())))
+			return false;
+		Util::SetResourceName(g_occTemp.get(), "GrassCull::OccDepthCopy");
+		D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+		sd.Format = srvFmt;
+		sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		sd.Texture2D.MipLevels = 1;
+		if (FAILED(device->CreateShaderResourceView(g_occTemp.get(), &sd, g_occTempSRV.put())))
+			return false;
+
+		g_occFullW = static_cast<int>(dd.Width);
+		g_occFullH = static_cast<int>(dd.Height);
+		g_occGridW = (g_occFullW + 15) / 16;
+		g_occGridH = (g_occFullH + 15) / 16;
+		D3D11_TEXTURE2D_DESC gd{};
+		gd.Width = static_cast<UINT>(g_occGridW);
+		gd.Height = static_cast<UINT>(g_occGridH);
+		gd.MipLevels = 1;
+		gd.ArraySize = 1;
+		gd.Format = DXGI_FORMAT_R32_FLOAT;
+		gd.SampleDesc = { 1, 0 };
+		gd.Usage = D3D11_USAGE_DEFAULT;
+		gd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+		if (FAILED(device->CreateTexture2D(&gd, nullptr, g_occGrid.put())))
+			return false;
+		Util::SetResourceName(g_occGrid.get(), "GrassCull::OccGrid");
+		if (FAILED(device->CreateUnorderedAccessView(g_occGrid.get(), nullptr, g_occGridUAV.put())))
+			return false;
+		if (FAILED(device->CreateShaderResourceView(g_occGrid.get(), nullptr, g_occGridSRV.put())))
+			return false;
+		g_occReady = true;
+		return true;
+	}
+
+	// Copy the current (pre-grass) scene depth and max-reduce it into g_occGrid = this frame's opaque occluders.
+	void BuildOccGrid()
+	{
+		if (!EnsureOccGrid())
+			return;
+		auto* ctx = globals::d3d::context;
+		auto* renderer = globals::game::renderer;
+		if (!ctx || !renderer)
+			return;
+		ID3D11Texture2D* depthTex =
+			renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture;
+		if (!depthTex)
+			return;
+		ctx->CopyResource(g_occTemp.get(), depthTex);  // opaque depth (grass not drawn yet this frame)
+		ID3D11ShaderResourceView* srv = g_occTempSRV.get();
+		ID3D11UnorderedAccessView* uav = g_occGridUAV.get();
+		ctx->CSSetShaderResources(0, 1, &srv);
+		ctx->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		ctx->CSSetShader(g_occReduceCS.get(), nullptr, 0);
+		ctx->Dispatch(static_cast<UINT>(g_occGridW), static_cast<UINT>(g_occGridH), 1);
+		ID3D11ShaderResourceView*  ns = nullptr;
+		ID3D11UnorderedAccessView* nu = nullptr;
+		ctx->CSSetShaderResources(0, 1, &ns);
+		ctx->CSSetUnorderedAccessViews(0, 1, &nu, nullptr);
+		ctx->CSSetShader(nullptr, nullptr, 0);
+	}
+
 	// Cull all registered batches in one dispatch into `out`, then fill its indirect args. doHiZ adds the
 	// occlusion test against THIS frame's grid -- valid only for the FORWARD burst, where the grid (built at
 	// PrepassPasses from the z-prepass depth) already exists. The z-prepass burst (doHiZ=false) runs earlier,
@@ -291,11 +406,7 @@ namespace
 		auto   vp = globals::game::frameBufferCached.GetCameraViewProj();  // this frame's main view-proj (row-major)
 		CullCB cb{};
 		std::memcpy(cb.camVP, &vp, sizeof(cb.camVP));
-		// Hi-Z reprojects into the PREVIOUS frame's grid, so use last frame's VP (first frame reuses this one).
-		// Only trust it if it is EXACTLY last frame's -- a frame that drew no grass leaves it stale, which would
-		// misplace clumps for one frame (transient wrong cull) on the frame grass reappears.
-		const bool prevFresh = g_prevCamVPValid && g_prevCamVPFrame + 1 == frame;
-		std::memcpy(cb.prevCamVP, prevFresh ? g_prevCamVP : cb.camVP, sizeof(cb.prevCamVP));
+		std::memcpy(cb.prevCamVP, cb.camVP, sizeof(cb.prevCamVP));  // unused (this-frame grid); kept for layout
 		cb.radiusWorld = kClumpRadius;
 		cb.distanceEnd = kDistanceCullEnd;
 		cb.thinStart = kThinStart;
@@ -304,33 +415,27 @@ namespace
 		cb.thinMax = kThinMax;
 		cb.hizMargin = kHiZMargin;
 
-		// Hi-Z runs in the single z-prepass burst against the PREVIOUS frame's grid (this frame's is not reduced
-		// until PrepassPasses, after the z-prepass), so both passes cull the same set = hole-free. Require an
-		// exact one-frame lag; if the grid is missing/stale (loading), skip Hi-Z -> plain frustum/distance cull.
+		// Hi-Z occlusion. Build THIS frame's OPAQUE-ONLY occluder grid now (the burst runs at the first grass
+		// draw of the z-prepass -- opaque geometry is drawn, grass is not) and cull against it with this frame's
+		// VP. Both passes draw the single set = hole-free. Opaque-only -> no grass-vs-grass over-cull; this-frame
+		// -> no frame-lag/flicker. If the grid or camera planes aren't available, skip Hi-Z (plain cull).
 		ID3D11ShaderResourceView* hizSRV = nullptr;
 		if (doHiZ) {
-			ID3D11ShaderResourceView* srvTmp = nullptr;
-			int                       gw = 0, gh = 0, fw = 0, fh = 0;
-			std::uint64_t             buildFrame = 0;
-			float                     zn = 0.0f, zf = 0.0f;
-			if (prevFresh && MOC::GetHiZGridForCompute(srvTmp, gw, gh, fw, fh, buildFrame, zn, zf) &&
-				buildFrame + 1 == frame && zf > zn && zn > 0.0f) {
-				hizSRV = srvTmp;
+			float zn = 0.0f, zf = 0.0f;
+			BuildOccGrid();
+			if (g_occReady && MOC::GetCameraNearFar(zn, zf) && zf > zn && zn > 0.0f) {
+				hizSRV = g_occGridSRV.get();
 				cb.hizValid = 1;
-				cb.hizGridW = static_cast<std::uint32_t>(gw);
-				cb.hizGridH = static_cast<std::uint32_t>(gh);
-				cb.hizFullW = static_cast<std::uint32_t>(fw);
-				cb.hizFullH = static_cast<std::uint32_t>(fh);
+				cb.hizGridW = static_cast<std::uint32_t>(g_occGridW);
+				cb.hizGridH = static_cast<std::uint32_t>(g_occGridH);
+				cb.hizFullW = static_cast<std::uint32_t>(g_occFullW);
+				cb.hizFullH = static_cast<std::uint32_t>(g_occFullH);
 				cb.hizNear = zn;
 				cb.hizFar = zf;
 				cb.hizHeight = kGrassHeight;
 			}
 		}
 		g_cullCB->Update(cb);
-		// Remember this frame's VP for next frame's Hi-Z reproject (into what will then be the previous grid).
-		std::memcpy(g_prevCamVP, cb.camVP, sizeof(g_prevCamVP));
-		g_prevCamVPValid = true;
-		g_prevCamVPFrame = frame;
 
 		const UINT clear[4] = { 0, 0, 0, 0 };
 		ctx->ClearUnorderedAccessViewUint(out.countersUAV.get(), clear);
