@@ -166,8 +166,16 @@ namespace
 			// Local-light stagger eligibility: shadow atlas (target 4), valid slice, a camera, and a
 			// local render mode (13 spot / 15 point). Directional cascades (14) are camera-relative and
 			// stay per-frame. EnsureCache lazily allocates the private slice mirror.
+			//
+			// STATIC/DYNAMIC SPLIT: a map that drew DYNAMIC (skinned) casters this frame -- the player,
+			// NPCs -- must never be cached or reused, or those shadows go stale (flicker / missing player).
+			// callOriginal already rendered this frame's skinned casters inline into the slice, so for such
+			// a map we just RenderMapInstanced the fresh static on top -> a fully fresh, correct map. Only
+			// STATIC-ONLY local lights (skinnedInline == 0) stagger via the cache; the cache then only ever
+			// holds clean static-only depth (light-space, camera-independent), so reused blits stay correct.
+			const bool hasDynamic = g_curMap->skinnedInline > 0;
 			const bool eligible = target == 4 && slice < 64 && camera &&
-				(rmode == 13 || rmode == 15) && ShadowMapCache::EnsureCache();
+				(rmode == 13 || rmode == 15) && !hasDynamic && ShadowMapCache::EnsureCache();
 			if (!eligible) {
 				RenderMapInstanced(*g_curMap);
 			} else {
