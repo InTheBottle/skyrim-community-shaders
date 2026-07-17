@@ -6,11 +6,14 @@
 #include <d3d11_1.h>
 
 #include "Globals.h"
+#include "State.h"
 #include "UtilityPassReplica.h"
 
 #include "ShadowMapCache.h"
 
 #include <RE/B/BSRenderPass.h>
+#include <RE/B/BSShaderProperty.h>
+#include <RE/P/PlayerCharacter.h>
 
 // Shadow-map instancing, built on the byte-exact UtilityPassReplica. Two levels of the shadow-map
 // walk are bracketed:
@@ -101,6 +104,146 @@ namespace
 		g_curMap->passes.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
 		return g_claiming;  // claim -> skip inline; replay owns it
 	}
+
+	// Z-prepass (Main_RenderDepth, RelID 100421) capture hook. Same instanceable classification as
+	// CaptureHook, plus two leading rejects the z-prepass needs: (G2) the terrain family -- owned by
+	// TerrainBlending, which double-renders landscape with a per-draw DSV toggle, so it must NEVER be
+	// claimed -- and (G4) OFFSET_DEPTH decals, whose per-object polygon offset can't vary within one
+	// DrawIndexedInstanced. Standalone so the shipped shadow CaptureHook stays byte-exact.
+	bool DepthCaptureHook(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest,
+		std::uint32_t a_renderFlags, bool a_canReplicate)
+	{
+		if (!g_curMap)
+			return false;
+		if (!a_canReplicate) {
+			++g_curMap->unsupported;
+			return false;
+		}
+		// G2: terrain-family reject FIRST (largest excluded class).
+		if (auto* sp = a_pass->shaderProperty) {
+			using Flag = RE::BSShaderProperty::EShaderPropertyFlag;
+			if (sp->flags.any(Flag::kMultiTextureLandscape, Flag::kLODLandscape, Flag::kNoLODLandBlend)) {
+				++g_curMap->unsupported;
+				return false;
+			}
+		}
+		// G4: decal reject (DepthWriteDecals technique bit 1u<<17) -- polygon-offset depth, order-sensitive.
+		if ((a_technique & (1u << 17)) != 0) {
+			++g_curMap->unsupported;
+			return false;
+		}
+		// Skinned -> engine inline (bone-CB / dynamic-VB rings).
+		auto* geom = a_pass->geometry;
+		if (geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(geom) + 0x130)) {
+			++g_curMap->skinnedInline;
+			return false;
+		}
+		// Whole-TRISHAPE, non-alpha-test, non-TreeAnim only (identical restrict to the shadow path).
+		const bool wholeTri = geom && *(reinterpret_cast<const std::uint8_t*>(geom) + 0x150) == 3;
+		const bool treeAnim = (a_technique & (1u << 26)) != 0;
+		if (!wholeTri || a_alphaTest || treeAnim) {
+			++g_curMap->unsupported;
+			return false;
+		}
+		// Snapshot the clean render-state block at the first claimed pass, while kMAIN DSV + viewport live.
+		if (g_curMap->passes.empty())
+			std::memcpy(g_curMap->block, reinterpret_cast<void*>(engine::S_base.address()), engine::kBlockBytes);
+		g_curMap->passes.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
+		return g_claiming;
+	}
+
+	// FP32 depth-instancing host: the same captured-block save/reseed/force-dirty/restore dance as
+	// RenderMapInstanced, but emits via RenderDepthInstancedFP32 (byte-exact FP32 World + R32 IL). The
+	// z-prepass is a single depth map (kMAIN), so one MapWork -- no atlas slice, no ShadowMapCache.
+	void RenderMapInstancedFP32(MapWork& mw)
+	{
+		if (mw.passes.empty())
+			return;
+		auto* const S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+		auto* const sflags = reinterpret_cast<std::uint32_t*>(S);
+
+		static std::vector<std::uint8_t> s_saved(engine::kBlockBytes);
+		std::memcpy(s_saved.data(), S, engine::kBlockBytes);
+		const auto  savedTech = *engine::g_currentTechnique;
+		auto* const savedShader = *engine::g_currentShader;
+		auto* const savedMaterial = *engine::g_currentMaterial;
+
+		std::memcpy(S, mw.block, engine::kBlockBytes);
+		sflags[0] = 0xFFFFFFFFu;
+		*engine::g_currentTechnique = 0;
+		*engine::g_currentShader = nullptr;
+		*engine::g_currentMaterial = nullptr;
+
+		static std::vector<RE::BSRenderPass*> s_passes;
+		static std::vector<std::uint32_t>     s_techs;
+		s_passes.clear();
+		s_techs.clear();
+		s_passes.reserve(mw.passes.size());
+		s_techs.reserve(mw.passes.size());
+		for (const auto& cp : mw.passes) {
+			s_passes.push_back(cp.pass);
+			s_techs.push_back(cp.technique);
+		}
+		UtilityPassReplica::GetSingleton()->RenderDepthInstancedFP32(
+			s_passes.data(), s_techs.data(), static_cast<std::uint32_t>(s_passes.size()), mw.passes[0].renderFlags);
+
+		std::memcpy(S, s_saved.data(), engine::kBlockBytes);
+		*engine::g_currentTechnique = savedTech;
+		*engine::g_currentShader = savedShader;
+		*engine::g_currentMaterial = savedMaterial;
+		sflags[0] = 0xFFFFFFFFu;
+	}
+
+	// Z-prepass instancing is byte-exact + terrain-safe + visually inert (validated: frozen serial-vs-instanced
+	// A/B == TAA-jitter baseline, correct in motion), BUT measured a ~1.5% FPS LOSS on the RTX 4080 reference
+	// rig: the frame is GPU-bound, so collapsing the z-prepass draw calls (a render-thread/CPU saving) does not
+	// convert to FPS while the capture/fill/emit overhead costs. It only pays when the frame is render-thread-
+	// bound (weak CPU / very heavy modlist). Default OFF -- the detour is not installed below -- so it never
+	// regresses the default; flip to true to enable it for a CPU-bound setup.
+	constexpr bool kEnableDepthPrepassInstancing = false;
+
+	// Main_RenderDepth (RelID 100421) detour = the z-prepass instanced bracket. Runs INSIDE the function
+	// (so before TerrainBlending's outer-wrapper BlendPrepassDepths, and while b12/CameraViewProj still holds
+	// the main camera). Arm DepthCaptureHook + restrict, run the engine depth body (statics claimed + skipped
+	// inline, terrain/skinned/alpha/decal render inline), disarm, emit the claimed statics FP32-instanced.
+	void Main_RenderDepthDetour(bool a1, bool a2, void* a_original)
+	{
+		auto callOriginal = *static_cast<void (**)(bool, bool)>(a_original);
+
+		auto* const player = RE::PlayerCharacter::GetSingleton();
+		const bool  inWorld = player && player->GetParentCell() &&
+			globals::state && !globals::state->IsMainOrLoadingMenuOpen();
+		if (!inWorld) {
+			callOriginal(a1, a2);
+			return;
+		}
+
+		static MapWork s_depthWork;
+		s_depthWork.passes.clear();
+		s_depthWork.unsupported = 0;
+		s_depthWork.skinnedInline = 0;
+
+		auto* const replica = UtilityPassReplica::GetSingleton();
+		g_curMap = &s_depthWork;
+		g_claiming = true;
+		g_instanceRestrict = true;
+		replica->SetShadowCaptureHook(&DepthCaptureHook);
+
+		callOriginal(a1, a2);
+
+		replica->SetShadowCaptureHook(nullptr);
+		g_claiming = false;
+		g_instanceRestrict = false;
+		g_curMap = nullptr;
+
+		RenderMapInstancedFP32(s_depthWork);
+	}
+
+	struct Main_RenderDepthHook
+	{
+		static void thunk(bool a1, bool a2) { Main_RenderDepthDetour(a1, a2, &func); }
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	// Per-map instanced draw. RenderShadowmap's original has returned and unbound the map's DSV, so seed
 	// the map's CAPTURED render-state block (RT/DSV/viewport snapshotted at the first covered pass while
@@ -255,6 +398,10 @@ void ShadowInstancingFix::Install()
 
 	stl::detour_thunk<RenderShadowmapsHook>(REL::RelocationID(100420, 0));
 	stl::detour_thunk<RenderShadowmapHook>(REL::RelocationID(100820, 0));
+	// Z-prepass instanced bracket: byte-exact but a net FPS loss on this GPU-bound rig, so NOT installed by
+	// default (see kEnableDepthPrepassInstancing). When off, Main_RenderDepth runs untouched -> zero overhead.
+	if (kEnableDepthPrepassInstancing)
+		stl::detour_thunk<Main_RenderDepthHook>(REL::RelocationID(100421, 0));
 
 	logger::info("[ShadowInstancingFix] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}",
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address());

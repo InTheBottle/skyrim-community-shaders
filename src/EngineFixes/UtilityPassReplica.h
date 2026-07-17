@@ -72,6 +72,14 @@ public:
 	void RenderShadowInstanced(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
 		std::uint32_t a_count, std::uint32_t a_renderFlags);
 
+	/** @brief Z-prepass sibling of RenderShadowInstanced. Emits the claimed whole-TRISHAPE static depth
+	 *         casters as DrawIndexedInstanced with a BYTE-EXACT FP32 World stream (64 B/instance) and a
+	 *         bespoke R32G32B32A32 instance input layout (the engine ILCreate hardcodes R16). Byte-exact
+	 *         is mandatory: the z-prepass depth is the early-Z equality reference for the forward pass.
+	 *         Reuses the shadow grouping / technique setup / id|Instanced VS fetch verbatim. */
+	void RenderDepthInstancedFP32(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
+		std::uint32_t a_count, std::uint32_t a_renderFlags);
+
 	/** @brief True when the pass is inside the replica's current RE coverage:
 	 *         non-custom TRISHAPE / SUB_INDEX_TRISHAPE geometry plus skinned passes on
 	 *         the static skin-instance Render branch. Stencil-above-water and the

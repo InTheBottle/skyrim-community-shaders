@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <winrt/base.h>
 
+#include "Hooks.h"  // TryGetShaderBytecode (for the FP32 depth-instancing input layout)
+
 #include <RE/B/BSRenderPass.h>
 #include <RE/B/BSShader.h>
 #include <RE/B/BSUtilityShader.h>
@@ -1550,7 +1552,259 @@ void UtilityPassReplica::RenderShadowInstanced(RE::BSRenderPass* const* a_passes
 	WsShader() = nullptr;
 	WsTechnique() = 0;
 	WsMaterial() = nullptr;
+}
 
+// Z-prepass sibling of RenderShadowInstanced. Two deltas: (1) the instance World is stored FP32
+// (64 B/instance, R32G32B32A32) instead of _mm_cvtps_ph FP16 -- byte-exact vs the serial b2 World,
+// mandatory because the prepass depth is the early-Z equality reference; (2) a bespoke R32 input
+// layout is bound directly (engine ILCreate hardcodes R16G16B16A16, ~line 1422-1431), so
+// DIRTY_VERTEX_DESC is cleared and the IL/VBs are set by us after SetDirtyStates. Grouping, technique
+// setup and the id|Instanced VS fetch are identical to the shadow path. Depth casters carry no shadow
+// FADE (accumulationHint 10 is shadow-only), so the group key is just (mesh, technique).
+void UtilityPassReplica::RenderDepthInstancedFP32(RE::BSRenderPass* const* a_passes,
+	const std::uint32_t* a_techniques, std::uint32_t a_count, std::uint32_t a_renderFlags)
+{
+	(void)a_renderFlags;
+	if (a_count == 0)
+		return;
+	auto* ctx = globals::d3d::context;
+	auto* S = reinterpret_cast<std::uint8_t*>(engine::S_base.address());
+
+	struct Group
+	{
+		engine::TriShapeData*          rd;
+		std::uint32_t                  tech;
+		std::uint32_t                  baseInst;
+		std::vector<RE::BSRenderPass*> passes;
+	};
+	static std::vector<Group>                             groups;
+	static std::unordered_map<std::uint64_t, std::size_t> index;
+	for (auto& g : groups)
+		g.passes.clear();
+	std::size_t liveGroups = 0;
+	index.clear();
+	if (groups.capacity() < a_count)
+		groups.reserve(a_count);
+	index.reserve(a_count);
+
+	for (std::uint32_t i = 0; i < a_count; ++i) {
+		auto* geom = reinterpret_cast<std::uint8_t*>(a_passes[i]->geometry);
+		if (geom[0x150] != 3)
+			continue;
+		auto* rd = *reinterpret_cast<engine::TriShapeData**>(geom + 0x138);
+		if (!rd)
+			continue;
+		const std::uint64_t k = reinterpret_cast<std::uint64_t>(rd) ^
+		                        (static_cast<std::uint64_t>(a_techniques[i]) << 1);
+		auto        it = index.find(k);
+		std::size_t gi;
+		if (it == index.end()) {
+			gi = liveGroups++;
+			index.emplace(k, gi);
+			if (gi < groups.size()) {
+				groups[gi].rd = rd;
+				groups[gi].tech = a_techniques[i];
+			} else {
+				groups.push_back(Group{ rd, a_techniques[i], 0, {} });
+			}
+		} else {
+			gi = it->second;
+		}
+		groups[gi].passes.push_back(a_passes[i]);
+	}
+	if (liveGroups == 0)
+		return;
+
+	static std::vector<std::uint32_t> order;
+	order.resize(liveGroups);
+	for (std::uint32_t i = 0; i < liveGroups; ++i)
+		order[i] = i;
+	std::sort(order.begin(), order.end(),
+		[&](std::uint32_t a, std::uint32_t b) { return groups[a].tech < groups[b].tech; });
+
+	// ---- FP32 instance VB: 64 B/instance, one Map(DISCARD) for the whole pass ----
+	static winrt::com_ptr<ID3D11Buffer> s_instVB32;
+	static std::uint32_t                s_instCap32 = 0;
+	std::uint32_t                       totalInst = 0;
+	for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+		groups[order[oi]].baseInst = totalInst;
+		totalInst += static_cast<std::uint32_t>(groups[order[oi]].passes.size());
+	}
+	if (totalInst > s_instCap32) {
+		std::uint32_t newCap = s_instCap32 ? s_instCap32 : 4096u;
+		while (newCap < totalInst)
+			newCap *= 2u;
+		s_instVB32 = nullptr;
+		D3D11_BUFFER_DESC bd{};
+		bd.ByteWidth = newCap * 64u;  // FP32: 64 B/instance (was 32 for FP16)
+		bd.Usage = D3D11_USAGE_DYNAMIC;
+		bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		if (FAILED(globals::d3d::device->CreateBuffer(&bd, nullptr, s_instVB32.put())))
+			return;
+		s_instCap32 = newCap;
+		Util::SetResourceName(s_instVB32.get(), "DepthInstance::InstanceVB32");
+	}
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (FAILED(ctx->Map(s_instVB32.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+			return;
+		auto*       outBase = reinterpret_cast<std::uint8_t*>(mapped.pData);
+		const float adjX = *reinterpret_cast<const float*>(REL::Offset(0x302820C).address());
+		const float adjY = *reinterpret_cast<const float*>(REL::Offset(0x3028210).address());
+		const float adjZ = *reinterpret_cast<const float*>(REL::Offset(0x3028214).address());
+		for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+			auto&      g = groups[order[oi]];
+			auto*      out = outBase + static_cast<std::size_t>(g.baseInst) * 64u;
+			const auto n = static_cast<std::uint32_t>(g.passes.size());
+			for (std::uint32_t i = 0; i < n; ++i, out += 64) {
+				auto*        geom = reinterpret_cast<std::uint8_t*>(g.passes[i]->geometry);
+				const float* x = reinterpret_cast<const float*>(geom + 0x7C);
+				const float  s = x[12];
+				alignas(16) float m44[16];
+				m44[0] = s * x[0];      m44[1] = s * x[3];      m44[2] = s * x[6];      m44[3] = 0.0f;
+				m44[4] = s * x[1];      m44[5] = s * x[4];      m44[6] = s * x[7];      m44[7] = 0.0f;
+				m44[8] = s * x[2];      m44[9] = s * x[5];      m44[10] = s * x[8];     m44[11] = 0.0f;
+				m44[12] = x[9] - adjX;  m44[13] = x[10] - adjY; m44[14] = x[11] - adjZ; m44[15] = 1.0f;
+				__m128 r0 = _mm_load_ps(m44 + 0), r1 = _mm_load_ps(m44 + 4),
+				       r2 = _mm_load_ps(m44 + 8), r3 = _mm_load_ps(m44 + 12);
+				_MM_TRANSPOSE4_PS(r0, r1, r2, r3);  // == SG_MatrixTranspose (row-major World rows)
+				_mm_store_ps(reinterpret_cast<float*>(out + 0), r0);  // FP32, no _mm_cvtps_ph
+				_mm_store_ps(reinterpret_cast<float*>(out + 16), r1);
+				_mm_store_ps(reinterpret_cast<float*>(out + 32), r2);
+				_mm_store_ps(reinterpret_cast<float*>(out + 48), r3);
+			}
+		}
+		ctx->Unmap(s_instVB32.get(), 0);
+	}
+
+	constexpr std::uint32_t kInstancedFlag = 1u << 30;  // UtilityShaderFlags::Instanced
+
+	// ---- per-vertexDesc R32 input-layout cache (bespoke; engine ILCreate is R16-only) ----
+	static std::unordered_map<std::uint64_t, winrt::com_ptr<ID3D11InputLayout>> s_ilCache;
+	const auto getDepthIL = [&](engine::TriShapeData* rd,
+	                             RE::BSGraphics::VertexShader* instVS) -> ID3D11InputLayout* {
+		auto it = s_ilCache.find(rd->vertexDesc);
+		if (it != s_ilCache.end())
+			return it->second.get();
+		const std::uint8_t* vsCode = nullptr;
+		std::size_t         vsLen = 0;
+		if (!instVS || !instVS->shader || !TryGetShaderBytecode(instVS->shader, vsCode, vsLen))
+			return nullptr;
+		const bool        posFull = (rd->vertexDesc & (0x400ull << 44)) != 0;  // VF_FULLPREC @ bit 54
+		const DXGI_FORMAT posFmt = posFull ? DXGI_FORMAT_R32G32B32A32_FLOAT :
+		                                     DXGI_FORMAT_R16G16B16A16_FLOAT;
+		const UINT        posOff = static_cast<UINT>((rd->vertexDesc >> 2) & 0x3C);  // == 0 in practice
+		const D3D11_INPUT_ELEMENT_DESC elems[5] = {
+			{ "POSITION", 0, posFmt, 0, posOff, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+			{ "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+			{ "TEXCOORD", 6, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+			{ "TEXCOORD", 7, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+		};
+		winrt::com_ptr<ID3D11InputLayout> il;
+		if (FAILED(globals::d3d::device->CreateInputLayout(elems, 5, vsCode, vsLen, il.put())))
+			return nullptr;
+		Util::SetResourceName(il.get(), "DepthInstance::R32InputLayout");
+		auto* raw = il.get();
+		s_ilCache.emplace(rd->vertexDesc, std::move(il));
+		return raw;
+	};
+
+	// ---- draw loop (technique-sorted); run setup hoisted exactly like the shadow path ----
+	std::uint32_t                 curTech = 0xFFFFFFFFu;
+	bool                          runLive = false, runFallback = false;
+	RE::BSGraphics::VertexShader* instVS = nullptr;
+	RE::BSShader*                 runShader = nullptr;
+	RE::BSRenderPass*             runPass0 = nullptr;
+	const auto closeRun = [&]() {
+		if (runLive && runShader && runPass0)
+			EngineCallV<7, void>(runShader, runPass0, a_renderFlags);  // RestoreGeometry
+		runLive = false;
+	};
+
+	for (std::uint32_t oi = 0; oi < liveGroups; ++oi) {
+		auto&               g = groups[order[oi]];
+		const std::uint32_t n = static_cast<std::uint32_t>(g.passes.size());
+		if (n == 0)
+			continue;
+		auto*               shader = g.passes[0]->shader;
+		auto*               geom0 = reinterpret_cast<std::uint8_t*>(g.passes[0]->geometry);
+		auto*               rd = g.rd;
+		const std::uint16_t triCount = *reinterpret_cast<const std::uint16_t*>(geom0 + 0x158);
+
+		if ((!runLive && !runFallback) || g.tech != curTech) {
+			closeRun();
+			curTech = g.tech;
+			runFallback = false;
+			WsShader() = nullptr;
+			WsTechnique() = 0;
+			WsMaterial() = nullptr;
+			if (!FlushSetupTechniqueReplica(ctx, nullptr, nullptr, S, shader,
+					static_cast<std::int32_t>(g.tech))) {
+				runFallback = true;
+				instVS = nullptr;
+			} else {
+				auto* boundVS = *reinterpret_cast<RE::BSGraphics::VertexShader**>(S + 0x348);
+				instVS = boundVS ? ShaderCache::Instance().GetVertexShader(*shader, boundVS->id | kInstancedFlag) :
+				                   nullptr;
+				if (!instVS || !instVS->shader) {
+					runFallback = true;
+				} else {
+					auto* vsSh = *reinterpret_cast<std::uint8_t**>(S + 0x348);
+					auto* psSh = *reinterpret_cast<std::uint8_t**>(S + 0x350);
+					FlushSetupGeometryReplica(ctx,
+						vsSh ? *reinterpret_cast<ID3D11Buffer**>(vsSh + 0x38) : nullptr,
+						psSh ? *reinterpret_cast<ID3D11Buffer**>(psSh + 0x30) : nullptr,
+						S, shader, g.passes[0]);
+					EngineCallV<11, void>(ctx, reinterpret_cast<ID3D11VertexShader*>(instVS->shader), nullptr, 0u);
+					*reinterpret_cast<void**>(S + 0x348) = instVS;
+					runShader = shader;
+					runPass0 = g.passes[0];
+					runLive = true;
+				}
+			}
+		}
+
+		if (runFallback) {
+			for (std::uint32_t i = 0; i < n; ++i)
+				ReplicaRenderPassImmediately(g.passes[i], g.tech, false, a_renderFlags);
+			continue;
+		}
+
+		// Resolve the R32 IL for this mesh; per-group serial fallback if it can't be built.
+		ID3D11InputLayout* il = getDepthIL(rd, instVS);
+		if (!il) {
+			for (std::uint32_t i = 0; i < n; ++i)
+				ReplicaRenderPassImmediately(g.passes[i], g.tech, false, a_renderFlags);
+			continue;
+		}
+
+		// Flush render state WITHOUT rebinding the engine IL, then bind ours. Nothing runs between
+		// SetDirtyStates and the draw, so the IL cannot be clobbered.
+		auto& stateFlags = *reinterpret_cast<std::uint32_t*>(S + 0);
+		auto& topology = *reinterpret_cast<std::uint32_t*>(S + 0x358);
+		if (topology != 4) {
+			topology = 4;  // TRIANGLELIST
+			stateFlags |= 0x800;
+		}
+		stateFlags &= ~0x400u;  // CLEAR DIRTY_VERTEX_DESC -> engine skips ILCreate (no R16 rebind)
+		EngineCall<void>(reinterpret_cast<void*>(engine::SetDirtyStates.address()), false);
+
+		EngineCallV<17, void>(ctx, il);  // IASetInputLayout(myR32IL)
+		const UINT    meshStride = static_cast<UINT>((4 * rd->vertexDesc) & 0x3C);
+		ID3D11Buffer* vbs[2] = { rd->vertexBuffer, s_instVB32.get() };
+		UINT          strides[2] = { meshStride, 64u };
+		UINT          offsets[2] = { 0u, 0u };
+		EngineCallV<19, void>(ctx, rd->indexBuffer, DXGI_FORMAT_R16_UINT, 0u);  // IASetIndexBuffer
+		EngineCallV<18, void>(ctx, 0u, 2u, vbs, strides, offsets);              // IASetVertexBuffers slot0+1
+		EngineCallV<20, void>(ctx, 3u * triCount, n, 0u, 0, g.baseInst);        // DrawIndexedInstanced
+	}
+	closeRun();
+
+	WsShader() = nullptr;
+	WsTechnique() = 0;
+	WsMaterial() = nullptr;
 }
 
 void UtilityPassReplica::ReplicaRenderSkinned(RE::BSRenderPass* a_pass, bool a_alphaTest, std::uint32_t a_renderFlags)
