@@ -62,6 +62,15 @@ namespace ShadowMapCache
 	// for this camera (caller must render instead).
 	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
 
+	// Phase 1 prototype: composite the unit's cached static depth into the atlas slice via a fullscreen SV_Depth
+	// pass (instead of the raw CopyPort blit), so live dynamic depth already in the slice can be preserved by the
+	// PSO's depth test. Returns false if the composite pipeline or the unit's cache isn't ready. Gated by a dev
+	// flag; validated byte-exact vs Blit on static-only maps before it drives the static-under-dynamic split.
+	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
+
+	// True when the dev flag F:\claudetmp\shadow_composite.flag exists (use Composite in place of Blit, for A/B).
+	bool CompositeEnabled();
+
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();
 

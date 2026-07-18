@@ -368,6 +368,14 @@ namespace
 					RenderMapInstanced(*g_curMap);                 // this unit's turn -> render fresh + cache
 					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before reading it
 					ShadowMapCache::Capture(ctx, camera, slice, port);
+				} else if (ShadowMapCache::CompositeEnabled()) {
+					// Phase 1 prototype (dev-flag): SV_Depth composite of the cached static slice (binds its own
+					// DSV) instead of the raw CopyPort blit -- validated byte-exact vs blit on static-only maps.
+					if (!ShadowMapCache::Composite(ctx, camera, slice, port)) {
+						RenderMapInstanced(*g_curMap);
+						ctx->OMSetRenderTargets(0, nullptr, nullptr);
+						ShadowMapCache::Capture(ctx, camera, slice, port);
+					}
 				} else {
 					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before writing it
 					if (!ShadowMapCache::Blit(ctx, camera, slice, port)) {

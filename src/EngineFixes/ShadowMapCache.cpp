@@ -6,6 +6,8 @@
 
 #include <RE/N/NiAVObject.h>
 
+#include <atomic>
+#include <filesystem>
 #include <vector>
 
 namespace ShadowMapCache
@@ -126,6 +128,90 @@ namespace ShadowMapCache
 				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, midY, 0, a_src, a_srcSub, &b);
 			}
 		}
+
+		// --- Phase 1 depth-composite pipeline (prototype) -------------------------------------------------------
+		winrt::com_ptr<ID3D11VertexShader>       g_compVS;
+		winrt::com_ptr<ID3D11PixelShader>        g_compPS;
+		winrt::com_ptr<ID3D11DepthStencilState>  g_compDepthState;
+		winrt::com_ptr<ID3D11RasterizerState>    g_compRaster;
+		winrt::com_ptr<ID3D11ShaderResourceView> g_cacheLayerSRV[kLayers];  // R16 view of each cache layer
+		winrt::com_ptr<ID3D11DepthStencilView>   g_atlasSliceDSV[kLayers];   // D16 view of each atlas slice
+		bool                                     g_compTried = false, g_compReady = false;
+
+		bool EnsureComposite()
+		{
+			if (g_compReady)
+				return true;
+			if (g_compTried)
+				return false;
+			g_compTried = true;
+			auto* dev = globals::d3d::device;
+			if (!dev || !g_cacheTex)
+				return false;
+			g_compVS.attach(static_cast<ID3D11VertexShader*>(
+				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "vs_5_0", "vsmain")));
+			g_compPS.attach(static_cast<ID3D11PixelShader*>(
+				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "ps_5_0", "psmain")));
+			if (!g_compVS || !g_compPS)
+				return false;
+			// Prototype PSO: write depth, ALWAYS pass -> overwrites the slice port, reproducing the CopyPort blit
+			// exactly on a static-only map (the byte-A/B that de-risks the D16 depth path). The min-depth merge
+			// (LESS_EQUAL / GREATER) is switched on only after this validates.
+			D3D11_DEPTH_STENCIL_DESC dd{};
+			dd.DepthEnable = TRUE;
+			dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			dd.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			if (FAILED(dev->CreateDepthStencilState(&dd, g_compDepthState.put())))
+				return false;
+			D3D11_RASTERIZER_DESC rd{};
+			rd.FillMode = D3D11_FILL_SOLID;
+			rd.CullMode = D3D11_CULL_NONE;
+			rd.DepthClipEnable = FALSE;
+			if (FAILED(dev->CreateRasterizerState(&rd, g_compRaster.put())))
+				return false;
+			g_compReady = true;
+			logger::info("[ShadowMapCache] depth-composite pipeline ready");
+			return true;
+		}
+
+		ID3D11ShaderResourceView* CacheLayerSRV(std::uint32_t a_layer)
+		{
+			if (a_layer >= kLayers)
+				return nullptr;
+			if (g_cacheLayerSRV[a_layer])
+				return g_cacheLayerSRV[a_layer].get();
+			D3D11_SHADER_RESOURCE_VIEW_DESC s{};
+			s.Format = DXGI_FORMAT_R16_UNORM;
+			s.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+			s.Texture2DArray.MipLevels = 1;
+			s.Texture2DArray.FirstArraySlice = a_layer;
+			s.Texture2DArray.ArraySize = 1;
+			if (FAILED(globals::d3d::device->CreateShaderResourceView(g_cacheTex.get(), &s, g_cacheLayerSRV[a_layer].put())))
+				return nullptr;
+			return g_cacheLayerSRV[a_layer].get();
+		}
+
+		ID3D11DepthStencilView* AtlasSliceDSV(std::uint32_t a_slice)
+		{
+			if (a_slice >= kLayers)
+				return nullptr;
+			if (g_atlasSliceDSV[a_slice])
+				return g_atlasSliceDSV[a_slice].get();
+			auto* atlas = AtlasResource();
+			if (!atlas)
+				return nullptr;
+			winrt::com_ptr<ID3D11Texture2D> tex;
+			if (FAILED(atlas->QueryInterface(IID_PPV_ARGS(tex.put()))))
+				return nullptr;
+			D3D11_DEPTH_STENCIL_VIEW_DESC dv{};
+			dv.Format = DXGI_FORMAT_D16_UNORM;
+			dv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+			dv.Texture2DArray.FirstArraySlice = a_slice;
+			dv.Texture2DArray.ArraySize = 1;
+			if (FAILED(globals::d3d::device->CreateDepthStencilView(tex.get(), &dv, g_atlasSliceDSV[a_slice].put())))
+				return nullptr;
+			return g_atlasSliceDSV[a_slice].get();
+		}
 	}
 
 	void BeginFrame()
@@ -245,6 +331,62 @@ namespace ShadowMapCache
 		const UINT atlasSub = D3D11CalcSubresource(0, a_slice, g_cacheDesc.MipLevels);
 		const UINT cacheSub = D3D11CalcSubresource(0, it->second.layer, g_cacheDesc.MipLevels);
 		CopyPort(a_ctx, atlas, atlasSub, g_cacheTex.get(), cacheSub, a_port);
+		++g_stats.blitsThisFrame;
+		return true;
+	}
+
+	bool CompositeEnabled()
+	{
+		static std::atomic<bool>          s_on{ false };
+		static std::atomic<std::uint32_t> s_ctr{ 0 };
+		if ((s_ctr.fetch_add(1, std::memory_order_relaxed) % 120u) == 0) {
+			std::error_code ec;
+			s_on.store(std::filesystem::exists(L"F:\\claudetmp\\shadow_composite.flag", ec), std::memory_order_relaxed);
+		}
+		return s_on.load(std::memory_order_relaxed);
+	}
+
+	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
+	{
+		if (!a_ctx || !EnsureComposite())
+			return false;
+		auto it = g_camState.find(a_camera);
+		if (it == g_camState.end() || it->second.layer == UINT32_MAX || !g_layerValid[it->second.layer])
+			return false;
+		auto* srv = CacheLayerSRV(it->second.layer);
+		auto* dsv = AtlasSliceDSV(a_slice);
+		if (!srv || !dsv)
+			return false;
+
+		const std::int32_t pl = a_port[0], pr = a_port[1], pt = a_port[2], pb = a_port[3];
+		D3D11_VIEWPORT     vp{};
+		vp.TopLeftX = static_cast<float>(std::min(pl, pr));
+		vp.TopLeftY = static_cast<float>(std::min(pt, pb));
+		vp.Width = static_cast<float>(std::abs(pr - pl));
+		vp.Height = static_cast<float>(std::abs(pb - pt));
+		vp.MinDepth = 0.0f;
+		vp.MaxDepth = 1.0f;
+		if (vp.Width <= 0.0f || vp.Height <= 0.0f)
+			return false;
+
+		// Depth-only fullscreen pass over the port rect: SV_Depth = cached static depth. The caller leaves S[0]
+		// dirty afterward so the engine re-binds all render state for the next map.
+		ID3D11RenderTargetView* noRTV[1] = { nullptr };
+		a_ctx->OMSetRenderTargets(0, noRTV, dsv);
+		a_ctx->RSSetViewports(1, &vp);
+		a_ctx->RSSetState(g_compRaster.get());
+		a_ctx->OMSetDepthStencilState(g_compDepthState.get(), 0);
+		a_ctx->OMSetBlendState(nullptr, nullptr, 0xffffffffu);
+		a_ctx->IASetInputLayout(nullptr);
+		a_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		a_ctx->VSSetShader(g_compVS.get(), nullptr, 0);
+		a_ctx->PSSetShader(g_compPS.get(), nullptr, 0);
+		ID3D11ShaderResourceView* srvs[1] = { srv };
+		a_ctx->PSSetShaderResources(0, 1, srvs);
+		a_ctx->Draw(3, 0);
+		ID3D11ShaderResourceView* nsrv[1] = { nullptr };
+		a_ctx->PSSetShaderResources(0, 1, nsrv);
+		a_ctx->OMSetRenderTargets(0, noRTV, nullptr);
 		++g_stats.blitsThisFrame;
 		return true;
 	}
