@@ -429,19 +429,20 @@ namespace
 		const auto pa = globals::game::frameBufferCached.GetCameraPosAdjust();
 		std::memcpy(cb.camPosAdjust, &pa, sizeof(cb.camPosAdjust));
 		cb.radiusWorld = kClumpRadius;
-		// Distance cull is FADE-RELATIVE (hard-cull only past the fade end, where grass is fully transparent).
-		// Thinning ramps from the CAMERA (thinStart = 0) out to the fade end so it visibly reduces density across
-		// the whole view, not just the far edge; the g_ThinCurve exponent shapes where it bites (high curve keeps
-		// near grass dense, low curve thins aggressively up close). Falls back to fixed constants until the fade
-		// params are read from the first captured batch.
+		// Distance cull + thinning are FADE-RELATIVE, matched to the VANILLA grass fade. Vanilla fades grass to
+		// transparent across fadeStart..fadeEnd but keeps DRAWING it (fully invisible geometry still rendered =
+		// wasted). The thinning instead progressively CULLS clumps on that same range (curve 1 = the vanilla linear
+		// fade), so density falls off matching the fade while the drawn-but-invisible grass is actually removed;
+		// the hard distance cull finishes the job past fadeEnd. Falls back to fixed constants until the fade params
+		// are captured from the first batch.
 		if (g_fadeCaptured) {
 			const float fadeEnd = g_fadeStart + g_fadeRange;
 			cb.distanceEnd = fadeEnd;
-			cb.thinStart = 0.0f;
+			cb.thinStart = g_fadeStart;
 			cb.thinEnd = fadeEnd;
 		} else {
 			cb.distanceEnd = kDistanceCullEnd;
-			cb.thinStart = 0.0f;
+			cb.thinStart = kThinStart;
 			cb.thinEnd = kThinEnd;
 		}
 		cb.batchCount = g_batchCount;

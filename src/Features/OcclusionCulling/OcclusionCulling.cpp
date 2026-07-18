@@ -282,10 +282,10 @@ void OcclusionCulling::DrawSettings()
 		ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_occlusion_tooltip",
 			"Also drops grass fully hidden behind terrain, rocks, and buildings (GPU Hi-Z). This is the main frame-rate win in occluded views."));
 
-	changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning", "Grass Thinning"), &settings.GrassThinning, 0.0f, 0.9f, "%.2f");
+	changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning", "Grass Thinning"), &settings.GrassThinning, 0.0f, 1.0f, "%.2f");
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_thinning_tooltip",
-			"Stochastic distance LOD: gradually drops a fraction of distant grass clumps, ramping up to this amount at the vanilla grass fade-out distance. 0 = off."));
+			"Culls grass across the vanilla fade-out range (fade-start to fade-end) instead of just fading it invisible like vanilla, matching that density falloff. This amount is the fraction culled at the fade-out end; 1.0 fully matches the fade. 0 = off."));
 
 	if (settings.GrassThinning > 0.0f) {
 		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning_curve", "Thinning Curve"), &settings.GrassThinningCurve, 0.25f, 8.0f, "%.2f");
