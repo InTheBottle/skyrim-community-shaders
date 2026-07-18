@@ -58,6 +58,7 @@ namespace
 		std::uint64_t             skinnedInline = 0;  // covered-but-skinned; render on the engine path
 		std::uint64_t             treeInline = 0;     // TreeAnim casters: DYNAMIC (sway) -> map is not cacheable
 		std::uint64_t             staticSig = 0;      // signature of the claimed static caster set (change detection)
+		bool                      staticOnly = false;  // Phase 1: suppress dynamic casters this frame (static capture)
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -102,6 +103,11 @@ namespace
 				mix(v);
 			g_curMap->staticSig += h;  // order-independent AND non-cancelling (XOR self-cancels identical folds)
 		}
+		// Phase 1 static-capture frame: render STATIC-ONLY into the slice, so SUPPRESS every dynamic caster
+		// (skinned actor / swaying tree) -- claim it (skip the engine's inline render) without adding it to the
+		// replay list, so it never reaches the slice and the captured layer is clean static depth.
+		if (g_curMap->staticOnly && (skinned || tree))
+			return true;
 		if (!a_canReplicate) {
 			++g_curMap->unsupported;
 			return false;  // uncovered -> engine renders inline (serial remainder)
@@ -334,6 +340,19 @@ namespace
 		g_mapWorkList.emplace_back();
 		g_curMap = &g_mapWorkList.back();
 
+		// PHASE 1 pre-walk arming: if this local light was dirtied last frame, render STATIC-ONLY this frame so the
+		// cache captures clean static depth (the CaptureHook suppresses dynamics). camera + rmode are readable
+		// pre-walk (stale-stable from last frame -- correct for a persistent light; a brand-new light has no pending
+		// capture so it stays normal). Only meaningful when the Phase 1 flag is on.
+		if (ShadowMapCache::CompositeEnabled()) {
+			auto* const         d = reinterpret_cast<const std::uint8_t*>(a2);
+			void* const         cam = *reinterpret_cast<void* const*>(d + 64);
+			void* const         acc = *reinterpret_cast<void* const*>(d + 0x48);
+			const std::uint32_t rm = acc ? *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const std::uint8_t*>(acc) + 0x150) : 0u;
+			if (cam && (rm == 13 || rm == 15) && ShadowMapCache::NeedsStaticCapture(cam))
+				g_curMap->staticOnly = true;
+		}
+
 		const std::int32_t r = callOriginal(a1, a2, a3, a4);
 
 		if (g_curMap) {
@@ -354,36 +373,54 @@ namespace
 			// STATIC-ONLY local lights cache; the cached slice then holds clean static-only depth (light-space,
 			// camera-independent) and is re-rendered ONLY when the static caster set's signature changes (a
 			// static placed / disabled / moved) -- otherwise it is blitted forever.
-			const bool hasDynamic = g_curMap->skinnedInline > 0 || g_curMap->treeInline > 0;
-			const bool eligible = target == 4 && slice < 64 && camera &&
-				(rmode == 13 || rmode == 15) && !hasDynamic && ShadowMapCache::EnsureCache();
-			if (!eligible) {
-				RenderMapInstanced(*g_curMap);
-			} else {
-				const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
-				const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
-				auto* const         ctx = *engine::g_immediateContext;
-				auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
-				if (ShadowMapCache::ShouldRender(camera, rmode, desc, sig)) {
-					RenderMapInstanced(*g_curMap);                 // this unit's turn -> render fresh + cache
-					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before reading it
+			const bool          localMap = target == 4 && slice < 64 && camera && (rmode == 13 || rmode == 15);
+			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
+			auto* const         ctx = *engine::g_immediateContext;
+			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
+			const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
+
+			if (localMap && ShadowMapCache::CompositeEnabled() && ShadowMapCache::EnsureCache()) {
+				// PHASE 1: cache STATIC casters even under dynamics. Statics are claimed (not inline); dynamics
+				// rendered inline this frame. Decide per unit: composite the cached static over the live dynamics
+				// (the win), capture a fresh static-only layer (dynamics were suppressed this frame), or -- for a
+				// new light -- render the full map for display while a capture is scheduled for next frame.
+				switch (ShadowMapCache::DecidePhase1(camera, rmode, sig, g_curMap->staticOnly)) {
+				case ShadowMapCache::Action::StaticCapture:
+					RenderMapInstanced(*g_curMap);                 // slice is static-only -> render statics + cache
+					ctx->OMSetRenderTargets(0, nullptr, nullptr);
 					ShadowMapCache::Capture(ctx, camera, slice, port);
-				} else if (ShadowMapCache::CompositeEnabled()) {
-					// Phase 1 prototype (dev-flag): SV_Depth composite of the cached static slice (binds its own
-					// DSV) instead of the raw CopyPort blit -- validated byte-exact vs blit on static-only maps.
-					if (!ShadowMapCache::Composite(ctx, camera, slice, port)) {
-						RenderMapInstanced(*g_curMap);
+					break;
+				case ShadowMapCache::Action::Composite:
+					if (!ShadowMapCache::Composite(ctx, camera, slice, port))
+						RenderMapInstanced(*g_curMap);             // composite failed -> full render fallback
+					break;
+				default:  // RenderFull
+					RenderMapInstanced(*g_curMap);                 // statics + inline dynamics = full display frame
+					break;
+				}
+				S[0] = 0xFFFFFFFFu;
+			} else {
+				// PHASE 0 (Phase 1 flag off) / non-local: only WHOLE-static-only maps cache (any dynamic caster ->
+				// fully fresh). The cached slice holds clean static-only depth, re-rendered only on a signature
+				// change; otherwise blitted forever.
+				const bool hasDynamic = g_curMap->skinnedInline > 0 || g_curMap->treeInline > 0;
+				const bool eligible = localMap && !hasDynamic && ShadowMapCache::EnsureCache();
+				if (!eligible) {
+					RenderMapInstanced(*g_curMap);
+				} else {
+					if (ShadowMapCache::ShouldRender(camera, rmode, desc, sig)) {
+						RenderMapInstanced(*g_curMap);                 // static set changed -> render fresh + cache
 						ctx->OMSetRenderTargets(0, nullptr, nullptr);
 						ShadowMapCache::Capture(ctx, camera, slice, port);
+					} else {
+						ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before writing it
+						if (!ShadowMapCache::Blit(ctx, camera, slice, port)) {
+							RenderMapInstanced(*g_curMap);             // no valid cache -> render + capture
+							ShadowMapCache::Capture(ctx, camera, slice, port);
+						}
 					}
-				} else {
-					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before writing it
-					if (!ShadowMapCache::Blit(ctx, camera, slice, port)) {
-						RenderMapInstanced(*g_curMap);             // no valid cache -> render + capture
-						ShadowMapCache::Capture(ctx, camera, slice, port);
-					}
+					S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
 				}
-				S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
 			}
 		}
 

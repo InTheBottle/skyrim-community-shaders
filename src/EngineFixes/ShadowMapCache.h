@@ -68,8 +68,25 @@ namespace ShadowMapCache
 	// flag; validated byte-exact vs Blit on static-only maps before it drives the static-under-dynamic split.
 	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
 
-	// True when the dev flag F:\claudetmp\shadow_composite.flag exists (use Composite in place of Blit, for A/B).
+	// True when the dev flag F:\claudetmp\shadow_composite.flag exists -- enables the Phase 1 static-under-dynamic
+	// split (cache statics even under actors/trees). Off = Phase 0 (whole-static-only maps only).
 	bool CompositeEnabled();
+
+	// --- Phase 1: static-under-dynamic --------------------------------------------------------------------------
+	// Pre-walk query: does this local light need a STATIC-ONLY render+capture this frame (its static set changed
+	// last frame)? If true the caller suppresses dynamic casters during the walk so the capture is clean static.
+	bool NeedsStaticCapture(void* a_camera);
+
+	enum class Action
+	{
+		RenderFull,     // render statics + inline dynamics into the slice, don't cache (new light / no cache yet)
+		StaticCapture,  // slice is static-only (dynamics were suppressed) -> replay statics + Capture the layer
+		Composite,      // dynamics are live in the slice -> composite the cached static depth on top (the win)
+	};
+
+	// Post-walk decision for a local map under Phase 1. a_wasStaticOnly = the caller suppressed dynamics this frame
+	// (armed from NeedsStaticCapture). Updates the unit's signature / pending-capture state and telemetry.
+	Action DecidePhase1(void* a_camera, std::uint32_t a_rmode, std::uint64_t a_staticSig, bool a_wasStaticOnly);
 
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();

@@ -51,6 +51,7 @@ namespace ShadowMapCache
 			std::uint64_t posKey = 0;
 			std::uint32_t lastFrame = 0;
 			bool          hasState = false;
+			bool          pendingCapture = false;  // Phase 1: static set changed -> capture static-only next frame
 		};
 		std::unordered_map<void*, CamState> g_camState;
 		bool                                g_layerValid[kLayers] = {};
@@ -154,13 +155,15 @@ namespace ShadowMapCache
 				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "ps_5_0", "psmain")));
 			if (!g_compVS || !g_compPS)
 				return false;
-			// Prototype PSO: write depth, ALWAYS pass -> overwrites the slice port, reproducing the CopyPort blit
-			// exactly on a static-only map (the byte-A/B that de-risks the D16 depth path). The min-depth merge
-			// (LESS_EQUAL / GREATER) is switched on only after this validates.
+			// MERGE PSO: keep the nearer-to-light depth so cached STATIC depth composites over the live dynamic
+			// depth already in the slice (static wins where nearer, dynamics win where nearer). GREATER assumes
+			// the shadow atlas is reversed-Z (near = larger). If the static-only shadows VANISH under composite,
+			// the convention is standard-Z -> flip to D3D11_COMPARISON_LESS_EQUAL. On a static-only slice
+			// (cleared to far) either way writes the static everywhere it is nearer than far == the CopyPort blit.
 			D3D11_DEPTH_STENCIL_DESC dd{};
 			dd.DepthEnable = TRUE;
 			dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-			dd.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			dd.DepthFunc = D3D11_COMPARISON_GREATER;
 			if (FAILED(dev->CreateDepthStencilState(&dd, g_compDepthState.put())))
 				return false;
 			D3D11_RASTERIZER_DESC rd{};
@@ -389,6 +392,60 @@ namespace ShadowMapCache
 		a_ctx->OMSetRenderTargets(0, noRTV, nullptr);
 		++g_stats.blitsThisFrame;
 		return true;
+	}
+
+	bool NeedsStaticCapture(void* a_camera)
+	{
+		auto it = g_camState.find(a_camera);
+		return it != g_camState.end() && it->second.pendingCapture;
+	}
+
+	Action DecidePhase1(void* a_camera, std::uint32_t, std::uint64_t a_staticSig, bool a_wasStaticOnly)
+	{
+		auto&               st = g_camState[a_camera];
+		st.lastFrame = g_frame;
+		const std::uint64_t posKey = PosKey(a_camera);
+
+		if (a_wasStaticOnly) {
+			// The caller suppressed dynamics this frame -> the slice is clean static; it will Capture the layer.
+			st.sig = a_staticSig;
+			st.posKey = posKey;
+			st.hasState = true;
+			st.pendingCapture = false;
+			++g_stats.freshThisFrame;
+			return Action::StaticCapture;
+		}
+
+		const bool moved = st.hasState && st.posKey != posKey;
+		const bool changed = !st.hasState || st.sig != a_staticSig || moved;
+		const bool haveCache = st.layer != UINT32_MAX && g_layerValid[st.layer];
+
+		if (changed) {
+			// Static set changed (or new / moved light): store the new signature and schedule a static-only capture
+			// next frame. This frame, composite the (now one-change-stale) cache if we have one -- the new static's
+			// shadow lags a single frame, imperceptible for a rare change -- else render the full map for display.
+			st.sig = a_staticSig;
+			st.posKey = posKey;
+			st.hasState = true;
+			st.pendingCapture = true;
+			++g_stats.regenThisFrame;
+			g_stats.lastRegenFrame = g_frame;
+			g_stats.lastReason = moved ? Reason::MovedLight : Reason::StaticSetChanged;
+			g_stats.lastReasonKey = posKey;
+			if (haveCache) {
+				++g_stats.blitsThisFrame;
+				return Action::Composite;
+			}
+			return Action::RenderFull;
+		}
+
+		// Static set unchanged: composite the cached static over the live dynamics, else capture next frame.
+		if (!haveCache) {
+			st.pendingCapture = true;
+			return Action::RenderFull;
+		}
+		++g_stats.blitsThisFrame;
+		return Action::Composite;
 	}
 
 	const Stats& GetStats() { return g_stats; }
