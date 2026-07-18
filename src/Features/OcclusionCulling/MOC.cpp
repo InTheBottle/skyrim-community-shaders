@@ -16,6 +16,7 @@
 
 #include <RE/A/Actor.h>
 #include <RE/B/BSGeometry.h>
+#include <RE/B/BSShaderProperty.h>
 #include <RE/B/BSMultiBound.h>
 #include <RE/B/BSMultiBoundAABB.h>
 #include <RE/B/BSMultiBoundNode.h>
@@ -722,6 +723,18 @@ void main(uint2 gid : SV_GroupID, uint2 tid : SV_GroupThreadID)
 		if (g_hizMode) {
 			if (!g_hizFront.load(std::memory_order_acquire))
 				return true;  // no Hi-Z readback published yet -- keep (conservative)
+		}
+
+		// Never occlusion-test object LOD (distant tree / rock / building LOD meshes, flagged kLODObjects /
+		// kHDLODObjects): their tall, thin, batched bounds mis-test against the coarse, 1-frame-stale Hi-Z and
+		// visibly pop out (whole DistantTree LODs vanishing), while LOD is cheap to draw so the occlusion saving
+		// is marginal. AsGeometry() is a cheap virtual paid only by survivors (RTTI-free).
+		if (auto* geom = a_object->AsGeometry()) {
+			if (auto* prop = geom->GetGeometryRuntimeData().shaderProperty.get()) {
+				using enum RE::BSShaderProperty::EShaderPropertyFlag;
+				if (prop->flags.any(kLODObjects, kHDLODObjects))
+					return true;
+			}
 		}
 
 		auto* aabb = GetAABBNode(a_object);  // the single RTTI lookup, survivors only
