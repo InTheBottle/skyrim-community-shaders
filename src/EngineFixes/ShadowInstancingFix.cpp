@@ -91,14 +91,16 @@ namespace
 		if (geom && !skinned && !tree) {
 			std::uint64_t h = 0xcbf29ce484222325ull;
 			auto          mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
-			mix(reinterpret_cast<std::uint64_t>(geom->GetUserData()));
-			const auto&   t = geom->world.translate;
-			std::uint32_t b[3];
-			std::memcpy(b, &t, sizeof(b));
-			mix(b[0]);
-			mix(b[1]);
-			mix(b[2]);
-			g_curMap->staticSig ^= h;
+			mix(reinterpret_cast<std::uint64_t>(geom));                 // per-sub-shape identity (co-located siblings differ)
+			mix(reinterpret_cast<std::uint64_t>(geom->GetUserData()));  // placed-reference identity
+			// Fold the FULL world transform (NiTransform: rotate 3x3 + translate 3 + scale = 13 floats) so a static
+			// that ROTATES/scales in place -- Dwemer gear, windmill, waterwheel: constant translate, changing
+			// rotation -- changes the signature and re-renders instead of freezing its cached shadow.
+			std::uint32_t b[13];
+			std::memcpy(b, &geom->world, sizeof(b));
+			for (std::uint32_t v : b)
+				mix(v);
+			g_curMap->staticSig += h;  // order-independent AND non-cancelling (XOR self-cancels identical folds)
 		}
 		if (!a_canReplicate) {
 			++g_curMap->unsupported;

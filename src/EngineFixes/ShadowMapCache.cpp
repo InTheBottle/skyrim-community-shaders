@@ -6,12 +6,14 @@
 
 #include <RE/N/NiAVObject.h>
 
+#include <vector>
+
 namespace ShadowMapCache
 {
 	namespace
 	{
 		constexpr std::uint32_t kLayers = 64;      // >= max concurrent shadow-map slices
-		constexpr std::uint32_t kEvictAfter = 240; // drop a unit not seen for ~4s (light despawned/moved)
+		constexpr std::uint32_t kEvictAfter = 240; // drop a camera not seen for ~4s (light despawned/moved)
 
 		// Shadow depth atlas = depth-stencil target 4. The SRV lives on the renderer object at
 		// stride 152/target, base 0x2040 (same access the shadow-instancing detour uses).
@@ -36,22 +38,23 @@ namespace ShadowMapCache
 		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
 		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
 
-		// Per-CAMERA private cache layer (each shadow map owns a slice-sized layer).
-		std::unordered_map<void*, std::uint32_t> g_layerOf;
-		std::uint32_t                            g_nextLayer = 0;
-		bool                                     g_layerValid[kLayers] = {};
-
-		// UNITS. A unit groups maps that update together (a point light's two halves share a unit; each spot is
-		// its own). Keyed on the shadow camera world position so a moved light becomes a new unit. `sig` is the
-		// last static-caster-set signature this unit rendered -- the unit renders fresh only when it differs.
-		struct Unit
+		// Per-CAMERA cache state. Each shadow map (one per spot light, one per point-light hemisphere) has its own
+		// camera pointer, its own cache-slice layer, and its own change signature -- so a point light's two halves
+		// never invalidate each other. posKey (the camera world-position hash) detects a MOVED light (its shadow
+		// view changed); sig detects a changed static caster set. UINT32_MAX layer = no slice captured yet.
+		struct CamState
 		{
+			std::uint32_t layer = UINT32_MAX;
 			std::uint64_t sig = 0;
+			std::uint64_t posKey = 0;
 			std::uint32_t lastFrame = 0;
-			bool          hasSig = false;
+			bool          hasState = false;
 		};
-		std::unordered_map<std::uint64_t, Unit> g_unitOf;
-		std::uint32_t                           g_frame = 0;
+		std::unordered_map<void*, CamState> g_camState;
+		bool                                g_layerValid[kLayers] = {};
+		std::uint32_t                       g_nextLayer = 0;
+		std::vector<std::uint32_t>          g_freeLayers;  // reclaimed from evicted cameras
+		std::uint32_t                       g_frame = 0;
 
 		Stats g_stats{};
 
@@ -68,9 +71,8 @@ namespace ShadowMapCache
 			return u;
 		}
 
-		// A local light's unit key is the shadow camera's WORLD POSITION so a point light's two hemisphere
-		// cameras (same position) share a unit and update together, and a moved light gets a new key.
-		std::uint64_t UnitKey(void* a_camera, std::uint32_t)
+		// The camera world-position hash -- a moved light gets a new posKey and re-renders.
+		std::uint64_t PosKey(void* a_camera)
 		{
 			std::uint64_t h = 0xcbf29ce484222325ull;
 			if (a_camera) {
@@ -84,13 +86,20 @@ namespace ShadowMapCache
 
 		std::uint32_t LayerFor(void* a_camera)
 		{
-			auto it = g_layerOf.find(a_camera);
-			if (it != g_layerOf.end())
-				return it->second;
-			if (g_nextLayer >= kLayers)
+			auto& st = g_camState[a_camera];
+			if (st.layer != UINT32_MAX)
+				return st.layer;
+			std::uint32_t l;
+			if (!g_freeLayers.empty()) {
+				l = g_freeLayers.back();
+				g_freeLayers.pop_back();
+			} else if (g_nextLayer < kLayers) {
+				l = g_nextLayer++;
+			} else {
 				return UINT32_MAX;
-			const std::uint32_t l = g_nextLayer++;
-			g_layerOf.emplace(a_camera, l);
+			}
+			st.layer = l;
+			g_layerValid[l] = false;
 			return l;
 		}
 
@@ -125,7 +134,7 @@ namespace ShadowMapCache
 		// Publish the completed frame's aggregates for the UI, then reset the per-frame counters (the lastRegen*
 		// fields stay sticky so the UI can show "N frames ago").
 		g_stats.frame = g_frame;
-		g_stats.unitsTotal = static_cast<std::uint32_t>(g_unitOf.size());
+		g_stats.unitsTotal = static_cast<std::uint32_t>(g_camState.size());
 		std::uint32_t valid = 0;
 		for (bool v : g_layerValid)
 			if (v)
@@ -135,13 +144,18 @@ namespace ShadowMapCache
 		g_stats.blitsThisFrame = 0;
 		g_stats.regenThisFrame = 0;
 
-		// Evict units not seen recently so despawned/moved lights don't hold cache slots.
+		// Evict cameras not seen recently (light despawned / cell change) and reclaim their cache layers.
 		if ((g_frame & 63) == 0) {
-			for (auto it = g_unitOf.begin(); it != g_unitOf.end();) {
-				if (g_frame - it->second.lastFrame > kEvictAfter)
-					it = g_unitOf.erase(it);
-				else
+			for (auto it = g_camState.begin(); it != g_camState.end();) {
+				if (g_frame - it->second.lastFrame > kEvictAfter) {
+					if (it->second.layer != UINT32_MAX) {
+						g_layerValid[it->second.layer] = false;
+						g_freeLayers.push_back(it->second.layer);
+					}
+					it = g_camState.erase(it);
+				} else {
 					++it;
+				}
 			}
 		}
 	}
@@ -174,35 +188,34 @@ namespace ShadowMapCache
 		return true;
 	}
 
-	bool ShouldRender(void* a_camera, std::uint32_t a_rmode, const std::uint8_t*, std::uint64_t a_staticSig)
+	bool ShouldRender(void* a_camera, std::uint32_t, const std::uint8_t*, std::uint64_t a_staticSig)
 	{
-		const std::uint64_t key = UnitKey(a_camera, a_rmode);
-		auto [it, inserted] = g_unitOf.try_emplace(key, Unit{});
-		it->second.lastFrame = g_frame;
+		auto&               st = g_camState[a_camera];
+		st.lastFrame = g_frame;
+		const std::uint64_t posKey = PosKey(a_camera);
 
 		auto renderFresh = [&](Reason a_reason) {
-			it->second.sig = a_staticSig;
-			it->second.hasSig = true;
+			st.sig = a_staticSig;
+			st.posKey = posKey;
+			st.hasState = true;
 			++g_stats.freshThisFrame;
 			if (a_reason == Reason::StaticSetChanged)
 				++g_stats.regenThisFrame;
 			if (a_reason != Reason::NoCache) {  // NoCache is a first capture, not a scene-change event
 				g_stats.lastRegenFrame = g_frame;
 				g_stats.lastReason = a_reason;
-				g_stats.lastReasonKey = key;
+				g_stats.lastReasonKey = posKey;
 			}
 			return true;
 		};
 
-		if (inserted || !it->second.hasSig)
-			return renderFresh(Reason::FirstBuild);  // a newly seen / moved light -> no cache yet
-
-		if (it->second.sig != a_staticSig)
-			return renderFresh(Reason::StaticSetChanged);  // a static was placed / disabled / moved
-
-		// Static set unchanged: reuse the cached slice if this exact map has a valid layer, else capture once.
-		auto lit = g_layerOf.find(a_camera);
-		if (lit == g_layerOf.end() || !g_layerValid[lit->second])
+		if (!st.hasState)
+			return renderFresh(Reason::FirstBuild);
+		if (st.posKey != posKey)
+			return renderFresh(Reason::MovedLight);  // light moved -> its shadow view changed
+		if (st.sig != a_staticSig)
+			return renderFresh(Reason::StaticSetChanged);
+		if (st.layer == UINT32_MAX || !g_layerValid[st.layer])
 			return renderFresh(Reason::NoCache);
 		return false;  // pure blit
 	}
@@ -226,11 +239,11 @@ namespace ShadowMapCache
 		auto* atlas = AtlasResource();
 		if (!g_cacheTex || !a_ctx || !atlas)
 			return false;
-		auto it = g_layerOf.find(a_camera);
-		if (it == g_layerOf.end() || !g_layerValid[it->second])
+		auto it = g_camState.find(a_camera);
+		if (it == g_camState.end() || it->second.layer == UINT32_MAX || !g_layerValid[it->second.layer])
 			return false;
 		const UINT atlasSub = D3D11CalcSubresource(0, a_slice, g_cacheDesc.MipLevels);
-		const UINT cacheSub = D3D11CalcSubresource(0, it->second, g_cacheDesc.MipLevels);
+		const UINT cacheSub = D3D11CalcSubresource(0, it->second.layer, g_cacheDesc.MipLevels);
 		CopyPort(a_ctx, atlas, atlasSub, g_cacheTex.get(), cacheSub, a_port);
 		++g_stats.blitsThisFrame;
 		return true;
@@ -242,6 +255,7 @@ namespace ShadowMapCache
 	{
 		switch (a_reason) {
 		case Reason::FirstBuild:       return "new light";
+		case Reason::MovedLight:       return "light moved";
 		case Reason::StaticSetChanged: return "static object changed";
 		case Reason::NoCache:          return "first capture";
 		default:                       return "none";

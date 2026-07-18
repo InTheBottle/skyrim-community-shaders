@@ -25,7 +25,8 @@ namespace ShadowMapCache
 	enum class Reason : std::uint32_t
 	{
 		None,             // nothing regenerated
-		FirstBuild,       // a newly seen light (or one that moved to a new position)
+		FirstBuild,       // a newly seen light
+		MovedLight,       // the light moved -> its shadow view changed
 		StaticSetChanged, // a static caster was added / disabled / moved under this light
 		NoCache,          // the map had no valid cached slice yet (first capture)
 	};
