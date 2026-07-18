@@ -12,22 +12,27 @@
 
 #include "ShadowMapCache.h"
 
+#include <RE/B/BSFadeNode.h>
+#include <RE/B/BSGeometry.h>
 #include <RE/B/BSRenderPass.h>
+#include <RE/B/BSShaderProperty.h>
+#include <RE/B/BSXFlags.h>
+#include <RE/N/NiNode.h>
 
-// Static-under-dynamic local-light shadow cache, built on the UtilityPassReplica seam. NO instancing:
-// casters are replayed one DrawIndexed each through the engine's OWN RenderPassImmediately (RenderPassesOriginal),
-// byte-for-byte the draws it would have issued inline. On a local-light map both static and dynamic casters are
-// claimed (skipped inline) so we own the render order: a cached STATIC BASE is laid down (blit, or render fresh +
-// capture on a static-set change), then the DYNAMICS are replayed ON TOP each frame, depth-tested against the
-// base. Static furniture is captured once + blitted forever; actors/trees move every frame. Two levels bracket:
+// Static-under-dynamic local-light shadow cache, built on the UtilityPassReplica seam. NO instancing. On a
+// local-light map, DYNAMIC casters (skinned actors, wind-animated trees, havok/animated/scriptable objects,
+// anything that has moved) render INLINE on the engine's own path -- so their live pose/position is always
+// correct. Only the completely-STATIC casters are claimed (skipped inline); they are rendered once through the
+// engine's OWN RenderPassImmediately (RenderPassesOriginal) and captured into a private depth layer, then that
+// cached static depth is COMPOSITED under the live dynamics each frame (a fullscreen SV_Depth min-depth pass).
+// So static furniture is drawn once and reused forever while actors keep moving. The base regenerates only when
+// the static set changes; that (rare) capture frame suppresses the dynamics so the copied base is clean static.
+// Two levels bracket:
 //   RenderShadowmaps 0x1412E3480 : once-per-frame driver -- arms the capture hook.
-//   RenderShadowmap  0x141305610 : once-per-map body (AddrLib 100820); snapshots the clean render-state block,
-//         then lays the static base + replays the dynamics on top.
+//   RenderShadowmap  0x141305610 : once-per-map body (AddrLib 100820); composites / captures the static base.
 //
 // Shadow depth passes read ONLY per-frame globals, the pass's own light/geometry, and the 0x5D8 render-state
-// block -- so the block captured mid-walk is the clean per-map render-target state the replay reseeds from.
-// The engine's own depth-test state (seeded from the block) merges the dynamics with the static base, so no
-// hand-picked composite direction is needed and the result matches a fully-inline render.
+// block -- so the block captured mid-walk is the clean per-map render-target state the static render reseeds from.
 
 namespace
 {
@@ -51,19 +56,19 @@ namespace
 		std::uint32_t     renderFlags;
 	};
 
-	// One shadow map's replay unit: the clean per-map render-state block (RT/viewport/depth, seeds the
-	// replay) + the claimed casters split into STATIC and DYNAMIC lists. On a local-light map both are
-	// claimed (skipped inline) so RenderShadowmapDetour fully controls the render order: cached static base
-	// first, then dynamics on top. On a non-local map (directional cascade) only statics are claimed;
-	// dynamics render inline on the engine path as before.
+	// One shadow map's replay unit: the clean per-map render-state block (RT/viewport/depth, seeds the replay)
+	// + the claimed COMPLETELY-STATIC casters. On a local-light map the statics are claimed (skipped inline) so
+	// they can be cached; dynamic casters (actors, swaying trees, MOVING statics) render INLINE on the engine's
+	// own path -- their live pose/position is correct, and the cached static depth is composited UNDER them
+	// post-walk. On a capture frame the dynamics are instead suppressed so the captured base is clean static.
 	struct MapWork
 	{
 		std::uint8_t              block[engine::kBlockBytes];
 		bool                      blockCaptured = false;
-		bool                      claimDynamics = false;  // local-light map (target 4): claim dynamics too
-		std::vector<CapturedPass> staticPasses;           // non-skinned, non-tree -> cached base
-		std::vector<CapturedPass> dynamicPasses;          // skinned actors / TreeAnim -> rendered on top each frame
-		std::uint64_t             staticSig = 0;           // signature of the static caster set (change detection)
+		bool                      isLocal = false;      // local-light shadow atlas (target 4): claim + cache statics
+		bool                      captureMode = false;  // this frame: suppress dynamics to capture a clean static base
+		std::vector<CapturedPass> staticPasses;         // completely-static casters -> cached base
+		std::uint64_t             staticSig = 0;         // signature of the static caster set (change detection)
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -80,15 +85,15 @@ namespace
 		}
 	}
 
-	// Per-caster movement history. A caster whose world transform changed since last frame is DYNAMIC (rendered
-	// on top each frame, never cached) -- only COMPLETELY static casters form the cached base, else a cached blit
-	// would freeze / flicker the moving one (animated statics: doors, gears, windmills, physics objects). Keyed by
-	// geometry pointer; consistent within a frame for a caster that appears in multiple maps.
+	// Per-caster classification history, keyed by geometry pointer. Stores the FIXED capability verdict (computed
+	// once) plus the per-frame transform for movement detection.
 	struct CasterHist
 	{
-		std::uint64_t xform;
-		std::uint32_t frame;
-		bool          moved;
+		std::uint64_t xform = 0;
+		std::uint32_t frame = 0;
+		bool          moved = false;
+		bool          classified = false;      // capability computed yet?
+		bool          dynamicCapable = false;  // fixed: can this object animate / havok / be scripted?
 	};
 	std::unordered_map<const void*, CasterHist> g_casterHist;
 	std::uint32_t                               g_frameCounter = 0;
@@ -103,58 +108,88 @@ namespace
 		return h;
 	}
 
-	// True if the caster moved since last frame (-> treat as dynamic). A FIRST sighting counts as moved, so a
-	// possibly-moving caster is never baked into the base on its first frame; a truly-static caster settles into
-	// the base on its second frame (its transform matches).
-	bool CasterMoved(const RE::BSGeometry* a_geom)
+	// Fixed CAPABILITY test (computed once per geometry): can this object EVER animate / have havok / be script-
+	// toggled? Reuses Skylighting's static classifier -- the skinned shader flag + the BSX flags on the owning
+	// FadeNode (kDynamic / kRagdoll / kAddon / kNeedsTransformUpdate / kBreakable / kLights / ...). This makes a
+	// physics object AT REST, a closed door, a script-disable-able static, an animated static, etc. all count as
+	// dynamic even before they first move -- so they render live inline and are never baked into the cached base.
+	bool ComputeDynamicCapable(RE::BSRenderPass* a_pass, RE::BSGeometry* a_geom)
 	{
-		const std::uint64_t xf = XformHash(a_geom);
-		auto                it = g_casterHist.find(a_geom);
-		if (it == g_casterHist.end()) {
-			g_casterHist.emplace(a_geom, CasterHist{ xf, g_frameCounter, true });
-			return true;
+		if (auto* prop = a_pass->shaderProperty) {
+			using enum RE::BSShaderProperty::EShaderPropertyFlag;
+			if (prop->flags.any(kSkinned))
+				return true;
 		}
-		auto& h = it->second;
-		if (h.frame == g_frameCounter)
-			return h.moved;  // already decided this frame (multi-map caster)
-		h.moved = (h.xform != xf);
-		h.xform = xf;
-		h.frame = g_frameCounter;
+		RE::BSFadeNode* fadeNode = nullptr;
+		for (RE::NiNode* p = a_geom->parent; p && !fadeNode; p = p->parent)
+			fadeNode = p->AsFadeNode();
+		if (fadeNode) {
+			if (auto* extra = fadeNode->GetExtraData("BSX")) {
+				const auto      v = static_cast<std::int32_t>(static_cast<RE::BSXFlags*>(extra)->value);
+				using Flag = RE::BSXFlags::Flag;
+				constexpr std::int32_t kDyn =
+					static_cast<std::int32_t>(Flag::kRagdoll) |
+					static_cast<std::int32_t>(Flag::kEditorMarker) |
+					static_cast<std::int32_t>(Flag::kDynamic) |
+					static_cast<std::int32_t>(Flag::kAddon) |
+					static_cast<std::int32_t>(Flag::kNeedsTransformUpdate) |
+					static_cast<std::int32_t>(Flag::kMagicShaderParticles) |
+					static_cast<std::int32_t>(Flag::kLights) |
+					static_cast<std::int32_t>(Flag::kBreakable) |
+					static_cast<std::int32_t>(Flag::kSearchedBreakable);
+				if (v & kDyn)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	// A caster is DYNAMIC (never cached; rendered live inline each frame) if it is skinned, wind-animated
+	// (TreeAnim), CAPABLE of animating / havok / being scripted (BSX flags), OR has moved since last frame. Only
+	// completely-static casters form the cached base. A first sighting counts as moved, so a non-flagged mover is
+	// never baked into the base on its first frame; a truly-static caster settles into the base its second frame.
+	bool IsDynamicCaster(RE::BSRenderPass* a_pass, RE::BSGeometry* a_geom, std::uint32_t a_technique)
+	{
+		if (a_technique & (1u << 26))  // TreeAnim wind
+			return true;
+		if (a_geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(a_geom) + 0x130))  // skinned
+			return true;
+		if (!a_geom)
+			return false;
+		auto& h = g_casterHist[a_geom];
+		if (!h.classified) {
+			h.classified = true;
+			h.dynamicCapable = ComputeDynamicCapable(a_pass, a_geom);
+		}
+		if (h.dynamicCapable)
+			return true;
+		const std::uint64_t xf = XformHash(a_geom);
+		if (h.frame != g_frameCounter) {  // first time this frame (multi-map casters reuse the verdict)
+			h.moved = h.xform != xf;
+			h.xform = xf;
+			h.frame = g_frameCounter;
+		}
 		return h.moved;
 	}
 
-	// UtilityPassReplica::ShadowCaptureHook. Sorts each caster into the current map's static / dynamic list and
-	// (when claiming) takes ownership so the engine's inline draw is skipped -- RenderPasses replays it later
-	// via the engine's own RenderPassImmediately. On a non-local map, dynamics are left on the engine's inline
-	// path (claimDynamics == false) so cascade behavior is unchanged.
+	// UtilityPassReplica::ShadowCaptureHook. On a local-light map, claims the COMPLETELY-STATIC casters (skip
+	// inline) so they can be cached, and leaves DYNAMIC casters (skinned actors, swaying trees, MOVING statics)
+	// on the engine's INLINE path so their live pose/position renders correctly -- the cached static depth is
+	// composited UNDER them post-walk. On a CAPTURE frame the dynamics are instead claimed-and-suppressed so the
+	// captured base is clean static. Non-local maps (cascades) claim nothing -> the engine renders everything.
 	bool CaptureHook(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest,
 		std::uint32_t a_renderFlags, bool /*a_canReplicate*/)
 	{
-		if (!g_curMap)
-			return false;
-		auto*      geom = a_pass->geometry;
-		const bool tree = (a_technique & (1u << 26)) != 0;  // TreeAnim sway -> dynamic
-		// Skinned casters (geom+0x130 != 0) are dynamic actors (player, NPCs).
-		const bool skinned = geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(geom) + 0x130);
-		if (tree || skinned) {
-			// DYNAMIC caster: rendered fresh every frame. On a local-light map claim it so it can be replayed
-			// ON TOP of the cached static base (RenderShadowmapDetour); elsewhere leave it inline.
-			if (!g_curMap->claimDynamics)
-				return false;
-			CaptureBlock();
-			g_curMap->dynamicPasses.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
-			return g_claiming;
+		if (!g_curMap || !g_curMap->isLocal)
+			return false;  // cascades / non-local: the engine renders every caster inline (unchanged)
+		auto* geom = a_pass->geometry;
+		if (IsDynamicCaster(a_pass, geom, a_technique)) {
+			if (g_curMap->captureMode)
+				return g_claiming;  // capture frame: claim + skip so the captured base is clean static (no inline draw)
+			return false;           // normal frame: render inline via the engine (correct LIVE pose/position)
 		}
 		if (!geom)
 			return false;  // non-geometry utility pass: leave it on the engine's inline path
-		// A caster that MOVED since last frame is DYNAMIC -- render it on top of the base each frame, never cache
-		// it (a blit would freeze / flicker its shadow). Only checked on local maps (claimDynamics); on cascades
-		// every caster is replayed every frame anyway, so movement is irrelevant there.
-		if (g_curMap->claimDynamics && CasterMoved(geom)) {
-			CaptureBlock();
-			g_curMap->dynamicPasses.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
-			return g_claiming;
-		}
 		// COMPLETELY STATIC caster. Fold its placed-reference identity + FULL world transform into the map's
 		// change signature so a static that is placed / disabled / moved re-renders the base; otherwise the base
 		// is blitted forever. Addition is order-independent (robust to per-frame walk reordering) and
@@ -170,16 +205,15 @@ namespace
 		g_curMap->staticSig += h;
 		CaptureBlock();
 		g_curMap->staticPasses.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
-		return g_claiming;  // claim -> skip inline; RenderPasses replays it
+		return g_claiming;  // claim -> skip inline; RenderPasses renders it into the cached base
 	}
 
-	// Replay a claimed caster list into the current map's slice. RenderShadowmap's original has returned, so
-	// seed the map's CAPTURED render-state block (RT/DSV/viewport snapshotted at the first claimed pass while
+	// Render a claimed STATIC caster list into the current map's slice. RenderShadowmap's original has returned,
+	// so seed the map's CAPTURED render-state block (RT/DSV/viewport snapshotted at the first claimed pass while
 	// the DSV was live), force the main dirty word, and reset the technique caches. RenderPassesOriginal then
-	// replays each pass through the engine's own RenderPassImmediately (one DrawIndexed each -- no instancing).
-	// Finally restore the engine's block + caches so the next map's engine render is undisturbed. The passes
-	// are depth-tested against whatever is already in the slice, so replaying the DYNAMIC list after a static
-	// base leaves the nearer-to-light depth (dynamics correctly occlude / are occluded by the cached statics).
+	// draws each pass through the engine's own RenderPassImmediately (one DrawIndexed each -- no instancing).
+	// Finally restore the engine's block + caches so the next map's engine render is undisturbed. Used to render
+	// the static base fresh (capture / full-render); dynamics are NEVER routed here -- they render live inline.
 	void RenderPasses(const std::vector<CapturedPass>& a_passes, const std::uint8_t* a_block)
 	{
 		if (a_passes.empty())
@@ -229,15 +263,19 @@ namespace
 
 	// BSShadowLight::RenderShadowmap (0x141305610, AddrLib 100820): one invocation == one shadow map.
 	//
-	// STATIC-UNDER-DYNAMIC. A local-light map's STATIC casters (furniture, walls) are cached ONCE and reused;
-	// its DYNAMIC casters (actors, swaying trees) are rendered ON TOP every frame, depth-tested against the
-	// static base so they occlude / are occluded correctly. Both are claimed (skipped inline) so we control the
-	// order: after the engine's original clears the slice, we (a) lay down the static base -- blit the cached
-	// depth, or on a static-set change render the statics fresh and copy them into the cache -- then (b) replay
-	// the dynamics on top via the engine's own RenderPassImmediately. The static base is re-rendered ONLY when
-	// the static signature changes (a static placed / disabled / moved), so in gameplay it is captured once and
-	// blitted forever while actors keep moving. renderMode is valid post-walk (callOriginal ran Func42): 13
-	// spot / 15 point. Non-local maps (directional cascades) claim only statics; their dynamics stayed inline.
+	// STATIC-UNDER-DYNAMIC. A local-light map's completely-STATIC casters (furniture, walls) are cached ONCE and
+	// reused; its DYNAMIC casters (actors, swaying trees, MOVING statics) render INLINE on the engine's own path
+	// each frame -- so their live pose/position is always correct -- and the cached static depth is composited
+	// UNDER them. Only the statics are claimed (skipped inline). Post-walk, per map:
+	//   Composite   : static set unchanged -> the slice already holds the live inline dynamics; composite the
+	//                 cached static depth under them (the win: statics cost nothing).
+	//   StaticCapture: a capture frame -- dynamics were suppressed this frame, so the slice is clean static ->
+	//                 render the statics + copy them into the cache. (Rare: only when the static set changed.)
+	//   RenderFull  : new light / no cache yet -> render the statics over the inline dynamics for a correct
+	//                 display while a capture is scheduled for next frame.
+	// The static base regenerates ONLY when the static signature changes (a static placed / disabled / moved),
+	// so in gameplay it is captured once and reused forever while actors keep moving. renderMode is valid
+	// post-walk (Func42 ran): 13 spot / 15 point. Non-local maps (cascades) claim nothing -> engine renders all.
 	std::int32_t RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
 	{
 		auto callOriginal = *static_cast<std::int32_t (**)(void*, std::int64_t, void*, std::int32_t)>(a_original);
@@ -245,55 +283,50 @@ namespace
 		g_mapWorkList.emplace_back();
 		g_curMap = &g_mapWorkList.back();
 
-		// Pre-walk: claim dynamics only for the local-light shadow atlas (target 4). target is set by the caller
-		// before RenderShadowmap and is valid here (unlike rmode, which Func42 populates during the walk). On a
-		// cascade (target != 4) dynamics render inline, so cascade behavior is unchanged.
-		g_curMap->claimDynamics = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const std::uint8_t*>(a2) + 84) == 4;
+		// Pre-walk: is this the local-light shadow atlas (target 4)? target is set by the caller before
+		// RenderShadowmap and is valid here (unlike rmode, which Func42 populates during the walk). captureMode =
+		// this light was flagged last frame to (re)build its static base -> suppress dynamics so the capture is
+		// clean static. camera (desc+64) is stale-stable pre-walk -- correct for the persistent-light key.
+		{
+			auto* const preDesc = reinterpret_cast<const std::uint8_t*>(a2);
+			void* const preCam = *reinterpret_cast<void* const*>(preDesc + 64);
+			g_curMap->isLocal = *reinterpret_cast<const std::uint32_t*>(preDesc + 84) == 4;
+			g_curMap->captureMode = g_curMap->isLocal && preCam && ShadowMapCache::NeedsStaticCapture(preCam);
+		}
 
 		const std::int32_t r = callOriginal(a1, a2, a3, a4);
 
-		if (g_curMap) {
+		if (g_curMap && g_curMap->isLocal) {
 			auto* const         desc = reinterpret_cast<const std::uint8_t*>(a2);
 			const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(desc + 84);
 			const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(desc + 88);
 			void* const         accum = *reinterpret_cast<void* const*>(desc + 0x48);
 			const std::uint32_t rmode = accum ? *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(accum) + 0x150) : 0u;
 			void* const         camera = *reinterpret_cast<void* const*>(desc + 64);
-			// Cache eligibility: shadow atlas (target 4), valid slice, a camera, and a local render mode (13 spot
-			// / 15 point). Directional cascades (14) are camera-relative and stay per-frame.
 			const bool          localMap = target == 4 && slice < 64 && camera && (rmode == 13 || rmode == 15);
 			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
 			auto* const         ctx = *engine::g_immediateContext;
 			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
 			const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
-			const bool          eligible = localMap && ShadowMapCache::EnsureCache();
 
-			// (a) STATIC BASE into the (engine-cleared) slice.
-			if (eligible) {
-				if (ShadowMapCache::ShouldRender(camera, rmode, desc, sig)) {
-					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // static set changed -> render fresh
+			if (localMap && ShadowMapCache::EnsureCache()) {
+				switch (ShadowMapCache::Decide(camera, rmode, sig, g_curMap->captureMode)) {
+				case ShadowMapCache::Action::StaticCapture:
+					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // slice is static-only -> render statics
 					ctx->OMSetRenderTargets(0, nullptr, nullptr);           // detach slice DSV before reading it
 					ShadowMapCache::Capture(ctx, camera, slice, port);      // copy the clean static base into the cache
-				} else {
-					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before writing it
-					if (!ShadowMapCache::Blit(ctx, camera, slice, port)) {
-						RenderPasses(g_curMap->staticPasses, g_curMap->block);  // no valid cache -> render + capture
-						ctx->OMSetRenderTargets(0, nullptr, nullptr);
-						ShadowMapCache::Capture(ctx, camera, slice, port);
-					}
+					break;
+				case ShadowMapCache::Action::Composite:
+					if (!ShadowMapCache::Composite(ctx, camera, slice, port))
+						RenderPasses(g_curMap->staticPasses, g_curMap->block);  // composite not ready -> full render
+					break;
+				default:  // RenderFull
+					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // statics over the inline dynamics
+					break;
 				}
 			} else {
-				// Non-local / not-yet-cacheable: replay the claimed statics (cascade dynamics stayed inline).
+				// isLocal but not eligible yet (rmode transient / cache not ready): statics were claimed -> render.
 				RenderPasses(g_curMap->staticPasses, g_curMap->block);
-			}
-			// (b) DYNAMICS ON TOP, depth-tested against the static base (nearer-to-light wins). Claimed only on
-			// the local atlas (claimDynamics == target 4); a no-op elsewhere, where dynamics rendered inline.
-			// Re-attach the slice depth target first -- the Blit/Capture above detached it for the copy, and the
-			// engine's dirty-state flush won't re-bind a raw-detached DSV, so the dynamic draws would otherwise
-			// have no depth target (this was why dynamics did not render on cached static lights).
-			if (g_curMap->claimDynamics) {
-				ShadowMapCache::BindSlice(ctx, slice);
-				RenderPasses(g_curMap->dynamicPasses, g_curMap->block);
 			}
 			S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
 		}

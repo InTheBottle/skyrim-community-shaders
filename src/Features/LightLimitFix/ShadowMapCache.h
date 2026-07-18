@@ -62,10 +62,27 @@ namespace ShadowMapCache
 	// for this camera (caller must render instead).
 	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
 
-	// Bind this frame's atlas slice as the (depth-only) render target -- a per-slice D16 DSV on the shadow
-	// atlas. Needed to re-attach the depth target after a Blit/Capture detaches it (CopySubresourceRegion
-	// requires the destination unbound), so the dynamic casters can then be replayed on top of the static base.
-	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice);
+	// Composite the unit's cached STATIC depth INTO this frame's atlas slice via a fullscreen SV_Depth pass with
+	// a min-depth PSO -- the cached static wins only where it is nearer to the light than the DYNAMIC depth the
+	// engine already rendered inline into the slice this frame. So statics are cached once and merged under live
+	// actors/trees/moving casters every frame. Returns false if the pipeline or the unit's cache isn't ready.
+	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
+
+	// Pre-walk query: does this local light need a STATIC-ONLY render+capture this frame (its static base is
+	// missing or its static set changed last frame)? If true the caller suppresses dynamic casters during the
+	// walk so the capture is clean static depth.
+	bool NeedsStaticCapture(void* a_camera);
+
+	enum class Action
+	{
+		RenderFull,     // render statics over the inline dynamics, don't cache (new light / no cache yet)
+		StaticCapture,  // slice is static-only (dynamics were suppressed) -> capture the layer
+		Composite,      // dynamics are live in the slice -> composite the cached static depth under them (the win)
+	};
+
+	// Post-walk decision for a local map. a_wasStaticOnly = the caller suppressed dynamics this frame (armed from
+	// NeedsStaticCapture). Updates the unit's signature / pending-capture state and telemetry.
+	Action Decide(void* a_camera, std::uint32_t a_rmode, std::uint64_t a_staticSig, bool a_wasStaticOnly);
 
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();

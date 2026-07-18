@@ -38,9 +38,14 @@ namespace ShadowMapCache
 		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
 		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
 
-		// Per-slice D16 depth-stencil views onto the shadow atlas (target 4), created lazily. Used to re-attach a
-		// slice as the depth target after a Blit/Capture detaches it, so dynamics can be replayed on top.
-		winrt::com_ptr<ID3D11DepthStencilView> g_atlasSliceDSV[kLayers];
+		// Depth-composite pipeline: merge the cached static depth UNDER the live dynamic depth in a slice.
+		winrt::com_ptr<ID3D11VertexShader>       g_compVS;
+		winrt::com_ptr<ID3D11PixelShader>        g_compPS;
+		winrt::com_ptr<ID3D11DepthStencilState>  g_compDepthState;
+		winrt::com_ptr<ID3D11RasterizerState>    g_compRaster;
+		winrt::com_ptr<ID3D11ShaderResourceView> g_cacheLayerSRV[kLayers];  // R16 view of each cache layer
+		winrt::com_ptr<ID3D11DepthStencilView>   g_atlasSliceDSV[kLayers];   // D16 view of each atlas slice
+		bool                                     g_compTried = false, g_compReady = false;
 
 		// Per-CAMERA cache state. Each shadow map (one per spot light, one per point-light hemisphere) has its own
 		// camera pointer, its own cache-slice layer, and its own change signature -- so a point light's two halves
@@ -53,6 +58,7 @@ namespace ShadowMapCache
 			std::uint64_t posKey = 0;
 			std::uint32_t lastFrame = 0;
 			bool          hasState = false;
+			bool          pendingCapture = false;  // static set changed -> capture static-only next frame
 		};
 		std::unordered_map<void*, CamState> g_camState;
 		bool                                g_layerValid[kLayers] = {};
@@ -129,6 +135,60 @@ namespace ShadowMapCache
 				const D3D11_BOX b{ bl, midY, 0, br, bb, 1 };
 				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, midY, 0, a_src, a_srcSub, &b);
 			}
+		}
+
+		bool EnsureComposite()
+		{
+			if (g_compReady)
+				return true;
+			if (g_compTried)
+				return false;
+			g_compTried = true;
+			auto* dev = globals::d3d::device;
+			if (!dev || !g_cacheTex)
+				return false;
+			g_compVS.attach(static_cast<ID3D11VertexShader*>(
+				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "vs_5_0", "vsmain")));
+			g_compPS.attach(static_cast<ID3D11PixelShader*>(
+				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "ps_5_0", "psmain")));
+			if (!g_compVS || !g_compPS)
+				return false;
+			// MERGE PSO: keep the nearer-to-light depth so cached STATIC depth composites UNDER the live dynamic
+			// depth already in the slice (static wins where nearer, dynamics win where nearer). GREATER assumes
+			// the shadow atlas is reversed-Z (near = larger). If the STATIC shadows vanish / render only behind
+			// the dynamics, the convention is standard-Z -> flip to D3D11_COMPARISON_LESS_EQUAL.
+			D3D11_DEPTH_STENCIL_DESC dd{};
+			dd.DepthEnable = TRUE;
+			dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			dd.DepthFunc = D3D11_COMPARISON_GREATER;
+			if (FAILED(dev->CreateDepthStencilState(&dd, g_compDepthState.put())))
+				return false;
+			D3D11_RASTERIZER_DESC rd{};
+			rd.FillMode = D3D11_FILL_SOLID;
+			rd.CullMode = D3D11_CULL_NONE;
+			rd.DepthClipEnable = FALSE;
+			if (FAILED(dev->CreateRasterizerState(&rd, g_compRaster.put())))
+				return false;
+			g_compReady = true;
+			logger::info("[ShadowMapCache] depth-composite pipeline ready");
+			return true;
+		}
+
+		ID3D11ShaderResourceView* CacheLayerSRV(std::uint32_t a_layer)
+		{
+			if (a_layer >= kLayers)
+				return nullptr;
+			if (g_cacheLayerSRV[a_layer])
+				return g_cacheLayerSRV[a_layer].get();
+			D3D11_SHADER_RESOURCE_VIEW_DESC s{};
+			s.Format = DXGI_FORMAT_R16_UNORM;
+			s.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+			s.Texture2DArray.MipLevels = 1;
+			s.Texture2DArray.FirstArraySlice = a_layer;
+			s.Texture2DArray.ArraySize = 1;
+			if (FAILED(globals::d3d::device->CreateShaderResourceView(g_cacheTex.get(), &s, g_cacheLayerSRV[a_layer].put())))
+				return nullptr;
+			return g_cacheLayerSRV[a_layer].get();
 		}
 
 		// A per-slice D16 DSV onto the shadow atlas (target 4), created lazily.
@@ -276,13 +336,103 @@ namespace ShadowMapCache
 		return true;
 	}
 
-	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice)
+	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
 	{
-		if (!a_ctx)
-			return;
+		if (!a_ctx || !EnsureComposite())
+			return false;
+		auto it = g_camState.find(a_camera);
+		if (it == g_camState.end() || it->second.layer == UINT32_MAX || !g_layerValid[it->second.layer])
+			return false;
+		auto* srv = CacheLayerSRV(it->second.layer);
 		auto* dsv = AtlasSliceDSV(a_slice);
-		if (dsv)
-			a_ctx->OMSetRenderTargets(0, nullptr, dsv);  // depth-only: no color RTV on a shadow map
+		if (!srv || !dsv)
+			return false;
+
+		const std::int32_t pl = a_port[0], pr = a_port[1], pt = a_port[2], pb = a_port[3];
+		D3D11_VIEWPORT     vp{};
+		vp.TopLeftX = static_cast<float>(std::min(pl, pr));
+		vp.TopLeftY = static_cast<float>(std::min(pt, pb));
+		vp.Width = static_cast<float>(std::abs(pr - pl));
+		vp.Height = static_cast<float>(std::abs(pb - pt));
+		vp.MinDepth = 0.0f;
+		vp.MaxDepth = 1.0f;
+		if (vp.Width <= 0.0f || vp.Height <= 0.0f)
+			return false;
+
+		// Depth-only fullscreen pass over the port rect: SV_Depth = cached static depth, min-depth PSO. The
+		// caller leaves S[0] dirty afterward so the engine re-binds all render state for the next map.
+		ID3D11RenderTargetView* noRTV[1] = { nullptr };
+		a_ctx->OMSetRenderTargets(0, noRTV, dsv);
+		a_ctx->RSSetViewports(1, &vp);
+		a_ctx->RSSetState(g_compRaster.get());
+		a_ctx->OMSetDepthStencilState(g_compDepthState.get(), 0);
+		a_ctx->OMSetBlendState(nullptr, nullptr, 0xffffffffu);
+		a_ctx->IASetInputLayout(nullptr);
+		a_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		a_ctx->VSSetShader(g_compVS.get(), nullptr, 0);
+		a_ctx->PSSetShader(g_compPS.get(), nullptr, 0);
+		ID3D11ShaderResourceView* srvs[1] = { srv };
+		a_ctx->PSSetShaderResources(0, 1, srvs);
+		a_ctx->Draw(3, 0);
+		ID3D11ShaderResourceView* nsrv[1] = { nullptr };
+		a_ctx->PSSetShaderResources(0, 1, nsrv);
+		a_ctx->OMSetRenderTargets(0, noRTV, nullptr);
+		++g_stats.blitsThisFrame;
+		return true;
+	}
+
+	bool NeedsStaticCapture(void* a_camera)
+	{
+		auto it = g_camState.find(a_camera);
+		return it != g_camState.end() && it->second.pendingCapture;
+	}
+
+	Action Decide(void* a_camera, std::uint32_t, std::uint64_t a_staticSig, bool a_wasStaticOnly)
+	{
+		auto&               st = g_camState[a_camera];
+		st.lastFrame = g_frame;
+		const std::uint64_t posKey = PosKey(a_camera);
+
+		if (a_wasStaticOnly) {
+			// The caller suppressed dynamics this frame -> the slice is clean static; it will Capture the layer.
+			st.sig = a_staticSig;
+			st.posKey = posKey;
+			st.hasState = true;
+			st.pendingCapture = false;
+			++g_stats.freshThisFrame;
+			return Action::StaticCapture;
+		}
+
+		const bool moved = st.hasState && st.posKey != posKey;
+		const bool changed = !st.hasState || st.sig != a_staticSig || moved;
+		const bool haveCache = st.layer != UINT32_MAX && g_layerValid[st.layer];
+
+		if (changed) {
+			// Static set changed (or new / moved light): store the new signature and schedule a static-only
+			// capture next frame. This frame, composite the (now one-change-stale) cache if we have one -- the new
+			// static's shadow lags a single frame, imperceptible for a rare change -- else render the full map.
+			st.sig = a_staticSig;
+			st.posKey = posKey;
+			st.hasState = true;
+			st.pendingCapture = true;
+			++g_stats.regenThisFrame;
+			g_stats.lastRegenFrame = g_frame;
+			g_stats.lastReason = moved ? Reason::MovedLight : Reason::StaticSetChanged;
+			g_stats.lastReasonKey = posKey;
+			if (haveCache) {
+				++g_stats.blitsThisFrame;
+				return Action::Composite;
+			}
+			return Action::RenderFull;
+		}
+
+		// Static set unchanged: composite the cached static under the live dynamics, else capture next frame.
+		if (!haveCache) {
+			st.pendingCapture = true;
+			return Action::RenderFull;
+		}
+		++g_stats.blitsThisFrame;
+		return Action::Composite;
 	}
 
 	const Stats& GetStats() { return g_stats; }

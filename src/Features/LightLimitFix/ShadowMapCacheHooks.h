@@ -5,14 +5,14 @@
  *        from LightLimitFix::PostPostLoad); this is NOT a standalone EngineFix.
  *
  * Detours the engine's shadow-map walk (DrawWorld::RenderShadowmaps + BSShadowLight::RenderShadowmap). On a
- * local-light map it claims BOTH the static and the dynamic casters through UtilityPassReplica's capture hook
- * (skipping their inline draws) and controls the render order: a STATIC BASE is cached once (blit the cached
- * depth, or on a static-set change render the statics fresh via the engine's own RenderPassImmediately and
- * copy them into the cache), then the DYNAMIC casters are replayed ON TOP every frame, depth-tested against
- * the base. So static furniture/walls cost nothing after the first frame while actors and swaying trees keep
- * moving. The static base regenerates only when the static signature changes (a static placed / disabled /
- * moved). Directional cascades claim only statics; their dynamics stay inline. No instancing. SE-only (every
- * RE'd offset is 1.5.97).
+ * local-light map, DYNAMIC casters (skinned actors, wind-animated trees, and anything that can animate / have
+ * havok / be script-toggled or has moved) render INLINE on the engine's own path so their live pose/position
+ * is correct. Only the completely-STATIC casters are claimed (skipped inline): they are rendered once into a
+ * cached depth layer and that cached static depth is COMPOSITED under the live dynamics every frame. So static
+ * furniture/walls cost nothing after the first frame while actors and swaying trees keep moving. The static
+ * base regenerates only when the static set changes (a static placed / disabled / moved); that capture frame
+ * suppresses dynamics so the copied base is clean static. Directional cascades claim nothing (engine renders
+ * everything). No instancing. SE-only (every RE'd offset is 1.5.97).
  */
 namespace ShadowMapCacheHooks
 {
