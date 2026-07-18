@@ -38,6 +38,10 @@ namespace ShadowMapCache
 		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
 		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
 
+		// Per-slice D16 depth-stencil views onto the shadow atlas (target 4), created lazily. Used to re-attach a
+		// slice as the depth target after a Blit/Capture detaches it, so dynamics can be replayed on top.
+		winrt::com_ptr<ID3D11DepthStencilView> g_atlasSliceDSV[kLayers];
+
 		// Per-CAMERA cache state. Each shadow map (one per spot light, one per point-light hemisphere) has its own
 		// camera pointer, its own cache-slice layer, and its own change signature -- so a point light's two halves
 		// never invalidate each other. posKey (the camera world-position hash) detects a MOVED light (its shadow
@@ -125,6 +129,29 @@ namespace ShadowMapCache
 				const D3D11_BOX b{ bl, midY, 0, br, bb, 1 };
 				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, midY, 0, a_src, a_srcSub, &b);
 			}
+		}
+
+		// A per-slice D16 DSV onto the shadow atlas (target 4), created lazily.
+		ID3D11DepthStencilView* AtlasSliceDSV(std::uint32_t a_slice)
+		{
+			if (a_slice >= kLayers)
+				return nullptr;
+			if (g_atlasSliceDSV[a_slice])
+				return g_atlasSliceDSV[a_slice].get();
+			auto* atlas = AtlasResource();
+			if (!atlas)
+				return nullptr;
+			winrt::com_ptr<ID3D11Texture2D> tex;
+			if (FAILED(atlas->QueryInterface(IID_PPV_ARGS(tex.put()))))
+				return nullptr;
+			D3D11_DEPTH_STENCIL_VIEW_DESC dv{};
+			dv.Format = DXGI_FORMAT_D16_UNORM;
+			dv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+			dv.Texture2DArray.FirstArraySlice = a_slice;
+			dv.Texture2DArray.ArraySize = 1;
+			if (FAILED(globals::d3d::device->CreateDepthStencilView(tex.get(), &dv, g_atlasSliceDSV[a_slice].put())))
+				return nullptr;
+			return g_atlasSliceDSV[a_slice].get();
 		}
 	}
 
@@ -247,6 +274,15 @@ namespace ShadowMapCache
 		CopyPort(a_ctx, atlas, atlasSub, g_cacheTex.get(), cacheSub, a_port);
 		++g_stats.blitsThisFrame;
 		return true;
+	}
+
+	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice)
+	{
+		if (!a_ctx)
+			return;
+		auto* dsv = AtlasSliceDSV(a_slice);
+		if (dsv)
+			a_ctx->OMSetRenderTargets(0, nullptr, dsv);  // depth-only: no color RTV on a shadow map
 	}
 
 	const Stats& GetStats() { return g_stats; }

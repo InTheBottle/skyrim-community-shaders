@@ -1,6 +1,7 @@
 #include "ShadowMapCacheHooks.h"
 
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #include <d3d11_1.h>
@@ -79,6 +80,49 @@ namespace
 		}
 	}
 
+	// Per-caster movement history. A caster whose world transform changed since last frame is DYNAMIC (rendered
+	// on top each frame, never cached) -- only COMPLETELY static casters form the cached base, else a cached blit
+	// would freeze / flicker the moving one (animated statics: doors, gears, windmills, physics objects). Keyed by
+	// geometry pointer; consistent within a frame for a caster that appears in multiple maps.
+	struct CasterHist
+	{
+		std::uint64_t xform;
+		std::uint32_t frame;
+		bool          moved;
+	};
+	std::unordered_map<const void*, CasterHist> g_casterHist;
+	std::uint32_t                               g_frameCounter = 0;
+
+	inline std::uint64_t XformHash(const RE::BSGeometry* a_geom)
+	{
+		std::uint64_t h = 0xcbf29ce484222325ull;
+		std::uint32_t b[13];  // NiTransform: rotate 3x3 + translate 3 + scale
+		std::memcpy(b, &a_geom->world, sizeof(b));
+		for (std::uint32_t v : b)
+			h = (h ^ v) * 0x100000001b3ull;
+		return h;
+	}
+
+	// True if the caster moved since last frame (-> treat as dynamic). A FIRST sighting counts as moved, so a
+	// possibly-moving caster is never baked into the base on its first frame; a truly-static caster settles into
+	// the base on its second frame (its transform matches).
+	bool CasterMoved(const RE::BSGeometry* a_geom)
+	{
+		const std::uint64_t xf = XformHash(a_geom);
+		auto                it = g_casterHist.find(a_geom);
+		if (it == g_casterHist.end()) {
+			g_casterHist.emplace(a_geom, CasterHist{ xf, g_frameCounter, true });
+			return true;
+		}
+		auto& h = it->second;
+		if (h.frame == g_frameCounter)
+			return h.moved;  // already decided this frame (multi-map caster)
+		h.moved = (h.xform != xf);
+		h.xform = xf;
+		h.frame = g_frameCounter;
+		return h.moved;
+	}
+
 	// UtilityPassReplica::ShadowCaptureHook. Sorts each caster into the current map's static / dynamic list and
 	// (when claiming) takes ownership so the engine's inline draw is skipped -- RenderPasses replays it later
 	// via the engine's own RenderPassImmediately. On a non-local map, dynamics are left on the engine's inline
@@ -103,9 +147,17 @@ namespace
 		}
 		if (!geom)
 			return false;  // non-geometry utility pass: leave it on the engine's inline path
-		// STATIC caster. Fold its placed-reference identity + FULL world transform into the map's change
-		// signature so a static that is placed / disabled / moved / rotated re-renders the base; otherwise the
-		// base is blitted forever. Addition is order-independent (robust to per-frame walk reordering) and
+		// A caster that MOVED since last frame is DYNAMIC -- render it on top of the base each frame, never cache
+		// it (a blit would freeze / flicker its shadow). Only checked on local maps (claimDynamics); on cascades
+		// every caster is replayed every frame anyway, so movement is irrelevant there.
+		if (g_curMap->claimDynamics && CasterMoved(geom)) {
+			CaptureBlock();
+			g_curMap->dynamicPasses.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
+			return g_claiming;
+		}
+		// COMPLETELY STATIC caster. Fold its placed-reference identity + FULL world transform into the map's
+		// change signature so a static that is placed / disabled / moved re-renders the base; otherwise the base
+		// is blitted forever. Addition is order-independent (robust to per-frame walk reordering) and
 		// non-cancelling (identical co-located sub-shapes do not XOR away).
 		std::uint64_t h = 0xcbf29ce484222325ull;
 		auto          mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
@@ -236,8 +288,13 @@ namespace
 			}
 			// (b) DYNAMICS ON TOP, depth-tested against the static base (nearer-to-light wins). Claimed only on
 			// the local atlas (claimDynamics == target 4); a no-op elsewhere, where dynamics rendered inline.
-			if (g_curMap->claimDynamics)
+			// Re-attach the slice depth target first -- the Blit/Capture above detached it for the copy, and the
+			// engine's dirty-state flush won't re-bind a raw-detached DSV, so the dynamic draws would otherwise
+			// have no depth target (this was why dynamics did not render on cached static lights).
+			if (g_curMap->claimDynamics) {
+				ShadowMapCache::BindSlice(ctx, slice);
 				RenderPasses(g_curMap->dynamicPasses, g_curMap->block);
+			}
 			S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
 		}
 
@@ -253,6 +310,17 @@ namespace
 
 		// Advance the cache clock at the start of the shadow phase (this IS the once-per-frame shadow driver).
 		ShadowMapCache::BeginFrame();
+
+		// Advance the movement-detection clock and periodically evict casters not seen for a while (left view).
+		++g_frameCounter;
+		if ((g_frameCounter & 255u) == 0u) {
+			for (auto it = g_casterHist.begin(); it != g_casterHist.end();) {
+				if (g_frameCounter - it->second.frame > 300u)
+					it = g_casterHist.erase(it);
+				else
+					++it;
+			}
+		}
 
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		g_mapWorkList.clear();

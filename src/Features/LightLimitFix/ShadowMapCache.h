@@ -62,6 +62,11 @@ namespace ShadowMapCache
 	// for this camera (caller must render instead).
 	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
 
+	// Bind this frame's atlas slice as the (depth-only) render target -- a per-slice D16 DSV on the shadow
+	// atlas. Needed to re-attach the depth target after a Blit/Capture detaches it (CopySubresourceRegion
+	// requires the destination unbound), so the dynamic casters can then be replayed on top of the static base.
+	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice);
+
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();
 
