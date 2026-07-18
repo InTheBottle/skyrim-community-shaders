@@ -1,4 +1,4 @@
-#include "ShadowInstancingFix.h"
+#include "ShadowMapCacheHooks.h"
 
 #include <cstring>
 #include <vector>
@@ -230,6 +230,9 @@ namespace
 	{
 		auto callOriginal = *static_cast<void (**)()>(a_original);
 
+		// Advance the cache clock at the start of the shadow phase (this IS the once-per-frame shadow driver).
+		ShadowMapCache::BeginFrame();
+
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		g_mapWorkList.clear();
 		g_mapWorkList.reserve(24);
@@ -256,11 +259,11 @@ namespace
 	};
 }
 
-void ShadowInstancingFix::Install()
+void ShadowMapCacheHooks::Install()
 {
 	// SE-only: every RE'd offset in this subsystem is 1.5.97.
 	if (!REL::Module::IsSE()) {
-		logger::info("[ShadowInstancingFix] SE-only; not installing on this runtime");
+		logger::info("[ShadowMapCache] SE-only; not installing on this runtime");
 		return;
 	}
 
@@ -272,6 +275,6 @@ void ShadowInstancingFix::Install()
 	stl::detour_thunk<RenderShadowmapsHook>(REL::RelocationID(100420, 0));
 	stl::detour_thunk<RenderShadowmapHook>(REL::RelocationID(100820, 0));
 
-	logger::info("[ShadowInstancingFix] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}",
+	logger::info("[ShadowMapCache] detoured RenderShadowmaps @ 0x{:X}, RenderShadowmap @ 0x{:X}",
 		RenderShadowmapsHook::func.address(), RenderShadowmapHook::func.address());
 }

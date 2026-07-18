@@ -2,7 +2,8 @@
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 
-#include "EngineFixes/ShadowMapCache.h"
+#include "Features/LightLimitFix/ShadowMapCache.h"
+#include "Features/LightLimitFix/ShadowMapCacheHooks.h"
 #include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
 #include "Shadercache.h"
@@ -384,6 +385,9 @@ bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 void LightLimitFix::PostPostLoad()
 {
 	Hooks::Install();
+	// The static local-light shadow cache is owned by LightLimitFix: install its shadow-map-walk detours here,
+	// so it exists only when LLF is loaded (PostPostLoad runs for loaded features only) and nowhere else.
+	ShadowMapCacheHooks::Install();
 }
 
 void LightLimitFix::DataLoaded()

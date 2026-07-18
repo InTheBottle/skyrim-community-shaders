@@ -106,7 +106,7 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 		return;
 	}
-	// Proceed only when a shadow-capture hook is armed (ShadowInstancingFix arms it only during the
+	// Proceed only when a shadow-capture hook is armed (ShadowMapCacheHooks arms it only during the
 	// shadow-map walk, so main-scene utility passes are unaffected). Otherwise the engine renders.
 	if (!shadowCaptureHook.load(std::memory_order_acquire)) {
 		RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);

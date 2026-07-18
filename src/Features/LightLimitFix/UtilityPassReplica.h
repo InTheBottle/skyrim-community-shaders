@@ -16,7 +16,7 @@ namespace RE
  *        during the shadow-map walk, each utility pass is offered to a capture hook; everything else is
  *        forwarded to the engine untouched.
  *
- * The cache (ShadowInstancingFix) arms the hook, which claims each STATIC caster (so the engine's inline
+ * The cache (ShadowMapCacheHooks) arms the hook, which claims each STATIC caster (so the engine's inline
  * draw is skipped) and folds it into a change signature. On a fresh frame the claimed statics are replayed
  * via RenderPassesOriginal -- the engine's OWN RenderPassImmediately (the detour trampoline), one DrawIndexed
  * each, byte-for-byte what the engine would have drawn inline. There is NO instancing and NO byte-exact
@@ -57,7 +57,7 @@ public:
 	[[nodiscard]] bool CanReplicate(RE::BSRenderPass* a_pass) const;
 
 	/**
-	 * @brief Shadow-capture hook (ShadowInstancingFix fan-out). While set, OnRenderPassImmediately offers
+	 * @brief Shadow-capture hook (ShadowMapCacheHooks fan-out). While set, OnRenderPassImmediately offers
 	 *        each utility pass to the hook BEFORE forwarding. Return true to signal "the caller took ownership
 	 *        of this pass" -- the inline render is then skipped (the cache replays it later). Return false to
 	 *        let the engine render the pass normally. The hook runs on the render thread during the shadow-map

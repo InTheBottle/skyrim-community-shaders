@@ -5,7 +5,6 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
-#include "EngineFixes/ShadowMapCache.h"
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
@@ -644,8 +643,8 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	// Advance the staggered shadow-map cache's round-robin before the engine's RenderShadowmaps driver runs.
-	ShadowMapCache::BeginFrame();
+	// The shadow-map cache (owned by LightLimitFix) advances its own clock inside its RenderShadowmaps
+	// driver detour, so nothing to do here beyond the engine's shadow render + the early prepasses.
 	func();
 	globals::deferred->EarlyPrepasses();
 };
