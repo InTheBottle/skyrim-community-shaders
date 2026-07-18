@@ -59,32 +59,31 @@ namespace
 	constexpr std::uint32_t kMaxRegistersPerFrame = 24;  // concat instance-stream copies (a few MB each)
 	constexpr std::uint32_t kMaxCapturesPerFrame = 32;   // b2 World captures (64 B each)
 
-	// Hi-Z occlusion margin (WORLD units). A clump is culled only when it is at least this far BEHIND the
-	// tip cell's farthest visible surface -- i.e. behind a solid occluder (tree/hill), never merely behind
-	// neighbouring grass at a similar depth. Comparing in view space (not saturated NDC) with a physical
-	// margin makes the cull decision stable frame-to-frame (no thrashing stripes). Only the forward burst.
-	constexpr float kHiZMargin = 700.0f;
+	// Hi-Z occlusion margin (WORLD units). A clump is culled only when its TOP point is at least this far BEHIND
+	// the farthest opaque surface in its screen cell -- i.e. clearly behind a solid occluder (tree/hill/building),
+	// never merely at a similar depth. Comparing in view space (linearized) with a physical margin keeps the cull
+	// distance-invariant and stable frame-to-frame. Tunable: smaller = culls more (more aggressive), larger = safer.
+	constexpr float kHiZMargin = 300.0f;
 
 	struct CullCB
 	{
-		float         camVP[16];      // this frame's main view-proj (frustum / distance / thinning)
-		float         prevCamVP[16];  // last frame's main view-proj (Hi-Z reproject into the previous-frame grid)
+		float         camVP[16];  // this frame's main view-proj (frustum / distance / thinning / Hi-Z project)
 		float         radiusWorld;
 		float         distanceEnd;
 		float         thinStart;
 		float         thinEnd;
 		std::uint32_t batchCount;
 		float         thinMax;
-		std::uint32_t hizValid;  // 1 = sample this-frame's Hi-Z grid at t3 (forward burst only)
+		std::uint32_t hizValid;  // 1 = test against this-frame's opaque Hi-Z grid at t3
 		std::uint32_t hizGridW;
 		std::uint32_t hizGridH;
 		std::uint32_t hizFullW;
 		std::uint32_t hizFullH;
-		float         hizMargin;  // world-units a clump must be BEHIND the tip cell's occluder to cull
-		float         hizNear;    // camera near/far the grid depth used -> reconstruct grid NDC-z from clip.w
+		float         hizHeight;  // blade height for the clump-top occlusion test point
+		float         hizNear;    // camera near/far to linearize the occluder NDC-z to a view distance
 		float         hizFar;
-		float         hizHeight;  // blade height: sample the grid at the clump's TIP cell (base + up*height)
-		float         pad0[1];
+		float         hizMargin;  // world-units a clump-top must be behind the occluder to count as occluded
+		float         pad0[1];    // fill register c7 (g_CamPosAdjust float4 aligns to c8)
 		float         camPosAdjust[4];  // this frame's camera posAdjust (grass World is camera-RELATIVE; drift fix)
 	};
 	struct ArgsCB
@@ -136,6 +135,7 @@ namespace
 	winrt::com_ptr<ID3D11UnorderedAccessView> g_occGridUAV;
 	winrt::com_ptr<ID3D11ShaderResourceView>  g_occGridSRV;
 	int                                       g_occFullW = 0, g_occFullH = 0, g_occGridW = 0, g_occGridH = 0;
+	DXGI_FORMAT                               g_occFmt = DXGI_FORMAT_UNKNOWN;  // depth desc the grid was built against
 	bool                                      g_occInitTried = false, g_occReady = false;
 	// Shared inputs (both bursts read these).
 	winrt::com_ptr<ID3D11Buffer>             g_concat, g_desc, g_world, g_captureAdjust;
@@ -175,11 +175,6 @@ namespace
 	std::uint32_t                            g_registersThisFrame = 0;  // concat copies this frame
 	std::uint32_t                            g_capturesThisFrame = 0;   // World captures this frame (own budget)
 	std::uint64_t                            g_registerFrame = ~0ull;
-		// Last frame's main view-proj: the Hi-Z grid is the PREVIOUS frame's, so a static clump reprojects with
-		// the matching (previous) camera to hit the right grid cell -- else a turning camera misplaces it (stripes).
-		float                                    g_prevCamVP[16] = {};
-		bool                                     g_prevCamVPValid = false;
-		std::uint64_t                            g_prevCamVPFrame = ~0ull;  // frame g_prevCamVP was captured
 		// Grass fade params read from the engine's PerGeometry CB (b2): distanceFade = 1 - saturate((dist -
 		// AlphaParam1)/AlphaParam2), so grass is solid < fadeStart, fades over fadeRange, gone by fadeStart+range.
 		// The distance cull + thinning tie to THESE (per the user's grass distance) so no VISIBLE grass is cut.
@@ -296,14 +291,28 @@ namespace
 		g_maxCount = 0;
 	}
 
-	// Lazily create the opaque-occluder-grid resources from the kMAIN scene-depth's runtime format/size:
-	// a same-format copy target g_occTemp (+ a depth-read SRV) and the R32F max-reduced grid g_occGrid.
+	// Drop the occluder-grid resources so the next EnsureOccGrid rebuilds them (kMAIN depth recreated at a new size).
+	void ResetOccGrid()
+	{
+		g_occGridSRV = nullptr;
+		g_occGridUAV = nullptr;
+		g_occGrid = nullptr;
+		g_occTempSRV = nullptr;
+		g_occTemp = nullptr;
+		g_occFullW = g_occFullH = g_occGridW = g_occGridH = 0;
+		g_occFmt = DXGI_FORMAT_UNKNOWN;
+		g_occInitTried = false;
+		g_occReady = false;
+	}
+
+	// Lazily create the opaque-occluder-grid resources from the kMAIN scene-depth's runtime format/size: a same-format
+	// copy target g_occTemp (+ a depth-read SRV) and the R32F max-reduced grid g_occGrid. The kMAIN depth is recreated
+	// when the resolution / upscaler render-scale / fullscreen mode changes, so compare the live depth desc to the one
+	// we built against and rebuild on a change -- otherwise CopyResource silently no-ops against the stale-sized target
+	// and the grid freezes at the old resolution (GrassCull is an EngineFix, so it never gets the Feature
+	// SetupResources/Reset callback that rebuilds depth-sized targets on those changes).
 	bool EnsureOccGrid()
 	{
-		if (g_occReady)
-			return true;
-		if (g_occInitTried)
-			return false;
 		auto* device = globals::d3d::device;
 		auto* renderer = globals::game::renderer;
 		if (!device || !renderer)
@@ -312,10 +321,19 @@ namespace
 			renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture;
 		if (!depthTex)
 			return false;
-		g_occInitTried = true;
 
 		D3D11_TEXTURE2D_DESC dd{};
 		depthTex->GetDesc(&dd);
+		if (g_occReady && (static_cast<int>(dd.Width) != g_occFullW ||
+							  static_cast<int>(dd.Height) != g_occFullH || dd.Format != g_occFmt))
+			ResetOccGrid();  // depth recreated at a new size/format -> rebuild against it
+
+		if (g_occReady)
+			return true;
+		if (g_occInitTried)
+			return false;
+		g_occInitTried = true;
+
 		if (dd.SampleDesc.Count > 1)
 			return false;  // MSAA depth unsupported
 		DXGI_FORMAT srvFmt;
@@ -346,6 +364,7 @@ namespace
 		if (FAILED(device->CreateShaderResourceView(g_occTemp.get(), &sd, g_occTempSRV.put())))
 			return false;
 
+		g_occFmt = dd.Format;  // record the desc we built against, to detect a later recreate
 		g_occFullW = static_cast<int>(dd.Width);
 		g_occFullH = static_cast<int>(dd.Height);
 		g_occGridW = (g_occFullW + 15) / 16;
@@ -414,7 +433,6 @@ namespace
 		auto   vp = globals::game::frameBufferCached.GetCameraViewProj();  // this frame's main view-proj (row-major)
 		CullCB cb{};
 		std::memcpy(cb.camVP, &vp, sizeof(cb.camVP));
-		std::memcpy(cb.prevCamVP, cb.camVP, sizeof(cb.prevCamVP));  // unused (this-frame grid); kept for layout
 		// This frame's camera posAdjust -- the captured grass World is camera-relative, so the shader adds the
 		// per-batch capture-frame posAdjust (recovering absolute world) then subtracts THIS value to re-project into
 		// the current camera-relative space. Without it the cull drifts as the camera moves (grass disappears).
@@ -437,12 +455,12 @@ namespace
 		}
 		cb.batchCount = g_batchCount;
 		cb.thinMax = kThinMax;
-		cb.hizMargin = kHiZMargin;
 
-		// Hi-Z occlusion. Build THIS frame's OPAQUE-ONLY occluder grid now (the burst runs at the first grass
-		// draw of the z-prepass -- opaque geometry is drawn, grass is not) and cull against it with this frame's
-		// VP. Both passes draw the single set = hole-free. Opaque-only -> no grass-vs-grass over-cull; this-frame
-		// -> no frame-lag/flicker. If the grid or camera planes aren't available, skip Hi-Z (plain cull).
+		// Hi-Z occlusion. Build THIS frame's OPAQUE-ONLY occluder grid now (the burst runs at the first grass draw
+		// of the z-prepass -- opaque geometry is drawn, grass is not) and test against it with this frame's VP. Both
+		// passes draw the single set = hole-free. Opaque-only -> no grass-vs-grass over-cull; this-frame -> no
+		// frame-lag/flicker. The shader compares the clump-top depth directly to the grid (standard depth-buffer z),
+		// so no camera near/far is needed. If the grid isn't ready yet, skip Hi-Z (plain frustum/distance cull).
 		ID3D11ShaderResourceView* hizSRV = nullptr;
 		if (doHiZ) {
 			float zn = 0.0f, zf = 0.0f;
@@ -454,9 +472,10 @@ namespace
 				cb.hizGridH = static_cast<std::uint32_t>(g_occGridH);
 				cb.hizFullW = static_cast<std::uint32_t>(g_occFullW);
 				cb.hizFullH = static_cast<std::uint32_t>(g_occFullH);
+				cb.hizHeight = kGrassHeight;
 				cb.hizNear = zn;
 				cb.hizFar = zf;
-				cb.hizHeight = kGrassHeight;
+				cb.hizMargin = kHiZMargin;
 			}
 		}
 		g_cullCB->Update(cb);
@@ -608,10 +627,11 @@ namespace
 			++g_registersThisFrame;
 		}
 
-		// ONE burst per frame on the FIRST kMAIN-depth grass draw (z-prepass, earliest). Hi-Z uses the
-		// PREVIOUS frame's grid (this frame's is not reduced until PrepassPasses, AFTER the z-prepass), so both
-		// the z-prepass AND the forward pass draw the IDENTICAL culled set -> a clump is never in the z-prepass
-		// but missing from the forward pass = HOLE-FREE (no orphan depth). Occluded grass leaves both together.
+		// ONE burst per frame on the FIRST kMAIN-depth grass draw (z-prepass, earliest). By this point the opaque
+		// z-prepass is complete (opaque draws before alpha-tested grass), so BuildOccGrid captures THIS frame's
+		// opaque occluder depth -- no frame lag, no grass self-occlusion. Both the z-prepass AND the forward pass
+		// then draw the IDENTICAL culled set (g_setA) -> a clump is never in the z-prepass but missing from the
+		// forward pass = HOLE-FREE (no orphan depth); occluded grass leaves both passes together.
 		if (g_burstFrameA != frame && g_batchCount > 0) {
 			RunCull(frame, g_setA, HiZCullEnabled());
 			g_burstFrameA = frame;

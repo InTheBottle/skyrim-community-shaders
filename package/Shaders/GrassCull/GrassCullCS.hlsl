@@ -11,6 +11,7 @@
 //   2. Hard distance cull — past the fade-out end (fully alpha-faded -> invisible but still drawn).
 //   3. Random distance thinning (stochastic LOD) — progressively drop a fraction of clumps with distance;
 //        position-hashed so each clump's keep/drop is stable across frames (no flicker) and spatially uncorrelated.
+//   4. Hi-Z occlusion — drop clumps fully behind this frame's opaque occluders (terrain/rocks/buildings).
 //
 // Grass InstanceData1.xyz is CELL-RELATIVE. Skyrim renders CAMERA-RELATIVE (RunGrass: WorldPosition = mul(World,
 // msPos) with the camera at the origin, absolute world = WorldPosition + CameraPosAdjust), so the batch's captured
@@ -37,23 +38,22 @@ struct BatchDesc
 
 cbuffer CullParams : register(b0)
 {
-	row_major float4x4 CameraViewProj;      // this frame's camera view-proj (frustum / distance / thinning)
-	row_major float4x4 PrevCameraViewProj;  // last frame's view-proj (Hi-Z reproject into the previous grid)
-	float g_RadiusWorld;                    // conservative clump bounding radius (world units)
+	row_major float4x4 CameraViewProj;  // this frame's camera view-proj (frustum / distance / thinning / Hi-Z project)
+	float g_RadiusWorld;                // conservative clump bounding radius (world units)
 	float g_DistanceEnd;                // hard-cull clumps past this clip.w (0 = disabled)
 	float g_ThinStart;                  // clip.w where stochastic thinning begins
 	float g_ThinEnd;                    // clip.w of maximum thinning
 	uint  g_BatchCount;
 	float g_ThinMax;                    // max fraction thinned at g_ThinEnd (0..1; 0 = disabled)
-	uint  g_HiZValid;                   // 1 = sample this-frame's Hi-Z grid (t3); set only on the forward burst
+	uint  g_HiZValid;                   // 1 = test against this-frame's opaque Hi-Z grid (t3)
 	uint  g_HiZGridW;
 	uint  g_HiZGridH;
 	uint  g_HiZFullW;
 	uint  g_HiZFullH;
-	float g_HiZMargin;                  // world-units a clump must be BEHIND the tip cell's occluder to cull
-	float g_HiZNear;                    // camera near/far the grid depth used -> reconstruct grid NDC-z from clip.w
+	float g_HiZHeight;                  // blade height: test the clump's TOP point (base + up*height)
+	float g_HiZNear;                    // camera near/far -> linearize the grid's occluder NDC-z to a view distance
 	float g_HiZFar;
-	float g_HiZHeight;                  // blade height: sample the grid at the clump's TIP cell (base + up*height)
+	float g_HiZMargin;                  // world-units a clump-top must be BEHIND the occluder to count as occluded
 	float g_HiZPad;
 	float4 g_CamPosAdjust;              // THIS frame's camera position adjust (grass World is camera-RELATIVE)
 };
@@ -126,33 +126,27 @@ float Hash13(float3 p3)
 			visible = false;
 	}
 
-	// 4. Hi-Z occlusion vs THIS frame's OPAQUE-ONLY occluder grid (built at the first grass draw, before grass
-	//    is drawn -> holds only terrain/trees/rocks). A clump is culled only when it is behind a SOLID surface,
-	//    never behind neighbouring grass (grass isn't in the grid), and the grid is this-frame so there is no
-	//    frame-lag/flicker. A grass clump's blades poke UPWARD, so its topmost ("tip") screen cell holds the
-	//    FARTHEST background over the whole clump: cull only if the clump is behind even the tip cell's farthest
-	//    surface (behind everything across its footprint) -> HOLE-PROOF, and a clump poking past the occluder
-	//    keeps itself. Clump distance is this frame's view-space w (pw); the tip cell is its blade-top screen pos.
-	const float pw = w;  // this frame's view-space distance (from the frustum clip above)
-	if (visible && g_HiZValid != 0 && pw > g_HiZNear) {
-		const float  objZ = (g_HiZFar / (g_HiZFar - g_HiZNear)) * (1.0 - g_HiZNear / pw);  // clump NDC depth
-		const float4 tipClip = mul(CameraViewProj, float4(worldPos + float3(0.0, 0.0, g_HiZHeight), 1.0));
-		if (objZ <= 0.9995 && tipClip.w > g_HiZNear) {
-			const float2 tuv = float2(tipClip.x / tipClip.w * 0.5 + 0.5, 0.5 - tipClip.y / tipClip.w * 0.5);
-			if (all(tuv >= 0.0) && all(tuv <= 1.0)) {  // tip on-screen (else keep -- conservative)
-				const int2 c = int2(tuv * float2(g_HiZFullW, g_HiZFullH)) / 16;
-				float      cellMax = 0.0;
-				[unroll] for (int dy = -1; dy <= 1; ++dy)
-					[unroll] for (int dx = -1; dx <= 1; ++dx) {
-						const int2 cc = clamp(c + int2(dx, dy), int2(0, 0), int2(g_HiZGridW - 1, g_HiZGridH - 1));
-						cellMax = max(cellMax, g_HiZGrid.Load(int3(cc, 0)));
-					}
-				// Compare in VIEW SPACE (world units), not saturated NDC: linearize the tip cell's farthest
-				// visible depth to its camera distance, and cull only if the clump is >= g_HiZMargin behind it
-				// (behind a solid occluder, not just neighbouring grass). Stable frame-to-frame; hole-free
-				// because the tip cell holds the farthest background over the whole clump.
-				const float wOcc = g_HiZNear / max(1.0 - cellMax * (g_HiZFar - g_HiZNear) / g_HiZFar, 1e-6);
-				if (pw > wOcc + g_HiZMargin)
+	// 4. Hi-Z occlusion vs THIS frame's OPAQUE-ONLY occluder grid (g_HiZGrid: the farthest depth-buffer z over each
+	//    16px screen cell, reduced from the pre-grass scene depth -> holds only terrain/rocks/buildings, never grass).
+	//    Test the clump's TOP point (base + blade height): if even the top is BEHIND the farthest opaque surface in
+	//    its screen cell (by more than a physical margin), the whole clump is occluded -> drop it. Hole-safe by
+	//    construction:
+	//      - the grid is the FARTHEST opaque z, so a clump in front of anything visible through the cell survives;
+	//      - sky / empty pixels read as the far-plane clear (max z), so a clump at a silhouette or poking above an
+	//        occluder lands in a far-reading cell and is kept;
+	//      - testing the TOP (not the base) keeps grass whose blades rise past a low wall.
+	//    This-frame + opaque-only means no frame-lag flicker and no grass-vs-grass self-occlusion. The occluder's
+	//    NDC-z is linearized to a view-space distance so the margin is a fixed world distance at any range.
+	if (visible && g_HiZValid != 0) {
+		const float4 topClip = mul(CameraViewProj, float4(worldPos + float3(0.0, 0.0, g_HiZHeight), 1.0));
+		if (topClip.w > g_HiZNear) {
+			const float2 uv = float2(topClip.x / topClip.w * 0.5 + 0.5, 0.5 - topClip.y / topClip.w * 0.5);
+			if (all(uv >= 0.0) && all(uv <= 1.0)) {  // top on-screen (else keep -- conservative)
+				const int2  cell = clamp(int2(uv * float2(g_HiZFullW, g_HiZFullH)) / 16,
+					int2(0, 0), int2(g_HiZGridW - 1, g_HiZGridH - 1));
+				const float occ = g_HiZGrid.Load(int3(cell, 0));  // farthest opaque NDC-z in the cell (standard: 1=far)
+				const float wOcc = g_HiZNear / max(1.0 - occ * (g_HiZFar - g_HiZNear) / g_HiZFar, 1e-6);  // -> view dist
+				if (topClip.w > wOcc + g_HiZMargin)               // clump-top >= margin behind the occluder -> occluded
 					visible = false;
 			}
 		}
