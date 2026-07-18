@@ -65,10 +65,15 @@ namespace
 	{
 		std::uint8_t              block[engine::kBlockBytes];
 		bool                      blockCaptured = false;
-		bool                      isLocal = false;      // local-light shadow atlas (target 4): claim + cache statics
-		bool                      captureMode = false;  // this frame: suppress dynamics to capture a clean static base
+		bool                      isLocal = false;       // local-light shadow atlas (target 4): claim + cache statics
+		bool                      captureMode = false;   // StaticCapture: suppress dynamics for a clean static base
+		bool                      copyBase = false;      // CopyBase: copy the cached static base in before the walk
+		bool                      baseCopied = false;    // the CopyBase copy has been done (once, at first pass)
 		bool                      classChanged = false;  // a caster's static/dynamic verdict flipped -> re-capture
-		std::vector<CapturedPass> staticPasses;         // completely-static casters -> cached base
+		ShadowMapCache::Action    action = ShadowMapCache::Action::RenderFull;
+		void*                     camera = nullptr;      // cache key (pre-walk, stale-stable for a persistent light)
+		const std::uint8_t*       desc = nullptr;        // the shadow-map descriptor (a2) -> slice/port at first pass
+		std::vector<CapturedPass> staticPasses;          // completely-static casters -> cached base
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -207,6 +212,21 @@ namespace
 	{
 		if (!g_curMap || !g_curMap->isLocal)
 			return false;  // cascades / non-local: the engine renders every caster inline (unchanged)
+		// CopyBase: at the FIRST pass (after the engine cleared the slice, before any caster draws), copy the
+		// cached STATIC base into the slice. The engine then draws the DYNAMIC casters ON TOP of it with its own
+		// depth test -> a clean merge, no shader. The copy needs the depth target detached; BindSlice re-attaches
+		// it so the caster draws land back in the slice, and S[0] dirty forces the engine to re-establish state.
+		if (g_curMap->copyBase && !g_curMap->baseCopied) {
+			g_curMap->baseCopied = true;
+			auto* const         ctx = *engine::g_immediateContext;
+			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
+			const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(g_curMap->desc + 88);
+			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(g_curMap->desc + 0xD0);
+			ctx->OMSetRenderTargets(0, nullptr, nullptr);
+			ShadowMapCache::Blit(ctx, g_curMap->camera, slice, port);  // cached static base -> this frame's slice
+			ShadowMapCache::BindSlice(ctx, slice);
+			S[0] = 0xFFFFFFFFu;
+		}
 		auto* geom = a_pass->geometry;
 		if (IsDynamicCaster(a_pass, geom, a_technique)) {
 			++g_dbgDynamic;
@@ -280,19 +300,18 @@ namespace
 
 	// BSShadowLight::RenderShadowmap (0x141305610, AddrLib 100820): one invocation == one shadow map.
 	//
-	// STATIC-UNDER-DYNAMIC. A local-light map's completely-STATIC casters (furniture, walls) are cached ONCE and
-	// reused; its DYNAMIC casters (actors, swaying trees, MOVING statics) render INLINE on the engine's own path
-	// each frame -- so their live pose/position is always correct -- and the cached static depth is composited
-	// UNDER them. Only the statics are claimed (skipped inline). Post-walk, per map:
-	//   Composite   : static set unchanged -> the slice already holds the live inline dynamics; composite the
-	//                 cached static depth under them (the win: statics cost nothing).
-	//   StaticCapture: a capture frame -- dynamics were suppressed this frame, so the slice is clean static ->
-	//                 render the statics + copy them into the cache. (Rare: only when the static set changed.)
-	//   RenderFull  : new light / no cache yet -> render the statics over the inline dynamics for a correct
-	//                 display while a capture is scheduled for next frame.
-	// The static base regenerates ONLY when the static signature changes (a static placed / disabled / moved),
-	// so in gameplay it is captured once and reused forever while actors keep moving. renderMode is valid
-	// post-walk (Func42 ran): 13 spot / 15 point. Non-local maps (cascades) claim nothing -> engine renders all.
+	// STATIC-UNDER-DYNAMIC via a COPY (no shader). A local-light map's completely-STATIC casters are cached once;
+	// its DYNAMIC casters (actors, swaying trees, moving/havok/scriptable objects) render INLINE on the engine's
+	// own path so their live pose is correct. The action is chosen PRE-walk from the unit's cache state:
+	//   CopyBase     : valid cache -> at the FIRST caster (after the engine's clear) copy the cached static base
+	//                  into the slice; the engine then draws the dynamics ON TOP of it with its own depth test.
+	//   StaticCapture: (re)build the base -> suppress dynamics during the walk, render the statics static-only
+	//                  post-walk, and copy them into the cache. Rare (only on a real change / new light).
+	//   RenderFull   : no cache yet / light moved -> render statics over the inline dynamics for a correct display
+	//                  while a capture is scheduled for next frame.
+	// The base is captured once and reused forever while actors keep moving; it is rebuilt only when a caster's
+	// static/dynamic verdict flips (a static started/stopped moving) -- cull-set churn never triggers it. Non-local
+	// maps (cascades) claim nothing -> the engine renders everything inline.
 	std::int32_t RenderShadowmapDetour(void* a1, std::int64_t a2, void* a3, std::int32_t a4, void* a_original)
 	{
 		auto callOriginal = *static_cast<std::int32_t (**)(void*, std::int64_t, void*, std::int32_t)>(a_original);
@@ -300,57 +319,52 @@ namespace
 		g_mapWorkList.emplace_back();
 		g_curMap = &g_mapWorkList.back();
 
-		// Pre-walk: is this the local-light shadow atlas (target 4)? target is set by the caller before
-		// RenderShadowmap and is valid here (unlike rmode, which Func42 populates during the walk). captureMode =
-		// this light was flagged last frame to (re)build its static base -> suppress dynamics so the capture is
-		// clean static. camera (desc+64) is stale-stable pre-walk -- correct for the persistent-light key.
+		// PRE-WALK decision: target (desc+84) and camera (desc+64) are valid here (unlike rmode / slice / port,
+		// which Func42 fills during the walk -- those are read at the first pass / post-walk). camera is
+		// stale-stable, correct as the persistent-light cache key. Decide the action so the CaptureHook can lay
+		// the base down (CopyBase) or suppress dynamics (StaticCapture) before the engine draws.
 		{
 			auto* const preDesc = reinterpret_cast<const std::uint8_t*>(a2);
 			void* const preCam = *reinterpret_cast<void* const*>(preDesc + 64);
+			g_curMap->desc = preDesc;
+			g_curMap->camera = preCam;
 			g_curMap->isLocal = *reinterpret_cast<const std::uint32_t*>(preDesc + 84) == 4;
-			g_curMap->captureMode = g_curMap->isLocal && preCam && ShadowMapCache::NeedsStaticCapture(preCam);
+			if (g_curMap->isLocal && preCam && ShadowMapCache::EnsureCache()) {
+				g_curMap->action = ShadowMapCache::PreWalkDecide(preCam);
+				g_curMap->captureMode = g_curMap->action == ShadowMapCache::Action::StaticCapture;
+				g_curMap->copyBase = g_curMap->action == ShadowMapCache::Action::CopyBase;
+				++g_dbgMaps;
+			}
 		}
 
 		const std::int32_t r = callOriginal(a1, a2, a3, a4);
 
 		if (g_curMap && g_curMap->isLocal) {
-			auto* const         desc = reinterpret_cast<const std::uint8_t*>(a2);
-			const std::uint32_t target = *reinterpret_cast<const std::uint32_t*>(desc + 84);
+			auto* const         desc = g_curMap->desc;
 			const std::uint32_t slice = *reinterpret_cast<const std::uint32_t*>(desc + 88);
-			void* const         accum = *reinterpret_cast<void* const*>(desc + 0x48);
-			const std::uint32_t rmode = accum ? *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(accum) + 0x150) : 0u;
-			void* const         camera = *reinterpret_cast<void* const*>(desc + 64);
-			const bool          localMap = target == 4 && slice < 64 && camera && (rmode == 13 || rmode == 15);
 			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
+			void* const         camera = g_curMap->camera;
 			auto* const         ctx = *engine::g_immediateContext;
 			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
 
-			if (localMap && ShadowMapCache::EnsureCache()) {
-				++g_dbgMaps;
-				switch (ShadowMapCache::Decide(camera, rmode, g_curMap->classChanged, g_curMap->captureMode)) {
-				case ShadowMapCache::Action::StaticCapture:
-					++g_dbgCapture;
-					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // slice is static-only -> render statics
-					ctx->OMSetRenderTargets(0, nullptr, nullptr);           // detach slice DSV before reading it
-					ShadowMapCache::Capture(ctx, camera, slice, port);      // copy the clean static base into the cache
-					break;
-				case ShadowMapCache::Action::Composite:
-					++g_dbgComposite;
-					// ISOLATION: the composite is breaking lighting -> temporarily full-render instead so the game
-					// is correct while the composite (depth-func direction / state) is fixed. No cache saving yet.
-					RenderPasses(g_curMap->staticPasses, g_curMap->block);
-					// if (!ShadowMapCache::Composite(ctx, camera, slice, port))
-					// 	RenderPasses(g_curMap->staticPasses, g_curMap->block);
-					break;
-				default:  // RenderFull
-					++g_dbgFull;
-					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // statics over the inline dynamics
-					break;
-				}
-			} else {
-				// isLocal but not eligible yet (rmode transient / cache not ready): statics were claimed -> render.
-				RenderPasses(g_curMap->staticPasses, g_curMap->block);
+			switch (g_curMap->action) {
+			case ShadowMapCache::Action::StaticCapture:
+				++g_dbgCapture;
+				RenderPasses(g_curMap->staticPasses, g_curMap->block);  // slice is static-only (dynamics suppressed)
+				ctx->OMSetRenderTargets(0, nullptr, nullptr);           // detach slice DSV before reading it
+				ShadowMapCache::Capture(ctx, camera, slice, port);      // copy the clean static base into the cache
+				ShadowMapCache::NoteCaptured(camera);
+				break;
+			case ShadowMapCache::Action::CopyBase:
+				++g_dbgComposite;  // the base copy + inline dynamics already merged during the walk -- nothing here
+				break;
+			default:  // RenderFull
+				++g_dbgFull;
+				RenderPasses(g_curMap->staticPasses, g_curMap->block);  // statics over the inline dynamics
+				break;
 			}
+			if (g_curMap->classChanged)
+				ShadowMapCache::NoteChanged(camera);  // a caster started/stopped moving -> rebuild the base next frame
 			S[0] = 0xFFFFFFFFu;  // force the engine's next SetDirtyStates to re-bind RT/DSV/viewport
 		}
 

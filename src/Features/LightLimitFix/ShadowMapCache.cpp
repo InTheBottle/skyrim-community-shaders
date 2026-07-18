@@ -38,14 +38,10 @@ namespace ShadowMapCache
 		winrt::com_ptr<ID3D11Texture2D> g_cacheTex;
 		D3D11_TEXTURE2D_DESC            g_cacheDesc{};
 
-		// Depth-composite pipeline: merge the cached static depth UNDER the live dynamic depth in a slice.
-		winrt::com_ptr<ID3D11VertexShader>       g_compVS;
-		winrt::com_ptr<ID3D11PixelShader>        g_compPS;
-		winrt::com_ptr<ID3D11DepthStencilState>  g_compDepthState;
-		winrt::com_ptr<ID3D11RasterizerState>    g_compRaster;
-		winrt::com_ptr<ID3D11ShaderResourceView> g_cacheLayerSRV[kLayers];  // R16 view of each cache layer
-		winrt::com_ptr<ID3D11DepthStencilView>   g_atlasSliceDSV[kLayers];   // D16 view of each atlas slice
-		bool                                     g_compTried = false, g_compReady = false;
+		// Per-slice D16 depth-stencil views onto the shadow atlas (target 4), created lazily. Used to re-attach a
+		// slice as the depth target after a Blit/Capture detaches it for the copy, so the engine's caster draws
+		// (and our static replay) land back in the slice.
+		winrt::com_ptr<ID3D11DepthStencilView> g_atlasSliceDSV[kLayers];
 
 		// Per-CAMERA cache state. Each shadow map (one per spot light, one per point-light hemisphere) has its own
 		// camera pointer, its own cache-slice layer, and its own change signature -- so a point light's two halves
@@ -54,11 +50,10 @@ namespace ShadowMapCache
 		struct CamState
 		{
 			std::uint32_t layer = UINT32_MAX;
-			std::uint64_t sig = 0;
 			std::uint64_t posKey = 0;
 			std::uint32_t lastFrame = 0;
 			bool          hasState = false;
-			bool          pendingCapture = false;  // static set changed -> capture static-only next frame
+			bool          pendingCapture = false;  // base needs (re)building -> capture static-only next frame
 		};
 		std::unordered_map<void*, CamState> g_camState;
 		bool                                g_layerValid[kLayers] = {};
@@ -135,60 +130,6 @@ namespace ShadowMapCache
 				const D3D11_BOX b{ bl, midY, 0, br, bb, 1 };
 				a_ctx->CopySubresourceRegion(a_dst, a_dstSub, bl, midY, 0, a_src, a_srcSub, &b);
 			}
-		}
-
-		bool EnsureComposite()
-		{
-			if (g_compReady)
-				return true;
-			if (g_compTried)
-				return false;
-			g_compTried = true;
-			auto* dev = globals::d3d::device;
-			if (!dev || !g_cacheTex)
-				return false;
-			g_compVS.attach(static_cast<ID3D11VertexShader*>(
-				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "vs_5_0", "vsmain")));
-			g_compPS.attach(static_cast<ID3D11PixelShader*>(
-				Util::CompileShader(L"Data\\Shaders\\ShadowMapCache\\ShadowDepthComposite.hlsl", {}, "ps_5_0", "psmain")));
-			if (!g_compVS || !g_compPS)
-				return false;
-			// MERGE PSO: keep the nearer-to-light depth so cached STATIC depth composites UNDER the live dynamic
-			// depth already in the slice (static wins where nearer, dynamics win where nearer). GREATER assumes
-			// the shadow atlas is reversed-Z (near = larger). If the STATIC shadows vanish / render only behind
-			// the dynamics, the convention is standard-Z -> flip to D3D11_COMPARISON_LESS_EQUAL.
-			D3D11_DEPTH_STENCIL_DESC dd{};
-			dd.DepthEnable = TRUE;
-			dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-			dd.DepthFunc = D3D11_COMPARISON_GREATER;
-			if (FAILED(dev->CreateDepthStencilState(&dd, g_compDepthState.put())))
-				return false;
-			D3D11_RASTERIZER_DESC rd{};
-			rd.FillMode = D3D11_FILL_SOLID;
-			rd.CullMode = D3D11_CULL_NONE;
-			rd.DepthClipEnable = FALSE;
-			if (FAILED(dev->CreateRasterizerState(&rd, g_compRaster.put())))
-				return false;
-			g_compReady = true;
-			logger::info("[ShadowMapCache] depth-composite pipeline ready");
-			return true;
-		}
-
-		ID3D11ShaderResourceView* CacheLayerSRV(std::uint32_t a_layer)
-		{
-			if (a_layer >= kLayers)
-				return nullptr;
-			if (g_cacheLayerSRV[a_layer])
-				return g_cacheLayerSRV[a_layer].get();
-			D3D11_SHADER_RESOURCE_VIEW_DESC s{};
-			s.Format = DXGI_FORMAT_R16_UNORM;
-			s.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-			s.Texture2DArray.MipLevels = 1;
-			s.Texture2DArray.FirstArraySlice = a_layer;
-			s.Texture2DArray.ArraySize = 1;
-			if (FAILED(globals::d3d::device->CreateShaderResourceView(g_cacheTex.get(), &s, g_cacheLayerSRV[a_layer].put())))
-				return nullptr;
-			return g_cacheLayerSRV[a_layer].get();
 		}
 
 		// A per-slice D16 DSV onto the shadow atlas (target 4), created lazily.
@@ -275,36 +216,55 @@ namespace ShadowMapCache
 		return true;
 	}
 
-	bool ShouldRender(void* a_camera, std::uint32_t, const std::uint8_t*, std::uint64_t a_staticSig)
+	Action PreWalkDecide(void* a_camera)
 	{
 		auto&               st = g_camState[a_camera];
 		st.lastFrame = g_frame;
 		const std::uint64_t posKey = PosKey(a_camera);
+		const bool          haveCache = st.layer != UINT32_MAX && g_layerValid[st.layer];
+		const bool          moved = st.hasState && st.posKey != posKey;  // light moved -> its shadow view changed
+		st.posKey = posKey;
+		st.hasState = true;
 
-		auto renderFresh = [&](Reason a_reason) {
-			st.sig = a_staticSig;
-			st.posKey = posKey;
-			st.hasState = true;
+		if (moved) {
+			// A moving light cannot cache (the whole view changes): render full every frame, invalidate the base.
+			if (st.layer != UINT32_MAX)
+				g_layerValid[st.layer] = false;
+			st.pendingCapture = false;
+			g_stats.lastRegenFrame = g_frame;
+			g_stats.lastReason = Reason::MovedLight;
+			g_stats.lastReasonKey = posKey;
+			return Action::RenderFull;
+		}
+		if (st.pendingCapture) {
 			++g_stats.freshThisFrame;
-			if (a_reason == Reason::StaticSetChanged)
-				++g_stats.regenThisFrame;
-			if (a_reason != Reason::NoCache) {  // NoCache is a first capture, not a scene-change event
-				g_stats.lastRegenFrame = g_frame;
-				g_stats.lastReason = a_reason;
-				g_stats.lastReasonKey = posKey;
-			}
-			return true;
-		};
+			return Action::StaticCapture;  // (re)build the base this frame
+		}
+		if (haveCache) {
+			++g_stats.blitsThisFrame;
+			return Action::CopyBase;  // the win: copy the cached static, draw dynamics on top
+		}
+		// No cache yet -> render full this frame + schedule a capture for next frame.
+		st.pendingCapture = true;
+		return Action::RenderFull;
+	}
 
-		if (!st.hasState)
-			return renderFresh(Reason::FirstBuild);
-		if (st.posKey != posKey)
-			return renderFresh(Reason::MovedLight);  // light moved -> its shadow view changed
-		if (st.sig != a_staticSig)
-			return renderFresh(Reason::StaticSetChanged);
-		if (st.layer == UINT32_MAX || !g_layerValid[st.layer])
-			return renderFresh(Reason::NoCache);
-		return false;  // pure blit
+	void NoteCaptured(void* a_camera)
+	{
+		auto& st = g_camState[a_camera];
+		st.pendingCapture = false;  // the layer was just filled (Capture sets g_layerValid)
+	}
+
+	void NoteChanged(void* a_camera)
+	{
+		auto& st = g_camState[a_camera];
+		if (!st.pendingCapture) {
+			st.pendingCapture = true;  // rebuild the base next frame
+			++g_stats.regenThisFrame;
+			g_stats.lastRegenFrame = g_frame;
+			g_stats.lastReason = Reason::StaticSetChanged;
+			g_stats.lastReasonKey = st.posKey;
+		}
 	}
 
 	void Capture(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
@@ -336,104 +296,13 @@ namespace ShadowMapCache
 		return true;
 	}
 
-	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port)
+	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice)
 	{
-		if (!a_ctx || !EnsureComposite())
-			return false;
-		auto it = g_camState.find(a_camera);
-		if (it == g_camState.end() || it->second.layer == UINT32_MAX || !g_layerValid[it->second.layer])
-			return false;
-		auto* srv = CacheLayerSRV(it->second.layer);
+		if (!a_ctx)
+			return;
 		auto* dsv = AtlasSliceDSV(a_slice);
-		if (!srv || !dsv)
-			return false;
-
-		const std::int32_t pl = a_port[0], pr = a_port[1], pt = a_port[2], pb = a_port[3];
-		D3D11_VIEWPORT     vp{};
-		vp.TopLeftX = static_cast<float>(std::min(pl, pr));
-		vp.TopLeftY = static_cast<float>(std::min(pt, pb));
-		vp.Width = static_cast<float>(std::abs(pr - pl));
-		vp.Height = static_cast<float>(std::abs(pb - pt));
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		if (vp.Width <= 0.0f || vp.Height <= 0.0f)
-			return false;
-
-		// Depth-only fullscreen pass over the port rect: SV_Depth = cached static depth, min-depth PSO. The
-		// caller leaves S[0] dirty afterward so the engine re-binds all render state for the next map.
-		ID3D11RenderTargetView* noRTV[1] = { nullptr };
-		a_ctx->OMSetRenderTargets(0, noRTV, dsv);
-		a_ctx->RSSetViewports(1, &vp);
-		a_ctx->RSSetState(g_compRaster.get());
-		a_ctx->OMSetDepthStencilState(g_compDepthState.get(), 0);
-		a_ctx->OMSetBlendState(nullptr, nullptr, 0xffffffffu);
-		a_ctx->IASetInputLayout(nullptr);
-		a_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		a_ctx->VSSetShader(g_compVS.get(), nullptr, 0);
-		a_ctx->PSSetShader(g_compPS.get(), nullptr, 0);
-		ID3D11ShaderResourceView* srvs[1] = { srv };
-		a_ctx->PSSetShaderResources(0, 1, srvs);
-		a_ctx->Draw(3, 0);
-		ID3D11ShaderResourceView* nsrv[1] = { nullptr };
-		a_ctx->PSSetShaderResources(0, 1, nsrv);
-		a_ctx->OMSetRenderTargets(0, noRTV, nullptr);
-		++g_stats.blitsThisFrame;
-		return true;
-	}
-
-	bool NeedsStaticCapture(void* a_camera)
-	{
-		auto it = g_camState.find(a_camera);
-		return it != g_camState.end() && it->second.pendingCapture;
-	}
-
-	Action Decide(void* a_camera, std::uint32_t, bool a_classChanged, bool a_wasStaticOnly)
-	{
-		auto&               st = g_camState[a_camera];
-		st.lastFrame = g_frame;
-		const std::uint64_t posKey = PosKey(a_camera);
-
-		if (a_wasStaticOnly) {
-			// The caller suppressed dynamics this frame -> the slice is clean static; it will Capture the layer.
-			st.posKey = posKey;
-			st.hasState = true;
-			st.pendingCapture = false;
-			++g_stats.freshThisFrame;
-			return Action::StaticCapture;
-		}
-
-		// Re-capture ONLY on real change: a new light, the LIGHT moving (posKey), or a caster's static/dynamic
-		// verdict flipping (a static started / stopped moving). Cull-set churn does NOT reach here (it never
-		// flips a verdict), so a still scene captures once and composites forever -- no periodic capture.
-		const bool moved = st.hasState && st.posKey != posKey;
-		const bool changed = !st.hasState || moved || a_classChanged;
-		const bool haveCache = st.layer != UINT32_MAX && g_layerValid[st.layer];
-
-		if (changed) {
-			// Schedule a static-only capture next frame. This frame, composite the (now one-change-stale) cache if
-			// we have one -- the change's shadow lags a single frame, imperceptible for a rare event -- else render
-			// the full map for a correct display.
-			st.posKey = posKey;
-			st.hasState = true;
-			st.pendingCapture = true;
-			++g_stats.regenThisFrame;
-			g_stats.lastRegenFrame = g_frame;
-			g_stats.lastReason = moved ? Reason::MovedLight : Reason::StaticSetChanged;
-			g_stats.lastReasonKey = posKey;
-			if (haveCache) {
-				++g_stats.blitsThisFrame;
-				return Action::Composite;
-			}
-			return Action::RenderFull;
-		}
-
-		// No real change: composite the cached static under the live dynamics, else capture next frame.
-		if (!haveCache) {
-			st.pendingCapture = true;
-			return Action::RenderFull;
-		}
-		++g_stats.blitsThisFrame;
-		return Action::Composite;
+		if (dsv)
+			a_ctx->OMSetRenderTargets(0, nullptr, dsv);  // depth-only: no color RTV on a shadow map
 	}
 
 	const Stats& GetStats() { return g_stats; }

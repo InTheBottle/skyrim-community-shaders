@@ -48,42 +48,38 @@ namespace ShadowMapCache
 	// Called once at the start of the shadow phase (advances the frame counter + publishes stats).
 	void BeginFrame();
 
-	// Per-map decision. rmode: 13 spot / 15 point. a_staticSig is the caller's signature of this map's claimed
-	// STATIC caster set. Returns true if the map must be RENDERED fresh (new unit, changed static set, or no
-	// valid cache); false if the caller should REUSE the cached slice (call Blit). a_lightXf = descriptor+0x00.
-	bool ShouldRender(void* a_camera, std::uint32_t a_rmode, const std::uint8_t* a_lightXf, std::uint64_t a_staticSig);
-
-	// Copy the freshly-rendered atlas slice (this frame's) into the unit's private cache layer. Call after the
-	// render on a ShouldRender==true map. Splits the copy so no single CopySubresourceRegion spans a full D16
-	// subresource (the DXVK quirk) and copies only the port rect.
-	void Capture(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
-
-	// Restore the unit's cached layer into this frame's atlas slice. Returns false if there is no valid cache
-	// for this camera (caller must render instead).
-	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
-
-	// Composite the unit's cached STATIC depth INTO this frame's atlas slice via a fullscreen SV_Depth pass with
-	// a min-depth PSO -- the cached static wins only where it is nearer to the light than the DYNAMIC depth the
-	// engine already rendered inline into the slice this frame. So statics are cached once and merged under live
-	// actors/trees/moving casters every frame. Returns false if the pipeline or the unit's cache isn't ready.
-	bool Composite(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
-
-	// Pre-walk query: does this local light need a STATIC-ONLY render+capture this frame (its static base is
-	// missing or its static set changed last frame)? If true the caller suppresses dynamic casters during the
-	// walk so the capture is clean static depth.
-	bool NeedsStaticCapture(void* a_camera);
-
 	enum class Action
 	{
-		RenderFull,     // render statics over the inline dynamics, don't cache (new light / no cache yet)
-		StaticCapture,  // slice is static-only (dynamics were suppressed) -> capture the layer
-		Composite,      // dynamics are live in the slice -> composite the cached static depth under them (the win)
+		RenderFull,     // no valid cache / light moved -> render statics over the inline dynamics; capture next frame
+		StaticCapture,  // (re)build the base this frame: suppress dynamics, render statics static-only, capture it
+		CopyBase,       // valid cache: copy the cached static base into the slice, then render dynamics ON TOP
 	};
 
-	// Post-walk decision for a local map. a_classChanged = a caster's static/dynamic verdict flipped this frame
-	// (a static started / stopped moving) -> the base must be re-captured. a_wasStaticOnly = the caller
-	// suppressed dynamics this frame (armed from NeedsStaticCapture). Updates pending-capture state + telemetry.
-	Action Decide(void* a_camera, std::uint32_t a_rmode, bool a_classChanged, bool a_wasStaticOnly);
+	// PRE-WALK decision for a local map, keyed by shadow camera. Chooses this frame's action from the unit's
+	// state (valid cache? capture pending? light moved?). Must run before the caster walk so a CopyBase can lay
+	// the base down before the engine draws dynamics. Updates the unit's position key.
+	Action PreWalkDecide(void* a_camera);
+
+	// After a StaticCapture: mark the base captured + valid, clear the pending-capture flag.
+	void NoteCaptured(void* a_camera);
+
+	// A caster's static/dynamic verdict flipped under this light (a static started / stopped moving) -> schedule a
+	// rebuild of the base next frame. Cull-set churn never calls this.
+	void NoteChanged(void* a_camera);
+
+	// Copy the freshly-rendered atlas slice (this frame's) into the unit's private cache layer. Call after the
+	// static-only render on a StaticCapture map. Splits the copy so no single CopySubresourceRegion spans a full
+	// D16 subresource (the DXVK quirk) and copies only the port rect.
+	void Capture(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
+
+	// Copy the unit's cached static base INTO this frame's atlas slice (as the base the engine then draws dynamics
+	// on top of). Returns false if there is no valid cache for this camera. The caller must have the slice's depth
+	// target DETACHED (CopySubresourceRegion needs the destination unbound) and re-attach it afterwards (BindSlice).
+	bool Blit(ID3D11DeviceContext* a_ctx, void* a_camera, std::uint32_t a_slice, const std::int32_t* a_port);
+
+	// Re-attach this frame's atlas slice as the (depth-only) render target -- a per-slice D16 DSV on the shadow
+	// atlas -- after Blit/Capture detached it, so the engine's caster draws land back in the slice.
+	void BindSlice(ID3D11DeviceContext* a_ctx, std::uint32_t a_slice);
 
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();
