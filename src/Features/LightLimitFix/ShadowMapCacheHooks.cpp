@@ -67,8 +67,8 @@ namespace
 		bool                      blockCaptured = false;
 		bool                      isLocal = false;      // local-light shadow atlas (target 4): claim + cache statics
 		bool                      captureMode = false;  // this frame: suppress dynamics to capture a clean static base
+		bool                      classChanged = false;  // a caster's static/dynamic verdict flipped -> re-capture
 		std::vector<CapturedPass> staticPasses;         // completely-static casters -> cached base
-		std::uint64_t             staticSig = 0;         // signature of the static caster set (change detection)
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -86,7 +86,9 @@ namespace
 	}
 
 	// Per-caster classification history, keyed by geometry pointer. Stores the FIXED capability verdict (computed
-	// once) plus the per-frame transform for movement detection.
+	// once), the per-frame transform for movement detection, and the last dynamic/static verdict so a FLIP
+	// (something started / stopped moving) can invalidate the cached base -- while cull-set churn (a caster that
+	// merely enters / leaves a frame's walk without moving) does NOT.
 	struct CasterHist
 	{
 		std::uint64_t xform = 0;
@@ -94,12 +96,15 @@ namespace
 		bool          moved = false;
 		bool          classified = false;      // capability computed yet?
 		bool          dynamicCapable = false;  // fixed: can this object animate / havok / be scripted?
+		bool          verdict = false;         // this frame's dynamic verdict (reused across maps in one frame)
+		bool          verdictKnown = false;    // has a prior-frame verdict to compare against?
+		bool          flipped = false;         // verdict changed vs the previous frame it was walked
 	};
 	std::unordered_map<const void*, CasterHist> g_casterHist;
 	std::uint32_t                               g_frameCounter = 0;
 
 	// Diagnostics (rate-limited log): per-frame classifier + action tallies to see why the cache misbehaves.
-	std::uint32_t g_dbgStatic = 0, g_dbgDynamic = 0, g_dbgCapability = 0, g_dbgMoved = 0;
+	std::uint32_t g_dbgStatic = 0, g_dbgDynamic = 0, g_dbgCapability = 0, g_dbgMoved = 0, g_dbgFlip = 0;
 	std::uint32_t g_dbgMaps = 0, g_dbgCapture = 0, g_dbgComposite = 0, g_dbgFull = 0;
 
 	inline std::uint64_t XformHash(const RE::BSGeometry* a_geom)
@@ -150,8 +155,9 @@ namespace
 
 	// A caster is DYNAMIC (never cached; rendered live inline each frame) if it is skinned, wind-animated
 	// (TreeAnim), CAPABLE of animating / havok / being scripted (BSX flags), OR has moved since last frame. Only
-	// completely-static casters form the cached base. A first sighting counts as moved, so a non-flagged mover is
-	// never baked into the base on its first frame; a truly-static caster settles into the base its second frame.
+	// completely-static casters form the cached base. When a caster's verdict FLIPS (a static starts / stops
+	// moving), it flags the current map so the base is re-captured -- but a caster merely entering / leaving a
+	// frame's shadow-cull walk WITHOUT moving does NOT flip, so cull-set churn never triggers a re-capture.
 	bool IsDynamicCaster(RE::BSRenderPass* a_pass, RE::BSGeometry* a_geom, std::uint32_t a_technique)
 	{
 		if (a_technique & (1u << 26))  // TreeAnim wind
@@ -165,19 +171,30 @@ namespace
 			h.classified = true;
 			h.dynamicCapable = ComputeDynamicCapable(a_pass, a_geom);
 		}
-		if (h.dynamicCapable) {
-			++g_dbgCapability;
-			return true;
-		}
-		const std::uint64_t xf = XformHash(a_geom);
-		if (h.frame != g_frameCounter) {  // first time this frame (multi-map casters reuse the verdict)
-			h.moved = h.xform != xf;
-			h.xform = xf;
+		if (h.frame != g_frameCounter) {  // first walk this frame -- recompute movement + verdict + flip
+			bool verdict;
+			if (h.dynamicCapable) {
+				verdict = true;
+				++g_dbgCapability;
+			} else {
+				const std::uint64_t xf = XformHash(a_geom);
+				h.moved = h.xform != xf;
+				h.xform = xf;
+				verdict = h.moved;
+				if (verdict)
+					++g_dbgMoved;
+			}
+			h.flipped = h.verdictKnown && h.verdict != verdict;  // started / stopped being dynamic
+			if (h.flipped)
+				++g_dbgFlip;
+			h.verdict = verdict;
+			h.verdictKnown = true;
 			h.frame = g_frameCounter;
 		}
-		if (h.moved)
-			++g_dbgMoved;
-		return h.moved;
+		// Flag EVERY map the flipped caster appears in this frame (its base must drop / add the caster).
+		if (h.flipped && g_curMap)
+			g_curMap->classChanged = true;
+		return h.verdict;
 	}
 
 	// UtilityPassReplica::ShadowCaptureHook. On a local-light map, claims the COMPLETELY-STATIC casters (skip
@@ -200,19 +217,9 @@ namespace
 		if (!geom)
 			return false;  // non-geometry utility pass: leave it on the engine's inline path
 		++g_dbgStatic;
-		// COMPLETELY STATIC caster. Fold its placed-reference identity + FULL world transform into the map's
-		// change signature so a static that is placed / disabled / moved re-renders the base; otherwise the base
-		// is blitted forever. Addition is order-independent (robust to per-frame walk reordering) and
-		// non-cancelling (identical co-located sub-shapes do not XOR away).
-		std::uint64_t h = 0xcbf29ce484222325ull;
-		auto          mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
-		mix(reinterpret_cast<std::uint64_t>(geom));                 // per-sub-shape identity (co-located siblings differ)
-		mix(reinterpret_cast<std::uint64_t>(geom->GetUserData()));  // placed-reference identity
-		std::uint32_t b[13];                                        // NiTransform: rotate 3x3 + translate 3 + scale
-		std::memcpy(b, &geom->world, sizeof(b));
-		for (std::uint32_t v : b)
-			mix(v);
-		g_curMap->staticSig += h;
+		// COMPLETELY STATIC caster -> claim it (skip inline) so RenderPasses can render it into the cached base.
+		// Invalidation is driven by verdict FLIPS (IsDynamicCaster), not by folding the caster set, so cull churn
+		// does not trigger re-captures.
 		CaptureBlock();
 		g_curMap->staticPasses.push_back(CapturedPass{ a_pass, a_technique, a_alphaTest, a_renderFlags });
 		return g_claiming;  // claim -> skip inline; RenderPasses renders it into the cached base
@@ -317,11 +324,10 @@ namespace
 			const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
 			auto* const         ctx = *engine::g_immediateContext;
 			auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
-			const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
 
 			if (localMap && ShadowMapCache::EnsureCache()) {
 				++g_dbgMaps;
-				switch (ShadowMapCache::Decide(camera, rmode, sig, g_curMap->captureMode)) {
+				switch (ShadowMapCache::Decide(camera, rmode, g_curMap->classChanged, g_curMap->captureMode)) {
 				case ShadowMapCache::Action::StaticCapture:
 					++g_dbgCapture;
 					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // slice is static-only -> render statics
@@ -370,10 +376,10 @@ namespace
 		}
 		// Diagnostics: dump the per-frame classifier + action tallies every ~2s, then reset them.
 		if (g_frameCounter % 120u == 0u) {
-			logger::info("[ShadowMapCache][dbg] localMaps={} static={} dynamic={} (cap={} moved={}) | capture={} composite={} full={}",
-				g_dbgMaps, g_dbgStatic, g_dbgDynamic, g_dbgCapability, g_dbgMoved, g_dbgCapture, g_dbgComposite, g_dbgFull);
+			logger::info("[ShadowMapCache][dbg] localMaps={} static={} dynamic={} (cap={} moved={} flip={}) | capture={} composite={} full={}",
+				g_dbgMaps, g_dbgStatic, g_dbgDynamic, g_dbgCapability, g_dbgMoved, g_dbgFlip, g_dbgCapture, g_dbgComposite, g_dbgFull);
 		}
-		g_dbgMaps = g_dbgStatic = g_dbgDynamic = g_dbgCapability = g_dbgMoved = 0;
+		g_dbgMaps = g_dbgStatic = g_dbgDynamic = g_dbgCapability = g_dbgMoved = g_dbgFlip = 0;
 		g_dbgCapture = g_dbgComposite = g_dbgFull = 0;
 
 		auto* const replica = UtilityPassReplica::GetSingleton();

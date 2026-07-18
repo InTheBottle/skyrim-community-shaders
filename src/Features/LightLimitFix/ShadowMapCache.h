@@ -80,9 +80,10 @@ namespace ShadowMapCache
 		Composite,      // dynamics are live in the slice -> composite the cached static depth under them (the win)
 	};
 
-	// Post-walk decision for a local map. a_wasStaticOnly = the caller suppressed dynamics this frame (armed from
-	// NeedsStaticCapture). Updates the unit's signature / pending-capture state and telemetry.
-	Action Decide(void* a_camera, std::uint32_t a_rmode, std::uint64_t a_staticSig, bool a_wasStaticOnly);
+	// Post-walk decision for a local map. a_classChanged = a caster's static/dynamic verdict flipped this frame
+	// (a static started / stopped moving) -> the base must be re-captured. a_wasStaticOnly = the caller
+	// suppressed dynamics this frame (armed from NeedsStaticCapture). Updates pending-capture state + telemetry.
+	Action Decide(void* a_camera, std::uint32_t a_rmode, bool a_classChanged, bool a_wasStaticOnly);
 
 	// Lazily allocate the private cache array (mirrors the shadow atlas, target 4). False if not ready.
 	bool EnsureCache();

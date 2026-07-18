@@ -387,7 +387,7 @@ namespace ShadowMapCache
 		return it != g_camState.end() && it->second.pendingCapture;
 	}
 
-	Action Decide(void* a_camera, std::uint32_t, std::uint64_t a_staticSig, bool a_wasStaticOnly)
+	Action Decide(void* a_camera, std::uint32_t, bool a_classChanged, bool a_wasStaticOnly)
 	{
 		auto&               st = g_camState[a_camera];
 		st.lastFrame = g_frame;
@@ -395,7 +395,6 @@ namespace ShadowMapCache
 
 		if (a_wasStaticOnly) {
 			// The caller suppressed dynamics this frame -> the slice is clean static; it will Capture the layer.
-			st.sig = a_staticSig;
 			st.posKey = posKey;
 			st.hasState = true;
 			st.pendingCapture = false;
@@ -403,15 +402,17 @@ namespace ShadowMapCache
 			return Action::StaticCapture;
 		}
 
+		// Re-capture ONLY on real change: a new light, the LIGHT moving (posKey), or a caster's static/dynamic
+		// verdict flipping (a static started / stopped moving). Cull-set churn does NOT reach here (it never
+		// flips a verdict), so a still scene captures once and composites forever -- no periodic capture.
 		const bool moved = st.hasState && st.posKey != posKey;
-		const bool changed = !st.hasState || st.sig != a_staticSig || moved;
+		const bool changed = !st.hasState || moved || a_classChanged;
 		const bool haveCache = st.layer != UINT32_MAX && g_layerValid[st.layer];
 
 		if (changed) {
-			// Static set changed (or new / moved light): store the new signature and schedule a static-only
-			// capture next frame. This frame, composite the (now one-change-stale) cache if we have one -- the new
-			// static's shadow lags a single frame, imperceptible for a rare change -- else render the full map.
-			st.sig = a_staticSig;
+			// Schedule a static-only capture next frame. This frame, composite the (now one-change-stale) cache if
+			// we have one -- the change's shadow lags a single frame, imperceptible for a rare event -- else render
+			// the full map for a correct display.
 			st.posKey = posKey;
 			st.hasState = true;
 			st.pendingCapture = true;
@@ -426,7 +427,7 @@ namespace ShadowMapCache
 			return Action::RenderFull;
 		}
 
-		// Static set unchanged: composite the cached static under the live dynamics, else capture next frame.
+		// No real change: composite the cached static under the live dynamics, else capture next frame.
 		if (!haveCache) {
 			st.pendingCapture = true;
 			return Action::RenderFull;
