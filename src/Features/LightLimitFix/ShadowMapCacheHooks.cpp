@@ -336,8 +336,11 @@ namespace
 					break;
 				case ShadowMapCache::Action::Composite:
 					++g_dbgComposite;
-					if (!ShadowMapCache::Composite(ctx, camera, slice, port))
-						RenderPasses(g_curMap->staticPasses, g_curMap->block);  // composite not ready -> full render
+					// ISOLATION: the composite is breaking lighting -> temporarily full-render instead so the game
+					// is correct while the composite (depth-func direction / state) is fixed. No cache saving yet.
+					RenderPasses(g_curMap->staticPasses, g_curMap->block);
+					// if (!ShadowMapCache::Composite(ctx, camera, slice, port))
+					// 	RenderPasses(g_curMap->staticPasses, g_curMap->block);
 					break;
 				default:  // RenderFull
 					++g_dbgFull;
