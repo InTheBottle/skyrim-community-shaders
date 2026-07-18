@@ -63,6 +63,16 @@ public:
 	 */
 	void ReplicaRenderPassImmediately(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags);
 
+	/** @brief Replay a set of captured shadow passes through the engine's ORIGINAL RenderPassImmediately
+	 *         (the detour trampoline) -- byte-for-byte the draws the engine would have issued inline, one
+	 *         DrawIndexed per caster, no instancing and no replica. This is the shadow cache's fresh-frame
+	 *         render: the claimed static casters were skipped inline during the walk, so replay them here.
+	 *         Must be called while the map's RT/DSV/viewport are bound (per-map replay point). Parallel
+	 *         arrays of a_count entries; a_alphaTests / a_renderFlags are per-pass. Bypasses the capture
+	 *         hook (calls the trampoline directly), so no pass is re-captured. */
+	void RenderPassesOriginal(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
+		const std::uint8_t* a_alphaTests, const std::uint32_t* a_renderFlags, std::uint32_t a_count);
+
 	/** @brief Shadow instancing: render a set of captured static shadow passes as a small number of
 	 *         DrawIndexedInstanced calls (one per unique mesh+technique group) instead of one DrawIndexed
 	 *         per object. Each object's World matrix (identical to the b2 PerGeometry World the engine

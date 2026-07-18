@@ -364,6 +364,17 @@ void UtilityPassReplica::OnRenderPassImmediately(RE::BSRenderPass* a_pass, std::
 	RenderPassImmediately_Hook::Engine(a_pass, a_technique, a_alphaTest, a_renderFlags);
 }
 
+void UtilityPassReplica::RenderPassesOriginal(RE::BSRenderPass* const* a_passes, const std::uint32_t* a_techniques,
+	const std::uint8_t* a_alphaTests, const std::uint32_t* a_renderFlags, std::uint32_t a_count)
+{
+	// Replay each claimed static shadow caster through the engine's ORIGINAL RenderPassImmediately -- the
+	// detour trampoline (RenderPassImmediately_Hook::func), NOT the OnRenderPassImmediately detour body -- so
+	// each pass draws exactly as the engine would have inline, and no pass is re-offered to the capture hook.
+	// The caller has reseeded the map's captured render-state block, so the DSV/viewport are the map's.
+	for (std::uint32_t i = 0; i < a_count; ++i)
+		RenderPassImmediately_Hook::Engine(a_passes[i], a_techniques[i], a_alphaTests[i] != 0, a_renderFlags[i]);
+}
+
 bool UtilityPassReplica::CanReplicate(RE::BSRenderPass* a_pass) const
 {
 	// Stage A coverage: unskinned, non-custom-render, plain TRISHAPE geometry. Anything
