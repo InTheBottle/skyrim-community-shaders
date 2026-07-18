@@ -12,8 +12,14 @@
 //   3. Random distance thinning (stochastic LOD) — progressively drop a fraction of clumps with distance;
 //        position-hashed so each clump's keep/drop is stable across frames (no flicker) and spatially uncorrelated.
 //
-// Grass InstanceData1.xyz is CELL-RELATIVE; the batch's STATIC World folds it to world space, then the per-frame
-// camera view-proj takes it to clip: clip = mul(camVP, mul(World, cellRelPos)) == the engine's b2 WorldViewProj.
+// Grass InstanceData1.xyz is CELL-RELATIVE. Skyrim renders CAMERA-RELATIVE (RunGrass: WorldPosition = mul(World,
+// msPos) with the camera at the origin, absolute world = WorldPosition + CameraPosAdjust), so the batch's captured
+// World folds cellRelPos to camera-relative space AT ITS CAPTURE FRAME. CameraPosAdjust moves with the camera every
+// frame, so the World is NOT frame-invariant: we store the capture-frame posAdjust per batch, add it back to recover
+// the frame-invariant ABSOLUTE world position, then subtract THIS frame's posAdjust to re-project into the current
+// camera-relative space before applying the current view-proj. Without this the reconstruction drifts as the camera
+// moves and on-screen grass slides out of frustum ("grass disappears when moving"). Absolute pos also stabilises the
+// thinning hash (else it would flicker as posAdjust changes each frame).
 
 struct GrassInstance
 {
@@ -49,12 +55,14 @@ cbuffer CullParams : register(b0)
 	float g_HiZFar;
 	float g_HiZHeight;                  // blade height: sample the grid at the clump's TIP cell (base + up*height)
 	float g_HiZPad;
+	float4 g_CamPosAdjust;              // THIS frame's camera position adjust (grass World is camera-RELATIVE)
 };
 
 StructuredBuffer<GrassInstance> g_Instances : register(t0);  // concatenated engine instance streams (mirrored)
 StructuredBuffer<BatchDesc>     g_Batches   : register(t1);  // per-batch offsets/count
-StructuredBuffer<float4x4>      g_World     : register(t2);  // per-batch STATIC World (row-major; engine b2 c8)
+StructuredBuffer<float4x4>      g_World     : register(t2);  // per-batch captured World (row-major; engine b2 c8, camera-relative)
 Texture2D<float>                g_HiZGrid   : register(t3);  // OcclusionCulling Hi-Z grid: farthest depth / 16px, THIS frame
+StructuredBuffer<float4>        g_CaptureAdjust : register(t4);  // per-batch camera posAdjust at capture (recovers absolute world)
 RWByteAddressBuffer             g_Compacted : register(u0);  // survivors (also a vertex buffer)
 RWStructuredBuffer<uint>        g_Counters  : register(u1);  // per-batch survivor counts (reset to 0 each frame)
 
@@ -86,13 +94,22 @@ float Hash13(float3 p3)
 
 	// Reconstruct the engine clip per frame (moving-camera correct). StructuredBuffer<float4x4> reads column-major
 	// but the engine World is row-major -> transpose so mul(W,v) applies rows; CameraViewProj is a row_major field.
+	// The captured World is camera-relative to the CAPTURE frame: add the capture-frame posAdjust to get the
+	// frame-invariant ABSOLUTE world, then subtract THIS frame's posAdjust for the current camera-relative position
+	// that CameraViewProj expects. (See file header -- this is what makes the cull moving-camera correct.)
 	const float4x4 W = transpose(g_World[batchIdx]);
-	const float3   worldPos = mul(W, float4(pos, 1.0)).xyz;
+	const float3   worldPosCapRel = mul(W, float4(pos, 1.0)).xyz;                    // camera-relative @ capture frame
+	const float3   worldPosAbs = worldPosCapRel + g_CaptureAdjust[batchIdx].xyz;     // absolute world (frame-invariant)
+	const float3   worldPos = worldPosAbs - g_CamPosAdjust.xyz;                      // camera-relative @ THIS frame
 	const float4   clip = mul(CameraViewProj, float4(worldPos, 1.0));
 	const float    w = clip.w;
 
-	// 1. Frustum cull (clip-space; uses clip.w for depth -- convention-robust). Small clump -> w-relative margin.
-	const float m = 0.15 * abs(w) + 0.0001;
+	// 1. Frustum cull (clip-space; uses clip.w for depth -- convention-robust). The margin MUST cover the clump's
+	//    blade extent: only the origin point is tested, but blades rise ~g_RadiusWorld world-units around it, so a
+	//    clump whose origin is just off an edge can still have visible blades. A world extent projects to a
+	//    near-CONSTANT clip margin (clip = ndc*w, ndc_extent = world/(w*tan) -> clip_extent = world/tan), so add a
+	//    constant term as well as the w-relative slack -- else edge clumps pop in/out as the camera pitches/turns.
+	const float m = 0.15 * abs(w) + g_RadiusWorld;
 	bool        visible = (w > 0.0) &&
 					(clip.x >= -w - m) && (clip.x <= w + m) &&
 					(clip.y >= -w - m) && (clip.y <= w + m) &&
@@ -105,7 +122,7 @@ float Hash13(float3 p3)
 	// 3. Random distance thinning (stochastic LOD).
 	if (visible && g_ThinMax > 0.0 && g_ThinEnd > g_ThinStart) {
 		const float t = saturate((w - g_ThinStart) / (g_ThinEnd - g_ThinStart));
-		if (Hash13(worldPos) > 1.0 - g_ThinMax * t)
+		if (Hash13(worldPosAbs) > 1.0 - g_ThinMax * t)  // absolute pos -> stable across frames (no thin flicker)
 			visible = false;
 	}
 

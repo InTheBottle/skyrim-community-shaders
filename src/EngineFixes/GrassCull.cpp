@@ -46,7 +46,7 @@ namespace
 	// spatially uncorrelated -- a gradual density falloff with distance, no hard band. Artifact-free (+~8%).
 	constexpr float         kThinStart = 3000.0f;
 	constexpr float         kThinEnd = 8000.0f;
-	constexpr float         kThinMax = 0.6f;
+	constexpr float         kThinMax = 0.0f;  // ISOLATION: thinning off to test frustum/distance alone
 	// Capacity must exceed worst-case loaded density -- dense-grass exteriors reach ~1000 batches / ~725k
 	// instances, and hitting either cap forces ResetSlots() to churn every frame (batches never stay captured,
 	// so they flip between culled and full = flickering/disappearing grass). Sized ~3-4x the observed worst
@@ -85,6 +85,7 @@ namespace
 		float         hizFar;
 		float         hizHeight;  // blade height: sample the grid at the clump's TIP cell (base + up*height)
 		float         pad0[1];
+		float         camPosAdjust[4];  // this frame's camera posAdjust (grass World is camera-RELATIVE; drift fix)
 	};
 	struct ArgsCB
 	{
@@ -137,8 +138,8 @@ namespace
 	int                                       g_occFullW = 0, g_occFullH = 0, g_occGridW = 0, g_occGridH = 0;
 	bool                                      g_occInitTried = false, g_occReady = false;
 	// Shared inputs (both bursts read these).
-	winrt::com_ptr<ID3D11Buffer>             g_concat, g_desc, g_world;
-	winrt::com_ptr<ID3D11ShaderResourceView> g_concatSRV, g_descSRV, g_worldSRV;
+	winrt::com_ptr<ID3D11Buffer>             g_concat, g_desc, g_world, g_captureAdjust;
+	winrt::com_ptr<ID3D11ShaderResourceView> g_concatSRV, g_descSRV, g_worldSRV, g_captureAdjustSRV;
 	// Per-pass output set (survivors + counters + indirect args). Set A = z-prepass (frustum/distance/thin).
 	// Set B = forward = A minus Hi-Z-occluded, sampled against THIS frame's grid. B is a subset of A, so
 	// occluded grass is skipped only in the expensive forward shading, never in the z-prepass -> hole-proof.
@@ -179,6 +180,11 @@ namespace
 		float                                    g_prevCamVP[16] = {};
 		bool                                     g_prevCamVPValid = false;
 		std::uint64_t                            g_prevCamVPFrame = ~0ull;  // frame g_prevCamVP was captured
+		// Grass fade params read from the engine's PerGeometry CB (b2): distanceFade = 1 - saturate((dist -
+		// AlphaParam1)/AlphaParam2), so grass is solid < fadeStart, fades over fadeRange, gone by fadeStart+range.
+		// The distance cull + thinning tie to THESE (per the user's grass distance) so no VISIBLE grass is cut.
+		bool                                     g_fadeCaptured = false;
+		float                                    g_fadeStart = 0.0f, g_fadeRange = 0.0f;
 
 	ID3D11Buffer* MakeBuf(UINT bytes, UINT bind, UINT misc, UINT stride, const char* name)
 	{
@@ -221,7 +227,8 @@ namespace
 			g_concat.attach(MakeBuf(kMaxInstances * 32u, SR, ST, 32u, "GrassCull::Concat"));
 			g_desc.attach(MakeBuf(kMaxBatches * sizeof(BatchDesc), SR, ST, sizeof(BatchDesc), "GrassCull::Desc"));
 			g_world.attach(MakeBuf(kMaxBatches * 64u, SR, ST, 64u, "GrassCull::World"));
-			if (!g_concat || !g_desc || !g_world) {
+			g_captureAdjust.attach(MakeBuf(kMaxBatches * 16u, SR, ST, 16u, "GrassCull::CaptureAdjust"));
+			if (!g_concat || !g_desc || !g_world || !g_captureAdjust) {
 				g_initFailed = true;
 				return false;
 			}
@@ -236,6 +243,7 @@ namespace
 			srvStruct(g_concat.get(), kMaxInstances, g_concatSRV.put());
 			srvStruct(g_desc.get(), kMaxBatches, g_descSRV.put());
 			srvStruct(g_world.get(), kMaxBatches, g_worldSRV.put());
+			srvStruct(g_captureAdjust.get(), kMaxBatches, g_captureAdjustSRV.put());
 
 			// Build a per-pass output set: compacted survivors (also a VB) + per-batch counters + indirect args.
 			auto makeSet = [&](OutSet& set, const char* tag) -> bool {
@@ -407,10 +415,26 @@ namespace
 		CullCB cb{};
 		std::memcpy(cb.camVP, &vp, sizeof(cb.camVP));
 		std::memcpy(cb.prevCamVP, cb.camVP, sizeof(cb.prevCamVP));  // unused (this-frame grid); kept for layout
+		// This frame's camera posAdjust -- the captured grass World is camera-relative, so the shader adds the
+		// per-batch capture-frame posAdjust (recovering absolute world) then subtracts THIS value to re-project into
+		// the current camera-relative space. Without it the cull drifts as the camera moves (grass disappears).
+		const auto pa = globals::game::frameBufferCached.GetCameraPosAdjust();
+		std::memcpy(cb.camPosAdjust, &pa, sizeof(cb.camPosAdjust));
 		cb.radiusWorld = kClumpRadius;
-		cb.distanceEnd = kDistanceCullEnd;
-		cb.thinStart = kThinStart;
-		cb.thinEnd = kThinEnd;
+		// Distance cull + thinning are FADE-RELATIVE once the engine's grass fade params are captured: hard-cull
+		// only past the fade end (grass fully transparent there), and ramp the thinning across the fade region
+		// (fadeStart..fadeEnd) so a thinned clump is already fading -> its pop is masked and NO fully-visible grass
+		// is ever cut. Falls back to the fixed constants until the params are read (first captured batch).
+		if (g_fadeCaptured) {
+			const float fadeEnd = g_fadeStart + g_fadeRange;
+			cb.distanceEnd = fadeEnd;
+			cb.thinStart = g_fadeStart;
+			cb.thinEnd = fadeEnd;
+		} else {
+			cb.distanceEnd = kDistanceCullEnd;
+			cb.thinStart = kThinStart;
+			cb.thinEnd = kThinEnd;
+		}
 		cb.batchCount = g_batchCount;
 		cb.thinMax = kThinMax;
 		cb.hizMargin = kHiZMargin;
@@ -441,18 +465,18 @@ namespace
 		ctx->ClearUnorderedAccessViewUint(out.countersUAV.get(), clear);
 
 		ID3D11Buffer*              cb0[1] = { g_cullCB->CB() };
-		ID3D11ShaderResourceView*  srv[4] = { g_concatSRV.get(), g_descSRV.get(), g_worldSRV.get(), hizSRV };
+		ID3D11ShaderResourceView*  srv[5] = { g_concatSRV.get(), g_descSRV.get(), g_worldSRV.get(), hizSRV, g_captureAdjustSRV.get() };
 		ID3D11UnorderedAccessView* uav[2] = { out.compactedUAV.get(), out.countersUAV.get() };
 		ctx->CSSetConstantBuffers(0, 1, cb0);
-		ctx->CSSetShaderResources(0, 4, srv);
+		ctx->CSSetShaderResources(0, 5, srv);
 		ctx->CSSetUnorderedAccessViews(0, 2, uav, nullptr);
 		ctx->CSSetShader(g_cullCS.get(), nullptr, 0);
 		ctx->Dispatch((g_maxCount + 63u) / 64u, g_batchCount, 1);
 
 		ID3D11UnorderedAccessView* nu[2] = { nullptr, nullptr };
-		ID3D11ShaderResourceView*  ns[4] = { nullptr, nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView*  ns[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
 		ctx->CSSetUnorderedAccessViews(0, 2, nu, nullptr);
-		ctx->CSSetShaderResources(0, 4, ns);
+		ctx->CSSetShaderResources(0, 5, ns);
 
 		// Fill the indirect args from the survivor counters.
 		ArgsCB ab{};
@@ -596,10 +620,11 @@ namespace
 		if (!b.registered)
 			return callOriginal(a1, a2, a3, a4, a5, a6, a7);
 
-		// Not yet captured -> draw vanilla in BOTH passes (consistent). Capture this batch's STATIC World
-		// (b2 register c8 == bytes 128..192) only in the forward pass, AFTER the engine's own draw has bound
-		// b2. World is camera-INDEPENDENT (per-cell translation), captured once; the cull reconstructs
-		// WVP = camVP x World per frame.
+		// Not yet captured -> draw vanilla in BOTH passes (consistent). Capture this batch's World (b2 register
+		// c8 == bytes 128..192) only in the forward pass, AFTER the engine's own draw has bound b2. The World is
+		// CAMERA-RELATIVE (folds cellRelPos to camera-relative space at the capture frame), so we also record the
+		// capture-frame posAdjust; the shader recovers absolute world (add capture posAdjust) then re-projects to
+		// the current frame (subtract this frame's posAdjust) so the cull tracks a moving camera without drift.
 		if (!b.worldCaptured) {
 			if (forwardPass) {
 				const std::int32_t r = callOriginal(a1, a2, a3, a4, a5, a6, a7);
@@ -609,6 +634,44 @@ namespace
 					if (b2) {
 						const D3D11_BOX c8{ 128, 0, 0, 192, 1, 1 };
 						ctx->CopySubresourceRegion(g_world.get(), 0, b.batchIdx * 64u, 0, 0, b2, 0, &c8);
+						// Record THIS batch's camera posAdjust at capture time. The captured World is camera-relative
+						// to right now, so the shader adds this back to recover the frame-invariant absolute position.
+						const auto      capPa = globals::game::frameBufferCached.GetCameraPosAdjust();
+						float           capAdj[4];
+						std::memcpy(capAdj, &capPa, sizeof(capAdj));
+						const D3D11_BOX adjBox{ b.batchIdx * 16u, 0, 0, b.batchIdx * 16u + 16u, 1, 1 };
+						ctx->UpdateSubresource(g_captureAdjust.get(), 0, &adjBox, capAdj, 0, 0);
+						// One-time read of the grass fade params (b2 c19.w=AlphaParam1 @316, c20.w=AlphaParam2 @332).
+						// Global grass-fade setting, same for every batch -> capture once. One blocking Map = one stall.
+						if (!g_fadeCaptured) {
+							static winrt::com_ptr<ID3D11Buffer> s_fadeStg;
+							if (!s_fadeStg) {
+								D3D11_BUFFER_DESC fd{};
+								fd.ByteWidth = 32u;
+								fd.Usage = D3D11_USAGE_STAGING;
+								fd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+								globals::d3d::device->CreateBuffer(&fd, nullptr, s_fadeStg.put());
+							}
+							if (s_fadeStg) {
+								const D3D11_BOX fadeBox{ 304, 0, 0, 336, 1, 1 };  // c19..c20
+								ctx->CopySubresourceRegion(s_fadeStg.get(), 0, 0, 0, 0, b2, 0, &fadeBox);
+								D3D11_MAPPED_SUBRESOURCE fm{};
+								if (SUCCEEDED(ctx->Map(s_fadeStg.get(), 0, D3D11_MAP_READ, 0, &fm))) {
+									const float* f = reinterpret_cast<const float*>(fm.pData);
+									const float fadeA1 = f[3];  // AlphaParam1 (byte 316-304 = float index 3)
+									const float fadeA2 = f[7];  // AlphaParam2 (byte 332-304 = float index 7)
+									ctx->Unmap(s_fadeStg.get(), 0);
+									if (fadeA1 > 1.0f && fadeA2 > 1.0f) {
+										g_fadeStart = fadeA1;
+										g_fadeRange = fadeA2;
+										g_fadeCaptured = true;
+										logger::info("[GrassCull] grass fade: start={:.0f} range={:.0f} end={:.0f} "
+													 "-> thin {:.0f}..{:.0f}, distcull {:.0f}",
+											fadeA1, fadeA2, fadeA1 + fadeA2, fadeA1, fadeA1 + fadeA2, fadeA1 + fadeA2);
+									}
+								}
+							}
+						}
 						b2->Release();
 						b.worldCaptured = true;
 						b.captureFrame = frame;
