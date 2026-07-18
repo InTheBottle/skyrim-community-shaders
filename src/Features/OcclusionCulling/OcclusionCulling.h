@@ -31,6 +31,15 @@ struct OcclusionCulling : public Feature
 		bool  CullSmallShadows = true;
 		float SmallShadowMinSize = 0.0f;
 		float SmallShadowSlope = 0.03f;  // measured: nets Utility down ~0.3ms vs occlusion-off
+
+		// GPU grass culling (a separate EngineFix that shares this feature's menu). Frustum + distance cull is
+		// cheap and hole-safe; Hi-Z occlusion drops grass fully hidden behind terrain/rocks/buildings (the real
+		// GPU win). Default on. Stochastic thinning is a separate distance-LOD, off by default.
+		bool  GrassCulling = true;
+		bool  GrassOcclusion = true;
+		float GrassThinning = 0.0f;       // fraction of clumps dropped at the grass fade-out end (0 = off)
+		float GrassThinningCurve = 1.0f;  // thinning ramp exponent; <1 thins aggressively up close, >1 pushes it far
+		float GrassThinningScale = 0.0f;  // enlarge surviving clumps to compensate for thinned density (0 = off)
 	};
 
 	Settings settings;
@@ -43,6 +52,9 @@ struct OcclusionCulling : public Feature
 
 	virtual void DrawSettings() override;
 
+	// This feature has no shader .ini, so the base Feature::Load hits its rc<0 early-return before it would call
+	// LoadSettings -- meaning saved settings would never be restored at boot. Override Load to restore directly.
+	virtual void Load(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;

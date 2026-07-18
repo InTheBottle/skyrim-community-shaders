@@ -26,4 +26,20 @@ struct GrassCull : EngineFix
 
 	/** @brief Compiles the cull shader lazily and installs the fDrawGrass detour. */
 	void Install() override;
+
+	/**
+	 * @brief Runtime settings, pushed from the OcclusionCulling feature's menu (GrassCull has no menu of its own;
+	 *        it is an EngineFix). Thinning is tied to the engine's grass fade-out distance captured at runtime.
+	 */
+	struct Settings
+	{
+		bool  cull = true;         ///< master: GPU frustum + distance cull of grass clumps
+		bool  occlusion = true;    ///< additionally drop clumps hidden behind opaque geometry (Hi-Z)
+		float thinAmount = 0.0f;   ///< stochastic thinning: fraction of clumps dropped at the fade-out end (0 = off)
+		float thinCurve = 1.0f;    ///< thinning ramp exponent; <1 thins up close, >1 concentrates toward the fade edge
+		float thinScale = 0.0f;    ///< enlarge surviving clumps to compensate for thinned density (0 = off)
+	};
+
+	/** @brief Push menu settings into the cull runtime (thread-safe; call from the UI thread). */
+	static void SetSettings(const Settings& a_settings);
 };

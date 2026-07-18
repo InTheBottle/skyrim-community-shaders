@@ -193,8 +193,11 @@ public:
 	 * Validates the INI version against FeatureVersions, sets the loaded flag,
 	 * and delegates to LoadSettings on success.
 	 * @param o_json Root JSON object containing per-feature settings sections.
+	 *
+	 * Virtual so a feature with no shader .ini (e.g. OcclusionCulling) can override the ini-driven early-return
+	 * and still restore its persisted settings. The default implementation is unchanged for all other features.
 	 */
-	void Load(json& o_json);
+	virtual void Load(json& o_json);
 
 	void Save(json& o_json);
 	virtual void SaveSettings(json&) {}

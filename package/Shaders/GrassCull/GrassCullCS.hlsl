@@ -56,6 +56,10 @@ cbuffer CullParams : register(b0)
 	float g_HiZMargin;                  // world-units a clump-top must be BEHIND the occluder to count as occluded
 	float g_HiZPad;
 	float4 g_CamPosAdjust;              // THIS frame's camera position adjust (grass World is camera-RELATIVE)
+	float g_ThinCurve;                  // thinning ramp exponent (higher = concentrate thinning toward the fade edge)
+	float g_ThinScale;                  // survivor scale-up compensation strength (0 = off)
+	float g_ThinPad0;
+	float g_ThinPad1;
 };
 
 StructuredBuffer<GrassInstance> g_Instances : register(t0);  // concatenated engine instance streams (mirrored)
@@ -119,12 +123,17 @@ float Hash13(float3 p3)
 	if (visible && g_DistanceEnd > 0.0 && w > g_DistanceEnd)
 		visible = false;
 
-	// 3. Random distance thinning (stochastic LOD).
-	if (visible && g_ThinMax > 0.0 && g_ThinEnd > g_ThinStart) {
+	// 3. Random distance thinning (stochastic LOD). The local thinned fraction ramps across the fade region on a
+	//    tunable curve (g_ThinCurve: >1 concentrates the drop toward the fade edge where grass is already faint).
+	//    Computed once here and reused for the survivor scale-up compensation at store time. Position-hashed on the
+	//    ABSOLUTE world pos so each clump's keep/drop is stable across frames (no flicker) and camera-independent.
+	float thinFrac = 0.0;
+	if (g_ThinMax > 0.0 && g_ThinEnd > g_ThinStart) {
 		const float t = saturate((w - g_ThinStart) / (g_ThinEnd - g_ThinStart));
-		if (Hash13(worldPosAbs) > 1.0 - g_ThinMax * t)  // absolute pos -> stable across frames (no thin flicker)
-			visible = false;
+		thinFrac = g_ThinMax * pow(t, max(g_ThinCurve, 0.001));
 	}
+	if (visible && thinFrac > 0.0 && Hash13(worldPosAbs) > 1.0 - thinFrac)
+		visible = false;
 
 	// 4. Hi-Z occlusion vs THIS frame's OPAQUE-ONLY occluder grid (g_HiZGrid: the farthest depth-buffer z over each
 	//    16px screen cell, reduced from the pre-grass scene depth -> holds only terrain/rocks/buildings, never grass).
@@ -156,7 +165,15 @@ float Hash13(float3 p3)
 		uint idx;
 		InterlockedAdd(g_Counters[batchIdx], 1u, idx);
 		const uint base = (bd.dstOffset + idx) * 32u;
+		uint4      outB = inst.b;
+		// Scale-up compensation: enlarge survivors by the local thinned fraction so a thinned field still reads as
+		// full. InstanceData4.y (FP16 h13 = high half of inst.b.z) is the per-instance size -- the engine grass VS
+		// builds each blade as Position * (InstanceData4.y * ScaleMask + 1), so ADDING to it grows the blade.
+		if (g_ThinScale > 0.0 && thinFrac > 0.0) {
+			const float sz = f16tof32(outB.z >> 16) + g_ThinScale * thinFrac;
+			outB.z = (outB.z & 0xFFFFu) | (f32tof16(sz) << 16);
+		}
 		g_Compacted.Store4(base, inst.a);
-		g_Compacted.Store4(base + 16u, inst.b);
+		g_Compacted.Store4(base + 16u, outB);
 	}
 }

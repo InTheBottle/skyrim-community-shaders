@@ -2,6 +2,7 @@
 
 #include "MOC.h"
 
+#include "EngineFixes/GrassCull.h"
 #include "Globals.h"
 
 #include <RE/B/BSCullingProcess.h>
@@ -216,6 +217,15 @@ void OcclusionCulling::SyncSettingsToMOC()
 	MOC::CullSmallShadows = settings.CullSmallShadows;
 	MOC::SmallShadowMinSize = settings.SmallShadowMinSize;
 	MOC::SmallShadowSlope = settings.SmallShadowSlope;
+
+	// The GPU grass cull is a separate EngineFix with no menu of its own -- push its settings from here too.
+	GrassCull::SetSettings({
+		.cull = settings.GrassCulling,
+		.occlusion = settings.GrassOcclusion,
+		.thinAmount = settings.GrassThinning,
+		.thinCurve = settings.GrassThinningCurve,
+		.thinScale = settings.GrassThinningScale,
+	});
 }
 
 void OcclusionCulling::DrawSettings()
@@ -254,8 +264,61 @@ void OcclusionCulling::DrawSettings()
 
 	ImGui::EndDisabled();
 
+	// --- GPU grass culling (a separate EngineFix that shares this menu; independent of the object master above) ---
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::TextDisabled("%s", T("feature.occlusion_culling.grass_header", "Grass Culling"));
+	ImGui::Spacing();
+
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.grass_enable", "Enable Grass Culling"), &settings.GrassCulling);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_enable_tooltip",
+			"GPU-culls grass clumps that are off-screen or past the fade-out distance before they are drawn. Cheap and artifact-free."));
+
+	ImGui::BeginDisabled(!settings.GrassCulling);
+
+	changed |= ImGui::Checkbox(T("feature.occlusion_culling.grass_occlusion", "Grass Occlusion Culling"), &settings.GrassOcclusion);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_occlusion_tooltip",
+			"Also drops grass fully hidden behind terrain, rocks, and buildings (GPU Hi-Z). This is the main frame-rate win in occluded views."));
+
+	changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning", "Grass Thinning"), &settings.GrassThinning, 0.0f, 0.9f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_thinning_tooltip",
+			"Stochastic distance LOD: gradually drops a fraction of distant grass clumps, ramping up to this amount at the vanilla grass fade-out distance. 0 = off."));
+
+	if (settings.GrassThinning > 0.0f) {
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning_curve", "Thinning Curve"), &settings.GrassThinningCurve, 0.25f, 8.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_thinning_curve_tooltip",
+				"Shapes where thinning bites. Below 1 thins aggressively even up close; above 1 keeps near grass dense and pushes the thinning out toward the fade edge."));
+
+		changed |= ImGui::SliderFloat(T("feature.occlusion_culling.grass_thinning_scale", "Thinning Scale-Up"), &settings.GrassThinningScale, 0.0f, 3.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T("feature.occlusion_culling.grass_thinning_scale_tooltip",
+				"Enlarges the surviving clumps to compensate for the thinned-out density, so the field still looks full. 0 = no compensation."));
+	}
+
+	ImGui::EndDisabled();
+
 	if (changed)
 		SyncSettingsToMOC();
+}
+
+void OcclusionCulling::Load(json& o_json)
+{
+	// No shader .ini -> base Feature::Load returns at its rc<0 guard before reaching LoadSettings, so persisted
+	// settings would never be restored. Mirror the success branch directly (settings are keyed by GetName()).
+	if (o_json[GetName()].is_structured()) {
+		try {
+			LoadSettings(o_json[GetName()]);
+		} catch (...) {
+			logger::warn("Invalid settings for {}, using default.", GetName());
+			RestoreDefaultSettings();
+		}
+	} else {
+		RestoreDefaultSettings();
+	}
 }
 
 void OcclusionCulling::LoadSettings(json& o_json)
@@ -271,6 +334,17 @@ void OcclusionCulling::LoadSettings(json& o_json)
 	if (o_json["SmallShadowSlope"].is_number())
 		settings.SmallShadowSlope = o_json["SmallShadowSlope"];
 
+	if (o_json["GrassCulling"].is_boolean())
+		settings.GrassCulling = o_json["GrassCulling"];
+	if (o_json["GrassOcclusion"].is_boolean())
+		settings.GrassOcclusion = o_json["GrassOcclusion"];
+	if (o_json["GrassThinning"].is_number())
+		settings.GrassThinning = o_json["GrassThinning"];
+	if (o_json["GrassThinningCurve"].is_number())
+		settings.GrassThinningCurve = o_json["GrassThinningCurve"];
+	if (o_json["GrassThinningScale"].is_number())
+		settings.GrassThinningScale = o_json["GrassThinningScale"];
+
 	SyncSettingsToMOC();
 }
 
@@ -281,6 +355,11 @@ void OcclusionCulling::SaveSettings(json& o_json)
 	o_json["CullSmallShadows"] = settings.CullSmallShadows;
 	o_json["SmallShadowMinSize"] = settings.SmallShadowMinSize;
 	o_json["SmallShadowSlope"] = settings.SmallShadowSlope;
+	o_json["GrassCulling"] = settings.GrassCulling;
+	o_json["GrassOcclusion"] = settings.GrassOcclusion;
+	o_json["GrassThinning"] = settings.GrassThinning;
+	o_json["GrassThinningCurve"] = settings.GrassThinningCurve;
+	o_json["GrassThinningScale"] = settings.GrassThinningScale;
 }
 
 void OcclusionCulling::RestoreDefaultSettings()

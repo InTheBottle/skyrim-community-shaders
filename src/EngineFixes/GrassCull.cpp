@@ -40,13 +40,13 @@ namespace
 	// Cull clumps whose view depth (clip.w) exceeds this -- past the grass fade-out they are fully alpha-faded
 	// (invisible) yet still drawn, so removing them is free visually. Generous so only invisible grass is cut.
 	constexpr float         kDistanceCullEnd = 8192.0f;
-	// Stochastic distance thinning LOD (the shipped grass-density optimisation; a distinct technique from Hi-Z
-	// occlusion, which is left opt-in/off). From kThinStart to kThinEnd, drop up to kThinMax of clumps with a
-	// smooth distance ramp. Position-hashed so each clump's keep/drop is STABLE across frames (no flicker) and
-	// spatially uncorrelated -- a gradual density falloff with distance, no hard band. Artifact-free (+~8%).
+	// Stochastic distance thinning LOD: from kThinStart to kThinEnd drop a fraction of clumps on a smooth,
+	// curve-shaped distance ramp. Position-hashed so each clump's keep/drop is STABLE across frames (no flicker)
+	// and spatially uncorrelated -- a gradual density falloff, no hard band. The AMOUNT/curve/scale-up are runtime
+	// settings (GrassCull::Settings, menu-driven); these constants are only the FALLBACK thin range used until the
+	// engine's grass fade-out distance is captured (then the ramp ties to fadeStart..fadeEnd instead).
 	constexpr float         kThinStart = 3000.0f;
 	constexpr float         kThinEnd = 8000.0f;
-	constexpr float         kThinMax = 0.0f;  // ISOLATION: thinning off to test frustum/distance alone
 	// Capacity must exceed worst-case loaded density -- dense-grass exteriors reach ~1000 batches / ~725k
 	// instances, and hitting either cap forces ResetSlots() to churn every frame (batches never stay captured,
 	// so they flip between culled and full = flickering/disappearing grass). Sized ~3-4x the observed worst
@@ -84,7 +84,10 @@ namespace
 		float         hizFar;
 		float         hizMargin;  // world-units a clump-top must be behind the occluder to count as occluded
 		float         pad0[1];    // fill register c7 (g_CamPosAdjust float4 aligns to c8)
-		float         camPosAdjust[4];  // this frame's camera posAdjust (grass World is camera-RELATIVE; drift fix)
+		float         camPosAdjust[4];  // this frame's camera posAdjust (grass World is camera-RELATIVE; drift fix)  c8
+		float         thinCurve;  // thinning ramp exponent (c9.x)
+		float         thinScale;  // survivor scale-up compensation strength (c9.y)
+		float         pad1[2];    // c9.z,w
 	};
 	struct ArgsCB
 	{
@@ -99,30 +102,17 @@ namespace
 		std::uint32_t triCount;
 	};
 
-	bool CullEnabled()
-	{
-		static std::atomic<bool>          s_on{ false };
-		static std::atomic<std::uint32_t> s_ctr{ 0 };
-		if ((s_ctr.fetch_add(1, std::memory_order_relaxed) % 120u) == 0) {
-			std::error_code ec;
-			s_on.store(std::filesystem::exists(L"F:\\claudetmp\\grass_cull.flag", ec), std::memory_order_relaxed);
-		}
-		return s_on.load(std::memory_order_relaxed);
-	}
+	// Menu-driven settings, pushed via GrassCull::SetSettings from the OcclusionCulling feature (grass has no menu
+	// of its own). Atomics so the UI thread can update while the render thread reads them in the hot path. Default
+	// ON (new users get the win; LoadSettings overrides for existing users before any grass renders).
+	std::atomic<bool>  g_cullOn{ true };
+	std::atomic<bool>  g_occOn{ true };
+	std::atomic<float> g_thinAmount{ 0.0f };
+	std::atomic<float> g_thinCurve{ 1.0f };
+	std::atomic<float> g_thinScale{ 0.0f };
 
-	// Frame-lagged Hi-Z occlusion is opt-in (separate flag, default OFF): the previous-frame reprojection
-	// makes unstable per-frame decisions (flicker) and currently over-culls. The frustum/distance/thinning
-	// cull is the shipped default. Kept for iteration on a stable Hi-Z.
-	bool HiZCullEnabled()
-	{
-		static std::atomic<bool>          s_on{ false };
-		static std::atomic<std::uint32_t> s_ctr{ 0 };
-		if ((s_ctr.fetch_add(1, std::memory_order_relaxed) % 120u) == 0) {
-			std::error_code ec;
-			s_on.store(std::filesystem::exists(L"F:\\claudetmp\\grass_hiz.flag", ec), std::memory_order_relaxed);
-		}
-		return s_on.load(std::memory_order_relaxed);
-	}
+	bool CullEnabled() { return g_cullOn.load(std::memory_order_relaxed); }
+	bool HiZCullEnabled() { return g_cullOn.load(std::memory_order_relaxed) && g_occOn.load(std::memory_order_relaxed); }
 
 	winrt::com_ptr<ID3D11ComputeShader> g_cullCS, g_argsCS, g_occReduceCS;
 	std::unique_ptr<ConstantBuffer>     g_cullCB, g_argsCB;
@@ -439,22 +429,25 @@ namespace
 		const auto pa = globals::game::frameBufferCached.GetCameraPosAdjust();
 		std::memcpy(cb.camPosAdjust, &pa, sizeof(cb.camPosAdjust));
 		cb.radiusWorld = kClumpRadius;
-		// Distance cull + thinning are FADE-RELATIVE once the engine's grass fade params are captured: hard-cull
-		// only past the fade end (grass fully transparent there), and ramp the thinning across the fade region
-		// (fadeStart..fadeEnd) so a thinned clump is already fading -> its pop is masked and NO fully-visible grass
-		// is ever cut. Falls back to the fixed constants until the params are read (first captured batch).
+		// Distance cull is FADE-RELATIVE (hard-cull only past the fade end, where grass is fully transparent).
+		// Thinning ramps from the CAMERA (thinStart = 0) out to the fade end so it visibly reduces density across
+		// the whole view, not just the far edge; the g_ThinCurve exponent shapes where it bites (high curve keeps
+		// near grass dense, low curve thins aggressively up close). Falls back to fixed constants until the fade
+		// params are read from the first captured batch.
 		if (g_fadeCaptured) {
 			const float fadeEnd = g_fadeStart + g_fadeRange;
 			cb.distanceEnd = fadeEnd;
-			cb.thinStart = g_fadeStart;
+			cb.thinStart = 0.0f;
 			cb.thinEnd = fadeEnd;
 		} else {
 			cb.distanceEnd = kDistanceCullEnd;
-			cb.thinStart = kThinStart;
+			cb.thinStart = 0.0f;
 			cb.thinEnd = kThinEnd;
 		}
 		cb.batchCount = g_batchCount;
-		cb.thinMax = kThinMax;
+		cb.thinMax = g_thinAmount.load(std::memory_order_relaxed);    // fraction dropped at the fade-out end
+		cb.thinCurve = g_thinCurve.load(std::memory_order_relaxed);   // ramp exponent
+		cb.thinScale = g_thinScale.load(std::memory_order_relaxed);   // survivor scale-up compensation
 
 		// Hi-Z occlusion. Build THIS frame's OPAQUE-ONLY occluder grid now (the burst runs at the first grass draw
 		// of the z-prepass -- opaque geometry is drawn, grass is not) and test against it with this frame's VP. Both
@@ -761,4 +754,13 @@ void GrassCull::Install()
 	DetourAttach(reinterpret_cast<PVOID*>(&GrassDrawHook::func), reinterpret_cast<PVOID>(GrassDrawHook::thunk));
 	DetourTransactionCommit();
 	logger::info("[GrassCull] detoured fDrawGrass @ 0x{:X}", GrassDrawHook::func.address());
+}
+
+void GrassCull::SetSettings(const Settings& a_settings)
+{
+	g_cullOn.store(a_settings.cull, std::memory_order_relaxed);
+	g_occOn.store(a_settings.occlusion, std::memory_order_relaxed);
+	g_thinAmount.store(a_settings.thinAmount, std::memory_order_relaxed);
+	g_thinCurve.store(a_settings.thinCurve, std::memory_order_relaxed);
+	g_thinScale.store(a_settings.thinScale, std::memory_order_relaxed);
 }
