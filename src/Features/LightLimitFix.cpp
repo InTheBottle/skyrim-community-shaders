@@ -385,9 +385,10 @@ bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 void LightLimitFix::PostPostLoad()
 {
 	Hooks::Install();
-	// The static local-light shadow cache is owned by LightLimitFix: install its shadow-map-walk detours here,
-	// so it exists only when LLF is loaded (PostPostLoad runs for loaded features only) and nowhere else.
-	ShadowMapCacheHooks::Install();
+	// The static local-light shadow cache is owned by LightLimitFix. TEMPORARILY DISABLED while the
+	// static-signature thrash (caster set fluctuates under the engine's per-frame shadow cull -> periodic
+	// captures -> dynamic-suppression blink) is redesigned. Re-enable once captures are stable + budgeted.
+	// ShadowMapCacheHooks::Install();
 }
 
 void LightLimitFix::DataLoaded()

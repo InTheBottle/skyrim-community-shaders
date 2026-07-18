@@ -98,6 +98,10 @@ namespace
 	std::unordered_map<const void*, CasterHist> g_casterHist;
 	std::uint32_t                               g_frameCounter = 0;
 
+	// Diagnostics (rate-limited log): per-frame classifier + action tallies to see why the cache misbehaves.
+	std::uint32_t g_dbgStatic = 0, g_dbgDynamic = 0, g_dbgCapability = 0, g_dbgMoved = 0;
+	std::uint32_t g_dbgMaps = 0, g_dbgCapture = 0, g_dbgComposite = 0, g_dbgFull = 0;
+
 	inline std::uint64_t XformHash(const RE::BSGeometry* a_geom)
 	{
 		std::uint64_t h = 0xcbf29ce484222325ull;
@@ -161,14 +165,18 @@ namespace
 			h.classified = true;
 			h.dynamicCapable = ComputeDynamicCapable(a_pass, a_geom);
 		}
-		if (h.dynamicCapable)
+		if (h.dynamicCapable) {
+			++g_dbgCapability;
 			return true;
+		}
 		const std::uint64_t xf = XformHash(a_geom);
 		if (h.frame != g_frameCounter) {  // first time this frame (multi-map casters reuse the verdict)
 			h.moved = h.xform != xf;
 			h.xform = xf;
 			h.frame = g_frameCounter;
 		}
+		if (h.moved)
+			++g_dbgMoved;
 		return h.moved;
 	}
 
@@ -184,12 +192,14 @@ namespace
 			return false;  // cascades / non-local: the engine renders every caster inline (unchanged)
 		auto* geom = a_pass->geometry;
 		if (IsDynamicCaster(a_pass, geom, a_technique)) {
+			++g_dbgDynamic;
 			if (g_curMap->captureMode)
 				return g_claiming;  // capture frame: claim + skip so the captured base is clean static (no inline draw)
 			return false;           // normal frame: render inline via the engine (correct LIVE pose/position)
 		}
 		if (!geom)
 			return false;  // non-geometry utility pass: leave it on the engine's inline path
+		++g_dbgStatic;
 		// COMPLETELY STATIC caster. Fold its placed-reference identity + FULL world transform into the map's
 		// change signature so a static that is placed / disabled / moved re-renders the base; otherwise the base
 		// is blitted forever. Addition is order-independent (robust to per-frame walk reordering) and
@@ -310,17 +320,21 @@ namespace
 			const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
 
 			if (localMap && ShadowMapCache::EnsureCache()) {
+				++g_dbgMaps;
 				switch (ShadowMapCache::Decide(camera, rmode, sig, g_curMap->captureMode)) {
 				case ShadowMapCache::Action::StaticCapture:
+					++g_dbgCapture;
 					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // slice is static-only -> render statics
 					ctx->OMSetRenderTargets(0, nullptr, nullptr);           // detach slice DSV before reading it
 					ShadowMapCache::Capture(ctx, camera, slice, port);      // copy the clean static base into the cache
 					break;
 				case ShadowMapCache::Action::Composite:
+					++g_dbgComposite;
 					if (!ShadowMapCache::Composite(ctx, camera, slice, port))
 						RenderPasses(g_curMap->staticPasses, g_curMap->block);  // composite not ready -> full render
 					break;
 				default:  // RenderFull
+					++g_dbgFull;
 					RenderPasses(g_curMap->staticPasses, g_curMap->block);  // statics over the inline dynamics
 					break;
 				}
@@ -354,6 +368,13 @@ namespace
 					++it;
 			}
 		}
+		// Diagnostics: dump the per-frame classifier + action tallies every ~2s, then reset them.
+		if (g_frameCounter % 120u == 0u) {
+			logger::info("[ShadowMapCache][dbg] localMaps={} static={} dynamic={} (cap={} moved={}) | capture={} composite={} full={}",
+				g_dbgMaps, g_dbgStatic, g_dbgDynamic, g_dbgCapability, g_dbgMoved, g_dbgCapture, g_dbgComposite, g_dbgFull);
+		}
+		g_dbgMaps = g_dbgStatic = g_dbgDynamic = g_dbgCapability = g_dbgMoved = 0;
+		g_dbgCapture = g_dbgComposite = g_dbgFull = 0;
 
 		auto* const replica = UtilityPassReplica::GetSingleton();
 		g_mapWorkList.clear();
