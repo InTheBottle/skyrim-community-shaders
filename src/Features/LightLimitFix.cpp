@@ -2,6 +2,7 @@
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 
+#include "EngineFixes/ShadowMapCache.h"
 #include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
 #include "Shadercache.h"
@@ -19,6 +20,39 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::TreeNodeEx(T(TKEY("statistics"), "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
+
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNodeEx(T(TKEY("shadow_cache"), "Shadow Cache"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::TextWrapped("%s", T(TKEY("shadow_cache_desc"),
+			"Local-light shadows cache STATIC casters (furniture, walls) and reuse them; only DYNAMIC casters "
+			"(actors, swaying trees) re-render each frame. A cached light regenerates ONLY when a static object "
+			"under it is placed, disabled, or moved -- which almost never happens in gameplay."));
+
+		const auto& s = ShadowMapCache::GetStats();
+		ImGui::Text(std::format("{} : {}   ({} : {})",
+			T(TKEY("shadow_cache_lights"), "Cached local lights"), s.unitsTotal,
+			T(TKEY("shadow_cache_slices"), "static slices held"), s.layersValid)
+						.c_str());
+		ImGui::Text(std::format("{} : {} {}, {} {}, {} {}",
+			T(TKEY("shadow_cache_frame"), "This frame"),
+			s.freshThisFrame, T(TKEY("shadow_cache_fresh"), "rendered"),
+			s.blitsThisFrame, T(TKEY("shadow_cache_reused"), "reused"),
+			s.regenThisFrame, T(TKEY("shadow_cache_regen"), "regenerated"))
+						.c_str());
+
+		if (s.lastReason != ShadowMapCache::Reason::None && s.lastRegenFrame > 0) {
+			const std::uint32_t ago = s.frame - s.lastRegenFrame;
+			ImGui::Text(std::format("{} : {} {} — {}",
+				T(TKEY("shadow_cache_last_regen"), "Last regeneration"),
+				ago, T(TKEY("shadow_cache_frames_ago"), "frames ago"),
+				ShadowMapCache::ReasonString(s.lastReason))
+							.c_str());
+		} else {
+			ImGui::Text("%s : %s", T(TKEY("shadow_cache_last_regen"), "Last regeneration"),
+				T(TKEY("shadow_cache_none"), "none this session"));
+		}
 
 		ImGui::TreePop();
 	}

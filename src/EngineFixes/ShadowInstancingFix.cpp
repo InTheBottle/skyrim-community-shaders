@@ -56,6 +56,8 @@ namespace
 		std::vector<CapturedPass> passes;
 		std::uint64_t             unsupported = 0;
 		std::uint64_t             skinnedInline = 0;  // covered-but-skinned; render on the engine path
+		std::uint64_t             treeInline = 0;     // TreeAnim casters: DYNAMIC (sway) -> map is not cacheable
+		std::uint64_t             staticSig = 0;      // signature of the claimed static caster set (change detection)
 	};
 
 	std::vector<MapWork> g_mapWorkList;
@@ -70,15 +72,39 @@ namespace
 	{
 		if (!g_curMap)
 			return false;
+		auto*      geom = a_pass->geometry;
+		const bool tree = (a_technique & (1u << 26)) != 0;
+		// Skinned casters (geom+0x130 != 0) drive the bone-CB + dynamic-VB rings, which map with
+		// WRITE_NO_OVERWRITE + a GPU query -- leave them on the engine's inline path; depth-only shadow output
+		// is order-independent so mixing is safe.
+		const bool skinned = geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(geom) + 0x130);
+		// TreeAnim casters (technique bit 1u<<26) sway every frame -> DYNAMIC. Count regardless of claimability so
+		// a tree-lit local light is never cache-eligible; else the whole-slice blit freezes the tree's animated
+		// shadow (the exact freeze the static/dynamic split must avoid). Trees still render inline serially.
+		if (tree)
+			++g_curMap->treeInline;
+		// Fold EVERY static caster (not skinned, not tree) into the map's static signature -- whether it is
+		// claimed for the instanced replay or rendered inline (alpha-test foliage / sub-index). It ends up in the
+		// cached slice, so it must be in the change signature: placed-reference identity (stable) XOR world pos.
+		// XOR is order-independent (robust to per-frame caster-walk reordering). When a static is placed /
+		// disabled / moved the signature changes and the light re-renders once; otherwise it is blitted forever.
+		if (geom && !skinned && !tree) {
+			std::uint64_t h = 0xcbf29ce484222325ull;
+			auto          mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
+			mix(reinterpret_cast<std::uint64_t>(geom->GetUserData()));
+			const auto&   t = geom->world.translate;
+			std::uint32_t b[3];
+			std::memcpy(b, &t, sizeof(b));
+			mix(b[0]);
+			mix(b[1]);
+			mix(b[2]);
+			g_curMap->staticSig ^= h;
+		}
 		if (!a_canReplicate) {
 			++g_curMap->unsupported;
 			return false;  // uncovered -> engine renders inline (serial remainder)
 		}
-		// Skinned casters (geom+0x130 != 0) drive the bone-CB + dynamic-VB rings, which map with
-		// WRITE_NO_OVERWRITE + a GPU query -- leave them on the engine's inline path; depth-only shadow
-		// output is order-independent so mixing is safe.
-		auto* geom = a_pass->geometry;
-		if (geom && *reinterpret_cast<void* const*>(reinterpret_cast<const std::uint8_t*>(geom) + 0x130)) {
+		if (skinned) {
 			++g_curMap->skinnedInline;
 			return false;
 		}
@@ -319,22 +345,24 @@ namespace
 			// local render mode (13 spot / 15 point). Directional cascades (14) are camera-relative and
 			// stay per-frame. EnsureCache lazily allocates the private slice mirror.
 			//
-			// STATIC/DYNAMIC SPLIT: a map that drew DYNAMIC (skinned) casters this frame -- the player,
-			// NPCs -- must never be cached or reused, or those shadows go stale (flicker / missing player).
-			// callOriginal already rendered this frame's skinned casters inline into the slice, so for such
-			// a map we just RenderMapInstanced the fresh static on top -> a fully fresh, correct map. Only
-			// STATIC-ONLY local lights (skinnedInline == 0) stagger via the cache; the cache then only ever
-			// holds clean static-only depth (light-space, camera-independent), so reused blits stay correct.
-			const bool hasDynamic = g_curMap->skinnedInline > 0;
+			// STATIC/DYNAMIC SPLIT: a map that drew any DYNAMIC caster this frame -- a skinned actor (player,
+			// NPC) OR a swaying tree (TreeAnim) -- must never be cached or reused, or those shadows freeze.
+			// callOriginal already rendered this frame's dynamic casters inline into the slice, so for such a
+			// map we just RenderMapInstanced the fresh static on top -> a fully fresh, correct map. Only
+			// STATIC-ONLY local lights cache; the cached slice then holds clean static-only depth (light-space,
+			// camera-independent) and is re-rendered ONLY when the static caster set's signature changes (a
+			// static placed / disabled / moved) -- otherwise it is blitted forever.
+			const bool hasDynamic = g_curMap->skinnedInline > 0 || g_curMap->treeInline > 0;
 			const bool eligible = target == 4 && slice < 64 && camera &&
 				(rmode == 13 || rmode == 15) && !hasDynamic && ShadowMapCache::EnsureCache();
 			if (!eligible) {
 				RenderMapInstanced(*g_curMap);
 			} else {
+				const std::uint64_t sig = g_curMap->staticSig;  // folded over the map's static casters during the walk
 				const std::int32_t* port = reinterpret_cast<const std::int32_t*>(desc + 0xD0);
 				auto* const         ctx = *engine::g_immediateContext;
 				auto* const         S = reinterpret_cast<std::uint32_t*>(engine::S_base.address());
-				if (ShadowMapCache::ShouldRender(camera, rmode, desc)) {
+				if (ShadowMapCache::ShouldRender(camera, rmode, desc, sig)) {
 					RenderMapInstanced(*g_curMap);                 // this unit's turn -> render fresh + cache
 					ctx->OMSetRenderTargets(0, nullptr, nullptr);  // detach slice DSV before reading it
 					ShadowMapCache::Capture(ctx, camera, slice, port);
