@@ -1,5 +1,6 @@
 #include "Deferred.h"
 #include "Features/RenderDoc.h"
+#include "Features/OcclusionCulling/OcclusionCulling.h"
 #include "Features/Upscaling.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
@@ -86,6 +87,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				Hooks::Install();
 				EngineFix::InstallOnPostPostLoadFixes();
 				FrameAnnotations::OnPostPostLoad();
+				OcclusionCulling::GetSingleton()->PostPostLoad();
 
 				auto shaderCache = globals::shaderCache;
 

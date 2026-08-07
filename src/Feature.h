@@ -193,8 +193,10 @@ public:
 	 * Validates the INI version against FeatureVersions, sets the loaded flag,
 	 * and delegates to LoadSettings on success.
 	 * @param o_json Root JSON object containing per-feature settings sections.
+	 *
+	 * Virtual so features without a shader INI can restore persisted settings.
 	 */
-	void Load(json& o_json);
+	virtual void Load(json& o_json);
 
 	void Save(json& o_json);
 	virtual void SaveSettings(json&) {}
