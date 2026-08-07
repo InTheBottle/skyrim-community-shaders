@@ -100,11 +100,19 @@ find_package(directx-headers CONFIG REQUIRED)
 if(DEVBENCH_BRIDGE)
     find_package(devbench-api CONFIG REQUIRED)
 endif()
-add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
-
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
-include(FidelityFX-SDK)
+
+# Vulkan SDK — CS talks to DXVK's own VkDevice (via the IDXGIVkInterop* interfaces)
+# and drives the FFX Vulkan backend on it. Using the SDK's headers (single source,
+# avoids a vulkan_core.h struct-layout split across the DXVK<->FFX interop boundary).
+find_package(Vulkan REQUIRED)
+
+# NVIDIA Streamline (SL) — headers only (INTERFACE lib). sl.interposer.dll IS DXVK's
+# vulkan-1.dll (full interposition); sl.* plugin DLLs are loaded at runtime from the CS
+# subfolder. FSR, XeSS, DLSS, Reflex, and DLSS-G all run as SL plugins.
+# See src/Features/Upscaling/Streamline.*.
+add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -154,11 +162,11 @@ target_link_libraries(
         unordered_dense::unordered_dense
         efsw::efsw
         Tracy::TracyClient
-        Streamline
-        d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
         windowscodecs
+        Vulkan::Vulkan
+        Streamline
 )
 
 # devbench bridge: opt-out via -DDEVBENCH_BRIDGE=OFF. When off, the port isn't required
@@ -431,6 +439,57 @@ install(
 )
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
+# DXVK DLLs — staged into the mod's Data subfolder (NOT the game root) under unique
+# base names (dxvk_d3d11.dll / dxvk_dxgi.dll) and loaded explicitly by the plugin at
+# startup (src/DxvkLoader.cpp). DXVK builds them with that 'dxvk_' prefix natively (so
+# d3d11 already imports dxvk_dxgi.dll, not the System32 copies Skyrim maps for its two
+# imported entry points); tools/stage-dxvk-dlls.ps1 just copies them into place.
+set(DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/extern/dxvk/build/src")
+if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
+    install(
+        CODE
+        "
+        execute_process(
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+                -File \"${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1\"
+                -Src \"${DXVK_BUILD_DIR}\"
+                -Dst \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/dxvk\"
+            RESULT_VARIABLE _dxvk_stage_rc
+        )
+        if(NOT _dxvk_stage_rc EQUAL 0)
+            message(FATAL_ERROR \"stage-dxvk-dlls.ps1 failed with code \${_dxvk_stage_rc}\")
+        endif()
+        "
+        COMPONENT DXVK
+    )
+endif()
+
+# Streamline runtime DLLs. The signed production set — sl.common/dlss/dlss_g/pcl/reflex,
+# the nvngx_* NGX models, NvLowLatencyVk.dll, plus the FSR (amd_fidelityfx_vk.dll) and
+# XeSS (libxess.dll) runtimes — is committed under
+# package/SKSE/Plugins/CommunityShaders/Streamline/ and ships with the package tree like
+# any other asset; there is no configure-time download. Only the CS-built (necessarily
+# unsigned) fork plugins are staged from the build tree: sl.interposer (CS WSI-hook
+# change for DLSS-G ↔ FSR-FG present coexistence) and the CS-custom sl.fsr / sl.xess.
+# (The fork interposer was briefly suspected in the DLSS-G world-flash and pinned to the
+# SDK build; a controlled follow-up round — waitIdle fix with the fork interposer restored
+# — cleared it. The flash was solely the async-eval input-lifetime race.)
+# NOTE: never stage the rest of the fork's _artifacts output — sl.template crashes
+# slInit (strlen(NULL) in its embedded JSON), and the others are never requested by
+# featuresToLoad (src/Features/Upscaling/Streamline.cpp).
+file(GLOB _SL_FORK_DLLS "${CMAKE_SOURCE_DIR}/extern/Streamline/_artifacts/sl.*/Develop_x64/sl.*.dll")
+list(FILTER _SL_FORK_DLLS INCLUDE REGEX "sl\\.(fsr|xess|interposer)\\.dll$")
+if(_SL_FORK_DLLS)
+    message(STATUS "Staging Streamline fork plugins: ${_SL_FORK_DLLS}")
+    install(
+        FILES ${_SL_FORK_DLLS}
+        DESTINATION SKSE/Plugins/CommunityShaders/Streamline
+        COMPONENT Streamline
+    )
+else()
+    message(WARNING "Streamline fork plugins not built (extern/Streamline/_artifacts empty) — DLSS/FSR/XeSS will be unavailable at runtime")
+endif()
+
 # #######################################################################################################################
 # # Automatic AIO preparation (incremental copy system)
 # #######################################################################################################################
@@ -534,6 +593,37 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
             append_copy_if_different(_prepare_aio_cmds _feature_files "${_fpath}" "${AIO_DIR}")
         endif()
     endforeach()
+
+    # Stage the runtime renderer DLLs that live OUTSIDE package/ and features/ (the only
+    # trees globbed above). The glob-based PREPARE_AIO path never invokes the install()
+    # COMPONENT rules (DXVK / Streamline), so without this the AIO archive and the
+    # auto-deploy would ship a mod with no DXVK renderer at all.
+    # We mirror those install() rules straight into ${AIO_DIR} so every downstream consumer
+    # (AIO_ZIP_PACKAGE, Package-AIO-Manual, AUTO_PLUGIN_DEPLOYMENT) gets a DXVK-runnable mod.
+    set(_aio_dxvk_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/dxvk")
+
+    # DXVK: copy the dxvk_-prefixed DLLs via the same staging script the install(CODE) rule uses
+    # (dxvk_d3d11.dll / dxvk_dxgi.dll). Only when a local DXVK build exists, mirroring the guard above.
+    if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
+        list(
+            APPEND _prepare_aio_cmds
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1"
+                -Src "${DXVK_BUILD_DIR}"
+                -Dst "${_aio_dxvk_dir}"
+        )
+    endif()
+
+    # Streamline fork plugins (CS-built). The signed production set + FSR/XeSS runtimes ship
+    # from package/SKSE/Plugins/CommunityShaders/Streamline/ with the rest of the package tree.
+    if(_SL_FORK_DLLS)
+        set(_aio_sl_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/Streamline")
+        list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_sl_dir}")
+        foreach(_sl IN LISTS _SL_FORK_DLLS)
+            list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl}" "${_aio_sl_dir}/")
+            list(APPEND _AIO_PACKAGE_FILES "${_sl}")
+        endforeach()
+    endif()
 
     # Remove CORE from AIO if it exists (keep rest intact)
     list(

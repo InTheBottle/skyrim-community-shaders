@@ -2,20 +2,22 @@
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
+#include "DxvkLoader.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
-#include "Utils/Game.h"
-#include "Upscaling/DX12SwapChain.h"
-#include "Upscaling/FidelityFX.h"
+#include "Upscaling/DxvkInterop.h"
+#include "Upscaling/FrameGenController.h"
 #include "Upscaling/Streamline.h"
+#include "Utils/Game.h"
 #include "Utils/UI.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
-#include <directx/d3dx12.h>
 #include <format>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
@@ -24,29 +26,25 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	upscaleMethod,
 	upscaleMethodNoDLSS,
 	qualityMode,
-	frameLimitMode,
-	frameGenerationMode,
-	frameGenerationForceEnable,
-	frameGenerationAllowInMenus,
-	streamlineLogLevel,
 	sharpnessFSR,
-	sharpnessDLSS,
-	presetDLSS,
+	reflexEnabled,
+	reflexBoost,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
-	reflexUseMarkersToOptimize,
-	reflexUseFPSLimit,
-	reflexFPSLimit);
+	frameGeneration,
+	frameGenMethod,
+	frameGenMultiplier,
+	dlssgDynamic,
+	fgShowOnlyGenerated,
+	fgDebugView,
+	fgDebugTearLines,
+	fgDebugPacingLines,
+	hardwareDefaultsApplied,
+	vsync,
+	frameRateLimitDivisor);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
-/**
- * @brief Creates a Direct3D 11 device and swap chain, with support for advanced upscaling and frame generation features.
- *
- * This function intercepts the standard D3D11 device and swap chain creation process to enable integration with Streamline and FidelityFX technologies, as well as optional D3D12 proxying for frame generation. It adjusts swap chain flags for tearing support, manages feature checks, and conditionally routes device creation through Streamline or FidelityFX proxies based on runtime settings and hardware capabilities. If frame generation is enabled and supported, a D3D12 proxy is used; otherwise, the standard D3D11 creation path is followed.
- *
- * @return HRESULT indicating the success or failure of device and swap chain creation.
- */
 HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	IDXGIAdapter* pAdapter,
 	D3D_DRIVER_TYPE DriverType,
@@ -63,15 +61,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 {
 	DXGI_ADAPTER_DESC adapterDesc;
 	pAdapter->GetDesc(&adapterDesc);
-	globals::state->SetAdapterDescription(adapterDesc.Description);
+	globals::state->SetAdapterDescription(adapterDesc.Description, adapterDesc.VendorId);
 
 	auto& upscaling = globals::features::upscaling;
-	upscaling.LoadUpscalingSDKs();
 
-	if (upscaling.IsBackendInitialized())
-		upscaling.CheckBackendFeatures(pAdapter);
-
-	// FLIP_DISCARD requires BufferCount >= 2 and a flip-model-compatible (non-sRGB) format.
 	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	if (pSwapChainDesc->BufferCount < 2)
 		pSwapChainDesc->BufferCount = 2;
@@ -85,78 +78,18 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	}
 
-	bool shouldProxy = true;
-	if (shouldProxy)
-		if (!pSwapChainDesc->Windowed)
-			shouldProxy = false;
-
 	auto refreshRate = Upscaling::GetRefreshRate(pSwapChainDesc->OutputWindow);
 	upscaling.refreshRate = refreshRate;
 
-	if (shouldProxy) {
-		if (upscaling.settings.frameGenerationMode)
-			if (refreshRate >= 120)
-				shouldProxy = true;
-			else if (upscaling.settings.frameGenerationForceEnable)
-				shouldProxy = true;
-			else
-				shouldProxy = false;
-		else
-			shouldProxy = false;
-	}
-
-	upscaling.lowRefreshRate = refreshRate < 120;
+	// Exclusive fullscreen is handled entirely in DXVK (dxgi.fullscreenNativeRefresh): it does the real
+	// mode-set at the game resolution but forces the native refresh, so the swapchain IS the game
+	// resolution (the display engine stretches it to the panel) while DLSS-G keeps its refresh headroom.
+	// Nothing CS-side to do beyond recording the windowed state.
 	upscaling.isWindowed = pSwapChainDesc->Windowed;
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
 
-	if (shouldProxy) {
-		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
-
-		if (upscaling.HasFrameGenModule()) {
-			DX::ThrowIfFailed(D3D11CreateDevice(
-				pAdapter,
-				DriverType,
-				Software,
-				Flags,
-				&featureLevel,
-				1,
-				SDKVersion,
-				ppDevice,
-				pFeatureLevel,
-				ppImmediateContext));
-
-			upscaling.SetProxyD3D11Device(*ppDevice);
-			upscaling.SetProxyD3D11DeviceContext(*ppImmediateContext);
-			upscaling.CreateProxySwapChain(pAdapter, *pSwapChainDesc);
-			upscaling.CreateProxyInterop();
-
-			*ppSwapChain = upscaling.GetProxySwapChain();
-
-			upscaling.d3d12SwapChainActive = true;
-
-			if (upscaling.IsBackendInitialized()) {
-				upscaling.UpgradeBackendInterface((void**)&(*ppDevice));
-				// Don't wrap the swap chain with Streamline when using the D3D12
-				// proxy.  The proxy's GetDevice() returns the D3D11 device for
-				// IID_ID3D11Device, which other SKSE plugins (e.g. SkyrimPlatform)
-				// rely on.  Streamline's wrapper would bypass this override and
-				// forward to the underlying D3D12 swap chain, causing
-				// E_NOINTERFACE.  The proxy must remain the outermost layer.
-				upscaling.SetBackendD3DDevice(*ppDevice);
-				// Some features (notably Reflex/PCL) may report availability only after device bind.
-				upscaling.CheckBackendFeatures(pAdapter);
-				upscaling.PostBackendDevice();
-			}
-
-			return S_OK;
-		} else {
-			logger::warn("[Frame Generation] FidelityFX DLLs are not loaded, skipping proxy");
-			upscaling.fidelityFXMissing = true;
-		}
-	}
-
-	auto ret = ptrD3D11CreateDeviceAndSwapChainUpscaling(pAdapter,
+	return ptrD3D11CreateDeviceAndSwapChainUpscaling(pAdapter,
 		DriverType,
 		Software,
 		Flags,
@@ -168,292 +101,284 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		ppDevice,
 		pFeatureLevel,
 		ppImmediateContext);
+}
 
-	if (upscaling.IsBackendInitialized()) {
-		upscaling.UpgradeBackendInterface((void**)&(*ppDevice));
-		upscaling.UpgradeBackendInterface((void**)&(*ppSwapChain));
-		upscaling.SetBackendD3DDevice(*ppDevice);
-		// Re-check after device bind to ensure feature availability is accurate.
-		upscaling.CheckBackendFeatures(pAdapter);
-		upscaling.PostBackendDevice();
+// Discrete selector backed by a native ImGui::SliderInt over the option index. The current option's text
+// is shown as the slider's value (the format string carries no %d, so ImGui renders it literally and it
+// updates as the handle moves). The slider's max bound is options.size()-1, so callers limit the range
+// simply by limiting how many options they pass (e.g. the MFG multiplier list capped to the hardware max).
+static bool DrawStepper(const char* a_label, int* a_index, const std::vector<const char*>& a_options, bool a_disabled = false)
+{
+	const int count = static_cast<int>(a_options.size());
+	if (count == 0)
+		return false;
+	*a_index = std::clamp(*a_index, 0, count - 1);
+
+	if (!Upscaling::useArrowSteppers) {
+		ImGui::BeginDisabled(a_disabled);
+		const bool changed = ImGui::SliderInt(a_label, a_index, 0, count - 1, a_options[*a_index], ImGuiSliderFlags_NoInput);
+		*a_index = std::clamp(*a_index, 0, count - 1);
+		ImGui::EndDisabled();
+		return changed;
 	}
 
-	return ret;
+	// PhotoMode-style "< value >" stepper (ported from powerof3/PhotoMode's ImGui::EnumSlider /
+	// CenteredTextWithArrows, MIT): the label sits in the left half (dimmed until the row is hovered) and the
+	// current option is centered in the right half, flanked by chevron arrows that highlight on hover. Click
+	// the left/right half (or press Left/Right while the row is hovered) to step; the option list wraps.
+	bool changed = false;
+	ImGui::PushID(a_label);
+	ImGui::BeginDisabled(a_disabled);
+
+	const ImGuiStyle& style = ImGui::GetStyle();
+	const float       rowH = ImGui::GetFrameHeight();
+	const float       fullW = ImGui::GetContentRegionAvail().x;
+	const float       labelHalf = fullW * 0.5f + style.ItemInnerSpacing.x;
+	const float       valueW = std::max(rowH * 3.0f, fullW - labelHalf);
+
+	const float  rowStartX = ImGui::GetCursorPosX();
+	const ImVec2 rowScreen = ImGui::GetCursorScreenPos();
+	const ImVec2 valueMin(rowScreen.x + labelHalf, rowScreen.y);
+	const ImVec2 valueMax(valueMin.x + valueW, rowScreen.y + rowH);
+	const bool   rowHovered = !a_disabled && ImGui::IsMouseHoveringRect(valueMin, valueMax);
+
+	// Label (left half) — normal CS text colour; dims only when the control is disabled (BeginDisabled alpha).
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(a_label);
+
+	// Value region (right half) — an invisible button gives hover/click; we draw the text + chevrons over it.
+	ImGui::SameLine();
+	ImGui::SetCursorPosX(rowStartX + labelHalf);
+	const bool  navPressed = ImGui::InvisibleButton("##value", ImVec2(valueW, rowH));
+	const bool  active = !a_disabled && (rowHovered || ImGui::IsItemHovered() || ImGui::IsItemFocused());
+	// Normal CS text colour by default; brighten to pure white when the row is hovered/controller-focused.
+	const ImU32 col = active ? IM_COL32_WHITE : ImGui::GetColorU32(ImGuiCol_Text);
+
+	ImDrawList* dl = ImGui::GetWindowDrawList();
+	const char* text = a_options[*a_index];
+	const ImVec2 ts = ImGui::CalcTextSize(text);
+	dl->AddText(ImVec2(valueMin.x + (valueW - ts.x) * 0.5f, valueMin.y + (rowH - ts.y) * 0.5f), col, text);
+
+	// Chevron arrows at the inner edges of the value region.
+	const float  midY = valueMin.y + rowH * 0.5f;
+	const float  ax = rowH * 0.16f, ay = rowH * 0.26f, inset = rowH * 0.5f, th = 2.5f;
+	const ImVec2 lc(valueMin.x + inset, midY), rc(valueMax.x - inset, midY);
+	dl->AddLine(ImVec2(lc.x + ax, lc.y - ay), ImVec2(lc.x - ax, lc.y), col, th);
+	dl->AddLine(ImVec2(lc.x - ax, lc.y), ImVec2(lc.x + ax, lc.y + ay), col, th);
+	dl->AddLine(ImVec2(rc.x - ax, rc.y - ay), ImVec2(rc.x + ax, rc.y), col, th);
+	dl->AddLine(ImVec2(rc.x + ax, rc.y), ImVec2(rc.x - ax, rc.y + ay), col, th);
+
+	// Activation fires once on release (navPressed): a mouse click steps by which half was clicked, a
+	// controller/keyboard activate (A / Enter) advances. (Don't also test IsItemClicked — it fires on the press
+	// frame while navPressed fires on release, which double-steps a single mouse click.)
+	if (navPressed) {
+		if (ImGui::IsMouseHoveringRect(valueMin, valueMax)) {
+			const float mx = ImGui::GetIO().MousePos.x;
+			*a_index = (mx < valueMin.x + valueW * 0.5f) ? (*a_index - 1 + count) % count : (*a_index + 1) % count;
+		} else {
+			*a_index = (*a_index + 1) % count;
+		}
+		changed = true;
+	}
+	// D-pad / arrow keys step while the row is hovered or controller-focused (single column → nav left/right
+	// has nowhere to go, so it falls through to here, matching PhotoMode's EnumSlider).
+	if (active) {
+		if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
+			*a_index = (*a_index - 1 + count) % count;
+			changed = true;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
+			*a_index = (*a_index + 1) % count;
+			changed = true;
+		}
+	}
+
+	ImGui::EndDisabled();
+	ImGui::PopID();
+	*a_index = std::clamp(*a_index, 0, count - 1);
+	return changed;
+}
+
+// Two-state Off/On selector bound to a bool, using the same native slider.
+static bool DrawToggleStepper(const char* a_label, bool* a_value, bool a_disabled = false)
+{
+	const std::vector<const char*> onOff = { "Off", "On" };
+	int idx = *a_value ? 1 : 0;
+	if (DrawStepper(a_label, &idx, onOff, a_disabled)) {
+		*a_value = (idx == 1);
+		return true;
+	}
+	return false;
 }
 
 void Upscaling::DrawSettings()
 {
-	// Display upscaling options in the UI
-	std::vector<std::string> upscaleModes = {
-		T(TKEY("method_none"), "None"),
-		T(TKEY("method_taa"), "TAA")
+	auto* streamline = Streamline::GetSingleton();
+	const bool dlssAvailable = streamline->IsDLSSSupported();
+	const bool xessAvailable = streamline->IsXeSSSupported();
+
+	const bool dlssgAvailable = streamline->IsDLSSGSupported();
+	const bool reflexAvailable = streamline->IsReflexSupported();
+
+	// Selecting any upscaler sets the single upscaleMethod (so the others read off). Remember the last
+	// non-DLSS pick in upscaleMethodNoDLSS for the GetUpscaleMethod fallback on non-NVIDIA GPUs.
+	auto selectUpscaler = [&](UpscaleMethod a_m) {
+		settings.upscaleMethod = (uint)a_m;
+		if (a_m != UpscaleMethod::kDLSS)
+			settings.upscaleMethodNoDLSS = (uint)a_m;
 	};
 
-	std::string fsrLabel = "AMD FSR 3.1";
-	upscaleModes.push_back(fsrLabel);
+	// ---- Display (VSync + frame limiter) ----
+	ImGui::SeparatorText(T(TKEY("display_header"), "Display"));
+	{
+		// VSync stepper. DLSS-G forces it off (incompatible on Vulkan) — show it disabled with a "(forced off)" note.
+		const bool vsyncForcedOff = IsFrameGenerationActive() && GetFrameGenMethod() == FrameGenMethod::kDLSSG;
+		if (vsyncForcedOff) {
+			bool effectiveVsync = false;
+			DrawToggleStepper(T(TKEY("vsync"), "Vertical Synchronisation"), &effectiveVsync, /*disabled=*/true);
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", T(TKEY("vsync_dlssg"), "(forced off by DLSS-G)"));
+		} else {
+			DrawToggleStepper(T(TKEY("vsync"), "Vertical Synchronisation"), &settings.vsync);
+		}
 
-	std::string dlssLabel = "NVIDIA DLSS";
-	upscaleModes.push_back(dlssLabel);
+		// Frame Rate: a stepper across divisors of the monitor refresh rate, far-right stop = "Unlocked (variable)".
+		// Stored as the divisor (settings.frameRateLimitDivisor): 1 = refresh, 2 = half…, 0 = unlocked. The stop text
+		// shows the resolved fps so the stops track the actual monitor (e.g. 165 Hz → 41/55/83/165 FPS/Unlocked).
+		const int refresh = GetMonitorRefreshRate();
+		std::vector<int> divisorOptions;  // each entry is a divisor; 0 = unlocked
+		for (int d = 4; d >= 1; --d) {
+			if (refresh / d >= 30)
+				divisorOptions.push_back(d);
+		}
+		if (divisorOptions.empty())
+			divisorOptions.push_back(1);
+		divisorOptions.push_back(0);  // Unlocked (variable) — far-right stop
 
-	// Determine available modes
-	bool featureDLSS = streamline.featureDLSS;
-	bool featureFSR = true;  // FSR is always available
+		std::vector<std::string> fpsStrings;
+		for (int d : divisorOptions)
+			fpsStrings.push_back(d == 0 ?
+			                         std::string(T(TKEY("frame_rate_unlocked"), "Unlocked (variable)")) :
+			                         std::format("{} FPS", refresh / d));
+		std::vector<const char*> fpsLabels;
+		for (auto& s : fpsStrings)
+			fpsLabels.push_back(s.c_str());
 
-	uint32_t* currentUpscaleMode = &settings.upscaleMethod;
-	uint32_t availableModes = 1;  // Start with TAA
-	if (featureFSR)
-		availableModes = 2;  // Add FSR
-	if (featureDLSS)
-		availableModes = 3;  // Add DLSS if available
-	else
-		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
+		const int maxSel = static_cast<int>(divisorOptions.size()) - 1;
+		int sel = maxSel > 0 ? maxSel - 1 : 0;  // default to refresh (divisor 1) if the stored value isn't a stop
+		for (int i = 0; i <= maxSel; ++i) {
+			if (divisorOptions[i] == settings.frameRateLimitDivisor)
+				sel = i;
+		}
+		DrawStepper(T(TKEY("frame_rate"), "Frame Rate"), &sel, fpsLabels);
+		settings.frameRateLimitDivisor = divisorOptions[std::clamp(sel, 0, maxSel)];
+	}
 
-	// Dropdown for method selection
-	std::vector<const char*> modeLabels;
-	for (uint32_t i = 0; i <= availableModes; ++i)
-		modeLabels.push_back(upscaleModes[i].c_str());
-	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	// ---- Upscaling ----
+	ImGui::SeparatorText(T(TKEY("upscaling_header"), "Upscaling"));
+	{
+		// Single Technique stepper: Off / TAA / FSR / (XeSS) / (DLSS), filtered by what the GPU supports.
+		// Bound to upscaleMethod; Off = no AA, TAA = base temporal AA, the rest are upscalers.
+		std::vector<const char*>   techLabels = { "Off", T(TKEY("method_taa"), "TAA"), "FSR" };
+		std::vector<UpscaleMethod> techMethods = { UpscaleMethod::kNONE, UpscaleMethod::kTAA, UpscaleMethod::kFSR };
+		if (xessAvailable) {
+			techLabels.push_back("XeSS");
+			techMethods.push_back(UpscaleMethod::kXeSS);
+		}
+		if (dlssAvailable) {
+			techLabels.push_back("DLSS");
+			techMethods.push_back(UpscaleMethod::kDLSS);
+		}
 
-	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
+		int techIdx = 0;
+		for (int i = 0; i < static_cast<int>(techMethods.size()); ++i)
+			if (settings.upscaleMethod == (uint)techMethods[i])
+				techIdx = i;
+		if (DrawStepper(T(TKEY("upscaling_technique"), "Upscaling Technique"), &techIdx, techLabels))
+			selectUpscaler(techMethods[std::clamp(techIdx, 0, static_cast<int>(techMethods.size()) - 1)]);
 
-	// Check the current upscale method
-	auto upscaleMethod = GetUpscaleMethod();
+		// Upscale Preset (only for upscalers that resolve a quality level). Native = qualityMode 0 (DLAA for
+		// DLSS, native-res AA for FSR/XeSS), then Quality/Balanced/Performance/Ultra Performance.
+		const UpscaleMethod cur = (UpscaleMethod)settings.upscaleMethod;
+		const bool hasPreset = (cur == UpscaleMethod::kFSR || cur == UpscaleMethod::kXeSS || cur == UpscaleMethod::kDLSS);
+		if (hasPreset) {
+			const std::vector<const char*> presets = {
+				T(TKEY("preset_native"), "Native"),                        // qualityMode 0
+				T(TKEY("preset_quality"), "Quality"),                      // 1
+				T(TKEY("preset_balanced"), "Balanced"),                    // 2
+				T(TKEY("preset_performance"), "Performance"),              // 3
+				T(TKEY("preset_ultra_performance"), "Ultra Performance"),  // 4
+			};
+			int pIdx = std::clamp((int)settings.qualityMode, 0, 4);
+			if (DrawStepper(T(TKEY("upscale_preset"), "Upscale Preset"), &pIdx, presets))
+				settings.qualityMode = (uint)std::clamp(pIdx, 0, 4);
 
-	// Display warning for DLSS resolution limits
-	if (upscaleMethod == UpscaleMethod::kDLSS) {
-		float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
-			Util::Text::Warning("Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS.",
-				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
-			Util::Text::Warning("DLSS will not function. Lower your resolution or select a different upscaling method.");
+			if (cur == UpscaleMethod::kFSR)
+				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
 		}
 	}
 
-	// Display upscaling settings if applicable
-	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		const char* upscalePresetsDLSS[] = {
-			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
-			T(TKEY("preset_performance"), "Performance"),
-			T(TKEY("preset_balanced"), "Balanced"),
-			T(TKEY("preset_quality"), "Quality"),
-			T(TKEY("preset_dlaa"), "DLAA")
-		};
-		const char* upscalePresets[] = {
-			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
-			T(TKEY("preset_performance"), "Performance"),
-			T(TKEY("preset_balanced"), "Balanced"),
-			T(TKEY("preset_quality"), "Quality"),
-			T(TKEY("preset_native_aa"), "Native AA")
-		};
+	// ---- Frame Generation ----
+	ImGui::SeparatorText(T(TKEY("fg_header"), "Frame Generation"));
+	{
+		// ONE method per system, hardware-derived (GetFrameGenMethod): DLSS-G on hardware that
+		// supports it, FSR-FG everywhere else. The user only toggles frame generation on/off
+		// (plus the multiplier on DLSS-G hardware).
+		if (dlssgAvailable) {
+			// DLSS Frame Generation: Off / Dynamic (or Auto) / 2x … up to the hardware max.
+			const uint32_t maxFrames = streamline->GetDLSSGMaxFramesToGenerate();
+			const uint     maxMultiplier = std::clamp<uint>(maxFrames > 0u ? maxFrames + 1u : 2u, 2u, 6u);
+			// The adaptive slot is "Dynamic" only when the hardware supports Dynamic
+			// MFG (RTX 50+); otherwise DLSS-G runs its automatic single-frame mode,
+			// so label it "Auto" (e.g. RTX 40 reports DynamicMFG=false).
+			std::vector<std::string> fgStrings = { "Off",
+				streamline->IsDLSSGDynamicSupported()
+					? std::string(T(TKEY("fg_dynamic"), "Dynamic"))
+					: std::string(T(TKEY("fg_auto"), "Auto")) };
+			for (uint m = 2; m <= maxMultiplier; ++m)
+				fgStrings.push_back(std::format("{}x", m));
+			std::vector<const char*> fgStates;
+			for (auto& s : fgStrings)
+				fgStates.push_back(s.c_str());
 
-		// Compute a safe preset index (4 - qualityMode) clamped to [0,4] to avoid negative/overflow indexing
-		int presetIndex = 0;
-		if (settings.qualityMode <= 4)
-			presetIndex = 4 - static_cast<int>(settings.qualityMode);
-		presetIndex = std::clamp(presetIndex, 0, 4);
-
-		// Choose preset name set and the corresponding scales once, then show a
-		// single SliderInt to avoid duplicated calls.
-		const char* baseLabel = nullptr;
-
-		if (upscaleMethod == UpscaleMethod::kFSR) {
-			baseLabel = upscalePresets[presetIndex];
-		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
-			baseLabel = upscalePresetsDLSS[presetIndex];
+			int fgIdx = !settings.frameGeneration ? 0 :
+			            settings.dlssgDynamic ? 1 :
+			            std::clamp((int)settings.frameGenMultiplier, 2, (int)maxMultiplier);
+			if (DrawStepper(T(TKEY("nv_frame_generation"), "DLSS Frame Generation"), &fgIdx, fgStates)) {
+				settings.frameGeneration = fgIdx != 0;
+				if (fgIdx != 0) {
+					settings.dlssgDynamic = (fgIdx == 1);
+					if (fgIdx >= 2)
+						settings.frameGenMultiplier = (uint)fgIdx;  // 2x..maxMultiplier
+				}
+			}
+		} else {
+			// FSR Frame Generation: Off / On.
+			DrawToggleStepper(T(TKEY("amd_fsr_fg"), "FSR Frame Generation"), &settings.frameGeneration);
 		}
+	}
 
-		if (baseLabel) {
-			// Format the label with preset name and resolution scale
-			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, (resolutionScale.x + resolutionScale.y) * 0.5f);
-
-			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
-		}
-
-		if (upscaleMethod == UpscaleMethod::kFSR) {
-			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
-		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
-			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
-
-			const char* presets[] = {
-				T(TKEY("dlss_model_preset_default"), "Default"),
-				T(TKEY("dlss_model_preset_j"), "Preset J"),
-				T(TKEY("dlss_model_preset_k"), "Preset K"),
-				T(TKEY("dlss_model_preset_l"), "Preset L"),
-				T(TKEY("dlss_model_preset_m"), "Preset M")
-			};
-			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
-									  "Choose which DLSS AI model preset to use.\n"
-									  "Each model offers different visual quality, performance, and motion stability.\n"
-									  "Set to 'Default' for automatic selection based on your Upscale Preset and hardware.\n"
-									  "Changing this setting requires a restart to take effect."));
+	// ---- Low Latency (NVIDIA Reflex) ----
+	if (reflexAvailable) {
+		ImGui::SeparatorText(T(TKEY("ll_header"), "Low Latency"));
+		// Three states: Off / On / On + Boost. FG dictates it (DLSS-G forces on, FSR-FG forces off); else user toggle.
+		const std::vector<const char*> reflexStates = { "Off", "On", T(TKEY("reflex_on_boost"), "On + Boost") };
+		const bool fgForcesReflex = IsFrameGenerationActive() &&
+		                            (GetFrameGenMethod() == FrameGenMethod::kDLSSG || GetFrameGenMethod() == FrameGenMethod::kFSR);
+		if (fgForcesReflex) {
+			int idx = GetEffectiveReflex() ? (settings.reflexBoost ? 2 : 1) : 0;
+			DrawStepper(T(TKEY("nv_reflex"), "NVIDIA Reflex Low Latency"), &idx, reflexStates, /*disabled=*/true);
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", GetFrameGenMethod() == FrameGenMethod::kDLSSG ?
+			                              T(TKEY("reflex_forced_dlssg"), "(forced on by DLSS-G)") :
+			                              T(TKEY("reflex_forced_fsrfg"), "(forced off by FSR frame gen)"));
+		} else {
+			int idx = settings.reflexEnabled ? (settings.reflexBoost ? 2 : 1) : 0;
+			if (DrawStepper(T(TKEY("nv_reflex"), "NVIDIA Reflex Low Latency"), &idx, reflexStates)) {
+				settings.reflexEnabled = (idx >= 1);
+				settings.reflexBoost = (idx == 2);
 			}
 		}
-	}
-
-	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
-
-	if (ImGui::TreeNodeEx(T(TKEY("frame_generation"), "Frame Generation"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text("%s", T(TKEY("frame_generation_desc"),
-							  "Frame Generation interpolates real frames with generated ones for a smoother experience"));
-		ImGui::Text("%s", T(TKEY("frame_generation_tech"),
-							  "Uses AMD FSR Frame Generation technology"));
-		if (HasFrameGenModule())
-			ImGui::Text("%s", T(TKEY("frame_generation_available"),
-								  "AMD FSR Frame Generation is available."));
-		ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"),
-							  "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
-		ImGui::Text("%s", T(TKEY("frame_generation_restart_note"),
-							  "Toggling this setting requires a restart to work correctly"));
-
-		bool onlyRequiresRestart = true;
-
-		if (!isWindowed) {
-			Util::Text::Warning("Warning: Requires windowed mode");
-
-			onlyRequiresRestart = false;
-		}
-
-		if (lowRefreshRate && !settings.frameGenerationForceEnable) {
-			Util::Text::Warning("Warning: Requires a high refresh rate monitor or Force Enable Frame Generation");
-
-			onlyRequiresRestart = false;
-		}
-
-		if (fidelityFXMissing) {
-			Util::Text::Warning("Warning: FidelityFX DLLs are not loaded");
-
-			onlyRequiresRestart = false;
-		}
-
-		if (onlyRequiresRestart && settings.frameGenerationMode && !frameGenerationDx12PathActive)
-			Util::Text::Warning("Warning: Requires restart");
-
-		if (!settings.frameGenerationMode && frameGenerationDx12PathActive)
-			Util::Text::Warning("Warning: Requires restart");
-
-		bool fgEnabled = settings.frameGenerationMode != 0;
-		if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
-			settings.frameGenerationMode = fgEnabled ? 1 : 0;
-
-		if (!frameGenerationDx12PathActive)
-			ImGui::BeginDisabled();
-
-		bool flEnabled = settings.frameLimitMode != 0;
-		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Frame Limit (Variable Refresh Rate)"), &flEnabled))
-			settings.frameLimitMode = flEnabled ? 1 : 0;
-
-		if (!frameGenerationDx12PathActive)
-			ImGui::EndDisabled();
-
-		ImGui::TextWrapped("Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz", refreshRate);
-		bool fgForce = settings.frameGenerationForceEnable != 0;
-		if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
-			settings.frameGenerationForceEnable = fgForce ? 1 : 0;
-
-		ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
-			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
-		}
-
-		ImGui::TreePop();
-	}
-
-	if (streamline.reflexSupportedOnCurrentAdapter && ImGui::TreeNodeEx(T(TKEY("nvidia_reflex"), "NVIDIA Reflex"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		const bool reflexBlockedByFrameGeneration = frameGenerationDx12PathActive;
-		const bool reflexAvailable = streamline.initialized && streamline.featureReflex;
-		const bool reflexControlsAvailable = reflexAvailable && !reflexBlockedByFrameGeneration;
-		const bool markerOptimizationAvailable = reflexControlsAvailable && streamline.featurePCL;
-		if (reflexBlockedByFrameGeneration) {
-			ImGui::TextDisabled("%s", T(TKEY("reflex_blocked_by_fg"), "Reflex is unavailable while the DX12 frame-generation swapchain is active."));
-		}
-
-		if (!reflexAvailable) {
-			ImGui::TextDisabled("%s", T(TKEY("reflex_not_available"), "Reflex is not available. Ensure sl.reflex.dll is present and restart."));
-		}
-
-		if (!reflexControlsAvailable)
-			ImGui::BeginDisabled();
-
-		ImGui::Checkbox(T(TKEY("low_latency_mode"), "Low Latency Mode"), &settings.reflexLowLatencyMode);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("low_latency_mode_tooltip_1"), "Cuts input delay by syncing CPU work closer to the GPU."));
-			ImGui::TextUnformatted(T(TKEY("low_latency_mode_tooltip_2"), "Can reduce max FPS a little, but usually feels more responsive."));
-		}
-
-		if (!settings.reflexLowLatencyMode)
-			ImGui::BeginDisabled();
-
-		ImGui::Checkbox(T(TKEY("low_latency_boost"), "Low Latency Boost"), &settings.reflexLowLatencyBoost);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("low_latency_boost_tooltip_1"), "Keeps GPU clocks higher to avoid latency spikes at low GPU load."));
-			ImGui::TextUnformatted(T(TKEY("low_latency_boost_tooltip_2"), "Useful if frametime jumps; costs extra power and heat."));
-		}
-
-		if (!markerOptimizationAvailable)
-			ImGui::BeginDisabled();
-
-		ImGui::Checkbox(T(TKEY("use_markers_to_optimize"), "Use Markers To Optimize"), &settings.reflexUseMarkersToOptimize);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("use_markers_to_optimize_tooltip_1"), "Uses frame markers for tighter Reflex timing."));
-			ImGui::TextUnformatted(T(TKEY("use_markers_to_optimize_tooltip_2"), "Try On first; turn Off if it causes stutter on your setup."));
-		}
-
-		if (!markerOptimizationAvailable)
-			ImGui::EndDisabled();
-
-		if (!markerOptimizationAvailable) {
-			ImGui::TextDisabled("%s", T(TKEY("marker_optimization_unavailable"), "Marker optimization unavailable (PCL not loaded)."));
-		}
-
-		ImGui::Checkbox(T(TKEY("use_fps_limit"), "Use FPS Limit"), &settings.reflexUseFPSLimit);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("use_fps_limit_tooltip_1"), "Uses Reflex's internal FPS cap for steadier frametimes."));
-			ImGui::TextUnformatted(T(TKEY("use_fps_limit_tooltip_2"), "Can lower latency versus uncapped rendering."));
-		}
-
-		if (!settings.reflexLowLatencyMode)
-			ImGui::EndDisabled();
-
-		if (!settings.reflexUseFPSLimit)
-			ImGui::BeginDisabled();
-
-		if (!std::isfinite(settings.reflexFPSLimit))
-			settings.reflexFPSLimit = 60.0f;
-		settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
-		ImGui::SliderFloat(T(TKEY("fps_limit"), "FPS Limit"), &settings.reflexFPSLimit, 20.0f, 240.0f, "%.0f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("fps_limit_tooltip_1"), "Set your frame cap target."));
-			ImGui::TextUnformatted(T(TKEY("fps_limit_tooltip_2"), "Start about 2-3 FPS below refresh rate (e.g. 117 for 120 Hz)."));
-		}
-
-		if (!settings.reflexUseFPSLimit)
-			ImGui::EndDisabled();
-
-		if (!reflexControlsAvailable)
-			ImGui::EndDisabled();
-
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
-		// Streamline log level selection
-		const char* logLevels[] = { "Off", "Default", "Verbose" };
-		int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
-		if (ImGui::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
-			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
-		}
-		ImGui::TextUnformatted(T(TKEY("streamline_logging_restart_note"), "Changing this requires a restart to take effect."));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("streamline_logging_tooltip"), "Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G."));
-		}
-
-		ImGui::Separator();
-		Util::DrawDllVersionTable("AMD FidelityFX DLLs (click to open folder)", FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
-		Util::DrawDllVersionTable("NVIDIA Streamline DLLs (click to open folder)", Streamline::PluginDir, Streamline::dllVersions, "sl_dll_versions");
-		ImGui::TreePop();
 	}
 }
 
@@ -473,36 +398,24 @@ void Upscaling::LoadSettings(json& o_json)
 {
 	settings = o_json;
 
-	// Sanitize loaded settings to ensure enum indices are valid
-	constexpr auto enumCount = 4;  // UpscaleMethod has 4 values: kNONE, kTAA, kFSR, kDLSS
+	constexpr auto enumCount = 5;  // kNONE, kTAA, kFSR, kDLSS, kXeSS
 	if (settings.upscaleMethod >= static_cast<uint>(enumCount)) {
-		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount ? enumCount - 1 : 0);
-		settings.upscaleMethod = enumCount ? enumCount - 1 : 0;
+		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount - 1);
+		settings.upscaleMethod = enumCount - 1;
 	}
-	if (settings.upscaleMethodNoDLSS >= static_cast<uint>(enumCount)) {
-		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, enumCount ? enumCount - 1 : 0);
-		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
+	if (settings.upscaleMethodNoDLSS >= static_cast<uint>(UpscaleMethod::kDLSS))
+		settings.upscaleMethodNoDLSS = static_cast<uint>(UpscaleMethod::kFSR);
+
+	constexpr auto fgMethodCount = 2;  // kFSR, kDLSSG
+	if (settings.frameGenMethod >= static_cast<uint>(fgMethodCount))
+		settings.frameGenMethod = static_cast<uint>(FrameGenMethod::kFSR);
+
+	// Migrate legacy Reflex settings to new reflexEnabled bool.
+	if (settings.reflexLowLatencyMode && !settings.reflexEnabled) {
+		settings.reflexEnabled = true;
+		settings.reflexBoost = settings.reflexLowLatencyBoost;
 	}
-	if (settings.presetDLSS > 4) {
-		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
-		settings.presetDLSS = 0;
-	}
-	const float originalReflexFPSLimit = settings.reflexFPSLimit;
-	if (!std::isfinite(settings.reflexFPSLimit)) {
-		settings.reflexFPSLimit = 60.0f;
-		logger::warn(
-			"[Upscaling] Loaded reflexFPSLimit {} is not finite, resetting to {}",
-			originalReflexFPSLimit,
-			settings.reflexFPSLimit);
-	}
-	const float clampedReflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
-	if (clampedReflexFPSLimit != settings.reflexFPSLimit) {
-		logger::warn(
-			"[Upscaling] Loaded reflexFPSLimit {} out of range, clamping to {}",
-			settings.reflexFPSLimit,
-			clampedReflexFPSLimit);
-	}
-	settings.reflexFPSLimit = clampedReflexFPSLimit;
+
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		auto setting = iniSettingCollection->GetSetting("bUseTAA:Display");
@@ -519,18 +432,32 @@ void Upscaling::RestoreDefaultSettings()
 
 void Upscaling::DataLoaded()
 {
-	// Fix screenshots fix from Engine Fixes
 	Util::DisableVanillaTAA();
 
-	// The game defaults this to a non-zero value
 	static auto fDRClampOffset = RE::GetINISetting("fDRClampOffset:Display");
 	fDRClampOffset->data.f = 0.0f;
-
 }
 
 void Upscaling::Load()
 {
-	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChainUpscaling = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainUpscaling, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+	if (DxvkLoader::IsLoaded()) {
+		// Map sl.interposer.dll NOW so DXVK's Vulkan loader (which tries sl.interposer.dll first) aliases
+		// it at its imminent first-DXGI VkInstance creation — routing DXVK's whole Vulkan surface through
+		// Streamline (full interposition). Must precede DXVK's instance creation; this is that window.
+		//
+		// ALWAYS preloaded (do not gate on the configured upscale method): DLSS must be available
+		// on capable hardware at all times, and FSR/XeSS run as sl.* plugins too, so every runtime
+		// upscaler/frame-gen switch needs the interposition established at boot.
+		Streamline::GetSingleton()->PreloadInterposer();
+	}
+
+	// Route the game's device creation to DXVK's subfolder-loaded export (set up by
+	// DxvkLoader during InstallEarlyHooks), not the inert System32 d3d11 the IAT now
+	// resolves to. Fall back to the IAT original only if DXVK failed to load.
+	const auto iatOriginal = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainUpscaling, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
+	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChainUpscaling = DxvkLoader::IsLoaded() ?
+	                                                              reinterpret_cast<uintptr_t>(DxvkLoader::GetD3D11CreateDeviceAndSwapChain()) :
+	                                                              iatOriginal;
 }
 
 struct BSImageSpace_Init_FXAA
@@ -539,36 +466,29 @@ struct BSImageSpace_Init_FXAA
 	{
 		func();
 
-		// Force FXAA off safely
 		auto fxaaEnabled = reinterpret_cast<bool*>(REL::RelocationID(513281, 391028).address());
 		*fxaaEnabled = false;
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
+
 void Upscaling::PostPostLoad()
 {
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
-	// Calculates resolution and jitter
 	stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate(0xE5, isGOG ? 0x133 : 0xE2));
 
-	// Disables the original dynamic resolution system
 	REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D), REL::NOP5, sizeof(REL::NOP5));
 
-	// Performs upscaling in between volumetric lighting and post processing
 	stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7));
 
-	// Patches RSSetScissorRect calls to use dynamic resolution
 	stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
-	// Patches facegen texture generation to not use dynamic resolution
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
 
-	// Patches precipitation camera to not use dynamic resolution
 	stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
 
-	// Forces FXAA off
 	stl::detour_thunk<BSImageSpace_Init_FXAA>(REL::RelocationID(98974, 105626));
 
 	logger::info("[Upscaling] Installed hooks");
@@ -578,219 +498,325 @@ void Upscaling::PostPostLoad()
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
-	if (streamline.featureDLSS)
-		return (UpscaleMethod)settings.upscaleMethod;
-	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
+	auto method = (UpscaleMethod)settings.upscaleMethod;
+	if (method == UpscaleMethod::kDLSS &&
+		!Streamline::GetSingleton()->IsDLSSSupported()) {
+		method = (UpscaleMethod)settings.upscaleMethodNoDLSS;
+		if (method == UpscaleMethod::kDLSS)
+			method = UpscaleMethod::kFSR;
+	}
+	if (method == UpscaleMethod::kXeSS &&
+		!Streamline::GetSingleton()->IsXeSSSupported()) {
+		method = UpscaleMethod::kFSR;
+	}
+	// FSR is the fallback of the chains above but is itself an SL plugin (sl.fsr):
+	// without Streamline (plugins missing, or disabled by configuration this session
+	// because no SL feature was requested at startup) its backend cannot engage, and
+	// a half-engaged upscaler (render-res switch with no evaluate) is undefined
+	// behavior. Clamp to TAA — a restart with the new setting picks the real method.
+	if (method == UpscaleMethod::kFSR &&
+		!Streamline::GetSingleton()->IsFSRSupported()) {
+		method = UpscaleMethod::kTAA;
+	}
+	return method;
 }
 
-void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
+void Upscaling::ApplyHardwareDefaults()
 {
-	logger::debug("[Upscaling] Creating texture resources for method {} ({})", static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod));
+	static bool applied = false;
+	if (applied)
+		return;
+	applied = true;
+
+	// Auto-select methods only ONCE per install (persisted flag). After that the user's saved config is
+	// authoritative — otherwise an explicit choice (e.g. switching FG to FSR because DLSS-G is unstable
+	// on this GPU) would be forced back to the hardware default on every launch.
+	if (settings.hardwareDefaultsApplied)
+		return;
+	settings.hardwareDefaultsApplied = true;
+
+	auto* sl = Streamline::GetSingleton();
+
+	// Upscaling priority: DLSS -> XeSS -> FSR 3
+	if (settings.upscaleMethod == (uint)UpscaleMethod::kFSR) {
+		if (sl->IsDLSSSupported()) {
+			settings.upscaleMethod = (uint)UpscaleMethod::kDLSS;
+			settings.upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
+			logger::info("[Upscaling] Hardware default: DLSS selected (NVIDIA GPU detected)");
+		} else if (sl->IsXeSSSupported()) {
+			settings.upscaleMethod = (uint)UpscaleMethod::kXeSS;
+			logger::info("[Upscaling] Hardware default: XeSS selected (Intel GPU detected via Streamline)");
+		}
+	}
+
+	// Low-latency: Reflex if available
+	if (!settings.reflexEnabled) {
+		if (sl->IsReflexSupported()) {
+			settings.reflexEnabled = true;
+			logger::info("[Upscaling] Hardware default: Reflex low-latency enabled");
+		}
+	}
+}
+
+Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const
+{
+	// ONE frame-generation method per system, hardware-derived and fixed for the session:
+	// DLSS-G on hardware that supports it, FSR-FG everywhere else. Not user-selectable — the
+	// two methods need opposite present paths (DLSS-G's pacer requires hardware flips; the FFX
+	// present worker requires the copy path on NVIDIA), which the driver locks per window, so
+	// a single hardware-matched method keeps everything switch-free and boot-independent.
+	// settings.frameGenMethod is legacy-ignored.
+	return Streamline::GetSingleton()->IsDLSSGSupported() ? FrameGenMethod::kDLSSG : FrameGenMethod::kFSR;
+}
+
+bool Upscaling::IsFrameGenerationActive() const
+{
+	if (!loaded || !settings.frameGeneration)
+		return false;
+	auto fgMethod = GetFrameGenMethod();
+	if (fgMethod == FrameGenMethod::kDLSSG)
+		return Streamline::GetSingleton()->IsDLSSGSupported();
+	// kFSR: the sl.fsr plugin owns frame generation via its FFX FrameInterpolationSwapChain.
+	// "Active" means FSR is supported and we've delivered the enable (settings.frameGeneration
+	// already checked above).
+	return Streamline::GetSingleton()->IsFSRSupported();
+}
+
+bool Upscaling::GetEffectiveReflex() const
+{
+	// DLSS-G frame generation REQUIRES Reflex on (it stalls otherwise); FSR frame generation requires it
+	// OFF (FFX paces the swapchain itself, Reflex fights it); with no frame generation the user's saved
+	// reflexEnabled toggle wins. The saved preference is never mutated — only the effective value changes.
+	if (IsFrameGenerationActive()) {
+		switch (GetFrameGenMethod()) {
+		case FrameGenMethod::kDLSSG:
+			return true;
+		case FrameGenMethod::kFSR:
+			return false;
+		default:
+			break;
+		}
+	}
+	return settings.reflexEnabled;
+}
+
+int Upscaling::GetMonitorRefreshRate() const
+{
+	if (refreshRate >= 1.0)
+		return static_cast<int>(std::lround(refreshRate));
+	DEVMODEA dm{};
+	dm.dmSize = sizeof(dm);
+	if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &dm) && (dm.dmFields & DM_DISPLAYFREQUENCY) && dm.dmDisplayFrequency > 1)
+		return static_cast<int>(dm.dmDisplayFrequency);
+	return 60;
+}
+
+int Upscaling::GetTargetFrameRate() const
+{
+	// Divisor of the monitor refresh rate: 0 (unlocked) => no cap; otherwise refresh / divisor (so the cap
+	// stays at/below refresh — VSync-on stays inside the VRR window and DLSS-G's generated frames don't
+	// outrun the display). Returns 0 for "no limit".
+	// An UNLOADED feature must not impose present policy: the C++-default divisor was silently
+	// frame-capping every no-upscaler DXVK user at the display refresh (measured dead-flat 165.1
+	// on a 165Hz panel) because the input-poll hook feeds this into ApplyDxvkFrameRateLimit
+	// unconditionally.
+	if (!loaded)
+		return 0;
+	const int divisor = settings.frameRateLimitDivisor;
+	if (divisor <= 0)
+		return 0;
+	return std::max(1, static_cast<int>(std::lround(static_cast<double>(GetMonitorRefreshRate()) / divisor)));
+}
+
+void Upscaling::ApplyDxvkFrameRateLimit(double a_fps)
+{
+	// Non-Reflex fallback: drive DXVK's own frame limiter via the dxvkSetTargetFrameRate export (same
+	// GetProcAddress pattern as the other dxvk* hooks). a_fps<=0 clears the limit. Graceful no-op if the export
+	// is absent (e.g. a DXVK build without it) so the Reflex path is unaffected. Only pushes on change.
+	using SetFrameRateFn = void (*)(double);
+	static SetFrameRateFn fn = nullptr;
+	static bool resolved = false;
+	if (!resolved) {
+		resolved = true;
+		if (HMODULE m = GetModuleHandleW(L"dxvk_d3d11.dll"))
+			fn = reinterpret_cast<SetFrameRateFn>(GetProcAddress(m, "dxvkSetTargetFrameRate"));
+	}
+	static double lastFps = -2.0;
+	if (fn && a_fps != lastFps) {
+		lastFps = a_fps;
+		fn(a_fps > 0.0 ? a_fps : 0.0);
+	}
+}
+
+HRESULT Upscaling::PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags,
+	const std::function<HRESULT(IDXGISwapChain*, UINT, UINT)>& a_present)
+{
+	if (!IsFrameGenerationActive())
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+
+	auto fgMethod = GetFrameGenMethod();
+
+	// DLSS-G: Streamline interpolates + paces inside its interposed vkQueuePresentKHR hook.
+	// SL's present hook requires a resource tag EVERY present or it waits forever on absent
+	// inputs — so guarantee one here. Then present normally; DXVK's present reaches SL's
+	// interposed present hook, which does the frame generation.
+	if (fgMethod == FrameGenMethod::kDLSSG) {
+		Streamline::GetSingleton()->EnsureDLSSGPresentTag();
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+	}
+
+	// FSR FG: the sl.fsr plugin's FFX FrameInterpolationSwapChain (installed via its
+	// CreateSwapchainKHR hook) interpolates + double-presents inside the plugin's vkQueuePresentKHR
+	// hook. DXVK's present reaches that hook through the interposer — present once and let the
+	// plugin run.
+	return a_present(a_swapChain, a_syncInterval, a_flags);
+}
+
+void Upscaling::CreateUpscaledTexture()
+{
+	if (upscaledTexture)
+		return;
 
 	auto renderer = globals::game::renderer;
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 	D3D11_TEXTURE2D_DESC texDesc{};
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	main.texture->GetDesc(&texDesc);
-	main.SRV->GetDesc(&srvDesc);
-	main.UAV->GetDesc(&uavDesc);
 
+	// Display-resolution texture with SRV+UAV for upscale output.
 	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-	if (a_upscalemethod == UpscaleMethod::kDLSS || a_upscalemethod == UpscaleMethod::kFSR) {
-		texDesc.Format = DXGI_FORMAT_R8_UNORM;
-		srvDesc.Format = texDesc.Format;
-		uavDesc.Format = texDesc.Format;
+	upscaledTexture = new Texture2D(texDesc);
+	Util::SetResourceName(upscaledTexture->resource.get(), "Upscaling::UpscaledTexture");
 
-		if (!reactiveMaskTexture) {
-			reactiveMaskTexture = new Texture2D(texDesc);
-			reactiveMaskTexture->CreateSRV(srvDesc);
-			reactiveMaskTexture->CreateUAV(uavDesc);
-		}
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+	upscaledTexture->CreateSRV(srvDesc);
 
-		if (!transparencyCompositionMaskTexture) {
-			transparencyCompositionMaskTexture = new Texture2D(texDesc);
-			transparencyCompositionMaskTexture->CreateSRV(srvDesc);
-			transparencyCompositionMaskTexture->CreateUAV(uavDesc);
-		}
-	}
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = texDesc.Format;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+	uavDesc.Texture2D.MipSlice = 0;
+	upscaledTexture->CreateUAV(uavDesc);
 
-	// Motion vector copy texture is only needed for DLSS
-	if (a_upscalemethod == UpscaleMethod::kDLSS) {
-		if (!motionVectorCopyTexture) {
-			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	logger::info("[Upscaling] Created upscaled texture ({}x{}, format={})",
+		texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
+}
 
-			D3D11_TEXTURE2D_DESC motionTexDesc{};
-			motionVector.texture->GetDesc(&motionTexDesc);
-
-			texDesc.Format = motionTexDesc.Format;
-			srvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-
-			motionVectorCopyTexture = new Texture2D(motionTexDesc);
-			motionVectorCopyTexture->CreateSRV(srvDesc);
-			motionVectorCopyTexture->CreateUAV(uavDesc);
-		}
-
-		// RCAS sharpener texture - matches kMAIN format for HDR sharpening
-		if (!sharpenerTexture) {
-			main.texture->GetDesc(&texDesc);
-			main.SRV->GetDesc(&srvDesc);
-
-			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-
-			srvDesc.Format = texDesc.Format;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			uavDesc.Format = texDesc.Format;
-			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-			uavDesc.Texture2D.MipSlice = 0;
-
-			sharpenerTexture = new Texture2D(texDesc);
-			sharpenerTexture->CreateSRV(srvDesc);
-			sharpenerTexture->CreateUAV(uavDesc);
-		}
+void Upscaling::DestroyUpscaledTexture()
+{
+	if (upscaledTexture) {
+		delete upscaledTexture;
+		upscaledTexture = nullptr;
+		logger::debug("[Upscaling] Destroyed upscaled texture");
 	}
 }
 
-void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
+void Upscaling::CreateHudlessTexture()
 {
-	logger::debug("[Upscaling] Destroying texture resources for method {} ({})", static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod));
+	auto renderer = globals::game::renderer;
+	// Size + format from kFRAMEBUFFER (the swapchain back buffer) — the hudless is captured FROM it just
+	// before the UI composites, so matching its format means the hudless is already in the back-buffer
+	// format FFX/DLSS-G expect (no precision-group mismatch).
+	// Source = kFRAMEBUFFER (the swapchain back buffer). Its `.texture` field is NULL under CS+DXVK, but its
+	// SRV is valid and references the real back-buffer texture — fetch the resource from the SRV. This gives
+	// the back-buffer FORMAT (R10G10B10A2 / 10-bit when HDR is on; kMAIN is RGBA16F / 16-bit), so the hudless
+	// matches the back buffer's precision group exactly (no conversion needed for FFX's UI extraction).
+	auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+	if (!fb.SRV)
+		return;  // framebuffer SRV not ready yet (early load) — defer; the capture hook creates it lazily
+	winrt::com_ptr<ID3D11Resource> fbResource;
+	fb.SRV->GetResource(fbResource.put());
+	winrt::com_ptr<ID3D11Texture2D> fbTexture;
+	if (!fbResource || FAILED(fbResource->QueryInterface(IID_PPV_ARGS(fbTexture.put()))) || !fbTexture)
+		return;
 
-	// Clean up D3D11 textures that are no longer needed
-	// Only destroy textures when switching away from methods that use them
-	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
-		if (reactiveMaskTexture) {
-			reactiveMaskTexture->srv = nullptr;
-			reactiveMaskTexture->uav = nullptr;
-			reactiveMaskTexture->resource = nullptr;
+	D3D11_TEXTURE2D_DESC texDesc{};
+	fbTexture->GetDesc(&texDesc);
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-			delete reactiveMaskTexture;
-			reactiveMaskTexture = nullptr;
-		}
+	hudlessTexture = new Texture2D(texDesc);
+	Util::SetResourceName(hudlessTexture->resource.get(), "Upscaling::HudlessTexture");
 
-		if (transparencyCompositionMaskTexture) {
-			transparencyCompositionMaskTexture->srv = nullptr;
-			transparencyCompositionMaskTexture->uav = nullptr;
-			transparencyCompositionMaskTexture->resource = nullptr;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+	hudlessTexture->CreateSRV(srvDesc);
 
-			delete transparencyCompositionMaskTexture;
-			transparencyCompositionMaskTexture = nullptr;
-		}
-	}
+	logger::info("[Upscaling] Created hudless texture ({}x{}, format={})",
+		texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
+}
 
-	// Motion vector copy texture is only needed for DLSS - destroy when switching away from DLSS
-	if (a_upscalemethod != UpscaleMethod::kDLSS) {
-		if (motionVectorCopyTexture) {
-			motionVectorCopyTexture->srv = nullptr;
-			motionVectorCopyTexture->uav = nullptr;
-			motionVectorCopyTexture->resource = nullptr;
-
-			delete motionVectorCopyTexture;
-			motionVectorCopyTexture = nullptr;
-		}
-		if (sharpenerTexture) {
-			sharpenerTexture->srv = nullptr;
-			sharpenerTexture->uav = nullptr;
-			sharpenerTexture->resource = nullptr;
-
-			delete sharpenerTexture;
-			sharpenerTexture = nullptr;
-		}
+void Upscaling::DestroyHudlessTexture()
+{
+	if (hudlessTexture) {
+		delete hudlessTexture;
+		hudlessTexture = nullptr;
+		logger::debug("[Upscaling] Destroyed hudless texture");
 	}
 }
 
 void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 {
 	static auto previousUpscaleMode = UpscaleMethod::kTAA;
-	static bool previousFrameGenMode = false;
 
-	bool frameGenModeCurrent = (settings.frameGenerationMode && d3d12SwapChainActive);
-	bool frameGenModeChanged = frameGenModeCurrent != previousFrameGenMode;
-	bool upscaleModeChanged = (previousUpscaleMode != a_upscalemethod);
+	if (previousUpscaleMode != a_upscalemethod) {
+		logger::debug("[Upscaling] Upscale method changed: {} ({}) -> {} ({})",
+			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode),
+			static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod));
 
-	if (upscaleModeChanged || frameGenModeChanged) {
-		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={})",
-			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive);
-
-		// Destroy previous upscaling method resources (only if they were actually active)
-		if (upscaleModeChanged) {
-			DestroyUpscalingTextureResources(a_upscalemethod);
-
-			// Only destroy SDK resources if the previous method was actually performing upscaling
-			if (previousUpscalingWasActive) {
-				if (previousUpscaleMode == UpscaleMethod::kDLSS)
-					streamline.DestroyDLSSResources();
-				else if (previousUpscaleMode == UpscaleMethod::kFSR)
-					fidelityFX.DestroyFSRResources();
-			}
-			if (a_upscalemethod == UpscaleMethod::kFSR)
-				fidelityFX.CreateFSRResources();
+		// Upscaled texture lifecycle — shared by all upscale methods that need a separate output texture.
+		bool hadUpscale = (previousUpscaleMode == UpscaleMethod::kFSR ||
+		                   previousUpscaleMode == UpscaleMethod::kDLSS ||
+		                   previousUpscaleMode == UpscaleMethod::kXeSS) &&
+		                  previousUpscalingWasActive;
+		if (hadUpscale) {
+			// The upscaler eval (DLSS/FSR/XeSS via cs_EvaluateFeatureCore) submits to DXVK's queue
+			// asynchronously (waitIdle=false) and is invisible to DXVK's resource-lifetime tracker, so an
+			// in-flight dispatch may still be writing these interop images. Drain the interop ring before
+			// freeing them, else DXVK can recycle the backing VkImage under a running dispatch -> device
+			// lost. Costs a CPU stall only on this rare resource-change frame; the per-frame path stays async.
+			if (auto* dxvk = DxvkInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
+				dxvk->DrainCommandRing();
+			DestroyUpscaledTexture();
+			DestroyHudlessTexture();
+		}
+		if (a_upscalemethod == UpscaleMethod::kFSR ||
+		    a_upscalemethod == UpscaleMethod::kDLSS ||
+		    a_upscalemethod == UpscaleMethod::kXeSS) {
+			CreateUpscaledTexture();
+			CreateHudlessTexture();
 		}
 
-		// Create new upscaling method resources
-		if (upscaleModeChanged) {
-			CreateUpscalingTextureResources(a_upscalemethod);
-		}
-
-		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
-		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
 		previousUpscalingWasActive = IsUpscalingActive();
 	}
-}
 
-ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
-{
-	auto upscaleMethod = GetUpscaleMethod();
-	uint methodIndex = (uint)upscaleMethod;
-
-	if (!encodeTexturesCS[methodIndex]) {
-		logger::debug("Compiling EncodeTexturesCS.hlsl for upscale method {}", methodIndex);
-
-		std::vector<std::pair<const char*, const char*>> defines;
-
-		// Add upscale method define
-		switch (upscaleMethod) {
-		case UpscaleMethod::kDLSS:
-			defines.push_back({ "DLSS", "" });
-			break;
-		case UpscaleMethod::kFSR:
-			defines.push_back({ "FSR", "" });
-			break;
-		default:
-			// No define for NONE or TAA
-			break;
-		}
-
-		encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
-	}
-	return encodeTexturesCS[methodIndex].get();
+	// Frame-generation present ownership (DLSS-G / FSR-FG lifecycle, plugin
+	// load state, swapchain recreates) is owned by the FrameGen controller.
+	FrameGen::Controller::GetSingleton()->Reconcile();
 }
 
 ID3D11PixelShader* Upscaling::GetDepthRefractionUpscalePS()
 {
 	if (!depthRefractionUpscalePS) {
 		logger::debug("Compiling DepthRefractionUpscalePS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		depthRefractionUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", defines, "ps_5_0"));
+		depthRefractionUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", {}, "ps_5_0"));
 	}
-
 	return depthRefractionUpscalePS.get();
 }
 
 ID3D11PixelShader* Upscaling::GetUnderwaterMaskUpscalePS()
 {
 	if (!underwaterMaskUpscalePS) {
-		logger::debug("Compiling UnderwaterMaskPS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		underwaterMaskUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", defines, "ps_5_0"));
+		logger::debug("Compiling UnderwaterMaskUpscalePS.hlsl");
+		underwaterMaskUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", {}, "ps_5_0"));
 	}
-
 	return underwaterMaskUpscalePS.get();
 }
 
@@ -798,9 +824,8 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 {
 	if (!upscaleVS) {
 		logger::debug("Compiling UpscaleVS.hlsl");
-		upscaleVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0"));
+		upscaleVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", {}, "vs_5_0"));
 	}
-
 	return upscaleVS.get();
 }
 
@@ -851,7 +876,6 @@ int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
 	return jitterPhaseCount;
 }
 
-// Calculate halton number for index and base.
 static float Halton(int32_t index, int32_t base)
 {
 	float f = 1.0f, result = 0.0f;
@@ -878,7 +902,6 @@ void Upscaling::ConfigureTAA()
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
-	// Force enable TAA if needed
 	Util::SetTemporal(upscaleMethod != UpscaleMethod::kNONE);
 }
 
@@ -886,22 +909,35 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
-	// Delete or create resources as necessary
 	CheckResources(upscaleMethod);
 
-	// Cache original TAA values for UI
 	projectionPosScaleX = a_viewport->projectionPosScaleX;
 	projectionPosScaleY = a_viewport->projectionPosScaleY;
 
-	// Get full screen size
 	auto state = globals::state;
 	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 
 	auto screenWidth = static_cast<int>(screenSize.x);
 	auto screenHeight = static_cast<int>(screenSize.y);
 
-	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)settings.qualityMode);
+	if (upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kXeSS || upscaleMethod == UpscaleMethod::kDLSS) {
+		auto getUpscaleRatio = [](uint qualityMode) -> float {
+			switch (qualityMode) {
+			case 0:
+				return 1.0f;  // Native (Quality)
+			case 1:
+				return 1.5f;  // Quality
+			case 2:
+				return 1.7f;  // Balanced
+			case 3:
+				return 2.0f;  // Performance
+			case 4:
+				return 3.0f;  // Ultra Performance
+			default:
+				return 1.5f;
+			}
+		};
+		float resolutionScaleBase = 1.0f / getUpscaleRatio(settings.qualityMode);
 
 		auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
 		auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);
@@ -934,14 +970,23 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	dynamicResolutionWidthRatio = resolutionScale.x;
 	dynamicResolutionHeightRatio = resolutionScale.y;
 
-	// Disable dynamic resolution unless the game explicitly enables it
 	runtimeData.dynamicResolutionLock = 1;
+
+	// Log the active upscaler's render vs display resolution whenever it changes.
+	static float s_loggedScale = -1.0f;
+	static int s_loggedMethod = -1;
+	if (std::abs(resolutionScale.x - s_loggedScale) > 0.001f || (int)upscaleMethod != s_loggedMethod) {
+		s_loggedScale = resolutionScale.x;
+		s_loggedMethod = (int)upscaleMethod;
+		logger::debug("[Upscaling] active method={} scale={:.3f} render={}x{} display={}x{}",
+			(int)upscaleMethod, resolutionScale.x,
+			(int)(screenSize.x * resolutionScale.x), (int)(screenSize.y * resolutionScale.y),
+			(int)screenSize.x, (int)screenSize.y);
+	}
 }
 
 void Upscaling::SetupResources()
 {
-	QueryPerformanceFrequency(&qpf);
-
 	auto renderer = globals::game::renderer;
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
@@ -960,21 +1005,15 @@ void Upscaling::SetupResources()
 	uavDesc.Format = texDesc.Format;
 
 	D3D11_DEPTH_STENCIL_DESC depthStencilDesc = {};
-	depthStencilDesc.DepthEnable = true;                           // Enable depth testing
-	depthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;  // Write to all depth bits
-	depthStencilDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;          // Always pass depth test (write all depths)
-
-	depthStencilDesc.StencilEnable = false;  // Disable stencil testing
+	depthStencilDesc.DepthEnable = true;
+	depthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	depthStencilDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+	depthStencilDesc.StencilEnable = false;
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateDepthStencilState(&depthStencilDesc, upscaleDepthStencilState.put()));
 
-	// Create jitter offset constant buffer for depth upscaling
 	jitterCB = new ConstantBuffer(ConstantBufferDesc<JitterCB>());
 
-	// Create upscaling data constant buffer for encode textures compute shader
-	upscalingDataCB = new ConstantBuffer(ConstantBufferDesc<UpscalingDataCB>());
-
-	// Create blend state for depth upscaling
 	D3D11_BLEND_DESC blendDesc = {};
 	blendDesc.AlphaToCoverageEnable = false;
 	blendDesc.IndependentBlendEnable = false;
@@ -982,7 +1021,6 @@ void Upscaling::SetupResources()
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 	DX::ThrowIfFailed(globals::d3d::device->CreateBlendState(&blendDesc, upscaleBlendState.put()));
 
-	// Create rasterizer state for fullscreen rendering
 	D3D11_RASTERIZER_DESC rasterizerDesc = {};
 	rasterizerDesc.FillMode = D3D11_FILL_SOLID;
 	rasterizerDesc.CullMode = D3D11_CULL_NONE;
@@ -1000,92 +1038,45 @@ void Upscaling::SetupResources()
 
 	rcas.Initialize();
 
-	if (d3d12SwapChainActive)
-		dx12SwapChain.CreateSharedResources();
-
-	copyDepthToSharedBufferPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0"));
-
-	// Setup HDR resources only when the HDR Display feature is loaded
 	if (globals::features::hdrDisplay.loaded) {
 		globals::features::hdrDisplay.SetupResources();
+	}
+
+	// Bridge to DXVK's own Vulkan device for Streamline interposition.
+	// On native D3D11 this is a no-op (IsAvailable() stays false).
+	auto* dxvk = DxvkInterop::GetSingleton();
+	if (dxvk->Initialize()) {
+		VkImage probeImage = VK_NULL_HANDLE;
+		VkImageCreateInfo probeInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+		if (dxvk->GetVkImage(main.texture, &probeImage, nullptr, &probeInfo) && probeImage != VK_NULL_HANDLE) {
+			logger::info("[Upscaling] DXVK texture->VkImage probe OK: main RT VkImage={:#x} ({}x{}, vkFormat={})",
+				reinterpret_cast<uintptr_t>(probeImage), probeInfo.extent.width, probeInfo.extent.height, static_cast<int>(probeInfo.format));
+		} else {
+			logger::warn("[Upscaling] DXVK texture->VkImage probe FAILED");
+		}
+
+		dxvk->CreateCommandResources(3);
+
+		// NVIDIA Streamline (DLSS/Reflex) on DXVK's Vulkan device.
+		auto* streamline = Streamline::GetSingleton();
+		if (streamline->Initialize()) {
+			streamline->SetVulkanDevice();
+			// Register the DXVK ownership predicate so DXVK knows when the interposer
+			// owns presentation (frame-gen swapchain active).
+			Streamline::RegisterDxvkOwnershipPredicate();
+		}
+
+		// Hardware-adaptive defaults (one-shot, first run only). Applied after feature
+		// probing so we know what's available. User settings override on subsequent loads.
+		ApplyHardwareDefaults();
 	}
 }
 
 void Upscaling::ClearShaderCache()
 {
-	for (int i = 0; i < 4; ++i) {
-		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
-	}
-
-	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
-	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
-	upscaleVS = nullptr;                 // com_ptr automatically releases
-}
-
-void Upscaling::CopySharedD3D12Resources()
-{
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Copy Shared D3D12 Resources");
-	globals::state->BeginPerfEvent("Copy Shared D3D12 Resources");
-
-	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
-
-	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, motionVector.texture);
-
-	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-	{
-		// Set up viewport for fullscreen rendering
-		float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-
-		D3D11_VIEWPORT viewport = {};
-		viewport.TopLeftX = 0.0f;
-		viewport.TopLeftY = 0.0f;
-		viewport.Width = screenSize.x;
-		viewport.Height = screenSize.y;
-		viewport.MinDepth = 0.0f;
-		viewport.MaxDepth = 1.0f;
-		context->RSSetViewports(1, &viewport);
-
-		// Set up Input Assembler for fullscreen triangle
-		context->IASetInputLayout(nullptr);
-		context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
-		context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
-		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-		// Set up vertex shader
-		context->VSSetShader(GetUpscaleVS(), nullptr, 0);
-
-		// Set up rasterizer and blend states
-		context->RSSetState(upscaleRasterizerState.get());
-		context->OMSetBlendState(upscaleBlendState.get(), nullptr, 0xffffffff);
-
-		// Set up pixel shader resources
-		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
-		context->PSSetShaderResources(0, ARRAYSIZE(views), views);
-
-		// Set render target view for pixel shader output
-		ID3D11RenderTargetView* rtvs[1] = { dx12SwapChain.depthBufferShared12->rtv };
-		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
-
-		context->PSSetShader(copyDepthToSharedBufferPS.get(), nullptr, 0);
-
-		globals::profiler->BeginPass("Upscaling::CopyDepthD3D12");
-		context->Draw(3, 0);
-		globals::profiler->EndPass();
-	}
-
-	// Clean up
-	ID3D11ShaderResourceView* views[1] = { nullptr };
-	context->PSSetShaderResources(0, ARRAYSIZE(views), views);
-
-	context->OMSetRenderTargets(0, nullptr, nullptr);
-	context->PSSetShader(nullptr, nullptr, 0);
-	context->VSSetShader(nullptr, nullptr, 0);
-
-	globals::state->EndPerfEvent();
+	depthRefractionUpscalePS = nullptr;
+	underwaterMaskUpscalePS = nullptr;
+	upscaleVS = nullptr;
 }
 
 void UpdateCameraData()
@@ -1113,47 +1104,7 @@ void Upscaling::PostDisplay()
 	globals::game::renderer->UpdateViewPort(0, 0, 1);
 	UpdateCameraData();
 
-	if (d3d12SwapChainActive)
-		globals::features::hdrDisplay.SetUIBuffer();
-
 	globals::state->UpdateSharedData(false, false);
-}
-
-void Upscaling::TimerSleepQPC(int64_t targetQPC)
-{
-	LARGE_INTEGER currentQPC;
-	do {
-		QueryPerformanceCounter(&currentQPC);
-	} while (currentQPC.QuadPart < targetQPC);
-}
-
-void Upscaling::FrameLimiter()
-{
-	if (d3d12SwapChainActive) {
-		// Use frame latency waitable object if available for better frame pacing
-		HANDLE waitableObject = GetFrameLatencyWaitableObject();
-
-		// Wait for the next frame presentation slot
-		WaitForSingleObject(waitableObject, INFINITE);
-
-		if (settings.frameLimitMode) {
-			static constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
-			static constexpr double kFrameGenerationRateScale = 0.5;
-			const double frameRateScale = ShouldUseFrameGenerationThisFrame() ? kFrameGenerationRateScale : 1.0;
-			int64_t targetFrameTimeNS = int64_t(static_cast<double>(kNanosecondsPerSecond) / (refreshRate * frameRateScale));
-			int64_t targetFrameTicks = (targetFrameTimeNS * qpf.QuadPart) / kNanosecondsPerSecond;
-
-			static LARGE_INTEGER lastFrame = {};
-			LARGE_INTEGER timeNow;
-			QueryPerformanceCounter(&timeNow);
-
-			int64_t delta = timeNow.QuadPart - lastFrame.QuadPart;
-			if (delta < targetFrameTicks) {
-				TimerSleepQPC(lastFrame.QuadPart + targetFrameTicks);
-			}
-			QueryPerformanceCounter(&lastFrame);
-		}
-	}
 }
 
 /*
@@ -1184,13 +1135,11 @@ double Upscaling::GetRefreshRate(HWND a_window)
 	MONITORINFOEXW info;
 	info.cbSize = sizeof(info);
 	if (GetMonitorInfoW(monitor, &info) != 0) {
-		// using the CCD get the associated path and display configuration
 		UINT32 requiredPaths, requiredModes;
 		if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &requiredPaths, &requiredModes) == ERROR_SUCCESS) {
 			std::vector<DISPLAYCONFIG_PATH_INFO> paths(requiredPaths);
 			std::vector<DISPLAYCONFIG_MODE_INFO> modes2(requiredModes);
 			if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &requiredPaths, paths.data(), &requiredModes, modes2.data(), nullptr) == ERROR_SUCCESS) {
-				// iterate through all the paths until find the exact source to match
 				for (auto& p : paths) {
 					DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName;
 					sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
@@ -1198,11 +1147,6 @@ double Upscaling::GetRefreshRate(HWND a_window)
 					sourceName.header.adapterId = p.sourceInfo.adapterId;
 					sourceName.header.id = p.sourceInfo.id;
 					if (DisplayConfigGetDeviceInfo(&sourceName.header) == ERROR_SUCCESS && wcscmp(info.szDevice, sourceName.viewGdiDeviceName) == 0) {
-						// find the matched device which is associated with current device
-						// there may be the possibility that display may be duplicated and windows may be one of them in such scenario
-						// there may be two callback because source is same target will be different
-						// as window is on both the display so either selecting either one is ok
-						// get the refresh rate
 						UINT numerator = p.targetInfo.refreshRate.Numerator;
 						UINT denominator = p.targetInfo.refreshRate.Denominator;
 						return (double)numerator / (double)denominator;
@@ -1215,218 +1159,124 @@ double Upscaling::GetRefreshRate(HWND a_window)
 	return 60;
 }
 
-bool Upscaling::IsFrameGenerationDx12PathActive() const
-{
-	return d3d12SwapChainActive;
-}
-
-bool Upscaling::IsFrameGenerationActive() const
-{
-	return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && fidelityFX.isFrameGenActive;
-}
-
-bool Upscaling::ShouldUseFrameGenerationThisFrame() const
-{
-	auto* ui = globals::game::ui;
-	auto* state = globals::state;
-	const bool menuOpen = (ui && ui->GameIsPaused()) || (state && state->IsMainOrLoadingMenuOpen(ui));
-	return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && (settings.frameGenerationAllowInMenus || !menuOpen);
-}
-
 bool Upscaling::IsUpscalingActive() const
 {
 	auto method = GetUpscaleMethod();
 
-	// Only consider vendor upscalers (FSR/DLSS) as "active" when the
-	// selected method actually produces a downscale. If the renderer is
-	// currently running at 1:1 (no downscale), treat upscaling as inactive.
-	if (!(method == UpscaleMethod::kFSR || method == UpscaleMethod::kDLSS)) {
+	if (method != UpscaleMethod::kFSR && method != UpscaleMethod::kXeSS && method != UpscaleMethod::kDLSS) {
 		return false;
 	}
 
-	// resolutionScale.x represents renderWidth / displayWidth.
 	return resolutionScale.x < .99f;
 }
 
-/**
- * @brief Retrieves the current frame time for frame generation.
- *
- * Returns the frame time from the D3D12 swap chain if frame generation is active; otherwise, returns 0.
- *
- * @return float The current frame time in seconds, or 0 if frame generation is inactive.
- */
-float Upscaling::GetFrameGenerationFrameTime() const
+bool Upscaling::IsWindowGapActive()
 {
-	if (!IsFrameGenerationActive())
-		return 0.0f;
-
-	// Get the current frame time from D3D12 swapchain
-	if (dx12SwapChain.swapChain) {
-		// Get frame time from the D3D12 SwapChain
-		return GetFrameTime();
+	// Minimized window: ALL Streamline/GPU-interop work must stop, not just presents — the
+	// frame generator's in-flight flip cannot retire against an iconic window and its pacer
+	// holds a driver lock while it times out; any SL evaluate in that window then blocks the
+	// render thread on that lock and wedges the pipeline (stack-proven). The Streamline sample
+	// survives minimize precisely because its whole loop stops; this is the equivalent gate.
+	static HWND s_window = nullptr;
+	if (!s_window && globals::d3d::swapChain) {
+		DXGI_SWAP_CHAIN_DESC desc{};
+		if (SUCCEEDED(globals::d3d::swapChain->GetDesc(&desc)))
+			s_window = desc.OutputWindow;
 	}
-
-	return 0.0f;
+	return s_window && IsIconic(s_window);
 }
 
-// Unified interface methods
-void Upscaling::LoadUpscalingSDKs()
+void Upscaling::NotifyWindowFocus(bool a_focused)
 {
-	// Initialize upscaling SDK components during plugin startup
-	// This ensures all SDKs are available before any D3D device creation
-	streamline.LoadInterposer();
-	fidelityFX.LoadFFX();  // Only for frame generation now
+	// WndProc thread. Atomic store only — the render/present thread acts on it.
+	s_windowUnfocused.store(!a_focused, std::memory_order_relaxed);
 }
 
-HANDLE Upscaling::GetFrameLatencyWaitableObject() const
+void Upscaling::NotifyWindowModifying(bool a_modifying)
 {
-	return dx12SwapChain.GetFrameLatencyWaitableObject();
+	// WndProc thread (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE). Atomic store only.
+	s_windowModifying.store(a_modifying, std::memory_order_relaxed);
 }
 
-float Upscaling::GetFrameTime() const
+bool Upscaling::IsWindowUnusable()
 {
-	return dx12SwapChain.GetFrameTime();
-}
-
-// Backend interface methods
-bool Upscaling::IsBackendInitialized() const
-{
-	return streamline.initialized;
-}
-
-void Upscaling::CheckBackendFeatures(IDXGIAdapter* adapter)
-{
-	streamline.CheckFeatures(adapter);
-}
-
-void Upscaling::UpgradeBackendInterface(void** ppInterface)
-{
-	streamline.slUpgradeInterface(ppInterface);
-}
-
-void Upscaling::SetBackendD3DDevice(ID3D11Device* device)
-{
-	streamline.slSetD3DDevice(device);
-}
-
-void Upscaling::PostBackendDevice()
-{
-	streamline.PostDevice();
-}
-
-// Module availability methods
-bool Upscaling::HasFrameGenModule() const
-{
-	return fidelityFX.featureFSR3FG;
-}
-
-// Proxy interface methods
-void Upscaling::SetProxyD3D11Device(ID3D11Device* device)
-{
-	dx12SwapChain.SetD3D11Device(device);
-}
-
-void Upscaling::SetProxyD3D11DeviceContext(ID3D11DeviceContext* context)
-{
-	dx12SwapChain.SetD3D11DeviceContext(context);
-}
-
-void Upscaling::CreateProxySwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc)
-{
-	dx12SwapChain.CreateSwapChain(adapter, swapChainDesc);
-}
-
-void Upscaling::CreateProxyInterop()
-{
-	dx12SwapChain.CreateInterop();
-}
-
-IDXGISwapChain* Upscaling::GetProxySwapChain()
-{
-	return dx12SwapChain.GetSwapChainProxy();
-}
-
-Upscaling::BlurResources Upscaling::GetBlurResources() const
-{
-	if (d3d12SwapChainActive) {
-		return dx12SwapChain.GetBlurResources();
-	}
-	return {};
+	// Minimized OR unfocused/occluded OR being resized/moved. Frame generation is suspended for
+	// the whole duration (see the present hook + FrameGen::Controller::SuspendForWindowGap): DXVK
+	// recreates the swapchain on occlusion and an FG-wrapped swapchain freezes the GPU.
+	return IsWindowGapActive() ||
+	       s_windowUnfocused.load(std::memory_order_relaxed) ||
+	       s_windowModifying.load(std::memory_order_relaxed);
 }
 
 void Upscaling::Upscale()
 {
 	ZoneScoped;
-	auto upscaleMethod = GetUpscaleMethod();
+
+	if (IsWindowGapActive())
+		return;
 
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 
-	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
+	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-
-	{
-		globals::profiler->BeginPass("Upscaling::EncodeTextures");
-		state->BeginPerfEvent("Encode Upscaling Textures");
-		TracyD3D11Zone(globals::state->tracyCtx, "Encode Upscaling Textures");
-
-		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
-		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-		auto renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
-		uint32_t renderWidth = (uint32_t)renderSize.x;
-		uint32_t renderHeight = (uint32_t)renderSize.y;
-
-		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-		context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
-
-		UpscalingDataCB upscalingData;
-		upscalingData.trueSamplingDim = float2((float)renderWidth, (float)renderHeight);
-		upscalingDataCB->Update(upscalingData);
-		auto upscalingBuffer = upscalingDataCB->CB();
-		context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
-
-		// u2 (MotionVectorOutput): DLSS only — 5x5 dilated MVec for ghosting reduction.
-		ID3D11UnorderedAccessView* uavs[4] = {
-			reactiveMaskTexture->uav.get(),
-			transparencyCompositionMaskTexture->uav.get(),
-			(upscaleMethod == UpscaleMethod::kDLSS) ? motionVectorCopyTexture->uav.get() : nullptr,
-			nullptr
-		};
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		context->Dispatch((renderWidth + 7) / 8, (renderHeight + 7) / 8, 1);
-
-		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
-		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
-
-		ID3D11UnorderedAccessView* nullUAVs[4] = { nullptr, nullptr, nullptr, nullptr };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUAVs), nullUAVs, nullptr);
-
-		ID3D11Buffer* nullBuffer = nullptr;
-		context->CSSetConstantBuffers(0, 1, &nullBuffer);
-
-		ID3D11ComputeShader* shader = nullptr;
-		context->CSSetShader(shader, nullptr, 0);
-
-		state->EndPerfEvent();
-		globals::profiler->EndPass();
-	}
 
 	{
 		globals::profiler->BeginPass("Upscaling::Upscale");
 		state->BeginPerfEvent("Upscaling");
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
-		if (upscaleMethod == UpscaleMethod::kDLSS) {
-			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
-		} else if (upscaleMethod == UpscaleMethod::kFSR) {
-			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
+		if (GetUpscaleMethod() == UpscaleMethod::kFSR) {
+			// FSR3 upscale runs UNDER STREAMLINE via the sl.fsr plugin (slEvaluateFeature(kFeatureFSR)).
+			// Upscale into the separate texture, then copy back.
+			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+			const auto renderSize = Util::ConvertToDynamic(displaySize);
+			if (upscaledTexture && upscaledTexture->resource) {
+				Streamline::GetSingleton()->EvaluateFSR(
+					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
+					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
+					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
+					settings.qualityMode, settings.sharpnessFSR,
+					jitter.x, jitter.y);
+				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+			}
+		} else if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
+			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+			const auto renderSize = Util::ConvertToDynamic(displaySize);
+			// DLSS cannot upscale in place: reading the low-res render sub-rect while writing the
+			// full-res output of the SAME texture corrupts it. Upscale into the separate display-res
+			// output texture, then copy it back to main.
+			if (upscaledTexture && upscaledTexture->resource) {
+				Streamline::GetSingleton()->EvaluateDLSS(
+					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
+					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
+					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
+					settings.qualityMode, settings.sharpnessFSR,
+					jitter.x, jitter.y);
+				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+			}
+		} else if (GetUpscaleMethod() == UpscaleMethod::kXeSS) {
+			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+			const auto renderSize = Util::ConvertToDynamic(displaySize);
+			// XeSS runs UNDER STREAMLINE via the sl.xess plugin (slEvaluateFeature(kFeatureXeSS)).
+			// Upscale into the separate texture, then copy back.
+			if (upscaledTexture && upscaledTexture->resource) {
+				Streamline::GetSingleton()->EvaluateXeSS(
+					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
+					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
+					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
+					settings.qualityMode, settings.sharpnessFSR,
+					jitter.x, jitter.y);
+				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+			}
 		}
 
 		state->EndPerfEvent();
@@ -1443,10 +1293,8 @@ void Upscaling::PerformUpscaling()
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
 
-	// Disable dynamic resolution past this point
 	runtimeData.dynamicResolutionLock = 1;
 
-	// Updates the PerFrame constant buffer so that dynamic resolution settings are disabled
 	UpdateCameraData();
 }
 
@@ -1454,12 +1302,7 @@ void Upscaling::UpscaleDepth()
 {
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth");
-	// Optimization overview:
-	// 1) Early validation exits before issuing GPU work.
-	// 2) Wide-kernel depth mode uses hysteresis to avoid frequent toggles.
-	// 3) Resource copies are skipped for aliased src/dst to reduce copy churn.
 
-	// (1) Early validation exits
 	if (!IsUpscalingActive()) {
 		return;
 	}
@@ -1497,16 +1340,13 @@ void Upscaling::UpscaleDepth()
 
 	state->BeginPerfEvent("Render Target Upscaling");
 
-	// Set up Input Assembler for fullscreen triangle (no vertex/index buffers needed)
 	context->IASetInputLayout(nullptr);
 	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
 	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	// Set up vertex shader that generates fullscreen triangle using SV_VertexID
 	context->VSSetShader(fullscreenVS, nullptr, 0);
 
-	// Set up viewport for fullscreen rendering
 	D3D11_VIEWPORT viewport = {};
 	viewport.TopLeftX = 0.0f;
 	viewport.TopLeftY = 0.0f;
@@ -1516,17 +1356,14 @@ void Upscaling::UpscaleDepth()
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);
 
-	// Set rasterizer and blend state
 	context->RSSetState(upscaleRasterizerState.get());
 	context->OMSetBlendState(upscaleBlendState.get(), nullptr, 0xffffffff);
 
 	ID3D11SamplerState* samplers[] = { deferred->linearSampler };
 	context->PSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
-	// Set up jitter/depth-kernel constant buffer for upscaling
 	JitterCB jitterData;
 	jitterData.jitter = jitter;
-	// (2) Wide-kernel hysteresis
 	{
 		constexpr float kEnterWideKernelRatio = 1.55f;
 		constexpr float kExitWideKernelRatio = 1.45f;
@@ -1551,7 +1388,6 @@ void Upscaling::UpscaleDepth()
 	auto bufferArray = jitterCB->CB();
 	context->PSSetConstantBuffers(0, 1, &bufferArray);
 
-	// (3) Skip aliased copies
 	const auto copyIfNonAliased = [&](ID3D11Resource* dst, ID3D11Resource* src) {
 		if (dst && src && dst != src) {
 			context->CopyResource(dst, src);
@@ -1561,11 +1397,8 @@ void Upscaling::UpscaleDepth()
 	{
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth Upscale");
 
-		// Sometimes this is not already copied e.g. map menu.
-		// Skip alias copies to reduce unnecessary copy churn.
 		copyIfNonAliased(depthCopy.texture, depth.texture);
 
-		// Set depth stencil state to write 0x00
 		context->OMSetDepthStencilState(upscaleDepthStencilState.get(), 0x00);
 
 		copyIfNonAliased(refractionNormals.textureCopy, refractionNormals.texture);
@@ -1593,7 +1426,6 @@ void Upscaling::UpscaleDepth()
 
 		context->OMSetDepthStencilState(nullptr, 0x00);
 
-		// t0: vanilla mask copy, t1: original depth.
 		ID3D11ShaderResourceView* srvs[] = { underwaterMask.SRVCopy, depthCopy.depthSRV };
 		context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
@@ -1612,37 +1444,11 @@ void Upscaling::UpscaleDepth()
 	state->EndPerfEvent();
 }
 
-void Upscaling::ApplySharpening()
-{
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Sharpening");
-
-	if (settings.sharpnessDLSS <= 0.0f)
-		return;
-
-	if (!sharpenerTexture)
-		return;
-
-	float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-	currentSharpness = exp2(-currentSharpness);
-
-	auto context = globals::d3d::context;
-	auto renderer = globals::game::renderer;
-	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-
-	if (!main.UAV)
-		return;
-
-	context->OMSetRenderTargets(0, nullptr, nullptr);
-
-	// Zero-copy path: DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-	rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, currentSharpness);
-
-	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-}
-
 void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 {
+	// Establish this render frame's explicit SL frame ID before any SL call of the frame
+	// (constants, tags, evaluates, markers all fetch their token with it).
+	Streamline::GetSingleton()->BeginRenderFrame();
 	globals::features::upscaling.ConfigureTAA();
 	func(a_state);
 	globals::features::upscaling.ConfigureUpscaling(a_state);
@@ -1650,15 +1456,29 @@ void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 
 void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 {
-	globals::features::upscaling.PostDisplay();
-
-	// For non-Frame Gen HDR: redirect kFRAMEBUFFER.RTV to UI texture before vanilla UI renders
-	// When FG is active, its SetUIBuffer redirects to uiBufferWrapped instead
-	// When HDR Display is not loaded, skip entirely so vanilla UI renders to kFRAMEBUFFER
 	auto& upscaling = globals::features::upscaling;
-	if (!upscaling.d3d12SwapChainActive && globals::features::hdrDisplay.loaded) {
-		globals::features::hdrDisplay.SetUIBuffer();
+
+	// Capture the hudless scene for frame generation HERE — this hook fires just before the UI/HUD is drawn
+	// (func(a1) below), so the back buffer holds the fully-composited scene WITHOUT UI, in the back-buffer
+	// format. The game's kFRAMEBUFFER `.texture` is NULL under DXVK, but its SRV references the real back
+	// buffer — read the resource from the SRV. Both DLSS-G and FSR FG consume this as their HUDLessColor.
+	if (upscaling.IsFrameGenerationActive()) {
+		if (!upscaling.hudlessTexture || !upscaling.hudlessTexture->resource)
+			upscaling.CreateHudlessTexture();
+		auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+		if (fb.SRV && upscaling.hudlessTexture && upscaling.hudlessTexture->resource) {
+			winrt::com_ptr<ID3D11Resource> fbResource;
+			fb.SRV->GetResource(fbResource.put());
+			if (fbResource)
+				globals::d3d::context->CopyResource(upscaling.hudlessTexture->resource.get(), fbResource.get());
+		}
 	}
+
+	upscaling.PostDisplay();
+
+	auto& hdr = globals::features::hdrDisplay;
+	if (hdr.loaded)
+		hdr.SetUIBuffer();
 
 	func(a1);
 }
@@ -1668,26 +1488,140 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 
-	if (upscaling.ShouldUseFrameGenerationThisFrame())
-		upscaling.CopySharedD3D12Resources();
+	// Reflex/PCL: the game simulation has finished and post-process/upscale render submission
+	// happens here — mark the simulation-end / render-submit-start boundary.
+	// Main_PostProcessing runs MORE THAN ONCE per rendered frame (same reason the constants/evaluate
+	// pair below is guarded once-per-frame). Fire these two markers only on the FIRST invocation each
+	// frame: otherwise SimulationEnd/RenderSubmitStart land ~2×/frame while their partners
+	// (RenderSubmitEnd/PresentStart/PresentEnd) fire 1×/frame on the present thread, doubling and
+	// desyncing the Sim→Submit→Present timeline DLSS-G paces the *interpolated* frame from. That
+	// systematically biases the generated frame's camera-reprojection phase — the whole static world
+	// gets flagged dynamic and reprojected wrong, worsening with camera rotation speed (real frames,
+	// rendered by the engine, are unaffected). Matches the once-per-frame SimulationStart rule.
+	auto* streamline = Streamline::GetSingleton();
+	if (upscaling.GetEffectiveReflex()) {
+		static uint32_t s_lastSimEndFrame = UINT32_MAX;
+		const uint32_t gameFrame = globals::state->frameCount;
+		if (s_lastSimEndFrame != gameFrame) {
+			s_lastSimEndFrame = gameFrame;
+			streamline->SetPCLMarker(Streamline::PclMarker::SimulationEnd);
+			streamline->SetPCLMarker(Streamline::PclMarker::RenderSubmitStart);
+		}
+	}
 
-	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA)
+	if (upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kXeSS || upscaleMethod == UpscaleMethod::kDLSS)
 		upscaling.PerformUpscaling();
 
-	if (upscaleMethod == UpscaleMethod::kDLSS)
-		upscaling.ApplySharpening();
+	// (HUDLessColor is captured later, in MenuManagerDrawInterfaceStartHook just before the UI draws, from
+	// kFRAMEBUFFER — the fully-composited pre-UI swapchain in back-buffer format.)
+
+	// Frame-gen resource tagging is independent of which upscaler ran (an upscaler + frame
+	// generation can be active together), so this is its own `if`, not an `else if`.
+	if (upscaling.IsFrameGenerationActive() && !Upscaling::IsWindowUnusable()) {
+		auto fgMethod = upscaling.GetFrameGenMethod();
+		auto renderer = globals::game::renderer;
+		auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+
+		auto* ui = globals::game::ui;
+		const bool gameplay = ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
+		ID3D11Resource* hudless = (upscaling.hudlessTexture && upscaling.hudlessTexture->resource)
+		                              ? upscaling.hudlessTexture->resource.get()
+		                              : nullptr;
+
+		if (fgMethod == FrameGenMethod::kDLSSG) {
+			// Turn DLSS-G interpolation on. The controller defers the first
+			// slDLSSGSetOptions(on) until the load reconcile settled on the final
+			// swapchain (single engagement, no toggle bounce), and SetDLSSGMode
+			// caches so steady-state frames are no-ops. slDLSSGSetOptions is NOT
+			// thread-safe vs Streamline's present hook (guide section 6.0), which
+			// is why the mode is never flipped per-frame.
+			FrameGen::Controller::GetSingleton()->EngageDLSSG();
+
+			if (gameplay) {
+				const auto dispSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+				// renderSize MUST be the actual DRS render size where depth/MV are valid — ignoreLock=true, else
+				// ConvertToDynamic returns full res and SL reads stale MV in the region outside the render sub-rect.
+				const auto rendSize = Util::ConvertToDynamic(dispSize, /*ignoreLock=*/true);
+
+				// FG depth = the pre-upscale render-res kMAIN. With an active upscaler UpscaleDepth() rewrote kMAIN
+				// to display res, but first copied the render-res depth into kMAIN_COPY — tag that. TAA (no upscaler):
+				// kMAIN is still render-res. DLSS-G tags this eOnlyValidNow, so SL snapshots it at tag time (instead
+				// of a CS-side CopyResource) and the later in-place depth upscale / next frame can't disturb it.
+				auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+				auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+				ID3D11Resource* fgDepth = (upscaling.IsUpscalingActive() && depthCopy.texture)
+				                              ? depthCopy.texture
+				                              : depth.texture;
+
+				// Under DXVK full-interposition, sl.dlss_g's present hook only PROCESSES (generates) a frame
+				// when a per-frame slEvaluateFeature(kFeatureFSR/DLSS) ran that frame — proven by exhaustive
+				// visual testing (the NVIDIA DLSSG dev overlay appears for FSR/DLSS, never for bare TAA). The
+				// sample needs no evaluate only because it uses eUseManualHooking (native synchronous present),
+				// which is mutually exclusive with the interposition the whole CS integration relies on. So on
+				// the no-upscaler (TAA) path drive a 1.0x FSR evaluate as the DLSS-G keep-alive: it sets the
+				// viewport-0 constants AND provides the per-frame SL-tracked evaluate sl.dlss_g requires. Output
+				// goes to the throwaway upscaledTexture (never copied back) so TAA's image is untouched.
+				if (!upscaling.IsUpscalingActive()) {
+					upscaling.CreateUpscaledTexture();  // idempotent throwaway target
+					auto& mainColor = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+					if (upscaling.upscaledTexture && upscaling.upscaledTexture->resource && mainColor.texture)
+						Streamline::GetSingleton()->EvaluateFSR(
+							mainColor.texture, upscaling.upscaledTexture->resource.get(), fgDepth, motionVector.texture,
+							(uint32_t)dispSize.x, (uint32_t)dispSize.y, (uint32_t)dispSize.x, (uint32_t)dispSize.y,
+							0 /*native 1.0x*/, 0.0f, upscaling.jitter.x, upscaling.jitter.y);
+				}
+
+				// Copy + tag once per rendered frame: Main_PostProcessing runs more than once per frame
+				// (see the marker gate above). Re-tagging is redundant (same token, same content — SL keeps
+				// the last), and each extra call would advance the MV ring, halving its reuse distance.
+				static uint32_t s_lastTagFrame = UINT32_MAX;
+				const uint32_t tagFrame = globals::state->frameCount;
+				if (s_lastTagFrame != tagFrame) {
+					s_lastTagFrame = tagFrame;
+					// Tag the LIVE kMOTION_VECTOR, sample-style. NOTE: the present-hook bound that
+					// guaranteed the GPU executed this frame's MV writes + tag before the present (which had
+					// validated the former 3-deep MV ring copy redundant) was REMOVED; the MV ring stays
+					// removed, so live-MV tagging no longer has that ordering backing it.
+					Streamline::GetSingleton()->TagDLSSGResources(
+						fgDepth, motionVector.texture, hudless,
+						(uint32_t)rendSize.x, (uint32_t)rendSize.y,
+						(uint32_t)dispSize.x, (uint32_t)dispSize.y);
+				}
+				Streamline::GetSingleton()->LogReflexStatus();
+			}
+		} else if (fgMethod == FrameGenMethod::kFSR && gameplay) {
+			// Drive the FSR FG-prepare every gameplay frame from depth + motion vectors, independent of the
+			// active upscaler (the sl.fsr plugin runs FrameGenerationPrepare on a color-less FSR evaluate).
+			const auto dispSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+			// renderSize MUST be the actual DRS render size where depth/MV are valid (see the DLSS-G branch
+			// above) — ignoreLock=true, else ConvertToDynamic returns full res and FFX reads stale MV in the
+			// 3/4 of the texture outside the render sub-rect (the "motion vectors don't fill the screen" bug).
+			const auto rendSize = Util::ConvertToDynamic(dispSize, /*ignoreLock=*/true);
+			// FG depth = pre-upscale render-res kMAIN (see the DLSS-G branch): kMAIN_COPY holds the render-res
+			// depth UpscaleDepth() saved before rewriting kMAIN to display res. TAA (no upscaler): use kMAIN. The
+			// sl.fsr FG-prepare consumes depth at evaluate (mid-frame), so kMAIN_COPY is still the correct depth.
+			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+			ID3D11Resource* fgDepth = (upscaling.IsUpscalingActive() && depthCopy.texture)
+			                              ? depthCopy.texture
+			                              : depth.texture;
+			Streamline::GetSingleton()->EvaluateFSRFrameGen(
+				fgDepth, motionVector.texture, hudless,
+				(uint32_t)rendSize.x, (uint32_t)rendSize.y,
+				(uint32_t)dispSize.x, (uint32_t)dispSize.y,
+				upscaling.jitter.x, upscaling.jitter.y);
+			Streamline::GetSingleton()->LogFSRFrameGenStats();
+		}
+	}
 
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
-	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
-	// When HDR Display is not loaded, ISHDR writes to vanilla kFRAMEBUFFER (SDR path)
 	bool hdrLoaded = globals::features::hdrDisplay.loaded;
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RedirectFramebuffer();
 
 	func(a_this, a3, a_target, a_4, a_5);
 
-	// Restore kFRAMEBUFFER after ISHDR — hdrTexture now has the HDR scene
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
 

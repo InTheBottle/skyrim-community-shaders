@@ -1,160 +1,178 @@
 #pragma once
 
-#include "../../Buffer.h"
-#include "../../State.h"
-
 #include <cstdint>
-#include <d3d11_4.h>
-#include <d3d12.h>
+#include <d3d11.h>
 
-#define NV_WINDOWS
+// NVIDIA Streamline (DLSS / Reflex / DLSS-G) + community plugins (FSR / XeSS) on
+// DXVK's Vulkan device via full interposition (sl.interposer.dll IS DXVK's vulkan-1.dll).
+//
+// SL types are intentionally kept out of this header (sl.h pulls in a large surface);
+// all Streamline state lives in Streamline.cpp behind an opaque impl.
 
-#pragma warning(push)
-#pragma warning(disable: 4471)
-#include <sl.h>
-#include <sl_consts.h>
-#include <sl_dlss.h>
-#include <sl_matrix_helpers.h>
-#include <sl_reflex.h>
-#include <sl_version.h>
-#pragma warning(pop)
-
-/** @brief Manages NVIDIA Streamline integration for DLSS upscaling and Reflex latency reduction. */
 class Streamline
 {
 public:
-	static constexpr const wchar_t* PluginDir = L"Data\\Shaders\\Upscaling\\Streamline";
+	static Streamline* GetSingleton();
 
+	/** @brief Map sl.interposer.dll before DXVK creates its VkInstance, so DXVK's loader
+	 *  aliases it and routes its entire Vulkan surface through Streamline. Call from
+	 *  Upscaling::Load (plugin load), before any DXGI call. Cheap + idempotent. */
+	void PreloadInterposer();
+
+	/** @brief Runs slInit on the Vulkan backend. Idempotent.
+	 *  @return true if Streamline initialized. */
+	bool Initialize();
+
+	/** @brief Probes per-adapter feature support and resolves feature-specific entry points.
+	 *  Must be called after the D3D11/DXVK device exists and DxvkInterop is up. */
+	void SetVulkanDevice();
+
+	/** @brief slShutdown + frees the interposer. Safe to call when not initialized. */
+	void Shutdown();
+
+	[[nodiscard]] bool IsInitialized() const { return initialized; }
+	// The per-adapter feature probe has run (SetVulkanDevice). Until then the
+	// Is*Supported() flags read false, so method fallbacks (e.g. DLSS-G -> FSR
+	// when unsupported) give transient wrong answers during early boot.
+	[[nodiscard]] bool IsFeatureSupportResolved() const { return vulkanDeviceSet; }
+	[[nodiscard]] bool IsDLSSSupported() const { return featureDLSS; }
+	[[nodiscard]] bool IsReflexSupported() const { return featureReflex; }
+	[[nodiscard]] bool IsDLSSGSupported() const { return featureDLSSG; }
+	[[nodiscard]] bool IsXeSSSupported() const { return featureXeSS; }
+	[[nodiscard]] bool IsFSRSupported() const { return featureFSR; }
+
+	void EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_outputWidth, uint32_t a_outputHeight,
+		uint32_t a_qualityMode, float a_sharpness,
+		float a_jitterX, float a_jitterY);
+
+	void EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_outputWidth, uint32_t a_outputHeight,
+		uint32_t a_qualityMode, float a_sharpness,
+		float a_jitterX, float a_jitterY);
+
+	void EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_outputWidth, uint32_t a_outputHeight,
+		uint32_t a_qualityMode, float a_sharpness,
+		float a_jitterX, float a_jitterY);
+
+	// Standalone FSR frame-generation prepare: tags ONLY depth + motion vectors (no color) and drives the
+	// sl.fsr plugin's FG-prepare via slEvaluateFeature(kFeatureFSR). Decoupled from the upscaler, so FSR FG
+	// works under any upscale method. Call every gameplay frame while FSR FG is the active method.
+	void EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		ID3D11Resource* a_hudlessColor,
+		uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_outputWidth, uint32_t a_outputHeight,
+		float a_jitterX, float a_jitterY);
+
+	[[nodiscard]] bool SetFSRFrameGen(bool a_enable, uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_displayWidth, uint32_t a_displayHeight, bool a_hdr,
+		bool a_debugView = false, bool a_debugTearLines = false, bool a_debugPacingLines = false,
+		bool a_onlyPresentGenerated = false);
+
+	// Throttled log of the sl.fsr plugin's frame-generation state (framesPresented 2 = doubling
+	// active, 1 = not wrapped/pass-through). Call per gameplay frame while FSR-FG is selected.
+	void LogFSRFrameGenStats();
+
+	// a_frameLimitUs: Reflex frame-limiter interval in microseconds (0 = no limit). Only takes effect while
+	// Reflex is on; the caller uses DXVK's limiter instead when Reflex is off.
+	void UpdateReflex(bool a_enable, bool a_boost, uint32_t a_frameLimitUs = 0);
+
+	enum class PclMarker : uint32_t
+	{
+		SimulationStart = 0,
+		SimulationEnd = 1,
+		RenderSubmitStart = 2,
+		RenderSubmitEnd = 3,
+		PresentStart = 4,
+		PresentEnd = 5,
+		TriggerFlash = 7,    // sl::PCLMarker::eTriggerFlash — sample fires once/frame
+		PCLatencyPing = 8,   // sl::PCLMarker::ePCLatencyPing — sample fires once/frame
+	};
+
+	void SetPCLMarker(PclMarker a_marker);
+
+	// a_numFramesToGenerate: 1 = 2x (single frame), 2 = 3x …; clamped to the hardware max.
+	// a_autoMode: DLSS-G eAuto (fixed multiplier, but the driver auto-disables FG when it would lower FPS).
+	// a_dynamic: DLSS-G eDynamic (Dynamic Multi Frame Generation) — overrides a_autoMode; a_dynamicTargetFps
+	//   is the desired output fps (0 => auto-detect the monitor refresh). Use only when IsDLSSGDynamicSupported().
+	void SetDLSSGMode(bool a_enable, uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_displayWidth, uint32_t a_displayHeight, uint32_t a_numFramesToGenerate = 1,
+		bool a_autoMode = false, bool a_dynamic = false, float a_dynamicTargetFps = 0.0f);
+
+	// Render thread, once per frame at frame start (Main_UpdateJitter hook): establishes the
+	// explicit SL frame ID all render-thread SL calls this frame fetch their token with — the
+	// Streamline_Sample's engine-frame-counter pattern (no shared token, no cross-thread latch).
+	void BeginRenderFrame();
+
+	// Present hook, first skipped frame of a minimize: light eOff before the present gap
+	// (§17 — a gap with interpolation on wedges the pacer at resume).
+	void PauseDLSSGForWindowGap();
+
+	// Whether the DXVK present-marker bridge is active (PresentStart/End fire on DXVK's submit
+	// thread around the real vkQueuePresentKHR). When true, the present hook must call
+	// NotifyPresentQueued() instead of firing PresentStart/PresentEnd itself.
+	[[nodiscard]] bool PresentMarkersBridged() const;
+	// Render thread, at the D3D11 Present call: queue this frame's id for the bridged markers.
+	void NotifyPresentQueued();
+
+	// Query DLSS-G capabilities (numFramesToGenerateMax, Dynamic MFG support) and cache them. MUST run on the
+	// present thread (slDLSSGGetState requirement); CS calls this from its present hook. Idempotent once cached.
+	void QueryDLSSGCapabilities();
+	// Max numFramesToGenerate the hardware supports (0 = not yet queried). Max multiplier = this + 1.
+	[[nodiscard]] uint32_t GetDLSSGMaxFramesToGenerate() const;
+	// Whether DLSS-G Dynamic Multi Frame Generation (eDynamic) is supported (50-series + driver + D3D12).
+	[[nodiscard]] bool IsDLSSGDynamicSupported() const;
+
+	// DLSS-G runtime (un)load (Streamline DLSS-G guide §18): set the desired loaded state, then call
+	// RequestDxvkSwapchainRecreate() — DXVK's torn-down callback applies slSetFeatureLoaded in the
+	// no-swapchain window so the next create installs/omits DLSS-G's proxy. Unloaded => no overhead when off.
+	void SetDLSSGDesiredLoaded(bool a_loaded);
+	[[nodiscard]] bool IsDLSSGLoaded() const;
+	// Desired load state has been applied (no load/unload recreate outstanding).
+	[[nodiscard]] bool IsDLSSGLoadSettled() const;
+
+	void LogReflexStatus();
+
+	void TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		ID3D11Resource* a_hudlessColor, uint32_t a_renderWidth, uint32_t a_renderHeight,
+		uint32_t a_displayWidth, uint32_t a_displayHeight);
+
+	void ClearDLSSGTags();
+	void EnsureDLSSGPresentTag();
+
+	// Register the DXVK frame-gen ownership predicate so DXVK treats all swapchains as
+	// externally paced under interposition (skips present-fence, present-wait worker).
+	static void RegisterDxvkOwnershipPredicate();
+
+	// Force DXVK to recreate its Vulkan swapchain on the next acquire. The teardown window is where
+	// sl.dlss_g gets (un)loaded and how its sticky present proxy is evicted; a_reason is logged.
+	static void RequestDxvkSwapchainRecreate(const char* a_reason = "FG method switch");
+
+private:
 	Streamline() = default;
 
-	/** @brief Returns the short identifier used for logging. */
-	inline std::string GetShortName() { return "Streamline"; }
-
-	bool enabledAtBoot = false;
+	bool triedInit = false;
 	bool initialized = false;
-	bool triedInitialization = false;
+	bool vulkanDeviceSet = false;
 
 	bool featureDLSS = false;
 	bool featureReflex = false;
-	bool featurePCL = false;
-	bool reflexSupportedOnCurrentAdapter = false;
+	bool featureDLSSG = false;
+	bool featureXeSS = false;
+	bool featureFSR = false;
 
-	sl::ViewportHandle viewport{ 0 };
-	static constexpr uint32_t MAX_RESOLUTION = 8192;
-	HMODULE interposer = NULL;
+	// Pre-slInit hardware capability (VK_NV_optical_flow on the system loader): decides
+	// whether sl.dlss_g is loaded at all — and with it, the session's frame-generation
+	// method and present path. See ProbeDLSSGHardware in Streamline.cpp.
+	bool dlssgHardware = false;
 
-	// SL Interposer Functions
-	PFun_slInit* slInit{};
-	PFun_slShutdown* slShutdown{};
-	PFun_slIsFeatureSupported* slIsFeatureSupported{};
-	PFun_slIsFeatureLoaded* slIsFeatureLoaded{};
-	PFun_slSetFeatureLoaded* slSetFeatureLoaded{};
-	PFun_slEvaluateFeature* slEvaluateFeature{};
-	PFun_slAllocateResources* slAllocateResources{};
-	PFun_slFreeResources* slFreeResources{};
-	PFun_slSetTag* slSetTag{};
-	PFun_slGetFeatureRequirements* slGetFeatureRequirements{};
-	PFun_slGetFeatureVersion* slGetFeatureVersion{};
-	PFun_slUpgradeInterface* slUpgradeInterface{};
-	PFun_slSetConstants* slSetConstants{};
-	PFun_slGetNativeInterface* slGetNativeInterface{};
-	PFun_slGetFeatureFunction* slGetFeatureFunction{};
-	PFun_slGetNewFrameToken* slGetNewFrameToken{};
-	PFun_slSetD3DDevice* slSetD3DDevice{};
-
-	// DLSS specific functions
-	PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
-	PFun_slDLSSGetState* slDLSSGetState{};
-	PFun_slDLSSSetOptions* slDLSSSetOptions{};
-
-	// Reflex specific functions
-	PFun_slReflexGetState* slReflexGetState{};
-	PFun_slReflexSleep* slReflexSleep{};
-	PFun_slReflexSetOptions* slReflexSetOptions{};
-	PFun_slPCLSetMarker* slPCLSetMarker{};
-
-	Util::FrameChecker frameChecker;
-	sl::FrameToken* frameToken = nullptr;
-
-	bool isRTXBelow40series = false;
-
-	struct ReflexOptionsCache
-	{
-		bool valid = false;
-		sl::ReflexMode mode = sl::ReflexMode::eOff;
-		uint32_t frameLimitUs = 0;
-		bool useMarkersToOptimize = false;
-	};
-	ReflexOptionsCache reflexOptionsCache{};
-	uint32_t lastReflexSleepFrame = UINT32_MAX;
-
-	/**
-	 * @brief Executes DLSS evaluation for a single viewport with the given resources.
-	 * @param vp The viewport handle identifying the DLSS instance.
-	 * @param colorIn Input color texture to upscale.
-	 * @param colorOut Output texture receiving the upscaled result.
-	 * @param depth Depth buffer for temporal reprojection.
-	 * @param mvec Per-pixel motion vectors.
-	 * @param reactiveMask Reactive mask for temporal stability hints.
-	 * @param transparencyMask Mask for transparency and composition handling.
-	 * @param extentIn Input resolution extent.
-	 * @param extentOut Output resolution extent.
-	 * @param outputWidth Target output width for DLSS options.
-	 */
-	void EvaluateDLSS(sl::ViewportHandle vp,
-		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
-		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth);
-
-	// Cached DLL version info for Streamline plugin directory
-	static std::vector<std::pair<std::string, std::string>> dllVersions;
-
-	/** @brief Loads the Streamline interposer DLL and initializes the SDK with feature preferences. */
-	void LoadInterposer();
-
-	/**
-	 * @brief Queries available Streamline features (DLSS, Reflex, PCL) on the given adapter.
-	 * @param a_adapter The DXGI adapter to check feature support against.
-	 */
-	void CheckFeatures(IDXGIAdapter* a_adapter);
-
-	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
-	void PostDevice();
-
-	/** @brief Acquires a new frame token from Streamline for the current frame. */
-	bool EnsureFrameToken();
-	/**
-	 * @brief Sets camera and jitter constants on the Streamline viewport for the current frame.
-	 * @param p_viewport The viewport handle to configure.
-	 * @return True if constants were set successfully.
-	 */
-	bool CheckFrameConstants(sl::ViewportHandle p_viewport);
-
-	/**
-	 * @brief Detects whether the GPU is an NVIDIA RTX card below the 40-series generation.
-	 * @param a_adapter The DXGI adapter to inspect.
-	 * @return True if the adapter is RTX 20xx or 30xx series.
-	 */
-	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
-
-	/**
-	 * @brief Configures DLSS quality mode and resolution options for a viewport.
-	 * @param p_viewport The viewport handle to configure.
-	 * @param width The target output width.
-	 */
-	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width);
-
-	/**
-	 * @brief Dispatches DLSS upscaling for the current frame.
-	 * @param a_upscalingTexture The input color texture to upscale.
-	 * @param a_reactiveMask Reactive mask for temporal stability hints.
-	 * @param a_transparencyCompositionMask Mask for transparency handling.
-	 * @param a_motionVectors Per-pixel motion vectors for temporal reprojection.
-	 */
-	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors);
-	/** @brief Updates Reflex latency reduction state and performs the Reflex sleep call. */
-	void UpdateReflex();
-
-	/** @brief Frees DLSS viewport resources through the Streamline SDK. */
-	void DestroyDLSSResources();
+	bool isNvidiaGPU = false;
+	bool isRTXBelow40Series = false;
 };

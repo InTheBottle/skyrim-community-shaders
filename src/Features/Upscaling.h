@@ -1,20 +1,11 @@
 #pragma once
 
 #include "Feature.h"
-#include "Upscaling/DX12SwapChain.h"
-#include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
-#include "Upscaling/Streamline.h"
+#include <atomic>
 #include <d3d11_4.h>
-#include <d3d12.h>
 #include <winrt/base.h>
 
-/**
- * @brief Provides upscaling functionality including DLSS, FSR and TAA.
- *
- * This feature handles various upscaling methods and frame generation technologies
- * to improve performance while maintaining visual quality.
- */
 struct Upscaling : Feature
 {
 private:
@@ -31,11 +22,9 @@ public:
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
-		return { T("feature.upscaling.description", "Advanced upscaling and frame generation technologies for improved performance"),
-			{ T("feature.upscaling.key_feature_1", "DLSS (Deep Learning Super Sampling) support"),
-				T("feature.upscaling.key_feature_2", "FSR (FidelityFX Super Resolution) support"),
-				T("feature.upscaling.key_feature_3", "TAA (Temporal Anti-Aliasing) support"),
-				T("feature.upscaling.key_feature_4", "Frame generation for supported systems") } };
+		return { T("feature.upscaling.description", "Advanced upscaling technologies for improved performance"),
+			{ T("feature.upscaling.key_feature_2", "FSR (FidelityFX Super Resolution) support"),
+				T("feature.upscaling.key_feature_3", "TAA (Temporal Anti-Aliasing) support") } };
 	};
 
 	float2 jitter = { 0, 0 };
@@ -45,27 +34,50 @@ public:
 		kNONE,
 		kTAA,
 		kFSR,
-		kDLSS
+		kDLSS,
+		kXeSS,
+	};
+
+	enum class FrameGenMethod
+	{
+		kFSR,
+		kDLSSG,
 	};
 
 	struct Settings
 	{
-		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
+		uint upscaleMethod = (uint)UpscaleMethod::kFSR;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
-		uint qualityMode = 1;  // Default to Quality (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
-		uint frameLimitMode = 1;
-		uint frameGenerationMode = 1;
-		uint frameGenerationForceEnable = 0;
-		bool frameGenerationAllowInMenus = false;
-		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
+		uint qualityMode = 1;
 		float sharpnessFSR = 0.0f;
-		float sharpnessDLSS = 0.0f;
-		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
+		bool reflexEnabled = false;
+		bool reflexBoost = false;
+		// Legacy fields kept for JSON backward compatibility.
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;
-		bool reflexUseMarkersToOptimize = false;
-		bool reflexUseFPSLimit = false;
-		float reflexFPSLimit = 60.0f;
+		bool frameGeneration = false;
+		uint frameGenMethod = (uint)FrameGenMethod::kFSR;
+		// DLSS-G fixed frame multiplier (2 = 2x single-frame … up to 6x). numFramesToGenerate = multiplier - 1.
+		// Capped at runtime to the hardware max (numFramesToGenerateMax+1): 40-series caps at 2x, 50-series up to 6x.
+		uint frameGenMultiplier = 2;
+		// DLSS-G "Dynamic" mode: the driver picks the multiplier itself. Maps to eDynamic when the hardware
+		// supports Dynamic MFG (50-series), else eAuto (40-series). The target fps is the Display frame-rate
+		// option. false = a fixed multiplier (frameGenMultiplier).
+		bool dlssgDynamic = false;
+		bool fgShowOnlyGenerated = false;
+		bool fgDebugView = false;
+		bool fgDebugTearLines = false;
+		bool fgDebugPacingLines = false;
+		bool hardwareDefaultsApplied = false;
+
+		// Present pacing. VSync is applied in our present hook (forced OFF whenever DLSS-G is the active FG
+		// method — VSync is incompatible with DLSS-G on Vulkan). The cap is driven by Reflex when available
+		// (lowest latency; DLSS-G handles it this way), else by DXVK's frame limiter.
+		bool vsync = false;
+		// Frame-rate cap as a DIVISOR of the monitor refresh rate: 1 = refresh (default), 2 = half, 3 = third…;
+		// 0 = unlocked (variable, no cap). Stored as the divisor (not an fps) so the cap stays meaningful across
+		// monitors/refresh rates. Resolved to fps by GetTargetFrameRate().
+		int frameRateLimitDivisor = 1;
 	};
 
 	Settings settings;
@@ -77,31 +89,42 @@ public:
 		float pad0;
 	};
 
-	struct UpscalingDataCB
-	{
-		float2 trueSamplingDim;
-		float2 pad0;
-	};
-
 	ConstantBuffer* jitterCB = nullptr;
-	ConstantBuffer* upscalingDataCB = nullptr;
 
 	// Runtime state
 	bool isWindowed = false;
-	bool lowRefreshRate = false;
-	bool fidelityFXMissing = false;
-	bool d3d12SwapChainActive = false;
+
+	// When true, the discrete settings steppers render as PhotoMode-style "< value >" arrow controls rather
+	// than native sliders. DisplaySettingsMenu sets this around its DrawSettings() call so the in-game Display
+	// Settings window matches PhotoMode, while the CS main menu keeps native sliders.
+	static inline bool useArrowSteppers = false;
+
+	// True while the game window is minimized: every Streamline/GPU-interop call (and the
+	// present itself, see the present hook) must be skipped for the gap's duration.
+	static bool IsWindowGapActive();
+
+	// Frame generation MUST be off whenever the window is not in a normal focused state:
+	// DXVK recreates the swapchain on occlusion and an FG-wrapped swapchain freezes the GPU
+	// (and DLSS-G's pacer wedges across a present gap, guide §17). These flags are set from
+	// the game's window/message thread (WndProc hook) — atomics ONLY, never touch SL/FFX
+	// there (wrong thread) — and read on the render/present thread via IsWindowUnusable().
+	static void NotifyWindowFocus(bool a_focused);        // WM_ACTIVATEAPP / WM_ACTIVATE
+	static void NotifyWindowModifying(bool a_modifying);  // WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE
+
+	// True while the window is minimized, unfocused (alt-tabbed / occluded), or being
+	// resized/moved. Frame generation is suspended for the duration (present hook ->
+	// FrameGen::Controller::SuspendForWindowGap). Superset of IsWindowGapActive() (minimize).
+	static bool IsWindowUnusable();
+
+	// Set from WndProc (window/message thread), read on the render/present thread.
+	static inline std::atomic<bool> s_windowUnfocused{ false };
+	static inline std::atomic<bool> s_windowModifying{ false };
+
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
 	float2 resolutionScale = { 1.0f, 1.0f };
-	LARGE_INTEGER qpf;
 
-	// FG FPS Measurement for Overlay
-	bool IsFrameGenerationDx12PathActive() const;
-	bool IsFrameGenerationActive() const;
-	bool ShouldUseFrameGenerationThisFrame() const;
-	float GetFrameGenerationFrameTime() const;
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
@@ -111,23 +134,16 @@ public:
 	virtual void RestoreDefaultSettings() override;
 	virtual void DataLoaded() override;
 
-	/**
-	 * @brief Installs Direct3D-related hooks for device and factory creation.
-	 *
-	 * Loads FidelityFX support and patches the import address table (IAT) to redirect D3D11 device and DXGI factory creation functions to custom hook implementations.
-	**/
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+	FrameGenMethod GetFrameGenMethod() const;
+
+	void ApplyHardwareDefaults();
 
 	void CheckResources(UpscaleMethod a_upscalemethod);
-	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
-	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
-
-	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCS[4];  // One for each UpscaleMethod (kNONE, kTAA, kFSR, kDLSS)
-	ID3D11ComputeShader* GetEncodeTexturesCS();
 
 	winrt::com_ptr<ID3D11PixelShader> depthRefractionUpscalePS;
 	ID3D11PixelShader* GetDepthRefractionUpscalePS();
@@ -142,7 +158,6 @@ public:
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
-	// Helper: Create a Texture2D matching source format at a given size
 	static eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
 
@@ -150,21 +165,31 @@ public:
 	void ConfigureUpscaling(RE::BSGraphics::State* a_state);
 	void Upscale();
 
+	bool IsFrameGenerationActive() const;
+
+	// Effective NVIDIA Reflex state under the frame-generation policy: DLSS-G frame-gen forces Reflex ON
+	// (DLSS-G stalls without it), FSR frame-gen forces it OFF, and with no frame generation it follows the
+	// user's reflexEnabled toggle. Never mutates the saved preference.
+	[[nodiscard]] bool GetEffectiveReflex() const;
+
+	// Monitor refresh rate in Hz (from the cached swapchain refreshRate, else the current display mode, else 60).
+	[[nodiscard]] int GetMonitorRefreshRate() const;
+	// Resolve the frame-rate cap to an fps value: refresh / frameRateLimitDivisor, or 0 ("no limit") when the
+	// divisor is 0 (unlocked). Driven by Reflex when active, else DXVK's limiter.
+	[[nodiscard]] int GetTargetFrameRate() const;
+	// Apply a frame-rate cap through DXVK's own limiter (the non-Reflex fallback). fps<=0 clears the limit.
+	void ApplyDxvkFrameRateLimit(double a_fps);
+
+	HRESULT PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags,
+		const std::function<HRESULT(IDXGISwapChain*, UINT, UINT)>& a_present);
+
 	// D3D11 textures
-	Texture2D* reactiveMaskTexture = nullptr;
-	Texture2D* transparencyCompositionMaskTexture = nullptr;
-	Texture2D* motionVectorCopyTexture = nullptr;
-	Texture2D* sharpenerTexture = nullptr;
+	Texture2D* upscaledTexture = nullptr;
+	Texture2D* hudlessTexture = nullptr;
 
 	virtual void ClearShaderCache() override;
 
-	// Static instances instead of singletons
-	static inline Streamline streamline;
-	static inline FidelityFX fidelityFX;  ///< Only for frame generation
-	static inline DX12SwapChain dx12SwapChain;
-	static inline RCAS rcas;  ///< Standalone RCAS sharpening for DLSS
-
-	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
+	static inline RCAS rcas;
 
 	float projectionPosScaleX = 0.0f;
 	float projectionPosScaleY = 0.0f;
@@ -173,61 +198,21 @@ public:
 	float dynamicResolutionHeightRatio = 1.0f;
 
 	bool previousUpscalingWasActive = false;
+
 	bool depthUpscaleUseWideKernel = false;
 
-	/**
-	 * Set by MenuOpenCloseEventHandler when LoadingMenu closes (cell/worldspace transitions,
-	 * initial load). Consumed at the start of Upscale() to force a one-frame DLSS feature
-	 * rebuild.
-	 */
-	std::atomic<bool> pendingDLSSReset{ false };
-
-	void CopySharedD3D12Resources();
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
 
-	/**
-	 * @brief Applies RCAS sharpening to the main render target after DLSS upscaling.
-	 *
-	 * Runs in HDR space before tonemapping. Only called when DLSS is active and sharpness > 0.
-	 */
-	void ApplySharpening();
-
-	static void TimerSleepQPC(int64_t targetQPC);
-
-	void FrameLimiter();
-
 	static double GetRefreshRate(HWND a_window);
 
-	// Unified interface methods - external code should use these instead of direct access
-	void LoadUpscalingSDKs();  // Loads all SDKs at once
-	HANDLE GetFrameLatencyWaitableObject() const;
-	float GetFrameTime() const;
-
-	// Backend interface methods
-	bool IsBackendInitialized() const;
-	void CheckBackendFeatures(IDXGIAdapter* adapter);
-	void UpgradeBackendInterface(void** ppInterface);
-	void SetBackendD3DDevice(ID3D11Device* device);
-	void PostBackendDevice();
-
-	// Module availability methods
-	bool HasFrameGenModule() const;
-
-	// Proxy interface methods
-	void SetProxyD3D11Device(ID3D11Device* device);
-	void SetProxyD3D11DeviceContext(ID3D11DeviceContext* context);
-	void CreateProxySwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
-	void CreateProxyInterop();
-	IDXGISwapChain* GetProxySwapChain();
-
-	using BlurResources = DX12SwapChain::BlurResources;
-
-	// Get all D3D11 resources needed for background blur when D3D12 swap chain is active
-	BlurResources GetBlurResources() const;
-
 private:
+	void CreateUpscaledTexture();
+	void DestroyUpscaledTexture();
+	void CreateHudlessTexture();
+	void DestroyHudlessTexture();
+
 	struct Main_UpdateJitter
 	{
 		static void thunk(RE::BSGraphics::State* a_state);

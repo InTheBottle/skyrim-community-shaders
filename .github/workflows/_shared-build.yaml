@@ -71,6 +71,47 @@ jobs:
                   cmake-preset: ${{ matrix.compiler.cmake-preset }}
                   build-dir: ${{ matrix.compiler.build-dir }}
 
+            # DXVK is a git submodule that CMake only STAGES (it never builds it). The
+            # install()/PREPARE_AIO rules need extern/dxvk/build/src/d3d11/d3d11.dll to exist,
+            # so we build DXVK natively here (using the MSVC env already set up above) before
+            # the CMake configure/build below. The FFX + Streamline DLL fetches (Tasks A/B)
+            # happen automatically during the run-cmake configure, so they need no CI step.
+            - name: Resolve DXVK submodule SHA
+              id: dxvk_sha
+              shell: bash
+              run: echo "sha=$(git -C extern/dxvk rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+            # Cache the DXVK build keyed on the submodule SHA so it is reused across runs
+            # (a full DXVK build is slow). Bumping the submodule invalidates the cache.
+            # The `-avx2ndebug` salt is load-bearing: the key is otherwise SHA-only, so changing the
+            # meson flags below (without bumping the submodule) would silently reuse the stale flagless
+            # build. Bump the salt whenever the DXVK build flags change.
+            - name: Cache DXVK build
+              id: cache_dxvk
+              uses: actions/cache@v5
+              with:
+                  path: extern/dxvk/build
+                  key: ${{ runner.os }}-dxvk-avx2ndebug-${{ steps.dxvk_sha.outputs.sha }}
+
+            - name: Install DXVK build tools (meson, ninja, glslang)
+              if: steps.cache_dxvk.outputs.cache-hit != 'true'
+              shell: pwsh
+              run: |
+                  python -m pip install --upgrade meson ninja
+                  choco install vulkan-sdk -y --no-progress
+
+            - name: Build DXVK
+              if: steps.cache_dxvk.outputs.cache-hit != 'true'
+              shell: pwsh
+              # Match the validated local build (tools/build-dxvk.ps1): -Db_ndebug=true (meson does NOT
+              # tie NDEBUG to buildtype=release, so a plain "release" ships DXVK with all asserts/debug
+              # paths live) and /arch:AVX2 (MSVC defaults to SSE2; the CS DLL is already /arch:AVX2 since
+              # 5f7d7337, so this adds no new hardware floor — release users already need AVX2). Prune
+              # d3d8/9/10 (CS never stages them). Without these CI shipped a slower SSE2, asserts-on DXVK.
+              run: |
+                  meson setup extern/dxvk/build extern/dxvk --buildtype release -Db_ndebug=true -Dcpp_args="/arch:AVX2" -Denable_d3d8=false -Denable_d3d9=false -Denable_d3d10=false
+                  ninja -C extern/dxvk/build
+
             - name: Build using run-cmake
               uses: lukka/run-cmake@v10
               with:
