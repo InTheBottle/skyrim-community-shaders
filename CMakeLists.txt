@@ -773,6 +773,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         DEPENDS
             ${HLSL_FILES}
             ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
+            ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
         COMMENT "Copying changed shaders into AIO/Shaders"
     )
 
