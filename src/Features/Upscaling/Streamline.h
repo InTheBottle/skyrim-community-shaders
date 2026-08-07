@@ -149,7 +149,7 @@ public:
 	void WaitDLSSGInputFence();
 	// Max numFramesToGenerate the hardware supports (0 = not yet queried). Max multiplier = this + 1.
 	[[nodiscard]] uint32_t GetDLSSGMaxFramesToGenerate() const;
-	// Whether DLSS-G Dynamic Multi Frame Generation (eDynamic) is supported (50-series + driver + D3D12).
+	// Whether DLSS-G Dynamic Multi Frame Generation (eDynamic) is supported (50-series + compatible driver).
 	[[nodiscard]] bool IsDLSSGDynamicSupported() const;
 
 	// DLSS-G runtime (un)load (Streamline DLSS-G guide §18): set the desired loaded state, then call

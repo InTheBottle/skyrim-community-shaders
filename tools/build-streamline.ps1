@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Build the Community Shaders Streamline fork plugins (sl.interposer / sl.fsr / sl.xess) from the
+    Build the Community Shaders Streamline fork plugins (sl.interposer / sl.fsr / sl.fsr_g / sl.xess) from the
     extern/Streamline submodule — fast and incrementally — so every Build*.bat produces them with no
     separate manual step.
 
@@ -8,13 +8,13 @@
     Called by BuildRelease.bat (and therefore by every one-click wrapper) right after
     tools/build-dxvk.ps1, BEFORE the CMake configure/build. CMakeLists.txt globs the staged plugins
     from extern/Streamline/_artifacts/sl.*/Develop_x64/sl.*.dll and installs the
-    sl.(fsr|xess|interposer) subset; without this step that directory is empty and a cold boot ships
+    sl.(fsr|fsr_g|xess|interposer) subset; without this step that directory is empty and a cold boot ships
     a mod with no upscaling / frame-generation (CMake only prints a WARNING).
 
-    Only the three CS-built fork plugins are compiled — the signed production runtimes ship committed
-    under package/SKSE/Plugins/CommunityShaders/Streamline/. sl.interposer, sl.fsr and sl.xess have no
+    Only the four CS-built fork plugins are compiled — the signed production runtimes ship committed
+    under package/SKSE/Plugins/CommunityShaders/Streamline/. The fork plugins have no
     inter-project dependencies (they compile the core sl.* sources they need directly and LoadLibrary
-    the runtime DLLs), so targeting just these three keeps the build minimal.
+    the runtime DLLs), so targeting just these four keeps the build minimal.
 
     Speed / correctness:
       * Incremental: msbuild is invoked WITHOUT a Clean target, so an unchanged tree relinks nothing.

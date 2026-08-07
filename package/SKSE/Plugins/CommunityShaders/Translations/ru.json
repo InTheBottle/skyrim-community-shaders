@@ -2035,7 +2035,6 @@
     "feature.upscaling.frame_generation_in_menus": "Генерация кадров в меню",
     "feature.upscaling.frame_generation_in_menus_tooltip_1": "Сохраняет генерацию кадров активной в игровых меню.",
     "feature.upscaling.frame_generation_in_menus_tooltip_2": "Может быть более плавным, но увеличивает задержку ввода в меню.",
-    "feature.upscaling.frame_generation_proxy_note": "Требует прокси D3D11 к D3D12, что может создавать проблемы совместимости",
     "feature.upscaling.frame_generation_restart_note": "Переключение этой настройки требует перезапуска для корректной работы",
     "feature.upscaling.frame_generation_tech": "Использует технологию AMD FSR Frame Generation",
     "feature.upscaling.frame_limit_vrr": "Ограничение кадров (переменная частота обновления)",
@@ -2049,7 +2048,6 @@
     "feature.upscaling.low_latency_mode_tooltip_2": "Может незначительно снижать максимальный FPS, но обычно обеспечивает более отзывчивое управление.",
     "feature.upscaling.marker_optimization_unavailable": "Оптимизация маркеров недоступна (PCL не загружен).",
     "feature.upscaling.nvidia_reflex": "NVIDIA Reflex",
-    "feature.upscaling.reflex_blocked_by_fg": "Reflex недоступен при активной цепочке обмена DX12 с генерацией кадров.",
     "feature.upscaling.reflex_not_available": "Reflex недоступен. Убедитесь, что sl.reflex.dll присутствует, и перезапустите.",
     "feature.upscaling.streamline_logging": "Журналирование Streamline",
     "feature.upscaling.streamline_logging_restart_note": "Изменение этой настройки требует перезапуска.",
@@ -2059,6 +2057,5 @@
     "feature.upscaling.use_fps_limit_tooltip_2": "Может снижать задержку по сравнению с рендерингом без ограничений.",
     "feature.upscaling.use_markers_to_optimize": "Использовать маркеры для оптимизации",
     "feature.upscaling.use_markers_to_optimize_tooltip_1": "Использует маркеры кадров для более точной синхронизации Reflex.",
-    "feature.upscaling.use_markers_to_optimize_tooltip_2": "Попробуйте Вкл. сначала; выключите, если это вызывает заикания на вашей системе.",
-    "menu.footer.d3d12_swap_chain": "D3D12 Swap Chain: {status}"
+    "feature.upscaling.use_markers_to_optimize_tooltip_2": "Попробуйте Вкл. сначала; выключите, если это вызывает заикания на вашей системе."
 }

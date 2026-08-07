@@ -465,15 +465,41 @@ if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
 endif()
 
 # Streamline runtime DLLs. The signed production set — sl.common/dlss/dlss_g/pcl/reflex,
-# the nvngx_* NGX models, NvLowLatencyVk.dll, plus the FSR (amd_fidelityfx_vk.dll) and
+# the nvngx_* NGX models, NvLowLatencyVk.dll, plus the Vulkan FSR (amd_fidelityfx_vk.dll) and
 # XeSS (libxess.dll) runtimes — is committed under
 # package/SKSE/Plugins/CommunityShaders/Streamline/ and ships with the package tree like
 # any other asset; there is no configure-time download. Only the CS-built (necessarily
 # unsigned) fork plugins are staged from the build tree: sl.interposer (CS WSI-hook
-# change for DLSS-G ↔ FSR-FG present coexistence) and the CS-custom sl.fsr / sl.xess.
+# change for DLSS-G ↔ FSR-FG present coexistence) and the CS-custom sl.fsr / sl.fsr_g / sl.xess.
 # (The fork interposer was briefly suspected in the DLSS-G world-flash and pinned to the
 # SDK build; a controlled follow-up round — waitIdle fix with the fork interposer restored
 # — cleared it. The flash was solely the async-eval input-lifetime race.)
+# FSR upscale and frame generation both load this module from the plugin directory at runtime.
+# Fail configuration instead of producing an AIO in which FSR appears selectable but cannot start.
+set(_FFX_VK_RUNTIME "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/Streamline/amd_fidelityfx_vk.dll")
+if(NOT EXISTS "${_FFX_VK_RUNTIME}")
+    message(FATAL_ERROR "Missing Vulkan FSR runtime: ${_FFX_VK_RUNTIME}")
+endif()
+set(_FFX_VK_PINNED "${CMAKE_SOURCE_DIR}/extern/Streamline/external/fidelityfx-bin/amd_fidelityfx_vk.dll")
+if(EXISTS "${_FFX_VK_PINNED}")
+    file(SHA256 "${_FFX_VK_RUNTIME}" _FFX_VK_RUNTIME_SHA256)
+    file(SHA256 "${_FFX_VK_PINNED}" _FFX_VK_PINNED_SHA256)
+    if(NOT _FFX_VK_RUNTIME_SHA256 STREQUAL _FFX_VK_PINNED_SHA256)
+        message(FATAL_ERROR "Packaged Vulkan FSR runtime does not match the pinned Streamline fork")
+    endif()
+endif()
+
+# Legacy backend binaries must never leak into the Vulkan package through package/ or a feature tree.
+file(GLOB_RECURSE _LEGACY_UPSCALING_RUNTIMES
+    "${CMAKE_SOURCE_DIR}/package/*dx12*"
+    "${CMAKE_SOURCE_DIR}/package/*d3d12*"
+    "${CMAKE_SOURCE_DIR}/features/Upscaling/*dx12*"
+    "${CMAKE_SOURCE_DIR}/features/Upscaling/*d3d12*"
+)
+if(_LEGACY_UPSCALING_RUNTIMES)
+    message(FATAL_ERROR "Legacy upscaling runtimes found in Vulkan package inputs: ${_LEGACY_UPSCALING_RUNTIMES}")
+endif()
+
 # NOTE: never stage the rest of the fork's _artifacts output — sl.template crashes
 # slInit (strlen(NULL) in its embedded JSON), and the others are never requested by
 # featuresToLoad (src/Features/Upscaling/Streamline.cpp).

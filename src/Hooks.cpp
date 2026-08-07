@@ -272,8 +272,8 @@ struct IDXGISwapChain_Present
 
 		// CS owns VSync via the Upscaling menu setting, overriding whatever SyncInterval the game passes. The one
 		// hard rule: VSync is fundamentally incompatible with DLSS-G frame generation on Vulkan, so it is ALWAYS
-		// forced off when DLSS-G is the active FG method (the IFLIP-based application-controlled-VSync path is a
-		// D3D12 concept that does not apply; presenting DLSS-G with SyncInterval>0 makes SL DISABLE interpolation
+		// forced off when DLSS-G is the active FG method (the application-controlled-VSync path is unavailable
+		// here; presenting DLSS-G with SyncInterval>0 makes SL DISABLE interpolation
 		// — "VSync interval 1 not supported with FG" — and frame-gen stops doubling). Reflex caps the rate for
 		// DLSS-G; the frame limiter handles VRR for the rest. FSR-FG/FFX still paces its own present underneath.
 		{

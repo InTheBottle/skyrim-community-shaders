@@ -15,7 +15,7 @@
 #include <filesystem>
 
 // Streamline SDK headers (header-only in the repo; the plugin DLLs ship separately
-// into the CS folder for NVIDIA users). NV_WINDOWS selects the Win32 surface.
+// into the CS folder). NV_WINDOWS selects the Win32 surface.
 #define NV_WINDOWS
 #pragma warning(push)
 #pragma warning(disable: 4471 5103)
@@ -558,9 +558,9 @@ void Streamline::SetVulkanDevice()
 	vulkanDeviceSet = true;
 
 	// Per-adapter feature probe. AdapterInfo with vkPhysicalDevice set keys SL off
-	// the actual GPU (LUID ignored). Only eOk means "enable". On AMD this whole
-	// method is unreachable (Initialize() returned false), but the per-feature
-	// check is the authoritative second gate on NVIDIA (old GPUs lack DLSS-G, etc.).
+	// the actual GPU (LUID ignored). Only eOk means "enable". The Vulkan FSR plugins
+	// advertise support on every compatible vendor; proprietary features remain
+	// gated by their own plugin and hardware checks.
 	sl::AdapterInfo adapter{};
 	adapter.vkPhysicalDevice = dxvk->GetPhysicalDevice();
 	const auto supported = [&](sl::Feature f) {

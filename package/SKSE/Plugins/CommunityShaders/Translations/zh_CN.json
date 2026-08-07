@@ -2054,7 +2054,6 @@
     "feature.upscaling.frame_generation_in_menus": "菜单中启用帧生成",
     "feature.upscaling.frame_generation_in_menus_tooltip_1": "在游戏菜单打开时保持帧生成激活。",
     "feature.upscaling.frame_generation_in_menus_tooltip_2": "可能感觉更流畅，但会增加菜单输入延迟。",
-    "feature.upscaling.frame_generation_proxy_note": "需要D3D11到D3D12代理，可能产生兼容性问题",
     "feature.upscaling.frame_generation_restart_note": "切换此设置需要重启才能正常工作",
     "feature.upscaling.frame_generation_tech": "使用AMD FSR帧生成技术",
     "feature.upscaling.frame_limit_vrr": "帧率限制（可变刷新率）",
@@ -2068,7 +2067,6 @@
     "feature.upscaling.low_latency_mode_tooltip_2": "可能略微降低最大FPS，但通常感觉响应更快。",
     "feature.upscaling.marker_optimization_unavailable": "标记优化不可用（PCL未加载）。",
     "feature.upscaling.nvidia_reflex": "NVIDIA Reflex",
-    "feature.upscaling.reflex_blocked_by_fg": "当DX12帧生成交换链激活时，Reflex不可用。",
     "feature.upscaling.reflex_not_available": "Reflex不可用。请确保sl.reflex.dll存在并重启。",
     "feature.upscaling.streamline_logging": "Streamline日志记录",
     "feature.upscaling.streamline_logging_restart_note": "更改此设置需要重启才能生效。",
@@ -2078,6 +2076,5 @@
     "feature.upscaling.use_fps_limit_tooltip_2": "相比无上限渲染可以降低延迟。",
     "feature.upscaling.use_markers_to_optimize": "使用标记优化",
     "feature.upscaling.use_markers_to_optimize_tooltip_1": "使用帧标记以实现更紧密的Reflex计时。",
-    "feature.upscaling.use_markers_to_optimize_tooltip_2": "先尝试开启；如果在您的设置上造成卡顿则关闭。",
-    "menu.footer.d3d12_swap_chain": "D3D12 交换链：{status}"
+    "feature.upscaling.use_markers_to_optimize_tooltip_2": "先尝试开启；如果在您的设置上造成卡顿则关闭。"
 }
