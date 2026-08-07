@@ -739,6 +739,14 @@ void Streamline::CaptureDLSSGInputFence()
 	__try {
 		sl::DLSSGState state{};
 		if (g_sl.slDLSSGGetState(g_sl.viewport, state, nullptr) == sl::Result::eOk) {
+			static uint32_t s_logCounter = 0;
+			if ((s_logCounter++ % 120) == 0) {
+				logger::info("[Streamline] DLSS-G state: framesPresented={} status={} vram={} MB",
+					state.numFramesActuallyPresented,
+					static_cast<int>(state.status),
+					state.estimatedVRAMUsageInBytes >> 20);
+			}
+
 			// A different semaphore handle means the plugin re-created it (reload/resize) — reset the waited
 			// watermark so the fresh, possibly-lower value is not mistaken for already-waited.
 			if (g_sl.dlssgInputFence.exchange(state.inputsProcessingCompletionFence, std::memory_order_acq_rel) !=
@@ -898,6 +906,18 @@ void Streamline::SetPCLMarker(PclMarker a_marker)
 // vectorNormalize turns zero camera rows into NaN camera vectors — SL consumes all of it verbatim (the
 // NaN clipToPrevClip/prevClipToClip visible in the NGX dev overlay). The caller skips slSetConstants for
 // such frames; SL then keeps the last good constants, which is correct for a static/UI frame.
+static bool cs_IsFiniteMatrix(const Matrix& a_matrix)
+{
+	return std::isfinite(a_matrix._11) && std::isfinite(a_matrix._12) &&
+	       std::isfinite(a_matrix._13) && std::isfinite(a_matrix._14) &&
+	       std::isfinite(a_matrix._21) && std::isfinite(a_matrix._22) &&
+	       std::isfinite(a_matrix._23) && std::isfinite(a_matrix._24) &&
+	       std::isfinite(a_matrix._31) && std::isfinite(a_matrix._32) &&
+	       std::isfinite(a_matrix._33) && std::isfinite(a_matrix._34) &&
+	       std::isfinite(a_matrix._41) && std::isfinite(a_matrix._42) &&
+	       std::isfinite(a_matrix._43) && std::isfinite(a_matrix._44);
+}
+
 static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, uint32_t a_outputHeight,
 	float a_jitterX, float a_jitterY)
 {
@@ -968,17 +988,41 @@ static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, u
 	a_consts.motionVectorsDilated = sl::Boolean::eFalse;
 	a_consts.motionVectorsJittered = sl::Boolean::eFalse;
 
-	// Validity gate (see the function comment). Checks one representative of each
-	// contamination path: the reprojection pair (NaN from inverting a zero/singular
-	// view-proj) and the camera basis (NaN from recalculateCameraMatrices normalizing
-	// zero rows). Also rejects a degenerate projection (_33 == 0 => zero cameraData).
-	if (!std::isfinite(clipToPrevClip._11) || !std::isfinite(prevClipToClip._11) ||
-		!std::isfinite(a_consts.cameraRight.x) || !std::isfinite(a_consts.cameraUp.y) ||
-		cameraViewToClip._33 == 0.0f) {
-		static uint32_t s_skipN = 0;
-		if ((s_skipN++ % 240) == 0)
-			logger::debug("[Streamline] skipping constants set - engine camera data not valid this frame");
+	// Validate the complete source and derived matrices. A projection's _33 member is
+	// allowed to be zero (for example an infinite/reversed projection), so it cannot be
+	// used as a generic "camera data exists" test. A zero/singular engine matrix is still
+	// rejected because its inverse above contains non-finite components.
+	const bool matricesFinite = cs_IsFiniteMatrix(cameraViewToClip) &&
+	                            cs_IsFiniteMatrix(clipToPrevClip) &&
+	                            cs_IsFiniteMatrix(prevClipToClip);
+	const bool basisFinite = std::isfinite(a_consts.cameraRight.x) &&
+	                         std::isfinite(a_consts.cameraRight.y) &&
+	                         std::isfinite(a_consts.cameraRight.z) &&
+	                         std::isfinite(a_consts.cameraUp.x) &&
+	                         std::isfinite(a_consts.cameraUp.y) &&
+	                         std::isfinite(a_consts.cameraUp.z) &&
+	                         std::isfinite(a_consts.cameraFwd.x) &&
+	                         std::isfinite(a_consts.cameraFwd.y) &&
+	                         std::isfinite(a_consts.cameraFwd.z);
+	const bool scalarsFinite = std::isfinite(a_consts.cameraAspectRatio) &&
+	                           std::isfinite(a_consts.cameraFOV) &&
+	                           std::isfinite(a_consts.cameraNear) &&
+	                           std::isfinite(a_consts.cameraFar);
+	static bool s_cameraDataInvalid = false;
+	if (!matricesFinite || !basisFinite || !scalarsFinite) {
+		if (!s_cameraDataInvalid) {
+			s_cameraDataInvalid = true;
+			logger::warn("[Streamline] skipping evaluate: invalid camera constants "
+				"(matrices={} basis={} scalars={} proj=[{},{},{},{},{},{}])",
+				matricesFinite, basisFinite, scalarsFinite,
+				cameraViewToClip._11, cameraViewToClip._22, cameraViewToClip._33,
+				cameraViewToClip._34, cameraViewToClip._43, cameraViewToClip._44);
+		}
 		return false;
+	}
+	if (s_cameraDataInvalid) {
+		s_cameraDataInvalid = false;
+		logger::info("[Streamline] camera constants became valid; evaluations resumed");
 	}
 
 	return true;
@@ -1046,8 +1090,12 @@ static void cs_DestroyViews(DxvkInterop* a_dxvk, VkDevice a_device, const VkImag
 static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::ViewportHandle& a_viewport,
 	ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight,
-	float a_jitterX, float a_jitterY, ID3D11Resource* a_hudlessColor = nullptr)
+	float a_jitterX, float a_jitterY, ID3D11Resource* a_hudlessColor = nullptr,
+	bool* a_outputReady = nullptr)
 {
+	if (a_outputReady)
+		*a_outputReady = false;
+
 	auto* dxvk = DxvkInterop::GetSingleton();
 	if (!dxvk)
 		return sl::Result::eErrorNotInitialized;
@@ -1176,6 +1224,8 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 		// frame-generation present queue.
 		const bool waitForOutput = haveColor;
 		if (dxvk->SubmitFrameCommandBuffer(cmd, waitForOutput)) {
+			if (a_outputReady && haveColor && evalRes == sl::Result::eOk)
+				*a_outputReady = true;
 			if (waitForOutput) {
 				cs_DestroyViews(dxvk, vkDevice, views, nv);
 				static bool s_loggedSynchronizedOutput = false;
@@ -1199,28 +1249,26 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	return evalRes;
 }
 
-void Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+bool Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 	ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight,
 	uint32_t a_outputWidth, uint32_t a_outputHeight,
 	uint32_t a_qualityMode, float a_sharpness,
 	float a_jitterX, float a_jitterY)
 {
-	// Best-effort DLSS super-resolution dispatch on DXVK's Vulkan device.
-	//
-	// NOTE: this path is NVIDIA-only and cannot be exercised on the current AMD hardware (and ships
-	// without the SL plugin DLLs), so it is structurally implemented from the SL VK spec but not
-	// runtime-validated. Fully gated (featureDLSS) and SEH-guarded so any fault latches the feature off.
+	bool outputReady = false;
+	// DLSS super-resolution dispatch on DXVK's Vulkan device. Fully gated by the
+	// runtime capability check and SEH-guarded so any fault latches the feature off.
 	if (!initialized || !featureDLSS || g_sl.dispatchFaulted)
-		return;
+		return false;
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
-		return;
+		return false;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
 	// DXVK itself is a hard requirement (load-time enforced), so the per-frame SL paths below only gate on
 	// whether the interop command ring is ready yet — a timing check, not a DXVK-availability check.
 	if (!dxvk->CommandResourcesReady())
-		return;
+		return false;
 	// Flush DXVK's pending D3D11 rendering so the interop VkImages are submitted/consistent before SL
 	// records its compute work; SL applies the layout barriers itself from the tagged per-resource state.
 	dxvk->FlushRenderingCommands();
@@ -1289,11 +1337,12 @@ void Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		}
 
 		if (g_sl.slDLSSSetOptions(g_sl.viewport, options) != sl::Result::eOk)
-			return;
+			return false;
 
 		const sl::Result evalRes = cs_EvaluateFeatureCore(sl::kFeatureDLSS, g_sl.viewport,
 			a_colorIn, a_colorOut, a_depth, a_motionVectors,
-			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY);
+			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY,
+			nullptr, &outputReady);
 
 		static sl::Result s_loggedRes = sl::Result::eErrorNotInitialized;
 		static uint32_t s_loggedDims = 0;
@@ -1308,23 +1357,25 @@ void Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		g_sl.dispatchFaulted = true;
 		logger::error("[Streamline] DLSS dispatch faulted — disabling for this session");
 	}
+	return outputReady;
 }
 
-void Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+bool Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 	ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight,
 	uint32_t a_outputWidth, uint32_t a_outputHeight,
 	uint32_t a_qualityMode, float a_sharpness,
 	float a_jitterX, float a_jitterY)
 {
+	bool outputReady = false;
 	if (!initialized || !featureXeSS || g_sl.dispatchFaulted)
-		return;
+		return false;
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
-		return;
+		return false;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
-		return;
+		return false;
 	dxvk->FlushRenderingCommands();
 
 	__try {
@@ -1354,11 +1405,12 @@ void Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		xessOpts.sharpness = a_sharpness;
 		xessOpts.colorBuffersHDR = sl::Boolean::eTrue;
 		if (g_sl.slXeSSSetOptions(g_sl.viewport, xessOpts) != sl::Result::eOk)
-			return;
+			return false;
 
 		const sl::Result evalRes = cs_EvaluateFeatureCore(sl::kFeatureXeSS, g_sl.viewport,
 			a_colorIn, a_colorOut, a_depth, a_motionVectors,
-			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY);
+			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY,
+			nullptr, &outputReady);
 
 		static sl::Result s_loggedRes = sl::Result::eErrorNotInitialized;
 		static uint32_t s_loggedDims = 0;
@@ -1373,23 +1425,25 @@ void Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		g_sl.dispatchFaulted = true;
 		logger::error("[Streamline] XeSS dispatch faulted — disabling for this session");
 	}
+	return outputReady;
 }
 
-void Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+bool Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 	ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight,
 	uint32_t a_outputWidth, uint32_t a_outputHeight,
 	uint32_t a_qualityMode, float a_sharpness,
 	float a_jitterX, float a_jitterY)
 {
+	bool outputReady = false;
 	if (!initialized || !featureFSR || g_sl.dispatchFaulted)
-		return;
+		return false;
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
-		return;
+		return false;
 
 	auto* dxvk = DxvkInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
-		return;
+		return false;
 	dxvk->FlushRenderingCommands();
 
 	__try {
@@ -1419,11 +1473,12 @@ void Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 		fsrOpts.sharpness = a_sharpness;
 		fsrOpts.colorBuffersHDR = sl::Boolean::eTrue;
 		if (g_sl.slFSRSetOptions(g_sl.viewport, fsrOpts) != sl::Result::eOk)
-			return;
+			return false;
 
 		const sl::Result evalRes = cs_EvaluateFeatureCore(sl::kFeatureFSR, g_sl.viewport,
 			a_colorIn, a_colorOut, a_depth, a_motionVectors,
-			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY);
+			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY,
+			nullptr, &outputReady);
 
 		static sl::Result s_loggedRes = sl::Result::eErrorNotInitialized;
 		static uint32_t s_loggedDims = 0;
@@ -1438,6 +1493,7 @@ void Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 		g_sl.dispatchFaulted = true;
 		logger::error("[Streamline] FSR dispatch faulted — disabling for this session");
 	}
+	return outputReady;
 }
 
 void Streamline::EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,

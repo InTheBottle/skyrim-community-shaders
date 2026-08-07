@@ -1323,13 +1323,14 @@ void Upscaling::Upscale()
 			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 			const auto renderSize = Util::ConvertToDynamic(displaySize);
 			if (upscaledTexture && upscaledTexture->resource) {
-				Streamline::GetSingleton()->EvaluateFSR(
+				const bool outputReady = Streamline::GetSingleton()->EvaluateFSR(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
 					settings.qualityMode, settings.sharpnessFSR,
 					jitter.x, jitter.y);
-				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+				if (outputReady)
+					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
 			}
 		} else if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
 			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -1340,13 +1341,14 @@ void Upscaling::Upscale()
 			// full-res output of the SAME texture corrupts it. Upscale into the separate display-res
 			// output texture, then copy it back to main.
 			if (upscaledTexture && upscaledTexture->resource) {
-				Streamline::GetSingleton()->EvaluateDLSS(
+				const bool outputReady = Streamline::GetSingleton()->EvaluateDLSS(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
 					settings.qualityMode, settings.sharpnessFSR,
 					jitter.x, jitter.y);
-				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+				if (outputReady)
+					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
 			}
 		} else if (GetUpscaleMethod() == UpscaleMethod::kXeSS) {
 			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -1356,13 +1358,14 @@ void Upscaling::Upscale()
 			// XeSS runs UNDER STREAMLINE via the sl.xess plugin (slEvaluateFeature(kFeatureXeSS)).
 			// Upscale into the separate texture, then copy back.
 			if (upscaledTexture && upscaledTexture->resource) {
-				Streamline::GetSingleton()->EvaluateXeSS(
+				const bool outputReady = Streamline::GetSingleton()->EvaluateXeSS(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
 					settings.qualityMode, settings.sharpnessFSR,
 					jitter.x, jitter.y);
-				globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+				if (outputReady)
+					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
 			}
 		}
 
@@ -1665,7 +1668,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 					upscaling.CreateUpscaledTexture();  // idempotent throwaway target
 					auto& mainColor = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 					if (upscaling.upscaledTexture && upscaling.upscaledTexture->resource && mainColor.texture)
-						Streamline::GetSingleton()->EvaluateFSR(
+						(void)Streamline::GetSingleton()->EvaluateFSR(
 							mainColor.texture, upscaling.upscaledTexture->resource.get(), fgDepth, motionVector.texture,
 							(uint32_t)dispSize.x, (uint32_t)dispSize.y, (uint32_t)dispSize.x, (uint32_t)dispSize.y,
 							0 /*native 1.0x*/, 0.0f, upscaling.jitter.x, upscaling.jitter.y);

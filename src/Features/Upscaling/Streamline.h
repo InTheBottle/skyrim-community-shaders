@@ -53,21 +53,21 @@ public:
 	//! FSR3 frame generation (sl.fsr_g / kFeatureFSR_G) — the FSR twin of IsDLSSGSupported().
 	[[nodiscard]] bool IsFSRFGSupported() const { return featureFSRFG; }
 
-	void EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	[[nodiscard]] bool EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		uint32_t a_qualityMode, float a_sharpness,
 		float a_jitterX, float a_jitterY);
 
-	void EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	[[nodiscard]] bool EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		uint32_t a_qualityMode, float a_sharpness,
 		float a_jitterX, float a_jitterY);
 
-	void EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	[[nodiscard]] bool EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
