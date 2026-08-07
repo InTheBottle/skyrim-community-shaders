@@ -856,11 +856,10 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		                   previousUpscaleMode == UpscaleMethod::kXeSS) &&
 		                  previousUpscalingWasActive;
 		if (hadUpscale) {
-			// The upscaler eval (DLSS/FSR/XeSS via cs_EvaluateFeatureCore) submits to DXVK's queue
-			// asynchronously (waitIdle=false) and is invisible to DXVK's resource-lifetime tracker, so an
-			// in-flight dispatch may still be writing these interop images. Drain the interop ring before
-			// freeing them, else DXVK can recycle the backing VkImage under a running dispatch -> device
-			// lost. Costs a CPU stall only on this rare resource-change frame; the per-frame path stays async.
+			// Direct Vulkan work is invisible to DXVK's resource-lifetime tracker. Full upscaler
+			// evaluations now wait before their immediate D3D11 copy-back, but frame-generation-only
+			// preparation remains asynchronous. Drain the interop ring before freeing shared images so
+			// DXVK cannot recycle a backing VkImage under any remaining submission.
 			if (auto* dxvk = DxvkInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
 				dxvk->DrainCommandRing();
 			DestroyUpscaledTexture();

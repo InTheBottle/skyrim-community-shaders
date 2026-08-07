@@ -1038,8 +1038,10 @@ static void cs_DestroyViews(DxvkInterop* a_dxvk, VkDevice a_device, const VkImag
 
 // Shared evaluate core: sets the frame constants on a_viewport, wraps depth + MV (+ color when BOTH
 // colorIn and colorOut are given), tags them, evaluates a_feature into a fresh DXVK frame command buffer,
-// submits (waitIdle), and frees the transient views on every path. colorIn/colorOut == null => the
-// depth+MV-only FG-prepare. Returns the slEvaluateFeature result (or a pre-eval error code on bail).
+// submits, waits for full upscaler output before the immediate D3D11 copy-back, and frees the
+// transient views on every path. colorIn/colorOut == null => the depth+MV-only FG-prepare, which
+// remains asynchronous to avoid blocking the frame-generation present queue. Returns the
+// slEvaluateFeature result (or a pre-eval error code on bail).
 // No __try here — each caller wraps the call in its own SEH guard.
 static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::ViewportHandle& a_viewport,
 	ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
@@ -1167,11 +1169,23 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 			logger::error("[Streamline] slSetTagForFrame failed for feature {} viewport {} (result {})",
 				static_cast<uint32_t>(a_feature), vpId, static_cast<int>(tagRes));
 		}
-		// Submit async — no per-frame GPU catch-up wait (e22095b9's perf win, kept under frame
-		// generation too thanks to the bound above). The views are referenced by the submitted
-		// dispatch; the deferred-delete ring frees them once this slot's fence signals.
-		if (dxvk->SubmitFrameCommandBuffer(cmd, /*waitIdle=*/false)) {
-			dxvk->QueueViewsForDeferredDelete(views, static_cast<uint32_t>(nv));
+		// A full upscaler result is consumed immediately by D3D11 CopyResource. DXVK does not
+		// track this direct Vulkan submission, so its command stream cannot infer the dependency;
+		// wait for the ring fence before handing the output image back to D3D11. FG preparation
+		// has no immediate D3D11 consumer and must stay asynchronous to avoid blocking the
+		// frame-generation present queue.
+		const bool waitForOutput = haveColor;
+		if (dxvk->SubmitFrameCommandBuffer(cmd, waitForOutput)) {
+			if (waitForOutput) {
+				cs_DestroyViews(dxvk, vkDevice, views, nv);
+				static bool s_loggedSynchronizedOutput = false;
+				if (!s_loggedSynchronizedOutput) {
+					s_loggedSynchronizedOutput = true;
+					logger::info("[Streamline] Vulkan upscaler output synchronized before D3D11 copy-back");
+				}
+			} else {
+				dxvk->QueueViewsForDeferredDelete(views, static_cast<uint32_t>(nv));
+			}
 			if (evalRes == sl::Result::eOk && vpId < 2)
 				s_evalFrameByVp[vpId] = g_sl.renderFrameId;
 		} else {

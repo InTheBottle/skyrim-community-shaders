@@ -347,8 +347,13 @@ bool DxvkInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool
 		return false;
 	}
 
-	if (a_waitIdle)
-		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+	if (a_waitIdle) {
+		vr = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+		if (vr != VK_SUCCESS) {
+			logger::error("[DxvkInterop] upscaler completion wait failed ({})", static_cast<int>(vr));
+			return false;
+		}
+	}
 
 	return true;
 }
