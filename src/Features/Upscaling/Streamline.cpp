@@ -1002,20 +1002,21 @@ static bool cs_WrapInteropImage(DxvkInterop* a_dxvk, VkDevice a_device, PFN_vkCr
 	if (!a_dxvk->GetVkImage(a_res, &image, &layout, &info) || image == VK_NULL_HANDLE)
 		return false;
 	VkImageView view = VK_NULL_HANDLE;
-	if (a_createView) {
-		VkImageViewCreateInfo ci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-		ci.image = image;
-		ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		ci.format = info.format;
-		ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		if (info.format == VK_FORMAT_D32_SFLOAT || info.format == VK_FORMAT_D24_UNORM_S8_UINT ||
-			info.format == VK_FORMAT_D16_UNORM || info.format == VK_FORMAT_D32_SFLOAT_S8_UINT)
-			ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		ci.subresourceRange.levelCount = 1;
-		ci.subresourceRange.layerCount = 1;
-		a_createView(a_device, &ci, nullptr, &view);
-		a_outView = view;
-	}
+	if (!a_createView)
+		return false;
+	VkImageViewCreateInfo ci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+	ci.image = image;
+	ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	ci.format = info.format;
+	ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	if (info.format == VK_FORMAT_D32_SFLOAT || info.format == VK_FORMAT_D24_UNORM_S8_UINT ||
+		info.format == VK_FORMAT_D16_UNORM || info.format == VK_FORMAT_D32_SFLOAT_S8_UINT)
+		ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	ci.subresourceRange.levelCount = 1;
+	ci.subresourceRange.layerCount = 1;
+	if (a_createView(a_device, &ci, nullptr, &view) != VK_SUCCESS || view == VK_NULL_HANDLE)
+		return false;
+	a_outView = view;
 	a_out = sl::Resource{ sl::ResourceType::eTex2d, image, nullptr, view, static_cast<uint32_t>(layout) };
 	a_out.width = a_w;
 	a_out.height = a_h;
@@ -1082,15 +1083,21 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 			sl::Constants consts;
 			if (!cs_BuildConstants(consts, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY))
 				return sl::Result::eOk;
+			const sl::Result constantsRes = g_sl.slSetConstants(consts, *token, a_viewport);
+			if (constantsRes != sl::Result::eOk) {
+				logger::error("[Streamline] slSetConstants failed for viewport {} (result {})",
+					vpId, static_cast<int>(constantsRes));
+				return constantsRes;
+			}
 			s_constFrameByVp[vpId] = g_sl.renderFrameId;
-			g_sl.slSetConstants(consts, *token, a_viewport);
 		}
-		s_evalFrameByVp[vpId] = g_sl.renderFrameId;
 	} else {
 		sl::Constants consts;
 		if (!cs_BuildConstants(consts, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY))
 			return sl::Result::eOk;
-		g_sl.slSetConstants(consts, *token, a_viewport);
+		const sl::Result constantsRes = g_sl.slSetConstants(consts, *token, a_viewport);
+		if (constantsRes != sl::Result::eOk)
+			return constantsRes;
 	}
 
 	VkDevice vkDevice = dxvk->GetDevice();
@@ -1155,14 +1162,26 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	sl::Result evalRes = sl::Result::eErrorNotInitialized;
 	VkCommandBuffer cmd = dxvk->BeginFrameCommandBuffer();
 	if (cmd != VK_NULL_HANDLE) {
-		g_sl.slSetTagForFrame(*token, a_viewport, tags, nt, cmd);
-		const sl::BaseStructure* inputs[] = { &a_viewport };
-		evalRes = g_sl.slEvaluateFeature(a_feature, *token, inputs, static_cast<uint32_t>(std::size(inputs)), cmd);
+		const sl::Result tagRes = g_sl.slSetTagForFrame(*token, a_viewport, tags, nt, cmd);
+		if (tagRes == sl::Result::eOk) {
+			const sl::BaseStructure* inputs[] = { &a_viewport };
+			evalRes = g_sl.slEvaluateFeature(a_feature, *token, inputs, static_cast<uint32_t>(std::size(inputs)), cmd);
+		} else {
+			evalRes = tagRes;
+			logger::error("[Streamline] slSetTagForFrame failed for feature {} viewport {} (result {})",
+				static_cast<uint32_t>(a_feature), vpId, static_cast<int>(tagRes));
+		}
 		// Submit async — no per-frame GPU catch-up wait (e22095b9's perf win, kept under frame
 		// generation too thanks to the bound above). The views are referenced by the submitted
 		// dispatch; the deferred-delete ring frees them once this slot's fence signals.
-		dxvk->SubmitFrameCommandBuffer(cmd, /*waitIdle=*/false);
-		dxvk->QueueViewsForDeferredDelete(views, static_cast<uint32_t>(nv));
+		if (dxvk->SubmitFrameCommandBuffer(cmd, /*waitIdle=*/false)) {
+			dxvk->QueueViewsForDeferredDelete(views, static_cast<uint32_t>(nv));
+			if (evalRes == sl::Result::eOk && vpId < 2)
+				s_evalFrameByVp[vpId] = g_sl.renderFrameId;
+		} else {
+			cs_DestroyViews(dxvk, vkDevice, views, nv);
+			evalRes = sl::Result::eErrorExceptionHandler;
+		}
 	} else {
 		// Nothing was submitted — the views carry no pending GPU work, so free them immediately.
 		cs_DestroyViews(dxvk, vkDevice, views, nv);
@@ -1227,7 +1246,9 @@ void Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		options.mode = dlssMode;
 		options.outputWidth = a_outputWidth;
 		options.outputHeight = a_outputHeight;
-		options.colorBuffersHDR = sl::Boolean::eFalse;  // CS upscales the SDR scene; HDR composite happens later.
+		// Community Shaders' Vulkan scene chain is always FP16 HDR. This describes the tagged
+		// input data, not whether Windows HDR output is enabled on the current monitor.
+		options.colorBuffersHDR = sl::Boolean::eTrue;
 		options.useAutoExposure = sl::Boolean::eTrue;   // matches the proven dev-branch DLSS integration.
 
 		// Per-GPU DLSS render-preset selection (ported from the proven dev-branch integration). RTX 40+
@@ -1321,7 +1342,7 @@ void Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 		xessOpts.outputWidth = a_outputWidth;
 		xessOpts.outputHeight = a_outputHeight;
 		xessOpts.sharpness = a_sharpness;
-		xessOpts.colorBuffersHDR = sl::Boolean::eFalse;
+		xessOpts.colorBuffersHDR = sl::Boolean::eTrue;
 		if (g_sl.slXeSSSetOptions(g_sl.viewport, xessOpts) != sl::Result::eOk)
 			return;
 
@@ -1386,7 +1407,7 @@ void Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 		fsrOpts.outputWidth = a_outputWidth;
 		fsrOpts.outputHeight = a_outputHeight;
 		fsrOpts.sharpness = a_sharpness;
-		fsrOpts.colorBuffersHDR = sl::Boolean::eFalse;
+		fsrOpts.colorBuffersHDR = sl::Boolean::eTrue;
 		if (g_sl.slFSRSetOptions(g_sl.viewport, fsrOpts) != sl::Result::eOk)
 			return;
 

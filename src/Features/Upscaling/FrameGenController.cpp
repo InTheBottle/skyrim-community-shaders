@@ -1,6 +1,5 @@
 #include "FrameGenController.h"
 
-#include "../HDRDisplay.h"
 #include "../Upscaling.h"
 #include "DxvkInterop.h"
 #include "Streamline.h"
@@ -149,8 +148,8 @@ namespace FrameGen
 		// swapchain. sl.fsr_g is still loaded at this point (the unload recreate
 		// has not run yet), so the disable is delivered.
 		if (fsrDelivered == 1 && a_target != Method::kFSR) {
-			const bool hdr = globals::features::hdrDisplay.loaded &&
-			                 globals::features::hdrDisplay.settings.enableHDR;
+			// The Vulkan scene/back-buffer chain is HDR regardless of the Windows HDR output toggle.
+			constexpr bool hdr = true;
 			const auto dims = CurrentDims(false);
 			const auto& s = globals::features::upscaling.settings;
 			// Disable-delivery result is intentionally ignored: the unload recreate that follows tears the
@@ -268,8 +267,8 @@ namespace FrameGen
 		// not recreate; only an off->on edge needs the wrap recreate below.
 		const bool enableEdge = fsrDelivered != 1;
 
-		const bool hdr = globals::features::hdrDisplay.loaded &&
-		                 globals::features::hdrDisplay.settings.enableHDR;
+		// Describes the internal Vulkan color chain, which is always HDR.
+		constexpr bool hdr = true;
 		const auto dims = CurrentDims(false);
 		const auto& s = upscaling.settings;
 		if (sl->SetFSRFrameGen(true,
