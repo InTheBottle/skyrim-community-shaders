@@ -82,18 +82,21 @@ if ((-not (Test-Path $ffxInc)) -or (-not (Test-Path $xessInc))) {
     if (-not (Test-Path $xessInc)) { Write-Warning "[build-streamline] XeSS headers ($xessInc) missing; sl.xess may fail to compile." }
 }
 
-# Current submodule commit drives the incremental skip.
+# The submodule commit drives the normal incremental skip. A dirty tracked source tree must
+# always rebuild: using only HEAD here can otherwise package stale plugins during development.
 $sha = ''
 try { $sha = (& git -C $SlSrc rev-parse HEAD 2>$null) } catch {}
 if (-not $sha) { $sha = 'unknown' }
 $short = $sha.Substring(0, [Math]::Min(8, $sha.Length))
+$dirty = $false
+try { $dirty = [bool](& git -C $SlSrc status --porcelain --untracked-files=no 2>$null) } catch { $dirty = $true }
 $Stamp = Join-Path $Artifacts ".cs-sl-sha-$Config"
 
 $dlls     = $plugins | ForEach-Object { Get-PluginDll $_ }
 $haveDlls = ($dlls | ForEach-Object { Test-Path $_ }) -notcontains $false
 
-# Fast path: all plugins present and built from the current submodule commit -> nothing to do.
-if ($haveDlls -and (Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $sha)) {
+# Fast path: all plugins present, the tracked source tree is clean, and they were built from HEAD.
+if (-not $dirty -and $haveDlls -and (Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $sha)) {
     Write-Host "[build-streamline] fork plugins up to date ($short) - skipping"
     exit 0
 }

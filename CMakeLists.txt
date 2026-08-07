@@ -1064,6 +1064,15 @@ endif()
 
 # Create a AIO zip for easier testing
 if(AIO_ZIP_TO_DIST)
+    find_program(
+        SEVEN_ZIP_EXECUTABLE
+        NAMES 7z 7zz
+        PATHS "$ENV{ProgramFiles}/7-Zip" "$ENV{ProgramW6432}/7-Zip"
+    )
+    if(NOT SEVEN_ZIP_EXECUTABLE)
+        message(FATAL_ERROR "7-Zip is required for the sub-100 MB AIO package")
+    endif()
+
     if(NOT ZIP_TO_DIST)
         add_custom_command(
             TARGET ${PROJECT_NAME}
@@ -1076,22 +1085,31 @@ if(AIO_ZIP_TO_DIST)
 
     # Create a stamp-producing custom command for the AIO archive so CMake
     # only rebuilds the archive when its inputs change. The archive filename
-    # keeps the UTC timestamp as before, but the command writes a stable
-    # stamp file that CMake can track as OUTPUT.
-    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+    # keeps the UTC timestamp as before. Solid LZMA2 substantially outperforms
+    # per-file ZIP deflate for the large related DLL/PDB payload.
+    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
-    set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
+    # Format-specific stamp invalidates pre-existing ZIP-era package state.
+    set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package_7z.stamp")
 
-    message("Zipping ${AIO_DIR} to ${AIO_ARCHIVE}")
+    message("Compressing ${AIO_DIR} to ${AIO_ARCHIVE}")
 
     add_custom_command(
         OUTPUT ${AIO_ZIP_STAMP}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/dist"
-        COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=zip -- .
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${AIO_ARCHIVE}"
+        COMMAND
+            "${SEVEN_ZIP_EXECUTABLE}" a -t7z "${AIO_ARCHIVE}" "*"
+            -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
+        COMMAND
+            ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_ARCHIVE}" -DMAX_BYTES=100000000
+            -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
         COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
         WORKING_DIRECTORY ${AIO_DIR}
-        DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
-        COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
+        DEPENDS
+            ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+            ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
+        COMMENT "Creating maximum-compression AIO archive ${AIO_ARCHIVE}"
     )
 
     add_custom_target(AIO_ZIP_PACKAGE ALL DEPENDS ${AIO_ZIP_STAMP})
@@ -1200,30 +1218,76 @@ else()
 endif()
 
 # Manual AIO package target
-set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
-if(TARGET PREPARE_AIO)
-    add_custom_command(
-        OUTPUT ${AIO_PACKAGE}
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
-        COMMAND ${CMAKE_COMMAND} -E tar cfv ${AIO_PACKAGE} --format=zip -- .
-        WORKING_DIRECTORY ${AIO_DIR}
-        DEPENDS
-            ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
-            copy_shaders.stamp
-            ${PROJECT_NAME}
-        COMMENT "Creating AIO zip package (from prepared AIO dir)"
-    )
+find_program(
+    SEVEN_ZIP_EXECUTABLE
+    NAMES 7z 7zz
+    PATHS "$ENV{ProgramFiles}/7-Zip" "$ENV{ProgramW6432}/7-Zip"
+)
+if(SEVEN_ZIP_EXECUTABLE)
+    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
 else()
-    add_custom_command(
-        OUTPUT ${AIO_PACKAGE}
-        DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
-        COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
-        COMMAND
-            ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
-            ${AIO_PACKAGE} --format=zip -- .
-        COMMENT "Creating AIO zip package (full install)"
-    )
+    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+endif()
+if(TARGET PREPARE_AIO)
+    if(SEVEN_ZIP_EXECUTABLE)
+        add_custom_command(
+            OUTPUT ${AIO_PACKAGE}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
+            COMMAND ${CMAKE_COMMAND} -E rm -f "${AIO_PACKAGE}"
+            COMMAND
+                "${SEVEN_ZIP_EXECUTABLE}" a -t7z "${AIO_PACKAGE}" "*"
+                -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
+            COMMAND
+                ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_PACKAGE}" -DMAX_BYTES=100000000
+                -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
+            WORKING_DIRECTORY ${AIO_DIR}
+            DEPENDS
+                ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                copy_shaders.stamp
+                ${PROJECT_NAME}
+            COMMENT "Creating maximum-compression AIO package (from prepared AIO dir)"
+        )
+    else()
+        add_custom_command(
+            OUTPUT ${AIO_PACKAGE}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
+            COMMAND ${CMAKE_COMMAND} -E tar cfv ${AIO_PACKAGE} --format=zip -- .
+            WORKING_DIRECTORY ${AIO_DIR}
+            DEPENDS
+                ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                copy_shaders.stamp
+                ${PROJECT_NAME}
+            COMMENT "Creating fallback AIO zip package (from prepared AIO dir)"
+        )
+    endif()
+else()
+    if(SEVEN_ZIP_EXECUTABLE)
+        add_custom_command(
+            OUTPUT ${AIO_PACKAGE}
+            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
+            COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
+            COMMAND ${CMAKE_COMMAND} -E rm -f "${AIO_PACKAGE}"
+            COMMAND
+                ${CMAKE_COMMAND} -E chdir ${AIO_DIR} "${SEVEN_ZIP_EXECUTABLE}" a -t7z
+                "${AIO_PACKAGE}" "*" -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
+            COMMAND
+                ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_PACKAGE}" -DMAX_BYTES=100000000
+                -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
+            COMMENT "Creating maximum-compression AIO package (full install)"
+        )
+    else()
+        add_custom_command(
+            OUTPUT ${AIO_PACKAGE}
+            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
+            COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
+            COMMAND
+                ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
+                ${AIO_PACKAGE} --format=zip -- .
+            COMMENT "Creating fallback AIO zip package (full install)"
+        )
+    endif()
 endif()
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
 

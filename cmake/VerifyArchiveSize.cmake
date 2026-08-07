@@ -1,0 +1,17 @@
+if(NOT DEFINED ARCHIVE_PATH OR NOT EXISTS "${ARCHIVE_PATH}")
+    message(FATAL_ERROR "Archive does not exist: ${ARCHIVE_PATH}")
+endif()
+
+if(NOT DEFINED MAX_BYTES)
+    message(FATAL_ERROR "MAX_BYTES is required")
+endif()
+
+file(SIZE "${ARCHIVE_PATH}" ARCHIVE_BYTES)
+math(EXPR ARCHIVE_MIB_TENTHS "(${ARCHIVE_BYTES} * 10) / 1048576")
+math(EXPR ARCHIVE_MIB_WHOLE "${ARCHIVE_MIB_TENTHS} / 10")
+math(EXPR ARCHIVE_MIB_FRACTION "${ARCHIVE_MIB_TENTHS} % 10")
+
+message(STATUS "AIO archive size: ${ARCHIVE_MIB_WHOLE}.${ARCHIVE_MIB_FRACTION} MiB (${ARCHIVE_BYTES} bytes)")
+if(ARCHIVE_BYTES GREATER MAX_BYTES)
+    message(FATAL_ERROR "AIO archive exceeds the ${MAX_BYTES}-byte release limit")
+endif()

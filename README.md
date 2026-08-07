@@ -96,17 +96,18 @@ cmake --install --preset ALL -- --prefix $MOD_FOLDER
 -   If you prefer to run the VC environment manually, launch Developer PowerShell or the x64 Native Tools prompt instead of calling vcvarsall.bat directly from PowerShell.
 -   The convenience wrapper `BuildRelease.bat` also captures these steps.
 
-#### Build a zip package
+#### Build a package
 
-You can build zip packages for optional cmake targets.
+You can build packages for optional CMake targets. AIO targets use maximum-compression solid 7z
+and fail the build if the resulting archive exceeds 100 MB; feature and Core targets remain ZIP files.
 Currently support `AIO_ZIP_PACKAGE`, `Package-AIO-Manual`, `Package-Core`, and `Package-<Feature>`:
 
 ```pwsh
 # Create a AIO package in ./dist/
-# Automated AIO zip (requires AIO_ZIP_TO_DIST=ON)
+# Automated AIO 7z (requires AIO_ZIP_TO_DIST=ON; target name retained for compatibility)
 cmake --build ./build/ALL --config Release --target AIO_ZIP_PACKAGE
 
-# Manual AIO package (install + tar)
+# Manual AIO package
 cmake --build ./build/ALL --config Release --target Package-AIO-Manual
 
 # Create a CommunityShaders core package in ./dist/
