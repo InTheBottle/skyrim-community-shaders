@@ -262,33 +262,11 @@ struct IDXGISwapChain_Present
 {
 	static HRESULT WINAPI thunk(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 	{
-		// Frame generation must be OFF whenever the window is not in a normal focused state —
-		// minimized, unfocused (alt-tabbed / occluded), or being resized/moved. On DXVK, an
-		// FG-wrapped swapchain that gets recreated on occlusion freezes the GPU, and DLSS-G's
-		// pacer wedges across a present gap with interpolation still eOn (guide §17). So suspend
-		// BOTH FG methods here (lightweight, resources retained — the controller's one-shot
-		// SuspendForWindowGap): DLSS-G interpolation off, FSR-FG unwrapped. This runs on the
-		// present/render thread — the only thread SL/FFX calls are safe on; the WndProc hook just
-		// sets the focus/resize atoms IsWindowUnusable reads. The normal per-frame engage path
-		// re-enables both on the first usable frame after restore.
-		//
-		// Minimized is special: the present itself is a complete no-op (nothing reaches DXVK's
-		// present chain), so short-circuit with S_OK. For focus-loss/occlusion WITHOUT minimize
-		// the present MUST still be issued (DXVK has to process the occlusion), so fall through
-		// with frame generation already suspended.
-		{
-			static HWND s_window = nullptr;
-			if (!s_window) {
-				DXGI_SWAP_CHAIN_DESC desc{};
-				if (This && SUCCEEDED(This->GetDesc(&desc)))
-					s_window = desc.OutputWindow;
-			}
-			if (Upscaling::IsWindowUnusable()) {
-				FrameGen::Controller::GetSingleton()->SuspendForWindowGap();
-				if (s_window && IsIconic(s_window))
-					return S_OK;
-			}
-		}
+		// Match the Streamline sample: stop presenting while the window is not visible or
+		// focused. Presenting through DLSS-G's blocking pacer on an occluded GDI-copy surface
+		// can wedge the pacer while DXVK waits on the same driver lock.
+		if (Upscaling::IsWindowUnusable())
+			return S_OK;
 
 		globals::state->Reset();
 
@@ -340,6 +318,9 @@ struct IDXGISwapChain_Present
 
 		if (!bridgedMarkers)
 			streamline->SetPCLMarker(Streamline::PclMarker::PresentEnd);
+
+		// Preserve eValidUntilPresent inputs until DLSS-G has finished consuming them.
+		streamline->CaptureDLSSGInputFence();
 
 		globals::features::screenshotFeature.ProcessCaptureRequest();
 
