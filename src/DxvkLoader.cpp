@@ -12,16 +12,16 @@ namespace DxvkLoader
 		decltype(&CreateDXGIFactory) g_createFactory = nullptr;
 	}
 
-	// Directory holding the staged DXVK DLLs, resolved relative to this
+	// Directory holding all staged renderer runtime DLLs, resolved relative to this
 	// plugin's own module so it works regardless of the process CWD or a mod
 	// manager's virtual file system. CommunityShaders.dll lives in
-	// .../SKSE/Plugins, so the DLLs sit in .../SKSE/Plugins/CommunityShaders/dxvk.
-	std::filesystem::path GetDxvkDir()
+	// .../SKSE/Plugins, so the DLLs sit in .../SKSE/Plugins/CommunityShaders/bin.
+	std::filesystem::path GetRuntimeDir()
 	{
 		HMODULE self = nullptr;
 		if (!::GetModuleHandleExW(
 				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCWSTR>(&GetDxvkDir),
+				reinterpret_cast<LPCWSTR>(&GetRuntimeDir),
 				&self)) {
 			return {};
 		}
@@ -30,7 +30,7 @@ namespace DxvkLoader
 		if (n == 0 || n >= MAX_PATH) {
 			return {};
 		}
-		return std::filesystem::path(buf).parent_path() / L"CommunityShaders" / L"dxvk";
+		return std::filesystem::path(buf).parent_path() / L"CommunityShaders" / L"bin";
 	}
 
 	bool NativeModeRequested()
@@ -58,7 +58,7 @@ namespace DxvkLoader
 			return false;
 		}
 
-		const auto dir = GetDxvkDir();
+		const auto dir = GetRuntimeDir();
 		if (dir.empty()) {
 			logger::error("[DXVK] Could not resolve plugin directory for DXVK DLLs");
 			return false;

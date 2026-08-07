@@ -1121,7 +1121,7 @@ namespace Hooks
 		if (!nativeMode && !dxvkLoaded) {
 			stl::report_and_fail(
 				"Community Shaders could not load its bundled DXVK renderer (dxvk_d3d11.dll / dxvk_dxgi.dll) "
-				"from Data/SKSE/Plugins/CommunityShaders/dxvk. Reinstall Community Shaders or verify the files exist."sv);
+				"from Data/SKSE/Plugins/CommunityShaders/bin. Reinstall Community Shaders or verify the files exist."sv);
 		}
 		if (nativeMode) {
 			// Native D3D11: disable the Vulkan-only upscaler so it doesn't install its own

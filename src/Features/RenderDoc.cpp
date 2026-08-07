@@ -631,7 +631,7 @@ std::filesystem::path RenderDoc::GetRenderDocDllPath() const
 	}
 
 	// Bundled fallback (no layer registered, so a second instance cannot appear).
-	return Util::PathHelpers::GetDataPath() / "Renderdoc" / "renderdoc.dll";
+	return Util::PathHelpers::GetDataPath() / "SKSE" / "Plugins" / "CommunityShaders" / "bin" / "renderdoc.dll";
 }
 
 void RenderDoc::SetupResources()

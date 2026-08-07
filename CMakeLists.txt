@@ -439,6 +439,16 @@ install(
 )
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
+# Remove the superseded split runtime directories when installing over an older
+# package so all renderer dependencies live in the single bin directory below.
+install(CODE
+    "file(REMOVE_RECURSE
+        \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/dxvk\"
+        \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/Streamline\"
+    )"
+    COMPONENT Shaders
+)
+
 # DXVK DLLs — staged into the mod's Data subfolder (NOT the game root) under unique
 # base names (dxvk_d3d11.dll / dxvk_dxgi.dll) and loaded explicitly by the plugin at
 # startup (src/DxvkLoader.cpp). DXVK builds them with that 'dxvk_' prefix natively (so
@@ -453,7 +463,7 @@ if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
             COMMAND powershell -NoProfile -ExecutionPolicy Bypass
                 -File \"${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1\"
                 -Src \"${DXVK_BUILD_DIR}\"
-                -Dst \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/dxvk\"
+                -Dst \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/bin\"
             RESULT_VARIABLE _dxvk_stage_rc
         )
         if(NOT _dxvk_stage_rc EQUAL 0)
@@ -467,7 +477,7 @@ endif()
 # Streamline runtime DLLs. The signed production set — sl.common/dlss/dlss_g/pcl/reflex,
 # the nvngx_* NGX models, NvLowLatencyVk.dll, plus the Vulkan FSR (amd_fidelityfx_vk.dll) and
 # XeSS (libxess.dll) runtimes — is committed under
-# package/SKSE/Plugins/CommunityShaders/Streamline/ and ships with the package tree like
+# package/SKSE/Plugins/CommunityShaders/bin/ and ships with the package tree like
 # any other asset; there is no configure-time download. Only the CS-built (necessarily
 # unsigned) fork plugins are staged from the build tree: sl.interposer (CS WSI-hook
 # change for DLSS-G ↔ FSR-FG present coexistence) and the CS-custom sl.fsr / sl.fsr_g / sl.xess.
@@ -476,7 +486,7 @@ endif()
 # — cleared it. The flash was solely the async-eval input-lifetime race.)
 # FSR upscale and frame generation both load this module from the plugin directory at runtime.
 # Fail configuration instead of producing an AIO in which FSR appears selectable but cannot start.
-set(_FFX_VK_RUNTIME "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/Streamline/amd_fidelityfx_vk.dll")
+set(_FFX_VK_RUNTIME "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/bin/amd_fidelityfx_vk.dll")
 if(NOT EXISTS "${_FFX_VK_RUNTIME}")
     message(FATAL_ERROR "Missing Vulkan FSR runtime: ${_FFX_VK_RUNTIME}")
 endif()
@@ -509,7 +519,7 @@ if(_SL_FORK_DLLS)
     message(STATUS "Staging Streamline fork plugins: ${_SL_FORK_DLLS}")
     install(
         FILES ${_SL_FORK_DLLS}
-        DESTINATION SKSE/Plugins/CommunityShaders/Streamline
+        DESTINATION SKSE/Plugins/CommunityShaders/bin
         COMPONENT Streamline
     )
 else()
@@ -626,7 +636,15 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # auto-deploy would ship a mod with no DXVK renderer at all.
     # We mirror those install() rules straight into ${AIO_DIR} so every downstream consumer
     # (AIO_ZIP_PACKAGE, Package-AIO-Manual, AUTO_PLUGIN_DEPLOYMENT) gets a DXVK-runnable mod.
-    set(_aio_dxvk_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/dxvk")
+    set(_aio_runtime_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/bin")
+
+    # PREPARE_AIO is incremental and intentionally preserves SKSE/Plugins files.
+    # Explicitly remove the old split layout so upgrades cannot retain duplicate DLLs.
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/dxvk"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/Streamline"
+    )
 
     # DXVK: copy the dxvk_-prefixed DLLs via the same staging script the install(CODE) rule uses
     # (dxvk_d3d11.dll / dxvk_dxgi.dll). Only when a local DXVK build exists, mirroring the guard above.
@@ -636,17 +654,16 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
             COMMAND powershell -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1"
                 -Src "${DXVK_BUILD_DIR}"
-                -Dst "${_aio_dxvk_dir}"
+                -Dst "${_aio_runtime_dir}"
         )
     endif()
 
     # Streamline fork plugins (CS-built). The signed production set + FSR/XeSS runtimes ship
-    # from package/SKSE/Plugins/CommunityShaders/Streamline/ with the rest of the package tree.
+    # from package/SKSE/Plugins/CommunityShaders/bin/ with the rest of the package tree.
     if(_SL_FORK_DLLS)
-        set(_aio_sl_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/Streamline")
-        list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_sl_dir}")
+        list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_runtime_dir}")
         foreach(_sl IN LISTS _SL_FORK_DLLS)
-            list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl}" "${_aio_sl_dir}/")
+            list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl}" "${_aio_runtime_dir}/")
             list(APPEND _AIO_PACKAGE_FILES "${_sl}")
         endforeach()
     endif()

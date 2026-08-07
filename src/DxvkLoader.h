@@ -4,8 +4,8 @@
 #include <dxgi.h>
 #include <filesystem>
 
-// Loads DXVK's d3d11/dxgi DLLs from the Community Shaders mod subfolder
-// (Data/SKSE/Plugins/CommunityShaders/dxvk) under unique base names
+// Loads DXVK's d3d11/dxgi DLLs from the shared Community Shaders runtime folder
+// (Data/SKSE/Plugins/CommunityShaders/bin) under unique base names
 // (dxvk_d3d11.dll / dxvk_dxgi.dll) so DXVK runs from Data/ rather than the game root.
 //
 // Skyrim statically imports exactly one symbol from each of d3d11.dll and
@@ -31,12 +31,12 @@ namespace DxvkLoader
 	 *  bundled DXVK, and disable the Vulkan-only upscaler stack. */
 	bool NativeModeRequested();
 
-	/** @brief Directory holding the staged native DLLs
-	 *  (Data/SKSE/Plugins/CommunityShaders/dxvk), resolved relative to this
+	/** @brief Directory holding the staged renderer runtime DLLs
+	 *  (Data/SKSE/Plugins/CommunityShaders/bin), resolved relative to this
 	 *  plugin's own module so it is independent of the process CWD or a mod
 	 *  manager's virtual file system.
 	 *  @return the directory, or an empty path if the module could not be resolved. */
-	std::filesystem::path GetDxvkDir();
+	std::filesystem::path GetRuntimeDir();
 
 	/** @brief DXVK's D3D11CreateDeviceAndSwapChain export, or nullptr if not loaded. */
 	decltype(&D3D11CreateDeviceAndSwapChain) GetD3D11CreateDeviceAndSwapChain();

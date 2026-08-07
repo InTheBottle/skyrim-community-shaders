@@ -294,14 +294,10 @@ namespace
 		}
 	}
 
-	// .../SKSE/Plugins/CommunityShaders/streamline — sibling of the DXVK dir,
-	// resolved module-relative (MO2 VFS safe) just like DxvkLoader::GetDxvkDir().
+	// Shared renderer runtime directory, resolved module-relative (MO2 VFS safe).
 	std::filesystem::path GetStreamlineDir()
 	{
-		const auto dxvkDir = DxvkLoader::GetDxvkDir();
-		if (dxvkDir.empty())
-			return {};
-		return dxvkDir.parent_path() / L"streamline";
+		return DxvkLoader::GetRuntimeDir();
 	}
 
 	template <typename T>
@@ -325,7 +321,7 @@ void Streamline::PreloadInterposer()
 	// Map sl.interposer.dll EARLY — before DXVK creates its VkInstance — so DXVK's
 	// loadVulkanLibrary("sl.interposer.dll") (which we added to its loader) aliases this already-mapped
 	// module and routes DXVK's ENTIRE Vulkan surface through Streamline (full interposition). A bare
-	// runtime LoadLibraryA from inside dxvk_d3d11.dll does NOT search the CS dxvk/ subfolder, so without
+	// runtime LoadLibraryA from inside dxvk_d3d11.dll does NOT search the CS bin/ subfolder, so without
 	// this preload DXVK falls through to the real vulkan-1.dll and SL never sees the device/present.
 	// LOAD_WITH_ALTERED_SEARCH_PATH lets the interposer resolve its sibling sl.*.dll from the CS folder.
 	if (disabledByConfig || g_sl.interposer)

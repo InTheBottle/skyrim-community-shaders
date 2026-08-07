@@ -12,7 +12,7 @@
     a mod with no upscaling / frame-generation (CMake only prints a WARNING).
 
     Only the four CS-built fork plugins are compiled — the signed production runtimes ship committed
-    under package/SKSE/Plugins/CommunityShaders/Streamline/. The fork plugins have no
+    under package/SKSE/Plugins/CommunityShaders/bin/. The fork plugins have no
     inter-project dependencies (they compile the core sl.* sources they need directly and LoadLibrary
     the runtime DLLs), so targeting just these four keeps the build minimal.
 
