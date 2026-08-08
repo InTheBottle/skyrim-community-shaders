@@ -1,7 +1,5 @@
 build/
 bin/
-!package/SKSE/Plugins/CommunityShaders/bin/
-!package/SKSE/Plugins/CommunityShaders/bin/**
 dist/
 .idea/
 .vs*/
