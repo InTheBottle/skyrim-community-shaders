@@ -95,7 +95,6 @@ public:
 	VkInstance GetInstance() const { return instance; }
 	VkPhysicalDevice GetPhysicalDevice() const { return physicalDevice; }
 	VkDevice GetDevice() const { return device; }
-	uint32_t GetQueueFamilyIndex() const { return queueFamilyIndex; }
 	PFN_vkGetInstanceProcAddr GetInstanceProcAddr() const { return vkGetInstanceProcAddr; }
 	PFN_vkGetDeviceProcAddr GetDeviceProcAddr() const { return vkGetDeviceProcAddr; }
 

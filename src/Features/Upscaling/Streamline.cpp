@@ -1253,7 +1253,7 @@ bool Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 	ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight,
 	uint32_t a_outputWidth, uint32_t a_outputHeight,
-	uint32_t a_qualityMode, float a_sharpness,
+	uint32_t a_qualityMode,
 	float a_jitterX, float a_jitterY)
 {
 	bool outputReady = false;
@@ -1272,8 +1272,6 @@ bool Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 	// Flush DXVK's pending D3D11 rendering so the interop VkImages are submitted/consistent before SL
 	// records its compute work; SL applies the layout barriers itself from the tagged per-resource state.
 	dxvk->FlushRenderingCommands();
-
-	(void)a_sharpness;  // sharpness is deprecated in DLSSOptions; RCAS handles sharpening.
 
 	__try {
 		// Map quality preset -> DLSS mode (shared convention with getUpscaleRatio: 0=Native,1=Quality,

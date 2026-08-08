@@ -81,13 +81,6 @@ public:
 	/** @brief Sets the swap chain color space to HDR10 (PQ/BT.2020) or SDR (sRGB) based on settings. */
 	void UpdateSwapChainColorSpace() const;
 
-	/** @brief Redirects UI rendering to the separate UI texture for HDR compositing. */
-	void BeginUIRendering();
-	/** @brief Restores the original render target after UI rendering. */
-	void EndUIRendering();
-	/** @brief Returns true while UI is being rendered to the separate UI texture. */
-	bool IsRenderingUI() const { return renderingUI; }
-
 	/** @brief Redirects kFRAMEBUFFER to the float16 HDR texture so ISHDR can write values above 1.0. */
 	void RedirectFramebuffer();
 	/** @brief Restores the original kFRAMEBUFFER texture, SRV, and RTV after HDR rendering. */
@@ -101,9 +94,6 @@ public:
 	bool UsesDeferredPresentComposite() const;
 	/** @brief Aligns kFRAMEBUFFER.RTV with uiTexture for engine paths when ImGui has already bound the OM. */
 	void SyncFramebufferUIRedirect();
-
-	/** @brief Scales UI brightness in the Frame Gen UI buffer using the UI brightness compute shader. */
-	void ScaleUIBrightnessForFG();
 
 	/** @brief Runs the HDR output compute shader to composite scene and UI, then copies to the back buffer. */
 	void ApplyHDR();
@@ -192,10 +182,6 @@ public:
 	/** @brief Returns the HDR output compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetHDROutputCS();
 
-	ID3D11ComputeShader* uiBrightnessCS = nullptr;
-	/** @brief Returns the UI brightness scaling compute shader, compiling it on first use. */
-	ID3D11ComputeShader* GetUIBrightnessCS();
-
 	/** @brief Detects whether Windows HDR is currently active on the swap chain's monitor. */
 	static bool DetectHDR();
 	static bool isHDRMonitor;            // Windows HDR is active (enabled in OS settings)
@@ -207,10 +193,6 @@ public:
 	float GetDisplayMaxLuminance() const;
 	mutable float cachedDisplayMaxLuminance = 1000.0f;
 
-	// Saved state for UI rendering redirection
-	bool renderingUI = false;
-	ID3D11RenderTargetView* savedRTV = nullptr;
-	ID3D11DepthStencilView* savedDSV = nullptr;
 	ID3D11RenderTargetView* savedFramebufferRTV = nullptr;  // Original kFRAMEBUFFER.RTV for restoration
 
 	// Saved kFRAMEBUFFER state for HDR redirect (ISHDR writes to hdrTexture instead)

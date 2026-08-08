@@ -8,7 +8,6 @@
  */
 
 #include "Feature.h"
-#include "Upscaling/RCAS/RCAS.h"
 #include <atomic>
 #include <d3d11_4.h>
 #include <winrt/base.h>
@@ -169,10 +168,6 @@ public:
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
-	// Creates a Texture2D matching the source format at the requested size.
-	static eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
-		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
-
 	void ConfigureTAA();
 	void ConfigureUpscaling(RE::BSGraphics::State* a_state);
 	void Upscale();
@@ -200,8 +195,6 @@ public:
 	Texture2D* hudlessTexture = nullptr;
 
 	virtual void ClearShaderCache() override;
-
-	static inline RCAS rcas;
 
 	float projectionPosScaleX = 0.0f;
 	float projectionPosScaleY = 0.0f;

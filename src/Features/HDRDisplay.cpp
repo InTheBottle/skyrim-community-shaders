@@ -704,59 +704,8 @@ void HDRDisplay::SetupResources()
 	UpdateHDRData();
 
 	GetHDROutputCS();
-	GetUIBrightnessCS();
 
 	UpgradeLDRRenderTargets();
-}
-
-void HDRDisplay::BeginUIRendering()
-{
-	if (renderingUI)
-		return;
-
-	if (!uiTexture || !uiTexture->rtv)
-		return;
-
-	auto context = globals::d3d::context;
-
-	if (savedRTV) {
-		savedRTV->Release();
-		savedRTV = nullptr;
-	}
-	if (savedDSV) {
-		savedDSV->Release();
-		savedDSV = nullptr;
-	}
-
-	context->OMGetRenderTargets(1, &savedRTV, &savedDSV);
-
-	// Do NOT clear - vanilla UI has already rendered to uiTexture via SetUIBuffer()
-	// Just ensure ImGui also renders to the same texture
-	ID3D11RenderTargetView* rtv = uiTexture->rtv.get();
-	context->OMSetRenderTargets(1, &rtv, nullptr);
-
-	renderingUI = true;
-}
-
-void HDRDisplay::EndUIRendering()
-{
-	if (!renderingUI)
-		return;
-
-	auto context = globals::d3d::context;
-
-	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
-
-	if (savedRTV) {
-		savedRTV->Release();
-		savedRTV = nullptr;
-	}
-	if (savedDSV) {
-		savedDSV->Release();
-		savedDSV = nullptr;
-	}
-
-	renderingUI = false;
 }
 
 void HDRDisplay::RedirectFramebuffer()
@@ -1383,10 +1332,6 @@ void HDRDisplay::ClearShaderCache()
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
 	}
-	if (uiBrightnessCS) {
-		uiBrightnessCS->Release();
-		uiBrightnessCS = nullptr;
-	}
 }
 
 ID3D11ComputeShader* HDRDisplay::GetHDROutputCS()
@@ -1399,23 +1344,6 @@ ID3D11ComputeShader* HDRDisplay::GetHDROutputCS()
 		}
 	}
 	return hdrOutputCS;
-}
-
-ID3D11ComputeShader* HDRDisplay::GetUIBrightnessCS()
-{
-	if (!uiBrightnessCS) {
-		std::vector<std::pair<const char*, const char*>> defines;
-		uiBrightnessCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\HDRDisplay\\UIBrightnessCS.hlsl", defines, "cs_5_0"));
-		if (!uiBrightnessCS) {
-			logger::error("HDR: Failed to compile UIBrightnessCS.hlsl");
-		}
-	}
-	return uiBrightnessCS;
-}
-
-void HDRDisplay::ScaleUIBrightnessForFG()
-{
-	// Frame generation has been removed; this is now a no-op stub.
 }
 
 float HDRDisplay::GetDisplayMaxLuminance() const
@@ -1483,7 +1411,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	data.uiBrightness = settings.hdrUIBrightness;
 	data.isSceneLinear = isSceneLinear ? 1.f : 0.f;
 	data.pad0 = isMainOrLoadingMenu ? 1.f : 0.f;
-	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
+	// TweenMenu = pause UI. HDROutputCS applies a mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
 	return data;

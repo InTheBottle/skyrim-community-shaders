@@ -919,46 +919,6 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 	return upscaleVS.get();
 }
 
-eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
-	bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
-{
-	D3D11_TEXTURE2D_DESC srcDesc;
-	static_cast<ID3D11Texture2D*>(src)->GetDesc(&srcDesc);
-
-	D3D11_TEXTURE2D_DESC desc = {};
-	desc.Width = width;
-	desc.Height = height;
-	desc.MipLevels = 1;
-	desc.ArraySize = 1;
-	desc.Format = srcDesc.Format;
-	desc.SampleDesc.Count = 1;
-	desc.Usage = D3D11_USAGE_DEFAULT;
-	desc.BindFlags = copyBindFlags ? srcDesc.BindFlags : (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
-
-	auto tex = eastl::make_unique<Texture2D>(desc);
-
-	if (name) {
-		Util::SetResourceName(tex->resource.get(), name);
-	}
-
-	if (createSRV) {
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = srcDesc.Format;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.MipLevels = 1;
-		tex->CreateSRV(srvDesc);
-	}
-	if (createUAV) {
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-		uavDesc.Format = srcDesc.Format;
-		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-		uavDesc.Texture2D.MipSlice = 0;
-		tex->CreateUAV(uavDesc);
-	}
-	return tex;
-}
-
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
 {
 	const float basePhaseCount = 8.0f;
@@ -1133,8 +1093,6 @@ void Upscaling::SetupResources()
 	DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&rasterizerDesc, upscaleRasterizerState.put()));
 
 	CheckResources(GetUpscaleMethod());
-
-	rcas.Initialize();
 
 	// HDR resources are only present when the HDR Display feature is loaded.
 	if (globals::features::hdrDisplay.loaded) {
@@ -1368,7 +1326,7 @@ void Upscaling::Upscale()
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
-					settings.qualityMode, settings.sharpnessFSR,
+					settings.qualityMode,
 					jitter.x, jitter.y);
 				if (outputReady)
 					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
