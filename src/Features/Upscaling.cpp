@@ -431,6 +431,7 @@ void Upscaling::LoadSettings(json& o_json)
 {
 	settings = o_json;
 
+	// Sanitize loaded settings before using them as enum indices.
 	constexpr auto enumCount = 5;  // kNONE, kTAA, kFSR, kDLSS, kXeSS
 	if (settings.upscaleMethod >= static_cast<uint>(enumCount)) {
 		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount - 1);
@@ -465,8 +466,10 @@ void Upscaling::RestoreDefaultSettings()
 
 void Upscaling::DataLoaded()
 {
+	// Preserve Engine Fixes screenshot compatibility by disabling vanilla TAA.
 	Util::DisableVanillaTAA();
 
+	// The game defaults this to a non-zero value.
 	static auto fDRClampOffset = RE::GetINISetting("fDRClampOffset:Display");
 	fDRClampOffset->data.f = 0.0f;
 }
@@ -539,6 +542,7 @@ struct BSImageSpace_Init_FXAA
 	{
 		func();
 
+		// Force FXAA off after the game initializes its image-space state.
 		auto fxaaEnabled = reinterpret_cast<bool*>(REL::RelocationID(513281, 391028).address());
 		*fxaaEnabled = false;
 	}
@@ -550,18 +554,25 @@ void Upscaling::PostPostLoad()
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
+	// Calculates render resolution and temporal jitter.
 	stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate(0xE5, isGOG ? 0x133 : 0xE2));
 
+	// Disables the original dynamic-resolution system.
 	REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D), REL::NOP5, sizeof(REL::NOP5));
 
+	// Performs upscaling between volumetric lighting and post-processing.
 	stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7));
 
+	// Scales scissor rectangles with the dynamic render resolution.
 	stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
+	// Prevents dynamic resolution from affecting face-generation textures.
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
 
+	// Prevents dynamic resolution from affecting the precipitation camera.
 	stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1));
 
+	// Forces FXAA off.
 	stl::detour_thunk<BSImageSpace_Init_FXAA>(REL::RelocationID(98974, 105626));
 
 	logger::info("[Upscaling] Installed hooks");
@@ -955,6 +966,7 @@ int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
 	return jitterPhaseCount;
 }
 
+// Calculates a Halton-sequence value for the given index and base.
 static float Halton(int32_t index, int32_t base)
 {
 	float f = 1.0f, result = 0.0f;
@@ -981,6 +993,7 @@ void Upscaling::ConfigureTAA()
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
+	// Force temporal AA on for every method except the explicit no-AA mode.
 	Util::SetTemporal(upscaleMethod != UpscaleMethod::kNONE);
 }
 
@@ -988,12 +1001,14 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
+	// Create or release method-specific resources as necessary.
 	CheckResources(upscaleMethod);
 
 	projectionPosScaleX = a_viewport->projectionPosScaleX;
 	projectionPosScaleY = a_viewport->projectionPosScaleY;
 
 	auto state = globals::state;
+	// The graphics-state dimensions are the full display size.
 	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 
 	auto screenWidth = static_cast<int>(screenSize.x);
@@ -1049,6 +1064,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	dynamicResolutionWidthRatio = resolutionScale.x;
 	dynamicResolutionHeightRatio = resolutionScale.y;
 
+	// Keep the game's dynamic-resolution system disabled; the selected upscaler owns the scale.
 	runtimeData.dynamicResolutionLock = 1;
 
 	// Log the active upscaler's render vs display resolution whenever it changes.
@@ -1091,8 +1107,10 @@ void Upscaling::SetupResources()
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateDepthStencilState(&depthStencilDesc, upscaleDepthStencilState.put()));
 
+	// Jitter and depth-kernel parameters used by the depth-upscale passes.
 	jitterCB = new ConstantBuffer(ConstantBufferDesc<JitterCB>());
 
+	// Opaque blend state for fullscreen depth-related upscaling.
 	D3D11_BLEND_DESC blendDesc = {};
 	blendDesc.AlphaToCoverageEnable = false;
 	blendDesc.IndependentBlendEnable = false;
@@ -1100,6 +1118,7 @@ void Upscaling::SetupResources()
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 	DX::ThrowIfFailed(globals::d3d::device->CreateBlendState(&blendDesc, upscaleBlendState.put()));
 
+	// Rasterizer state for fullscreen triangle rendering.
 	D3D11_RASTERIZER_DESC rasterizerDesc = {};
 	rasterizerDesc.FillMode = D3D11_FILL_SOLID;
 	rasterizerDesc.CullMode = D3D11_CULL_NONE;
@@ -1117,6 +1136,7 @@ void Upscaling::SetupResources()
 
 	rcas.Initialize();
 
+	// HDR resources are only present when the HDR Display feature is loaded.
 	if (globals::features::hdrDisplay.loaded) {
 		globals::features::hdrDisplay.SetupResources();
 	}
@@ -1215,6 +1235,7 @@ double Upscaling::GetRefreshRate(HWND a_window)
 	info.cbSize = sizeof(info);
 	if (GetMonitorInfoW(monitor, &info) != 0) {
 		UINT32 requiredPaths, requiredModes;
+		// Query the active display paths and find the source associated with this window.
 		if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &requiredPaths, &requiredModes) == ERROR_SUCCESS) {
 			std::vector<DISPLAYCONFIG_PATH_INFO> paths(requiredPaths);
 			std::vector<DISPLAYCONFIG_MODE_INFO> modes2(requiredModes);
@@ -1242,10 +1263,12 @@ bool Upscaling::IsUpscalingActive() const
 {
 	auto method = GetUpscaleMethod();
 
+	// Only vendor upscalers are active here; NONE and TAA do not downscale the scene.
 	if (method != UpscaleMethod::kFSR && method != UpscaleMethod::kXeSS && method != UpscaleMethod::kDLSS) {
 		return false;
 	}
 
+	// resolutionScale.x is render width divided by display width. Treat a 1:1 mode as inactive.
 	return resolutionScale.x < .99f;
 }
 
@@ -1383,6 +1406,7 @@ void Upscaling::PerformUpscaling()
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
 
+	// Disable dynamic resolution past this point and update the per-frame camera data accordingly.
 	runtimeData.dynamicResolutionLock = 1;
 
 	UpdateCameraData();
@@ -1393,6 +1417,7 @@ void Upscaling::UpscaleDepth()
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth");
 
+	// Validate every dependency before issuing GPU work.
 	if (!IsUpscalingActive()) {
 		return;
 	}
@@ -1430,6 +1455,7 @@ void Upscaling::UpscaleDepth()
 
 	state->BeginPerfEvent("Render Target Upscaling");
 
+	// Fullscreen triangle: no input layout, vertex buffer, or index buffer is required.
 	context->IASetInputLayout(nullptr);
 	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
 	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
@@ -1437,6 +1463,7 @@ void Upscaling::UpscaleDepth()
 
 	context->VSSetShader(fullscreenVS, nullptr, 0);
 
+	// All depth-related outputs are reconstructed at display resolution.
 	D3D11_VIEWPORT viewport = {};
 	viewport.TopLeftX = 0.0f;
 	viewport.TopLeftY = 0.0f;
@@ -1446,12 +1473,14 @@ void Upscaling::UpscaleDepth()
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);
 
+	// Use the dedicated fullscreen rasterizer and opaque blend states.
 	context->RSSetState(upscaleRasterizerState.get());
 	context->OMSetBlendState(upscaleBlendState.get(), nullptr, 0xffffffff);
 
 	ID3D11SamplerState* samplers[] = { deferred->linearSampler };
 	context->PSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
+	// Use hysteresis when selecting the wide depth kernel to avoid mode churn near the threshold.
 	JitterCB jitterData;
 	jitterData.jitter = jitter;
 	{
@@ -1478,6 +1507,7 @@ void Upscaling::UpscaleDepth()
 	auto bufferArray = jitterCB->CB();
 	context->PSSetConstantBuffers(0, 1, &bufferArray);
 
+	// Skip aliased copies; some menus already point the source and destination at the same resource.
 	const auto copyIfNonAliased = [&](ID3D11Resource* dst, ID3D11Resource* src) {
 		if (dst && src && dst != src) {
 			context->CopyResource(dst, src);
@@ -1489,10 +1519,12 @@ void Upscaling::UpscaleDepth()
 
 		copyIfNonAliased(depthCopy.texture, depth.texture);
 
+		// Write depth while clearing the stencil reference to zero.
 		context->OMSetDepthStencilState(upscaleDepthStencilState.get(), 0x00);
 
 		copyIfNonAliased(refractionNormals.textureCopy, refractionNormals.texture);
 
+		// t0: refraction-normal copy, t1: original depth, t2: original stencil.
 		ID3D11ShaderResourceView* srvs[] = { refractionNormals.SRVCopy, depthCopy.depthSRV, depthCopy.stencilSRV };
 		context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
@@ -1719,12 +1751,14 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
+	// Redirect kFRAMEBUFFER to the floating-point HDR scene before ISHDR runs.
 	bool hdrLoaded = globals::features::hdrDisplay.loaded;
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RedirectFramebuffer();
 
 	func(a_this, a3, a_target, a_4, a_5);
 
+	// Restore kFRAMEBUFFER after ISHDR; hdrTexture now contains the HDR scene.
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
 

@@ -1,5 +1,12 @@
 #pragma once
 
+/**
+ * @brief Provides Vulkan-backed DLSS, FSR, XeSS, TAA, and frame generation.
+ *
+ * Handles render-resolution scaling, temporal jitter, upscaler dispatch, and
+ * frame-generation presentation while the game continues to render through D3D11.
+ */
+
 #include "Feature.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include <atomic>
@@ -162,6 +169,7 @@ public:
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
+	// Creates a Texture2D matching the source format at the requested size.
 	static eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
 

@@ -568,14 +568,18 @@ namespace BackgroundBlur
 		                 hdr->settings.enableHDR && hdr->hdrDataCB && hdr->outputTexture &&
 		                 hdr->hdrTexture && hdr->hdrTexture->resource && hdr->hdrTexture->srv && hdr->hdrTexture->rtv;
 
+		// The startup main/loading back buffer can remain black until DataLoaded and initial shader work finish.
 		if (ShouldSkipStartupMenuBlur(upscaling))
 			return;
 
 		winrt::com_ptr<ID3D11Texture2D> currentTexture;
 		winrt::com_ptr<ID3D11RenderTargetView> currentRTV;
-		ID3D11ShaderResourceView* sourceSRV = nullptr;
+		ID3D11ShaderResourceView* sourceSRV = nullptr;  // Non-owning; lifetime is managed elsewhere.
 		UIBufferViews uiBuffer;
 
+		// HDR: blur hdrTexture in place before ApplyHDR composites the UI. No color-space conversion is
+		// needed; the blur operates directly in PQ BT.2020 space, then ApplyHDR composites vanilla UI and
+		// ImGui over the blurred scene.
 		if (hdrActive) {
 			currentTexture = hdr->hdrTexture->resource;
 			sourceSRV = hdr->hdrTexture->srv.get();
