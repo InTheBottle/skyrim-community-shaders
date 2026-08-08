@@ -1432,14 +1432,24 @@ void HDRDisplay::UpdateSwapChainColorSpace() const
 		return;
 
 	if (settings.enableHDR) {
-		HRESULT hr = swapChain4->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		constexpr auto hdrColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+		UINT support = 0;
+		const HRESULT supportHr = swapChain4->CheckColorSpaceSupport(hdrColorSpace, &support);
+		if (FAILED(supportHr) || !(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)) {
+			logger::error("[HDR] HDR10 color space is unavailable (support hr=0x{:08X}, flags=0x{:X})",
+				static_cast<unsigned>(supportHr), support);
+			swapChain4->Release();
+			return;
+		}
+
+		HRESULT hr = swapChain4->SetColorSpace1(hdrColorSpace);
 		if (SUCCEEDED(hr)) {
 			logger::info("[HDR] Set swap chain color space to HDR10 (PQ/BT.2020)");
 			// Do NOT set HDR10 static metadata - it can cause issues on some monitors
 			// The HGiG approach is to handle highlights compression in the shader instead.
 			swapChain4->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_NONE, 0, nullptr);
 		} else {
-			logger::warn("[HDR] Failed to set HDR10 color space");
+			logger::error("[HDR] Failed to set HDR10 color space (hr=0x{:08X})", static_cast<unsigned>(hr));
 		}
 	} else {
 		HRESULT hr = swapChain4->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);

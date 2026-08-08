@@ -52,6 +52,10 @@ namespace DxvkLoader
 			return false;
 		}
 
+		if (!::SetEnvironmentVariableW(L"DXVK_HDR", L"1")) {
+			logger::warn("[DXVK] Failed to enable HDR color-space support (error {})", ::GetLastError());
+		}
+
 		const auto dir = GetRuntimeDir();
 		if (dir.empty()) {
 			logger::error("[DXVK] Could not resolve plugin directory for DXVK DLLs");
