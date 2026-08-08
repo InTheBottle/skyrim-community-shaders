@@ -124,62 +124,65 @@ namespace ShaderConstants
 	};
 }
 
-enum class ShaderClass
+namespace SIE
 {
-	Vertex,
-	Pixel,
-	Compute,
-	Total,
-};
-
-class ShaderCompilationTask
-{
-public:
-	enum Status
+	enum class ShaderClass
 	{
-		Pending,
-		Failed,
-		Completed
+		Vertex,
+		Pixel,
+		Compute,
+		Total,
 	};
-	ShaderCompilationTask(ShaderClass shaderClass, const RE::BSShader& shader,
-		uint32_t descriptor);
-	/** @brief Compiles the shader, writing the result to the ShaderCache. */
-	void Perform() const;
 
-	/** @brief Returns a unique hash identifying this shader class, type, and descriptor combo. */
-	size_t GetId() const;
-	/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
-	std::string GetString() const;
+	class ShaderCompilationTask
+	{
+	public:
+		enum Status
+		{
+			Pending,
+			Failed,
+			Completed
+		};
+		ShaderCompilationTask(ShaderClass shaderClass, const RE::BSShader& shader,
+			uint32_t descriptor);
+		/** @brief Compiles the shader, writing the result to the ShaderCache. */
+		void Perform() const;
 
-	/**
+		/** @brief Returns a unique hash identifying this shader class, type, and descriptor combo. */
+		size_t GetId() const;
+		/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
+		std::string GetString() const;
+
+		/**
 		 * LPT scheduling score: higher = more expensive = should be dispatched first.
 		 * Based on shader type, class, descriptor complexity, and known heavy defines.
 		 * Computed once at construction and cached.
 		 */
-	/** Gets the cached LPT scheduling priority. */
-	int GetPriority() const { return cachedPriority; }
-	/** @brief Records the QPC timestamp when this task was enqueued. */
-	void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
-	/** @brief Gets the QPC timestamp when this task was enqueued. */
-	int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
+		/** Gets the cached LPT scheduling priority. */
+		int GetPriority() const { return cachedPriority; }
+		/** @brief Records the QPC timestamp when this task was enqueued. */
+		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
+		/** @brief Gets the QPC timestamp when this task was enqueued. */
+		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
 
-	bool operator==(const ShaderCompilationTask& other) const;
+		bool operator==(const ShaderCompilationTask& other) const;
 
-protected:
-	ShaderClass shaderClass;
-	const RE::BSShader& shader;
-	uint32_t descriptor;
+	protected:
+		ShaderClass shaderClass;
+		const RE::BSShader& shader;
+		uint32_t descriptor;
 
-private:
-	static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
-	int cachedPriority;
-	int64_t enqueuedQpc = 0;
-};
+	private:
+		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
+		int cachedPriority;
+		int64_t enqueuedQpc = 0;
+	};
+}
 
 template <>
-struct std::hash<ShaderCompilationTask>
+struct std::hash<SIE::ShaderCompilationTask>
 {
-	std::size_t operator()(const ShaderCompilationTask& task) const noexcept
+	std::size_t operator()(const SIE::ShaderCompilationTask& task) const noexcept
 	{
 		return task.GetId();
 	}
@@ -187,7 +190,7 @@ struct std::hash<ShaderCompilationTask>
 
 struct TaskPriorityLess
 {
-	bool operator()(const ShaderCompilationTask& a, const ShaderCompilationTask& b) const
+	bool operator()(const SIE::ShaderCompilationTask& a, const SIE::ShaderCompilationTask& b) const
 	{
 		if (a.GetPriority() != b.GetPriority()) {
 			return a.GetPriority() < b.GetPriority();
@@ -196,8 +199,10 @@ struct TaskPriorityLess
 	}
 };
 
-/**
- * Threshold above which a shader task is considered "heavy" and benefits
+namespace SIE
+{
+	/**
+	 * Threshold above which a shader task is considered "heavy" and benefits
 	 * from P-core placement on hybrid CPUs. Used for thread-priority hints,
 	 * telemetry, and developer-facing diagnostics.
 	 */
@@ -842,3 +847,4 @@ private:
 	std::mutex actionMutex;
 	std::vector<fileAction> queue{};
 };
+}

@@ -7,7 +7,9 @@
 #include <unordered_set>
 #include <vector>
 
-/** @brief Tracks include dependencies between .hlsl and .hlsli files for hot-reload invalidation. */
+namespace SIE
+{
+	/** @brief Tracks include dependencies between .hlsl and .hlsli files for hot-reload invalidation. */
 class ShaderFileDependencyTracker
 {
 public:
@@ -87,3 +89,4 @@ private:
 	std::unordered_map<std::string, std::unordered_set<std::string>> hlsliToHlsl;
 	std::mutex mutex;
 };
+}

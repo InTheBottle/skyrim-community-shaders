@@ -18,7 +18,9 @@
 
 #include "Plugin.h"
 
-// Custom include handler to track all includes during shader compilation
+namespace SIE
+{
+	// Custom include handler to track all includes during shader compilation
 class TrackingIncludeHandler : public ID3DInclude
 {
 public:
@@ -3599,4 +3601,5 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string& 
 		// only add if not a duplicate; esfw is very spammy
 		queue.push_back({ watchid, dir, filename, action, oldFilename });
 	}
+}
 }

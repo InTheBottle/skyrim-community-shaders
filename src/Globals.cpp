@@ -156,14 +156,14 @@ namespace globals
 	State* state = nullptr;
 	Deferred* deferred = nullptr;
 	Menu* menu = nullptr;
-	ShaderCache* shaderCache = nullptr;
+	SIE::ShaderCache* shaderCache = nullptr;
 
 	static Profiler profilerInstance;
 	Profiler* profiler = &profilerInstance;
 
 	void OnInit()
 	{
-		shaderCache = &ShaderCache::Instance();
+		shaderCache = &SIE::ShaderCache::Instance();
 		state = State::GetSingleton();
 		menu = Menu::GetSingleton();
 		deferred = Deferred::GetSingleton();
