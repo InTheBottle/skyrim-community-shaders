@@ -114,88 +114,10 @@ static bool DrawStepper(const char* a_label, int* a_index, const std::vector<con
 		return false;
 	*a_index = std::clamp(*a_index, 0, count - 1);
 
-	if (!Upscaling::useArrowSteppers) {
-		ImGui::BeginDisabled(a_disabled);
-		const bool changed = ImGui::SliderInt(a_label, a_index, 0, count - 1, a_options[*a_index], ImGuiSliderFlags_NoInput);
-		*a_index = std::clamp(*a_index, 0, count - 1);
-		ImGui::EndDisabled();
-		return changed;
-	}
-
-	// PhotoMode-style "< value >" stepper (ported from powerof3/PhotoMode's ImGui::EnumSlider /
-	// CenteredTextWithArrows, MIT): the label sits in the left half (dimmed until the row is hovered) and the
-	// current option is centered in the right half, flanked by chevron arrows that highlight on hover. Click
-	// the left/right half (or press Left/Right while the row is hovered) to step; the option list wraps.
-	bool changed = false;
-	ImGui::PushID(a_label);
 	ImGui::BeginDisabled(a_disabled);
-
-	const ImGuiStyle& style = ImGui::GetStyle();
-	const float       rowH = ImGui::GetFrameHeight();
-	const float       fullW = ImGui::GetContentRegionAvail().x;
-	const float       labelHalf = fullW * 0.5f + style.ItemInnerSpacing.x;
-	const float       valueW = std::max(rowH * 3.0f, fullW - labelHalf);
-
-	const float  rowStartX = ImGui::GetCursorPosX();
-	const ImVec2 rowScreen = ImGui::GetCursorScreenPos();
-	const ImVec2 valueMin(rowScreen.x + labelHalf, rowScreen.y);
-	const ImVec2 valueMax(valueMin.x + valueW, rowScreen.y + rowH);
-	const bool   rowHovered = !a_disabled && ImGui::IsMouseHoveringRect(valueMin, valueMax);
-
-	// Label (left half) — normal CS text colour; dims only when the control is disabled (BeginDisabled alpha).
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextUnformatted(a_label);
-
-	// Value region (right half) — an invisible button gives hover/click; we draw the text + chevrons over it.
-	ImGui::SameLine();
-	ImGui::SetCursorPosX(rowStartX + labelHalf);
-	const bool  navPressed = ImGui::InvisibleButton("##value", ImVec2(valueW, rowH));
-	const bool  active = !a_disabled && (rowHovered || ImGui::IsItemHovered() || ImGui::IsItemFocused());
-	// Normal CS text colour by default; brighten to pure white when the row is hovered/controller-focused.
-	const ImU32 col = active ? IM_COL32_WHITE : ImGui::GetColorU32(ImGuiCol_Text);
-
-	ImDrawList* dl = ImGui::GetWindowDrawList();
-	const char* text = a_options[*a_index];
-	const ImVec2 ts = ImGui::CalcTextSize(text);
-	dl->AddText(ImVec2(valueMin.x + (valueW - ts.x) * 0.5f, valueMin.y + (rowH - ts.y) * 0.5f), col, text);
-
-	// Chevron arrows at the inner edges of the value region.
-	const float  midY = valueMin.y + rowH * 0.5f;
-	const float  ax = rowH * 0.16f, ay = rowH * 0.26f, inset = rowH * 0.5f, th = 2.5f;
-	const ImVec2 lc(valueMin.x + inset, midY), rc(valueMax.x - inset, midY);
-	dl->AddLine(ImVec2(lc.x + ax, lc.y - ay), ImVec2(lc.x - ax, lc.y), col, th);
-	dl->AddLine(ImVec2(lc.x - ax, lc.y), ImVec2(lc.x + ax, lc.y + ay), col, th);
-	dl->AddLine(ImVec2(rc.x - ax, rc.y - ay), ImVec2(rc.x + ax, rc.y), col, th);
-	dl->AddLine(ImVec2(rc.x + ax, rc.y), ImVec2(rc.x - ax, rc.y + ay), col, th);
-
-	// Activation fires once on release (navPressed): a mouse click steps by which half was clicked, a
-	// controller/keyboard activate (A / Enter) advances. (Don't also test IsItemClicked — it fires on the press
-	// frame while navPressed fires on release, which double-steps a single mouse click.)
-	if (navPressed) {
-		if (ImGui::IsMouseHoveringRect(valueMin, valueMax)) {
-			const float mx = ImGui::GetIO().MousePos.x;
-			*a_index = (mx < valueMin.x + valueW * 0.5f) ? (*a_index - 1 + count) % count : (*a_index + 1) % count;
-		} else {
-			*a_index = (*a_index + 1) % count;
-		}
-		changed = true;
-	}
-	// D-pad / arrow keys step while the row is hovered or controller-focused (single column → nav left/right
-	// has nowhere to go, so it falls through to here, matching PhotoMode's EnumSlider).
-	if (active) {
-		if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
-			*a_index = (*a_index - 1 + count) % count;
-			changed = true;
-		}
-		if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
-			*a_index = (*a_index + 1) % count;
-			changed = true;
-		}
-	}
-
-	ImGui::EndDisabled();
-	ImGui::PopID();
+	const bool changed = ImGui::SliderInt(a_label, a_index, 0, count - 1, a_options[*a_index], ImGuiSliderFlags_NoInput);
 	*a_index = std::clamp(*a_index, 0, count - 1);
+	ImGui::EndDisabled();
 	return changed;
 }
 

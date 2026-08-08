@@ -7,7 +7,6 @@
 #include "Feature.h"
 #include "Globals.h"
 #include "Menu.h"
-#include "Menu/DisplaySettingsMenu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -493,9 +492,6 @@ struct BSInputDeviceManager_PollInputDevices
 			// Reflex latency statistics DLSS-G paces by.
 		}
 
-		// Poll the pause-menu Scaleform each frame (main thread) to detect System → SETTINGS → DISPLAY.
-		DisplaySettingsMenu::GetSingleton()->Update();
-
 		bool blockedDevice = true;
 
 		auto menu = globals::menu;
@@ -505,11 +501,8 @@ struct BSInputDeviceManager_PollInputDevices
 
 			if (*a_events) {
 				if (auto device = (*a_events)->GetDevice()) {
-					// Normally only gamepad is let through to the game while a CS overlay is open (the overlay is
-					// mouse-driven). The Display Settings window is a true modal navigated by controller, so block
-					// the gamepad too while it is open.
-					const bool blockGamepadToo = DisplaySettingsMenu::GetSingleton()->IsOpen();
-					blockedDevice = blockGamepadToo || (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
+					// Block all devices except gamepad while the CS menu is open.
+					blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
 				}
 			}
 		}

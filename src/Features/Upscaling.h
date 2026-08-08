@@ -100,11 +100,6 @@ public:
 	// Runtime state
 	bool isWindowed = false;
 
-	// When true, the discrete settings steppers render as PhotoMode-style "< value >" arrow controls rather
-	// than native sliders. DisplaySettingsMenu sets this around its DrawSettings() call so the in-game Display
-	// Settings window matches PhotoMode, while the CS main menu keeps native sliders.
-	static inline bool useArrowSteppers = false;
-
 	// True while the game window is minimized: every Streamline/GPU-interop call (and the
 	// present itself, see the present hook) must be skipped for the gap's duration.
 	static bool IsWindowGapActive();

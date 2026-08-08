@@ -3,7 +3,6 @@
 #include "ThemePresets.h"
 
 #include "BackgroundBlur.h"
-#include "DisplaySettingsMenu.h"
 #include "Fonts.h"
 #include "I18n/I18n.h"
 
