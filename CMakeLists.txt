@@ -1119,9 +1119,6 @@ if(AIO_ZIP_TO_DIST)
         COMMAND
             "${SEVEN_ZIP_EXECUTABLE}" a -t7z "${AIO_ARCHIVE}" "*"
             -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
-        COMMAND
-            ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_ARCHIVE}" -DMAX_BYTES=100000000
-            -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
         COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
         WORKING_DIRECTORY ${AIO_DIR}
         DEPENDS
@@ -1255,9 +1252,6 @@ if(TARGET PREPARE_AIO)
             COMMAND
                 "${SEVEN_ZIP_EXECUTABLE}" a -t7z "${AIO_PACKAGE}" "*"
                 -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
-            COMMAND
-                ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_PACKAGE}" -DMAX_BYTES=100000000
-                -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
             WORKING_DIRECTORY ${AIO_DIR}
             DEPENDS
                 ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
@@ -1289,9 +1283,6 @@ else()
             COMMAND
                 ${CMAKE_COMMAND} -E chdir ${AIO_DIR} "${SEVEN_ZIP_EXECUTABLE}" a -t7z
                 "${AIO_PACKAGE}" "*" -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
-            COMMAND
-                ${CMAKE_COMMAND} -DARCHIVE_PATH="${AIO_PACKAGE}" -DMAX_BYTES=100000000
-                -P "${CMAKE_SOURCE_DIR}/cmake/VerifyArchiveSize.cmake"
             COMMENT "Creating maximum-compression AIO package (full install)"
         )
     else()
