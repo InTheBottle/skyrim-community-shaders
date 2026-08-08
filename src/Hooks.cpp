@@ -325,9 +325,8 @@ struct IDXGISwapChain_Present
 {
 	static HRESULT WINAPI thunk(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 	{
-		// Do not enter a frame-generation present while the surface is unavailable.
 		if (Upscaling::IsWindowUnusable())
-			return S_OK;
+			return func(This, SyncInterval, Flags);
 
 		globals::state->Reset();
 
