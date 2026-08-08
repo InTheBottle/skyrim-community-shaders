@@ -9,6 +9,7 @@ struct ExtendedMaterials;
 struct GrassCollision;
 struct GrassLighting;
 struct HairSpecular;
+struct HorizonFix;
 struct IBL;
 struct LightLimitFix;
 struct LinearLighting;
@@ -33,6 +34,7 @@ struct ExtendedTranslucency;
 struct Upscaling;
 class Profiler;
 struct CSEditor;
+struct Effects11;
 struct ExponentialHeightFog;
 struct HDRDisplay;
 struct ScreenshotFeature;
@@ -44,6 +46,8 @@ struct TruePBR;
 class RenderDoc;
 class RemoteControl;
 class Menu;
+class WeatherManager;
+class SceneSettingsManager;
 
 namespace SIE
 {
@@ -94,6 +98,7 @@ namespace globals
 		extern GrassCollision grassCollision;
 		extern GrassLighting grassLighting;
 		extern HairSpecular hairSpecular;
+		extern HorizonFix horizonFix;
 		extern IBL ibl;
 		extern LightLimitFix lightLimitFix;
 		extern LinearLighting linearLighting;
@@ -117,6 +122,7 @@ namespace globals
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;
 		extern HDRDisplay hdrDisplay;
+		extern Effects11 effects11;
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;
@@ -238,6 +244,8 @@ namespace globals
 	extern Menu* menu;
 	extern SIE::ShaderCache* shaderCache;
 	extern Profiler* profiler;
+	extern WeatherManager* weatherManager;
+	extern SceneSettingsManager* sceneSettingsManager;
 
 	/** @brief Initializes core singletons (ShaderCache, State, Menu, Deferred). Called once at plugin load. */
 	void OnInit();

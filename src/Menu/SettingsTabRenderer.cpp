@@ -397,6 +397,12 @@ void SettingsTabRenderer::RenderKeybindingsTab(
 			state.settingScreenshotKey,
 			"Change##Screenshot");
 
+		Util::InputComboWidget(
+			T("menu.settings.effects11_toggle_key", "Effects 11 Toggle Key:"),
+			settings.Effects11ToggleKey,
+			state.settingEffects11ToggleKey,
+			"Change##Effects11Toggle");
+
 		ImGui::EndTabItem();
 	}
 }
@@ -1009,6 +1015,11 @@ void SettingsTabRenderer::RenderFontsTab()
 		}
 
 		ImGui::EndTabItem();
+	} else if (auto* menuInstance = globals::menu; menuInstance->wantsFontPreviewAtlas) {
+		// Fonts tab not active: drop the preview-font atlas so it is not rebaked into every
+		// later atlas rebuild for the rest of the session.
+		menuInstance->wantsFontPreviewAtlas = false;
+		menuInstance->pendingFontReload = true;
 	}
 }
 
