@@ -97,10 +97,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				// Now validate disk cache after features have had a chance to modify their state
 				shaderCache->ValidateDiskCache();
 
-				// Cache metadata is independent of shader compilation completion.
-				if (shaderCache->IsDiskCache())
-					shaderCache->WriteDiskCacheInfo();
-
 				if (shaderCache->UseFileWatcher())
 					shaderCache->StartFileWatcher();
 			}
