@@ -501,8 +501,8 @@ struct BSInputDeviceManager_PollInputDevices
 
 			if (*a_events) {
 				if (auto device = (*a_events)->GetDevice()) {
-					// Block all devices except gamepad while the CS menu is open.
-					blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
+						// Block all devices except gamepad when menu is open
+						blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
 				}
 			}
 		}
