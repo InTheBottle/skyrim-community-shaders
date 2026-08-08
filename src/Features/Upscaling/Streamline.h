@@ -109,6 +109,9 @@ public:
 	/** @brief Waits before overwriting live frame-generation inputs. */
 	void WaitDLSSGInputFence();
 	[[nodiscard]] uint32_t GetDLSSGMaxFramesToGenerate() const;
+
+	/** @brief Returns the latest number of frames presented per rendered frame. */
+	[[nodiscard]] uint32_t GetFrameGenerationMultiplier() const;
 	[[nodiscard]] bool IsDLSSGDynamicSupported() const;
 
 	/** @brief Sets the desired DLSS-G runtime load state. */

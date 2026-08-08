@@ -87,6 +87,7 @@ namespace
 		float dlssgCachedDynamicFps = 0.0f;
 		std::atomic<uint32_t> dlssgMaxFramesToGenerate = 0;
 		std::atomic<bool> dlssgDynamicSupported = false;
+		std::atomic<uint32_t> frameGenerationMultiplier = 1;
 
 		// Completion semaphore for eValidUntilPresent inputs shared across threads.
 		std::atomic<void*> dlssgInputFence{ nullptr };
@@ -107,20 +108,23 @@ namespace
 
 	// Feature load changes are applied only while the swapchain is torn down.
 	std::atomic<bool> g_dlssgDesiredLoaded{ false };
-	bool g_dlssgCurrentlyLoaded = false;
+	std::atomic<bool> g_dlssgCurrentlyLoaded{ false };
 	std::atomic<bool> g_fsrfgDesiredLoaded{ false };
-	bool g_fsrfgCurrentlyLoaded = false;
+	std::atomic<bool> g_fsrfgCurrentlyLoaded{ false };
+	std::atomic<bool> g_fsrfgOwnsPresent{ false };
 
 	// Keep this free of C++ unwinding because it executes inside __try.
-	void ReconcileFgFeatureLoad(sl::Feature a_feature, std::atomic<bool>& a_desired, bool& a_current)
+	void ReconcileFgFeatureLoad(sl::Feature a_feature, std::atomic<bool>& a_desired, std::atomic<bool>& a_current)
 	{
 		const bool want = a_desired.load(std::memory_order_acquire);
-		if (want == a_current || !g_sl.slSetFeatureLoaded || g_sl.dispatchFaulted)
+		if (want == a_current.load(std::memory_order_acquire) || !g_sl.slSetFeatureLoaded || g_sl.dispatchFaulted)
 			return;
 		__try {
 			if (g_sl.slSetFeatureLoaded(a_feature, want) != sl::Result::eOk)
 				return;
-			a_current = want;
+			a_current.store(want, std::memory_order_release);
+			if (a_feature == sl::kFeatureFSR_G && !want)
+				g_fsrfgOwnsPresent.store(false, std::memory_order_release);
 			if (want) {
 				if (a_feature == sl::kFeatureDLSS_G) {
 					g_sl.slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", reinterpret_cast<void*&>(g_sl.slDLSSGSetOptions));
@@ -148,6 +152,12 @@ namespace
 
 		ReconcileFgFeatureLoad(sl::kFeatureDLSS_G, g_dlssgDesiredLoaded, g_dlssgCurrentlyLoaded);
 		ReconcileFgFeatureLoad(sl::kFeatureFSR_G, g_fsrfgDesiredLoaded, g_fsrfgCurrentlyLoaded);
+	}
+
+	bool DxvkFrameGenerationOwnsSwapchain(VkSwapchainKHR)
+	{
+		return g_dlssgCurrentlyLoaded.load(std::memory_order_acquire) ||
+		       g_fsrfgOwnsPresent.load(std::memory_order_acquire);
 	}
 
 	// Suppress exact known-benign diagnostics; pass all other messages through.
@@ -346,10 +356,10 @@ bool Streamline::Initialize()
 	if (dlssgHardware) {
 		featuresToLoad.push_back(sl::kFeatureDLSS_G);
 		g_dlssgDesiredLoaded.store(true, std::memory_order_release);
-		g_dlssgCurrentlyLoaded = true;
+		g_dlssgCurrentlyLoaded.store(true, std::memory_order_release);
 	}
 	g_fsrfgDesiredLoaded.store(true, std::memory_order_release);
-	g_fsrfgCurrentlyLoaded = true;
+	g_fsrfgCurrentlyLoaded.store(true, std::memory_order_release);
 
 	sl::Preferences pref{};
 	pref.renderAPI = sl::RenderAPI::eVulkan;
@@ -534,14 +544,17 @@ void Streamline::BeginRenderFrame()
 void Streamline::CaptureDLSSGInputFence()
 {
 	// Capture the completion point before the next frame overwrites live inputs.
-	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted || !g_dlssgCurrentlyLoaded || !g_sl.dlssgModeOn)
+	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted ||
+		!g_dlssgCurrentlyLoaded.load(std::memory_order_acquire) || !g_sl.dlssgModeOn)
 		return;
 	__try {
 		sl::DLSSGState state{};
 		if (g_sl.slDLSSGGetState(g_sl.viewport, state, nullptr) == sl::Result::eOk) {
+			g_sl.frameGenerationMultiplier.store(
+				std::max(state.numFramesActuallyPresented, 1u), std::memory_order_release);
 			static uint32_t s_logCounter = 0;
 			if ((s_logCounter++ % 120) == 0) {
-				logger::info("[Streamline] DLSS-G state: framesPresented={} status={} vram={} MB",
+				logger::info("[Streamline] DLSS-G state: presentedPerFrame={} status={} vram={} MB",
 					state.numFramesActuallyPresented,
 					static_cast<int>(state.status),
 					state.estimatedVRAMUsageInBytes >> 20);
@@ -1224,7 +1237,7 @@ void Streamline::SetDLSSGMode(bool a_enable, uint32_t a_displayWidth, uint32_t a
 		return;
 
 	// Do not call the options entry point while DLSS-G is runtime-unloaded.
-	if (!g_dlssgCurrentlyLoaded)
+	if (!g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))
 		return;
 
 	// Clamp the requested multiplier to the reported hardware limit.
@@ -1302,7 +1315,7 @@ bool Streamline::SetFSRFrameGen(bool a_enable, uint32_t a_renderWidth, uint32_t 
 	// The caller retries until the runtime-loaded plugin accepts the option.
 	if (!initialized || !featureFSRFG || !g_sl.slFSRFrameGenerationSetOptions || g_sl.dispatchFaulted)
 		return false;
-	if (!g_fsrfgCurrentlyLoaded)
+	if (!g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire))
 		return false;
 
 	bool ok = false;
@@ -1323,6 +1336,9 @@ bool Streamline::SetFSRFrameGen(bool a_enable, uint32_t a_renderWidth, uint32_t 
 			logger::warn("[Streamline] slFSRFrameGenerationSetOptions failed (result {})", static_cast<int>(res));
 		} else {
 			ok = true;
+			g_fsrfgOwnsPresent.store(a_enable, std::memory_order_release);
+			if (!a_enable)
+				g_sl.frameGenerationMultiplier.store(1, std::memory_order_release);
 			logger::info("[Streamline] FSR frame generation {} (render {}x{} display {}x{})",
 				a_enable ? "ENABLED" : "disabled", a_renderWidth, a_renderHeight, a_displayWidth, a_displayHeight);
 		}
@@ -1337,15 +1353,17 @@ void Streamline::LogFSRFrameGenStats()
 {
 	if (!initialized || !featureFSRFG || !g_sl.slFSRGetFrameGenState || g_sl.dispatchFaulted)
 		return;
-	static uint32_t s_n = 0;
-	if ((s_n++ % 120) != 0)
-		return;
 	__try {
 		sl::FSRFrameGenState state{};
-		if (g_sl.slFSRGetFrameGenState(g_sl.viewport, state) == sl::Result::eOk)
-			logger::info("[Streamline] FSR-FG state: framesPresented={} status={} vram={} MB",
-				state.numFramesActuallyPresented, state.status,
-				state.estimatedVRAMUsageInBytes >> 20);
+		if (g_sl.slFSRGetFrameGenState(g_sl.viewport, state) == sl::Result::eOk) {
+			g_sl.frameGenerationMultiplier.store(
+				std::max(state.numFramesActuallyPresented, 1u), std::memory_order_release);
+			static uint32_t s_n = 0;
+			if ((s_n++ % 120) == 0)
+				logger::info("[Streamline] FSR-FG state: presentedPerFrame={} status={} vram={} MB",
+					state.numFramesActuallyPresented, state.status,
+					state.estimatedVRAMUsageInBytes >> 20);
+		}
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		g_sl.dispatchFaulted = true;
 	}
@@ -1354,7 +1372,8 @@ void Streamline::LogFSRFrameGenStats()
 void Streamline::QueryDLSSGCapabilities()
 {
 	// Streamline requires this state query on the present thread.
-	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted || !g_dlssgCurrentlyLoaded)
+	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted ||
+		!g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))
 		return;
 	if (g_sl.dlssgMaxFramesToGenerate.load(std::memory_order_acquire) != 0u)
 		return;
@@ -1374,6 +1393,11 @@ void Streamline::QueryDLSSGCapabilities()
 uint32_t Streamline::GetDLSSGMaxFramesToGenerate() const
 {
 	return g_sl.dlssgMaxFramesToGenerate.load(std::memory_order_acquire);
+}
+
+uint32_t Streamline::GetFrameGenerationMultiplier() const
+{
+	return g_sl.frameGenerationMultiplier.load(std::memory_order_acquire);
 }
 
 bool Streamline::IsDLSSGDynamicSupported() const
@@ -1573,8 +1597,8 @@ void Streamline::RegisterDxvkOwnershipPredicate()
 		logger::warn("[Streamline] dxvkSetFrameGenOwnershipQuery not found in DXVK module");
 		return;
 	}
-	setQuery([](VkSwapchainKHR) -> bool { return true; });
-	logger::info("[Streamline] registered DXVK ownership predicate (all swapchains externally paced)");
+	setQuery(&DxvkFrameGenerationOwnsSwapchain);
+	logger::info("[Streamline] registered DXVK frame-generation ownership predicate");
 
 	// Streamline features may only be loaded or unloaded while no swapchain exists.
 	using SetTornDownFn = void (*)(void (*)());
@@ -1618,12 +1642,13 @@ void Streamline::SetDLSSGDesiredLoaded(bool a_loaded)
 
 bool Streamline::IsDLSSGLoaded() const
 {
-	return g_dlssgCurrentlyLoaded;
+	return g_dlssgCurrentlyLoaded.load(std::memory_order_acquire);
 }
 
 bool Streamline::IsDLSSGLoadSettled() const
 {
-	return g_dlssgDesiredLoaded.load(std::memory_order_acquire) == g_dlssgCurrentlyLoaded;
+	return g_dlssgDesiredLoaded.load(std::memory_order_acquire) ==
+	       g_dlssgCurrentlyLoaded.load(std::memory_order_acquire);
 }
 
 void Streamline::SetFSRFGDesiredLoaded(bool a_loaded)
@@ -1633,12 +1658,13 @@ void Streamline::SetFSRFGDesiredLoaded(bool a_loaded)
 
 bool Streamline::IsFSRFGLoaded() const
 {
-	return g_fsrfgCurrentlyLoaded;
+	return g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire);
 }
 
 bool Streamline::IsFSRFGLoadSettled() const
 {
-	return g_fsrfgDesiredLoaded.load(std::memory_order_acquire) == g_fsrfgCurrentlyLoaded;
+	return g_fsrfgDesiredLoaded.load(std::memory_order_acquire) ==
+	       g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire);
 }
 
 void Streamline::RequestDxvkSwapchainRecreate(const char* a_reason)

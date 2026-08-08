@@ -22,6 +22,7 @@
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/Upscaling.h"
+#include "Features/Upscaling/Streamline.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -161,7 +162,7 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Checkbox(T(TKEY("show_vram"), "Show VRAM Usage"), &this->settings.ShowVRAM);
 		ImGui::Checkbox(T(TKEY("show_cs_passes"), "Show CS Render Passes"), &this->settings.ShowCSPasses);
 
-		bool isFrameGenerationActive = false;
+		const bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 		if (this->settings.ShowFPS && isFrameGenerationActive) {
 			ImGui::Checkbox(T(TKEY("show_pre_fg_graph"), "Show Pre-FG Frametime Graph"), &this->settings.ShowPreFGFrameTimeGraph);
 
@@ -475,6 +476,9 @@ void PerformanceOverlay::DrawFPS()
 			ImGui::EndTable();
 		}
 	}
+
+	if (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive)
+		this->DrawPostFGFrameTimeGraph();
 
 }
 
@@ -1903,8 +1907,7 @@ void PerformanceOverlay::UpdateSummaryTestData(float smoothedFrameTime, float ot
 
 void PerformanceOverlay::UpdateGraphValues()
 {
-	// Check if Frame Generation is active
-	state.isFrameGenerationActive = false;
+	state.isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 
 	// Sync frame history buffer size with user settings
 	settings.FrameHistorySize = std::clamp(
@@ -1979,11 +1982,24 @@ void PerformanceOverlay::UpdateGraphValues()
 	state.smoothedMinFrameTime = state.smoothedMinFrameTime + Settings::kSmoothingFactor * (graphMin - state.smoothedMinFrameTime);
 	state.smoothedMaxFrameTime = state.smoothedMaxFrameTime + Settings::kSmoothingFactor * (graphMax - state.smoothedMaxFrameTime);
 
+	if (state.isFrameGenerationActive) {
+		const float multiplier = static_cast<float>(
+			Streamline::GetSingleton()->GetFrameGenerationMultiplier());
+		state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
+		state.postFGFps = state.fps * multiplier;
+		state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
+	} else {
+		state.postFGFrameTimeMs = 0.0f;
+		state.postFGFps = 0.0f;
+	}
+
 	// Update smooth values with user-specified interval
 	state.updateTimer += deltaTime;
 	if (state.updateTimer >= settings.UpdateInterval) {
 		state.smoothFps = state.fps;  // Sampling white noise won't give you smoothed noise. This is useless.
 		state.smoothFrameTimeMs = state.frameTimeMs;
+		state.postFGSmoothFps = state.postFGFps;
+		state.postFGSmoothFrameTimeMs = state.postFGFrameTimeMs;
 		state.updateTimer = 0.0f;
 	}
 }
