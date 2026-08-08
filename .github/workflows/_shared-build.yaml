@@ -83,7 +83,7 @@ jobs:
 
             # Cache the DXVK build keyed on the submodule SHA so it is reused across runs
             # (a full DXVK build is slow). Bumping the submodule invalidates the cache.
-            # The `-avx2ndebug` salt is load-bearing: the key is otherwise SHA-only, so changing the
+            # The `-avx2ndebug-vksdk` salt is load-bearing: the key is otherwise SHA-only, so changing the
             # meson flags below (without bumping the submodule) would silently reuse the stale flagless
             # build. Bump the salt whenever the DXVK build flags change.
             - name: Cache DXVK build
@@ -91,14 +91,13 @@ jobs:
               uses: actions/cache@v5
               with:
                   path: extern/dxvk/build
-                  key: ${{ runner.os }}-dxvk-avx2ndebug-${{ steps.dxvk_sha.outputs.sha }}
+                  key: ${{ runner.os }}-dxvk-avx2ndebug-vksdk-${{ steps.dxvk_sha.outputs.sha }}
 
-            - name: Install DXVK build tools (meson, ninja, glslang)
+            - name: Install DXVK build tools (meson and ninja)
               if: steps.cache_dxvk.outputs.cache-hit != 'true'
               shell: pwsh
               run: |
                   python -m pip install --upgrade meson ninja
-                  choco install vulkan-sdk -y --no-progress
 
             - name: Build DXVK
               if: steps.cache_dxvk.outputs.cache-hit != 'true'
