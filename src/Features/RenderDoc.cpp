@@ -36,9 +36,6 @@ RenderDoc* RenderDoc::GetSingleton()
 
 void RenderDoc::Load()
 {
-	// Idempotent: XSEPlugin::Load calls this before InstallEarlyHooks (renderdoc.dll must
-	// install its global IAT hooks before the originals are captured), and the generic
-	// feature Load loop calls it again afterwards.
 	if (renderDocModule) {
 		return;
 	}
@@ -128,16 +125,11 @@ void RenderDoc::Load()
 		logger::warn("[RenderDoc] Failed to prepare capture directory/template: {}", e.what());
 	}
 
-	// DXVK/Vulkan captures need every live resource serialized: DXVK recycles
-	// descriptors and dynamic-buffer memory in ways RenderDoc's frame-usage tracking
-	// cannot see, and a default capture replays with VK_ERROR_DEVICE_LOST at load.
-	// Costs capture size (all live resources are included). CS_RENDERDOC_REF_ALL=0
-	// opts out for size-sensitive captures on plain D3D11.
+	// DXVK resources can outlive RenderDoc's normal frame-usage tracking.
 	char refAllBuf[8] = {};
 	const bool refAll = !(GetEnvironmentVariableA("CS_RENDERDOC_REF_ALL", refAllBuf, sizeof(refAllBuf)) && refAllBuf[0] == '0');
 	renderDocApi->SetCaptureOptionU32(eRENDERDOC_Option_RefAllResources, refAll ? 1 : 0);
-	// Record D3D11 deferred command lists from application start so lists recorded
-	// before the capture frame (and reused) are still serialized.
+	// Reused command lists may have been recorded before capture begins.
 	renderDocApi->SetCaptureOptionU32(eRENDERDOC_Option_CaptureAllCmdLists, 1);
 	logger::info("[RenderDoc] Capture options: RefAllResources={}, CaptureAllCmdLists=1", refAll ? 1 : 0);
 
@@ -148,17 +140,7 @@ void RenderDoc::Load()
 	// Initialize capture count tracking
 	lastCaptureCount = renderDocApi->GetNumCaptures();
 
-	// DXVK captures replay only on the classic descriptor-set path: RenderDoc hides
-	// VK_EXT_descriptor_heap (unsupported), DXVK then falls back to
-	// VK_EXT_descriptor_buffer, and RenderDoc's replay of that model (plus its
-	// buffer-device-address-tagged memory) device-losts at capture load on NVIDIA.
-	// Also un-relax the baked SkyrimSE barrier profile -- barriers omitted live are
-	// tolerated by the driver but can fault under replay's different timing -- and
-	// drop pipeline libraries / unified layouts to shrink the replay surface.
-	// This runs at plugin load, before DXVK creates its device, and DXVK reads these
-	// through Win32 GetEnvironmentVariable, so the values are picked up. Applied only
-	// when capture is enabled, so normal runs keep the faster binding models. An
-	// existing DXVK_CONFIG is respected so it can be overridden per-run.
+	// RenderDoc replay requires DXVK's classic descriptor and conservative barrier paths.
 	if (!DxvkLoader::NativeModeRequested()) {
 		if (GetEnvironmentVariableA("DXVK_CONFIG", nullptr, 0) == 0) {
 			SetEnvironmentVariableA("DXVK_CONFIG",
@@ -169,7 +151,6 @@ void RenderDoc::Load()
 		} else {
 			logger::info("[RenderDoc] DXVK_CONFIG already set; leaving it untouched");
 		}
-		// Named D3D11 objects flow into the Vulkan capture as debug names.
 		if (GetEnvironmentVariableA("DXVK_DEBUG", nullptr, 0) == 0) {
 			SetEnvironmentVariableA("DXVK_DEBUG", "markers");
 		}
@@ -578,10 +559,6 @@ std::filesystem::path RenderDoc::GetCapturesPath() const
 	return Util::PathHelpers::GetCommunityShaderPath() / "Captures";
 }
 
-// Locate the renderdoc.dll belonging to the REGISTERED Vulkan implicit capture layer,
-// if one exists. The layer json ("...\renderdoc.json") is registered as a value name
-// under SOFTWARE\Khronos\Vulkan\ImplicitLayers, and the RenderDoc installer always
-// places renderdoc.dll next to it.
 static std::filesystem::path FindRegisteredRenderDocLayerDll()
 {
 	constexpr const wchar_t* kLayerKey = L"SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers";
@@ -615,22 +592,16 @@ static std::filesystem::path FindRegisteredRenderDocLayerDll()
 
 std::filesystem::path RenderDoc::GetRenderDocDllPath() const
 {
-	// CS_RENDERDOC_DLL overrides the default location.
 	wchar_t overridePath[MAX_PATH]{};
 	if (GetEnvironmentVariableW(L"CS_RENDERDOC_DLL", overridePath, MAX_PATH) && overridePath[0]) {
 		return std::filesystem::path(overridePath);
 	}
 
-	// Prefer the DLL of the registered Vulkan implicit layer: under DXVK the Vulkan
-	// loader maps that exact file at instance creation, and the in-app API must bind
-	// the SAME file — the Windows loader keys modules by full path, so loading a
-	// different copy puts TWO RenderDoc instances in the process (in-app + layer)
-	// that fight over the Vulkan dispatch chain and hang instance creation.
+	// Bind the same DLL as the Vulkan layer to avoid two RenderDoc instances.
 	if (auto layerDll = FindRegisteredRenderDocLayerDll(); !layerDll.empty()) {
 		return layerDll;
 	}
 
-	// Bundled fallback (no layer registered, so a second instance cannot appear).
 	return Util::PathHelpers::GetDataPath() / "SKSE" / "Plugins" / "CommunityShaders" / "bin" / "renderdoc.dll";
 }
 

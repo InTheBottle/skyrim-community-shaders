@@ -58,8 +58,7 @@ static constexpr DISPLAYCONFIG_DEVICE_INFO_TYPE kDisplayConfigGetAdvancedColorIn
 // https://github.com/Filoppi/Luma-Framework/blob/f1fbc2a36f2d24fd551721ce90f26821a8e754c1/Source/Core/utils/display.hpp
 namespace
 {
-	// Returns the GDI device name for the swap chain's output via GetContainingOutput.
-	// Returns false if the output cannot be determined.
+	// Returns the GDI device name for the swap chain's output.
 	bool GetSwapChainOutputDeviceName(IDXGISwapChain* swapChain, WCHAR (&outDeviceName)[32])
 	{
 		winrt::com_ptr<IDXGIOutput> output;
@@ -120,8 +119,7 @@ namespace
 
 		DISPLAYCONFIG_PATH_INFO pathInfo{};
 		if (!GetDisplayConfigPathInfo(swapChain, pathInfo)) {
-			// GetContainingOutput can fail in certain configurations. Fall back to enumerating
-			// the device adapter's outputs by HMONITOR. Only detects active HDR, not capable.
+			// Fall back to enumerating outputs by HMONITOR.
 			HWND outputWindow = nullptr;
 			DXGI_SWAP_CHAIN_DESC scDescFull{};
 			if (SUCCEEDED(swapChain->GetDesc(&scDescFull)))
@@ -984,8 +982,6 @@ HRESULT HDRDisplay::HandleSwapChainPresent(
 	globals::menu->DrawOverlay();
 	globals::d3d::context->RSSetViewports(1, &savedViewport);
 
-	// Frame generation is handled independently, in the present chain wrapper (Upscaling::
-	// PresentWithFrameGeneration). HDR Display only composites the real frame and presents it.
 	return RunPresentChainWithHDR(swapChain, syncInterval, flags, hdrReady, false, presentChain);
 }
 
@@ -1411,7 +1407,6 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	data.uiBrightness = settings.hdrUIBrightness;
 	data.isSceneLinear = isSceneLinear ? 1.f : 0.f;
 	data.pad0 = isMainOrLoadingMenu ? 1.f : 0.f;
-	// TweenMenu = pause UI. HDROutputCS applies a mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
 	return data;

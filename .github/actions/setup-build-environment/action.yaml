@@ -59,10 +59,7 @@ runs:
           with:
               arch: x64
 
-        # Both the C++ build and prepare-shaders configure the Vulkan-enabled project.
-        # Install the SDK on every job, including DXVK cache hits. Chocolatey updates
-        # the machine environment, but the Actions runner process does not reload it,
-        # so explicitly export VULKAN_SDK and Bin for all later steps.
+        # Export the installed SDK because the runner does not reload machine environment changes.
         - name: Install and export Vulkan SDK
           shell: pwsh
           run: |

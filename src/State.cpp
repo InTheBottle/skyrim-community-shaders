@@ -1022,9 +1022,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				float2 screenSz{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 				auto renderSize = Util::ConvertToDynamic(screenSz, true);
 				data.MipBias = std::log2f(renderSize.x / screenSz.x);
-				// DLSS reconstructs from a lower internal resolution and recommends an extra
-				// -1 LOD bias so textures keep their detail; FSR applies its own sharpening
-				// (RCAS) and uses the unmodified log2 ratio.
+				// DLSS requires an additional mip bias beyond the resolution ratio.
 				if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS)
 					data.MipBias -= 1.0f;
 			} else {

@@ -261,50 +261,34 @@ struct IDXGISwapChain_Present
 {
 	static HRESULT WINAPI thunk(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 	{
-		// Match the Streamline sample: stop presenting while the window is not visible or
-		// focused. Presenting through DLSS-G's blocking pacer on an occluded GDI-copy surface
-		// can wedge the pacer while DXVK waits on the same driver lock.
+		// Do not enter a frame-generation present while the surface is unavailable.
 		if (Upscaling::IsWindowUnusable())
 			return S_OK;
 
 		globals::state->Reset();
 
-		// CS owns VSync via the Upscaling menu setting, overriding whatever SyncInterval the game passes. The one
-		// hard rule: VSync is fundamentally incompatible with DLSS-G frame generation on Vulkan, so it is ALWAYS
-		// forced off when DLSS-G is the active FG method (the application-controlled-VSync path is unavailable
-		// here; presenting DLSS-G with SyncInterval>0 makes SL DISABLE interpolation
-		// — "VSync interval 1 not supported with FG" — and frame-gen stops doubling). Reflex caps the rate for
-		// DLSS-G; the frame limiter handles VRR for the rest. FSR-FG/FFX still paces its own present underneath.
+		// DLSS-G on Vulkan requires SyncInterval 0.
 		{
 			auto& up = globals::features::upscaling;
 			const bool dlssgActive = up.IsFrameGenerationActive() &&
 			                         up.GetFrameGenMethod() == Upscaling::FrameGenMethod::kDLSSG;
 			SyncInterval = dlssgActive ? 0u : (up.settings.vsync ? 1u : 0u);
-			// Query DLSS-G's Multi Frame Generation cap here (present thread, as SL requires); idempotent,
-			// caches once. Drives the UI multiplier limit and the clamp in SetDLSSGMode.
 			if (dlssgActive) {
 				auto* sl = Streamline::GetSingleton();
 				sl->QueryDLSSGCapabilities();
 			}
 		}
 
-		// Reflex/PCL latency markers: render submission is complete by present time. When the DXVK
-		// present-marker bridge is active, PresentStart/End fire on DXVK's submit thread around the
-		// REAL vkQueuePresentKHR (this D3D11 call only queues the present) — we just hand it this
-		// frame's id. Without the bridge (older DXVK dll), fall back to bracketing here.
+		// Bridged markers surround vkQueuePresentKHR on DXVK's submit thread.
 		auto* streamline = Streamline::GetSingleton();
 		streamline->SetPCLMarker(Streamline::PclMarker::RenderSubmitEnd);
-		streamline->SetPCLMarker(Streamline::PclMarker::TriggerFlash);  // sample fires this once/frame before present
+		streamline->SetPCLMarker(Streamline::PclMarker::TriggerFlash);
 		const bool bridgedMarkers = streamline->PresentMarkersBridged();
 		if (bridgedMarkers)
 			streamline->NotifyPresentQueued();
 		else
 			streamline->SetPCLMarker(Streamline::PclMarker::PresentStart);
 
-		// HDR Display composites the real frame into the back buffer, then calls the present
-		// chain. We wrap that chain with FSR3 frame generation: it interpolates from the final
-		// back buffer and presents the generated frame ahead of the real one. Frame gen and HDR
-		// are independent — when either is off, its wrapper is a passthrough.
 		HRESULT retval = globals::features::hdrDisplay.HandleSwapChainPresent(
 			This,
 			SyncInterval,
@@ -318,7 +302,6 @@ struct IDXGISwapChain_Present
 		if (!bridgedMarkers)
 			streamline->SetPCLMarker(Streamline::PclMarker::PresentEnd);
 
-		// Preserve eValidUntilPresent inputs until DLSS-G has finished consuming them.
 		streamline->CaptureDLSSGInputFence();
 
 		globals::features::screenshotFeature.ProcessCaptureRequest();
@@ -357,9 +340,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	pAdapter->GetDesc(&adapterDesc);
 	globals::state->SetAdapterDescription(adapterDesc.Description, adapterDesc.VendorId, adapterDesc.DeviceId);
 
-	// If this line is missing from the log, another hooking layer (e.g. RenderDoc's IAT
-	// patching) has stolen the game's import slot and the feature-level force below never
-	// happened -- see the RenderDoc load-ordering note in XSEPlugin::Load.
 	logger::info("D3D11CreateDeviceAndSwapChain intercepted (forcing D3D_FEATURE_LEVEL_11_1)");
 
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
@@ -464,21 +444,13 @@ struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
 	{
-		// Drive low-latency at the input-poll boundary.
 		{
 			auto& upscaling = globals::features::upscaling;
-			// Reflex policy (GetEffectiveReflex): DLSS-G frame-gen forces Reflex ON (it stalls otherwise),
-			// FSR frame-gen forces it OFF (FFX paces the swapchain itself), no frame-gen follows the toggle.
 			const bool wantReflex = upscaling.GetEffectiveReflex();
-			// Frame limiter: cap at GetTargetFrameRate() (default = refresh rate). Reflex paces it when active
-			// (lowest latency; DLSS-G relies on this); otherwise DXVK's own limiter. Exactly one is engaged so
-			// they don't double-limit.
 			const int targetFps = upscaling.GetTargetFrameRate();
 			const uint32_t reflexLimitUs = (wantReflex && targetFps > 0) ? static_cast<uint32_t>(1000000.0 / targetFps) : 0u;
 			Streamline::GetSingleton()->UpdateReflex(wantReflex, wantReflex && upscaling.settings.reflexBoost, reflexLimitUs);
-			// DXVK limiter (the non-Reflex fallback). It paces DXVK's real presents; under FSR frame generation
-			// FFX inserts one generated frame per real present, so the real-present cap must be HALVED for the
-			// displayed rate to land on the user's target. 0 => unlimited (and Reflex-driven cases pass 0 here).
+			// FSR-FG generates one frame per real present, so cap real presents at half the target.
 			double dxvkFps = 0.0;
 			if (!wantReflex && targetFps > 0) {
 				const bool fsrFg = upscaling.IsFrameGenerationActive() &&
@@ -487,9 +459,6 @@ struct BSInputDeviceManager_PollInputDevices
 			}
 			upscaling.ApplyDxvkFrameRateLimit(dxvkFps);
 			Streamline::GetSingleton()->SetPCLMarker(Streamline::PclMarker::SimulationStart);
-			// PCLatencyPing intentionally NOT fired: the sample sends it only on a dedicated
-			// latency-measurement key (F13), never per frame — per-frame pings pollute the
-			// Reflex latency statistics DLSS-G paces by.
 		}
 
 		bool blockedDevice = true;
@@ -536,9 +505,6 @@ namespace Hooks
 			logger::info("Accessing render device information");
 			globals::ReInit();
 
-			// Report which module implements the device: system d3d11.dll, DXVK, or a
-			// RenderDoc wrapper. Confirms whether a capture layer actually wrapped the
-			// device (its vtable then lives in renderdoc.dll) versus silently missing it.
 			if (auto* device = globals::d3d::device) {
 				void* firstVFunc = (*reinterpret_cast<void***>(device))[0];
 				HMODULE implModule = nullptr;
@@ -580,21 +546,15 @@ namespace Hooks
 			if ((a_msg == WM_KILLFOCUS || a_msg == WM_SETFOCUS) && menu->initialized) {
 				menu->focusChanged = true;
 			}
-			// Track the window's focus/modification state so the present hook can suspend frame
-			// generation while the window is not normally focused (see IDXGISwapChain_Present /
-			// Upscaling::IsWindowUnusable). This runs on the game's window/message thread — set
-			// atomic flags ONLY here; every SL/FFX call is made on the render/present thread.
+			// Only update atomics from the window thread; SL/FFX calls stay on the render thread.
 			switch (a_msg) {
 			case WM_ACTIVATEAPP:
-				// Whole-application activation: wParam FALSE => another app took focus (alt-tab).
 				Upscaling::NotifyWindowFocus(a_wParam != FALSE);
 				break;
 			case WM_ACTIVATE:
-				// Window-level (de)activation, including click-away within the app.
 				Upscaling::NotifyWindowFocus(LOWORD(a_wParam) != WA_INACTIVE);
 				break;
 			case WM_ENTERSIZEMOVE:
-				// User grabbed the title bar / a resize border — modal move/resize loop begins.
 				Upscaling::NotifyWindowModifying(true);
 				break;
 			case WM_EXITSIZEMOVE:
@@ -1101,33 +1061,21 @@ namespace Hooks
 
 	void InstallEarlyHooks()
 	{
-		// Load DXVK's d3d11/dxgi from the mod subfolder (not the game root) before the game creates its
-		// device. The IAT hooks below redirect the game's two entry points to these exports; the inert
-		// System32 copies are never called.
-		//
-		// DXVK is a HARD requirement: the entire Community Shaders rendering path (full Streamline
-		// interposition, the FFX/SL frame-gen + upscaling plugins, the DXVK interop device) is built on it,
-		// and there is no meaningful native-D3D11 mode anymore. If the bundled DLLs can't be loaded, fail
-		// loudly rather than limp along on the system d3d11/dxgi (which would silently disable everything).
+		// Load DXVK before the game creates its D3D11 device.
 		const bool nativeMode = DxvkLoader::NativeModeRequested();
-		const bool dxvkLoaded = DxvkLoader::Load();  // returns false immediately in native mode
+		const bool dxvkLoaded = DxvkLoader::Load();
 		if (!nativeMode && !dxvkLoaded) {
 			stl::report_and_fail(
 				"Community Shaders could not load its bundled DXVK renderer (dxvk_d3d11.dll / dxvk_dxgi.dll) "
 				"from Data/SKSE/Plugins/CommunityShaders/bin. Reinstall Community Shaders or verify the files exist."sv);
 		}
 		if (nativeMode) {
-			// Native D3D11: disable the Vulkan-only upscaler so it doesn't install its own
-			// device hook or the Streamline interposition; the device/factory hooks below
-			// then fall through to the system d3d11/dxgi the IAT already resolves to.
 			globals::features::upscaling.loaded = false;
 			logger::info("[Native] CS_NATIVE_D3D11=1: DXVK + upscaling disabled, using system d3d11/dxgi");
 		}
 
 		if (!globals::features::upscaling.loaded) {
 			logger::info("Hooking D3D11CreateDeviceAndSwapChain");
-			// PatchIAT returns the entry it replaced -- the system d3d11 export -- which is the
-			// native fallback when DXVK isn't loaded.
 			const auto iatOriginal = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChain, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 			*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChain = dxvkLoaded ?
 			                                                     reinterpret_cast<uintptr_t>(DxvkLoader::GetD3D11CreateDeviceAndSwapChain()) :

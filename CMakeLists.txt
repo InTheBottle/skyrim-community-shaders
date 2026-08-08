@@ -103,15 +103,10 @@ endif()
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 
-# Vulkan SDK — CS talks to DXVK's own VkDevice (via the IDXGIVkInterop* interfaces)
-# and drives the FFX Vulkan backend on it. Using the SDK's headers (single source,
-# avoids a vulkan_core.h struct-layout split across the DXVK<->FFX interop boundary).
+# Vulkan headers must match across the DXVK and upscaler interop boundary.
 find_package(Vulkan REQUIRED)
 
-# NVIDIA Streamline (SL) — headers only (INTERFACE lib). sl.interposer.dll IS DXVK's
-# vulkan-1.dll (full interposition); sl.* plugin DLLs are loaded at runtime from the CS
-# subfolder. FSR, XeSS, DLSS, Reflex, and DLSS-G all run as SL plugins.
-# See src/Features/Upscaling/Streamline.*.
+# Streamline is linked as headers and loaded through its Vulkan interposer at runtime.
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 target_compile_definitions(
@@ -439,8 +434,7 @@ install(
 )
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
-# Remove the superseded split runtime directories when installing over an older
-# package so all renderer dependencies live in the single bin directory below.
+# Remove runtime directories superseded by the unified bin layout.
 install(CODE
     "file(REMOVE_RECURSE
         \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/dxvk\"
@@ -449,11 +443,7 @@ install(CODE
     COMPONENT Shaders
 )
 
-# DXVK DLLs — staged into the mod's Data subfolder (NOT the game root) under unique
-# base names (dxvk_d3d11.dll / dxvk_dxgi.dll) and loaded explicitly by the plugin at
-# startup (src/DxvkLoader.cpp). DXVK builds them with that 'dxvk_' prefix natively (so
-# d3d11 already imports dxvk_dxgi.dll, not the System32 copies Skyrim maps for its two
-# imported entry points); tools/stage-dxvk-dlls.ps1 just copies them into place.
+# Stage prefixed DXVK DLLs without colliding with the system D3D modules.
 set(DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/extern/dxvk/build/src")
 if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
     install(
@@ -474,18 +464,8 @@ if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
     )
 endif()
 
-# Streamline runtime DLLs. The signed production set — sl.common/dlss/dlss_g/pcl/reflex,
-# the nvngx_* NGX models, NvLowLatencyVk.dll, plus the Vulkan FSR (amd_fidelityfx_vk.dll) and
-# XeSS (libxess.dll) runtimes — is committed under
-# package/SKSE/Plugins/CommunityShaders/bin/ and ships with the package tree like
-# any other asset; there is no configure-time download. Only the CS-built (necessarily
-# unsigned) fork plugins are staged from the build tree: sl.interposer (CS WSI-hook
-# change for DLSS-G ↔ FSR-FG present coexistence) and the CS-custom sl.fsr / sl.fsr_g / sl.xess.
-# (The fork interposer was briefly suspected in the DLSS-G world-flash and pinned to the
-# SDK build; a controlled follow-up round — waitIdle fix with the fork interposer restored
-# — cleared it. The flash was solely the async-eval input-lifetime race.)
-# FSR upscale and frame generation both load this module from the plugin directory at runtime.
-# Fail configuration instead of producing an AIO in which FSR appears selectable but cannot start.
+# Signed runtimes ship from package/; locally built fork plugins are staged below.
+# FSR requires the pinned Vulkan runtime to be present and unmodified.
 set(_FFX_VK_RUNTIME "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/bin/amd_fidelityfx_vk.dll")
 if(NOT EXISTS "${_FFX_VK_RUNTIME}")
     message(FATAL_ERROR "Missing Vulkan FSR runtime: ${_FFX_VK_RUNTIME}")
@@ -499,7 +479,7 @@ if(EXISTS "${_FFX_VK_PINNED}")
     endif()
 endif()
 
-# Legacy backend binaries must never leak into the Vulkan package through package/ or a feature tree.
+# Reject legacy backend binaries in Vulkan package inputs.
 file(GLOB_RECURSE _LEGACY_UPSCALING_RUNTIMES
     "${CMAKE_SOURCE_DIR}/package/*dx12*"
     "${CMAKE_SOURCE_DIR}/package/*d3d12*"
@@ -510,9 +490,7 @@ if(_LEGACY_UPSCALING_RUNTIMES)
     message(FATAL_ERROR "Legacy upscaling runtimes found in Vulkan package inputs: ${_LEGACY_UPSCALING_RUNTIMES}")
 endif()
 
-# NOTE: never stage the rest of the fork's _artifacts output — sl.template crashes
-# slInit (strlen(NULL) in its embedded JSON), and the others are never requested by
-# featuresToLoad (src/Features/Upscaling/Streamline.cpp).
+# Only stage plugins requested by Streamline initialization.
 file(GLOB _SL_FORK_DLLS "${CMAKE_SOURCE_DIR}/extern/Streamline/_artifacts/sl.*/Develop_x64/sl.*.dll")
 list(FILTER _SL_FORK_DLLS INCLUDE REGEX "sl\\.(fsr|fsr_g|xess|interposer)\\.dll$")
 if(_SL_FORK_DLLS)
@@ -630,24 +608,17 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         endif()
     endforeach()
 
-    # Stage the runtime renderer DLLs that live OUTSIDE package/ and features/ (the only
-    # trees globbed above). The glob-based PREPARE_AIO path never invokes the install()
-    # COMPONENT rules (DXVK / Streamline), so without this the AIO archive and the
-    # auto-deploy would ship a mod with no DXVK renderer at all.
-    # We mirror those install() rules straight into ${AIO_DIR} so every downstream consumer
-    # (AIO_ZIP_PACKAGE, Package-AIO-Manual, AUTO_PLUGIN_DEPLOYMENT) gets a DXVK-runnable mod.
+    # Mirror runtime install rules into the glob-based AIO staging path.
     set(_aio_runtime_dir "${AIO_DIR}/SKSE/Plugins/CommunityShaders/bin")
 
-    # PREPARE_AIO is incremental and intentionally preserves SKSE/Plugins files.
-    # Explicitly remove the old split layout so upgrades cannot retain duplicate DLLs.
+    # Remove the old split layout without clearing other incremental AIO files.
     list(
         APPEND _prepare_aio_cmds
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/dxvk"
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/Streamline"
     )
 
-    # DXVK: copy the dxvk_-prefixed DLLs via the same staging script the install(CODE) rule uses
-    # (dxvk_d3d11.dll / dxvk_dxgi.dll). Only when a local DXVK build exists, mirroring the guard above.
+    # Stage a local DXVK build when available.
     if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
         list(
             APPEND _prepare_aio_cmds
@@ -658,8 +629,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         )
     endif()
 
-    # Streamline fork plugins (CS-built). The signed production set + FSR/XeSS runtimes ship
-    # from package/SKSE/Plugins/CommunityShaders/bin/ with the rest of the package tree.
+    # Stage locally built Streamline fork plugins.
     if(_SL_FORK_DLLS)
         list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_runtime_dir}")
         foreach(_sl IN LISTS _SL_FORK_DLLS)
@@ -1101,13 +1071,9 @@ if(AIO_ZIP_TO_DIST)
         )
     endif()
 
-    # Create a stamp-producing custom command for the AIO archive so CMake
-    # only rebuilds the archive when its inputs change. The archive filename
-    # keeps the UTC timestamp as before. Solid LZMA2 substantially outperforms
-    # per-file ZIP deflate for the large related DLL/PDB payload.
+    # Solid LZMA2 keeps the Vulkan AIO below the distribution size limit.
     set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
-    # Format-specific stamp invalidates pre-existing ZIP-era package state.
     set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package_7z.stamp")
 
     message("Compressing ${AIO_DIR} to ${AIO_ARCHIVE}")

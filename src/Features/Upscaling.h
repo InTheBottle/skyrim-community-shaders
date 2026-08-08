@@ -1,11 +1,6 @@
 #pragma once
 
-/**
- * @brief Provides Vulkan-backed DLSS, FSR, XeSS, TAA, and frame generation.
- *
- * Handles render-resolution scaling, temporal jitter, upscaler dispatch, and
- * frame-generation presentation while the game continues to render through D3D11.
- */
+/** @brief Provides Vulkan-backed temporal upscaling and frame generation. */
 
 #include "Feature.h"
 #include <atomic>
@@ -62,13 +57,8 @@ public:
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;
 		bool frameGeneration = false;
-		uint frameGenMethod = (uint)FrameGenMethod::kDLSSG;  // default resolves to DLSS-G on capable HW, else FSR-FG
-		// DLSS-G fixed frame multiplier (2 = 2x single-frame … up to 6x). numFramesToGenerate = multiplier - 1.
-		// Capped at runtime to the hardware max (numFramesToGenerateMax+1): 40-series caps at 2x, 50-series up to 6x.
+		uint frameGenMethod = (uint)FrameGenMethod::kDLSSG;
 		uint frameGenMultiplier = 2;
-		// DLSS-G "Dynamic" mode: the driver picks the multiplier itself. Maps to eDynamic when the hardware
-		// supports Dynamic MFG (50-series), else eAuto (40-series). The target fps is the Display frame-rate
-		// option. false = a fixed multiplier (frameGenMultiplier).
 		bool dlssgDynamic = false;
 		bool fgShowOnlyGenerated = false;
 		bool fgDebugView = false;
@@ -76,13 +66,8 @@ public:
 		bool fgDebugPacingLines = false;
 		bool hardwareDefaultsApplied = false;
 
-		// Present pacing. VSync is applied in our present hook (forced OFF whenever DLSS-G is the active FG
-		// method — VSync is incompatible with DLSS-G on Vulkan). The cap is driven by Reflex when available
-		// (lowest latency; DLSS-G handles it this way), else by DXVK's frame limiter.
 		bool vsync = false;
-		// Frame-rate cap as a DIVISOR of the monitor refresh rate: 1 = refresh (default), 2 = half, 3 = third…;
-		// 0 = unlocked (variable, no cap). Stored as the divisor (not an fps) so the cap stays meaningful across
-		// monitors/refresh rates. Resolved to fps by GetTargetFrameRate().
+		// Zero disables the cap; positive values divide the monitor refresh rate.
 		int frameRateLimitDivisor = 1;
 	};
 
@@ -100,31 +85,17 @@ public:
 	// Runtime state
 	bool isWindowed = false;
 
-	// True while the game window is minimized: every Streamline/GPU-interop call (and the
-	// present itself, see the present hook) must be skipped for the gap's duration.
+	/** @brief Returns whether the game window is minimized. */
 	static bool IsWindowGapActive();
 
-	// Frame generation MUST be off whenever the window is not in a normal focused state:
-	// DXVK recreates the swapchain on occlusion and an FG-wrapped swapchain freezes the GPU
-	// (and DLSS-G's pacer wedges across a present gap, guide §17). These flags are set from
-	// the game's window/message thread (WndProc hook) — atomics ONLY, never touch SL/FFX
-	// there (wrong thread) — and read on the render/present thread via IsWindowUnusable().
 	static void NotifyWindowFocus(bool a_focused);        // WM_ACTIVATEAPP / WM_ACTIVATE
 	static void NotifyWindowModifying(bool a_modifying);  // WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE
 
-	// True while the window is minimized, unfocused (alt-tabbed / occluded), or being
-	// resized/moved. Frame generation is suspended for the duration (present hook ->
-	// FrameGen::Controller::SuspendForWindowGap). Superset of IsWindowGapActive() (minimize).
+	/** @brief Returns whether presenting must be suspended. */
 	static bool IsWindowUnusable();
 
-	// Set from WndProc (window/message thread), read on the render/present thread.
 	static inline std::atomic<bool> s_windowUnfocused{ false };
 	static inline std::atomic<bool> s_windowModifying{ false };
-
-	// NOTE (Streamline-sample parity): an upscaler reconfiguration (method or quality/preset change) needs
-	// NO special DLSS-G handling — the sample changes DLSS mode with zero SL-lifecycle ceremony (no eOff,
-	// no swapchain recreate, no present skip); its DLSS-G options carry no render dims in fixed-resolution
-	// mode, so the change is invisible to DLSS-G (tag extents describe the render sub-rect per frame).
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
@@ -169,17 +140,14 @@ public:
 
 	bool IsFrameGenerationActive() const;
 
-	// Effective NVIDIA Reflex state under the frame-generation policy: DLSS-G frame-gen forces Reflex ON
-	// (DLSS-G stalls without it), FSR frame-gen forces it OFF, and with no frame generation it follows the
-	// user's reflexEnabled toggle. Never mutates the saved preference.
+	/** @brief Returns the Reflex state required by the active frame generator. */
 	[[nodiscard]] bool GetEffectiveReflex() const;
 
-	// Monitor refresh rate in Hz (from the cached swapchain refreshRate, else the current display mode, else 60).
+	/** @brief Returns the monitor refresh rate in hertz. */
 	[[nodiscard]] int GetMonitorRefreshRate() const;
-	// Resolve the frame-rate cap to an fps value: refresh / frameRateLimitDivisor, or 0 ("no limit") when the
-	// divisor is 0 (unlocked). Driven by Reflex when active, else DXVK's limiter.
+	/** @brief Returns the configured frame-rate cap, or zero when uncapped. */
 	[[nodiscard]] int GetTargetFrameRate() const;
-	// Apply a frame-rate cap through DXVK's own limiter (the non-Reflex fallback). fps<=0 clears the limit.
+	/** @brief Applies the non-Reflex frame-rate limit through DXVK. */
 	void ApplyDxvkFrameRateLimit(double a_fps);
 
 	HRESULT PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags,

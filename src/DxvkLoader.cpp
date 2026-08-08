@@ -12,10 +12,7 @@ namespace DxvkLoader
 		decltype(&CreateDXGIFactory) g_createFactory = nullptr;
 	}
 
-	// Directory holding all staged renderer runtime DLLs, resolved relative to this
-	// plugin's own module so it works regardless of the process CWD or a mod
-	// manager's virtual file system. CommunityShaders.dll lives in
-	// .../SKSE/Plugins, so the DLLs sit in .../SKSE/Plugins/CommunityShaders/bin.
+	// Resolve relative to the plugin for mod-manager VFS compatibility.
 	std::filesystem::path GetRuntimeDir()
 	{
 		HMODULE self = nullptr;
@@ -35,10 +32,7 @@ namespace DxvkLoader
 
 	bool NativeModeRequested()
 	{
-		// CS_NATIVE_D3D11=1 forces the system D3D11 runtime instead of the bundled DXVK
-		// (and disables the Vulkan-only upscaler stack). Used to validate the shadow-deferred
-		// path on native drivers, which handle deferred command lists robustly where DXVK's
-		// deferred context mis-handles the engine's shared dynamic buffers.
+		// Debug override for testing against the native D3D11 runtime.
 		static const bool s_native = [] {
 			char buf[8] = {};
 			return GetEnvironmentVariableA("CS_NATIVE_D3D11", buf, sizeof(buf)) && buf[0] == '1';
@@ -67,8 +61,7 @@ namespace DxvkLoader
 		const auto dxgiPath = (dir / L"dxvk_dxgi.dll").wstring();
 		const auto d3d11Path = (dir / L"dxvk_d3d11.dll").wstring();
 
-		// Load dxgi first: dxvk_d3d11.dll imports dxvk_dxgi.dll (DXVK is built with the dxvk_ name prefix),
-		// and the loader binds that import to the already-mapped module by base name.
+		// dxvk_d3d11.dll imports dxvk_dxgi.dll by base name.
 		const HMODULE dxgiMod = ::LoadLibraryExW(dxgiPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 		if (!dxgiMod) {
 			const DWORD err = ::GetLastError();
@@ -91,13 +84,7 @@ namespace DxvkLoader
 			return false;
 		}
 
-		// Seed the present mode to ASYNC (stock DXVK behavior). The fork's frame-gen present
-		// ownership defaults to SYNCHRONOUS present, and the only writers of the flag live in
-		// the Upscaling feature (Upscaling::Load seeds the saved setting; FrameGenController
-		// tracks the FG lifecycle) -- so with Upscaling absent/disabled NOTHING pushed async and
-		// every no-upscaler DXVK user was silently vsync-capped at the display refresh (measured
-		// dead-flat 165.1 fps on a 165Hz panel; dxvk.conf dxgi.syncInterval=0 cannot override
-		// it). Idempotent: Upscaling/FrameGenController overwrite this whenever FG engages.
+		// Frame generation enables synchronous present when it takes ownership.
 		if (auto setSync = reinterpret_cast<void (*)(uint32_t)>(::GetProcAddress(d3d11Mod, "dxvkSetSyncPresent")))
 			setSync(0u);
 		else

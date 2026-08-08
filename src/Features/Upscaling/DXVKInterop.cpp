@@ -19,8 +19,6 @@ bool DXVKInterop::Initialize()
 		return false;
 	}
 
-	// IDXGIVkInteropDevice is only implemented by DXVK. On native D3D11 this
-	// fails cleanly and we simply report unavailable.
 	winrt::com_ptr<IDXGIVkInteropDevice> dev;
 	if (FAILED(d3dDevice->QueryInterface(__uuidof(IDXGIVkInteropDevice), dev.put_void()))) {
 		logger::info("[DXVKInterop] IDXGIVkInteropDevice not present — not running under DXVK");
@@ -37,7 +35,6 @@ bool DXVKInterop::Initialize()
 		return false;
 	}
 
-	// vulkan-1.dll is already loaded in-process by DXVK; grab the loader entry.
 	if (HMODULE vk = GetModuleHandleW(L"vulkan-1.dll")) {
 		vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
 			reinterpret_cast<void*>(GetProcAddress(vk, "vkGetInstanceProcAddr")));
@@ -56,11 +53,9 @@ bool DXVKInterop::Initialize()
 		return false;
 	}
 
-	// Resolved once for the deferred-view-delete path (BeginFrameCommandBuffer / teardown).
 	vkDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(
 		vkGetDeviceProcAddr(device, "vkDestroyImageView"));
 
-	// Log the physical device for confirmation (single shared device).
 	if (auto pfnProps = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
 			vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"))) {
 		VkPhysicalDeviceProperties props{};
@@ -109,12 +104,7 @@ void DXVKInterop::WaitDeviceIdle() const
 {
 	if (!interopDevice)
 		return;
-	// DXVK-safe drain. Do NOT call vkDeviceWaitIdle directly here: DXVK owns the queues from its own
-	// submission thread, and vkDeviceWaitIdle requires external synchronization of ALL queue access —
-	// an unsynchronized external call races DXVK's submit thread (and, while DLSS-G is active, waits on
-	// Streamline's async pacer queue) and HANGS. That was the frame-gen toggle freeze. Instead flush
-	// pending D3D11 work to the GPU and take/release DXVK's submission lock, which drains DXVK's pending
-	// submissions the DXVK-managed way without the unsafe global wait.
+	// vkDeviceWaitIdle would race DXVK's submission thread; drain under DXVK's queue lock.
 	FlushRenderingCommands();
 	LockSubmissionQueue();
 	ReleaseSubmissionQueue();
@@ -184,12 +174,10 @@ void DXVKInterop::DestroyCommandResources()
 	if (device == VK_NULL_HANDLE)
 		return;
 
-	// Ensure no in-flight submissions before tearing down.
 	for (auto f : commandFences) {
 		if (f != VK_NULL_HANDLE)
 			vkWaitForFences(device, 1, &f, VK_TRUE, UINT64_MAX);
 	}
-	// All submissions have drained — free any views still queued for deferred destruction.
 	if (vkDestroyImageView) {
 		for (auto& slot : pendingViewDeletes)
 			for (VkImageView v : slot)
@@ -204,7 +192,6 @@ void DXVKInterop::DestroyCommandResources()
 	commandFences.clear();
 
 	if (commandPool != VK_NULL_HANDLE) {
-		// Freeing the pool frees its command buffers.
 		vkDestroyCommandPool(device, commandPool, nullptr);
 		commandPool = VK_NULL_HANDLE;
 	}
@@ -218,14 +205,10 @@ void DXVKInterop::DrainCommandRing()
 	if (commandPool == VK_NULL_HANDLE || device == VK_NULL_HANDLE)
 		return;
 
-	// Wait every in-flight submission so no foreign upscaler dispatch still references interop images
-	// about to be destroyed. Fences are left signalled (not reset) — the next BeginFrameCommandBuffer
-	// waits + resets them as usual, so this is a no-op stall on the fast path afterwards.
+	// Leave fences signaled; BeginFrameCommandBuffer resets them on reuse.
 	if (!commandFences.empty())
 		vkWaitForFences(device, static_cast<uint32_t>(commandFences.size()), commandFences.data(), VK_TRUE, UINT64_MAX);
 
-	// The GPU is now idle w.r.t. our submissions — free views still queued for deferred destruction so
-	// they are not double-processed when their slot is later reused.
 	if (vkDestroyImageView) {
 		for (auto& slot : pendingViewDeletes) {
 			for (VkImageView v : slot)
@@ -241,12 +224,7 @@ VkCommandBuffer DXVKInterop::BeginFrameCommandBuffer()
 	if (commandPool == VK_NULL_HANDLE)
 		return VK_NULL_HANDLE;
 
-	// NEVER-BLOCKING acquire (task #88 experiment): a fence wait here deadlocks under SL's
-	// eBlockPresentingClientQueue (the queue is held at each present until FG completes, so ring
-	// fences signal late — and at FG engagement transitions possibly never while we're the ones
-	// starving it). Instead: take any already-signaled slot; if none, GROW the ring; only at a
-	// hard cap fall back to waiting (logged — if that fires under the SL-block mode, the
-	// experiment failed).
+	// Avoid waiting while Streamline owns the presenting queue; grow the ring if needed.
 	constexpr uint32_t kMaxRingDepth = 64;
 	uint32_t next = (commandFrameIndex + 1) % framesInFlight;
 	if (vkGetFenceStatus(device, commandFences[next]) != VK_SUCCESS) {
@@ -294,8 +272,7 @@ VkCommandBuffer DXVKInterop::BeginFrameCommandBuffer()
 	VkFence fence = commandFences[commandFrameIndex];
 	VkCommandBuffer cb = commandBuffers[commandFrameIndex];
 
-	// That submission is now complete, so any transient views tagged to this slot are no longer
-	// referenced by the GPU — destroy them here rather than blocking the submit path on a fence.
+	// Reusing a signaled slot makes its deferred views safe to destroy.
 	if (commandFrameIndex < pendingViewDeletes.size()) {
 		auto& dead = pendingViewDeletes[commandFrameIndex];
 		if (vkDestroyImageView) {
@@ -334,9 +311,7 @@ bool DXVKInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &a_commandBuffer;
 
-	// Flush DXVK's pending D3D11 work so it is visible to the queue before our
-	// submission, then submit under the lock so DXVK's own worker thread doesn't
-	// race us on the shared graphics queue.
+	// Serialize the foreign submit with DXVK's worker thread.
 	FlushRenderingCommands();
 	LockSubmissionQueue();
 	VkResult vr = vkQueueSubmit(queue, 1, &submitInfo, fence);
@@ -360,9 +335,6 @@ bool DXVKInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool
 
 void DXVKInterop::QueueViewsForDeferredDelete(const VkImageView* a_views, uint32_t a_count)
 {
-	// Tag the views to the ring slot the just-submitted command buffer used (commandFrameIndex is
-	// only advanced by the next BeginFrameCommandBuffer). They are destroyed when that slot's fence
-	// signals at reuse — see BeginFrameCommandBuffer.
 	if (!a_views || commandFrameIndex >= pendingViewDeletes.size())
 		return;
 	auto& slot = pendingViewDeletes[commandFrameIndex];

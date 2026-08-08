@@ -100,8 +100,7 @@ elseif(MODE STREQUAL "SHADERS")
         file(REMOVE "${_stale}")
     endforeach()
 
-    # Prune directories left empty by deleted shaders so incremental AIO builds
-    # do not retain obsolete feature paths in the archive.
+    # Remove empty shader directories retained by incremental staging.
     file(GLOB_RECURSE _aio_shader_entries LIST_DIRECTORIES TRUE "${AIO_DIR}/Shaders/*")
     set(_aio_shader_dirs)
     foreach(_entry IN LISTS _aio_shader_entries)

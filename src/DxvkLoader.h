@@ -4,43 +4,25 @@
 #include <dxgi.h>
 #include <filesystem>
 
-// Loads DXVK's d3d11/dxgi DLLs from the shared Community Shaders runtime folder
-// (Data/SKSE/Plugins/CommunityShaders/bin) under unique base names
-// (dxvk_d3d11.dll / dxvk_dxgi.dll) so DXVK runs from Data/ rather than the game root.
-//
-// Skyrim statically imports exactly one symbol from each of d3d11.dll and
-// dxgi.dll (D3D11CreateDeviceAndSwapChain / CreateDXGIFactory), so the System32
-// copies are mapped at process start. The Windows loader keys modules by base
-// name, so a second "d3d11.dll"/"dxgi.dll" loaded from a subfolder would merely
-// alias the already-mapped System32 module. DXVK is built with a 'dxvk_' name
-// prefix (so dxvk_d3d11.dll imports dxvk_dxgi.dll, not System32 dxgi); CS then
-// points its two IAT hooks at these exports so the game renders on DXVK while the
-// inert System32 copies are never called. tools/stage-dxvk-dlls.ps1 just copies
-// the two prefixed DLLs into place.
+// Loads the prefixed DXVK DLLs from CommunityShaders/bin so they do not alias
+// Skyrim's process-wide System32 d3d11.dll and dxgi.dll modules.
 namespace DxvkLoader
 {
-	/** @brief Load DXVK's renamed DLLs once (idempotent). Must be called before the
-	 *  game creates its D3D11 device. @return true if both DLLs loaded and their
-	 *  exports resolved; false otherwise (caller should fall back to system DLLs). */
+	/** @brief Loads DXVK before the game creates its D3D11 device. */
 	bool Load();
 
-	/** @brief Whether Load() has succeeded. */
+	/** @brief Returns whether DXVK loaded successfully. */
 	bool IsLoaded();
 
-	/** @brief True if CS_NATIVE_D3D11=1 -- run on the system D3D11 runtime instead of the
-	 *  bundled DXVK, and disable the Vulkan-only upscaler stack. */
+	/** @brief Returns whether CS_NATIVE_D3D11 requests the native runtime. */
 	bool NativeModeRequested();
 
-	/** @brief Directory holding the staged renderer runtime DLLs
-	 *  (Data/SKSE/Plugins/CommunityShaders/bin), resolved relative to this
-	 *  plugin's own module so it is independent of the process CWD or a mod
-	 *  manager's virtual file system.
-	 *  @return the directory, or an empty path if the module could not be resolved. */
+	/** @brief Returns the module-relative renderer runtime directory. */
 	std::filesystem::path GetRuntimeDir();
 
-	/** @brief DXVK's D3D11CreateDeviceAndSwapChain export, or nullptr if not loaded. */
+	/** @brief Returns DXVK's D3D11CreateDeviceAndSwapChain export. */
 	decltype(&D3D11CreateDeviceAndSwapChain) GetD3D11CreateDeviceAndSwapChain();
 
-	/** @brief DXVK's CreateDXGIFactory export, or nullptr if not loaded. */
+	/** @brief Returns DXVK's CreateDXGIFactory export. */
 	decltype(&CreateDXGIFactory) GetCreateDXGIFactory();
 }
