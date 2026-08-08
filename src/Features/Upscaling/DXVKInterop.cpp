@@ -1,21 +1,21 @@
-#include "DxvkInterop.h"
+#include "DXVKInterop.h"
 
 #include "Globals.h"
 
-DxvkInterop* DxvkInterop::GetSingleton()
+DXVKInterop* DXVKInterop::GetSingleton()
 {
-	static DxvkInterop singleton;
+	static DXVKInterop singleton;
 	return &singleton;
 }
 
-bool DxvkInterop::Initialize()
+bool DXVKInterop::Initialize()
 {
 	if (available)
 		return true;
 
 	auto d3dDevice = globals::d3d::device;
 	if (!d3dDevice) {
-		logger::warn("[DxvkInterop] No D3D11 device available yet");
+		logger::warn("[DXVKInterop] No D3D11 device available yet");
 		return false;
 	}
 
@@ -23,7 +23,7 @@ bool DxvkInterop::Initialize()
 	// fails cleanly and we simply report unavailable.
 	winrt::com_ptr<IDXGIVkInteropDevice> dev;
 	if (FAILED(d3dDevice->QueryInterface(__uuidof(IDXGIVkInteropDevice), dev.put_void()))) {
-		logger::info("[DxvkInterop] IDXGIVkInteropDevice not present — not running under DXVK");
+		logger::info("[DXVKInterop] IDXGIVkInteropDevice not present — not running under DXVK");
 		return false;
 	}
 
@@ -32,7 +32,7 @@ bool DxvkInterop::Initialize()
 	interopDevice->GetSubmissionQueue(&queue, &queueFamilyIndex);
 
 	if (!instance || !physicalDevice || !device || !queue) {
-		logger::error("[DxvkInterop] DXVK returned null Vulkan handles");
+		logger::error("[DXVKInterop] DXVK returned null Vulkan handles");
 		interopDevice = nullptr;
 		return false;
 	}
@@ -43,7 +43,7 @@ bool DxvkInterop::Initialize()
 			reinterpret_cast<void*>(GetProcAddress(vk, "vkGetInstanceProcAddr")));
 	}
 	if (!vkGetInstanceProcAddr) {
-		logger::error("[DxvkInterop] Could not resolve vkGetInstanceProcAddr from vulkan-1.dll");
+		logger::error("[DXVKInterop] Could not resolve vkGetInstanceProcAddr from vulkan-1.dll");
 		interopDevice = nullptr;
 		return false;
 	}
@@ -51,7 +51,7 @@ bool DxvkInterop::Initialize()
 	vkGetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
 		vkGetInstanceProcAddr(instance, "vkGetDeviceProcAddr"));
 	if (!vkGetDeviceProcAddr) {
-		logger::error("[DxvkInterop] Could not resolve vkGetDeviceProcAddr");
+		logger::error("[DXVKInterop] Could not resolve vkGetDeviceProcAddr");
 		interopDevice = nullptr;
 		return false;
 	}
@@ -65,21 +65,21 @@ bool DxvkInterop::Initialize()
 			vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"))) {
 		VkPhysicalDeviceProperties props{};
 		pfnProps(physicalDevice, &props);
-		logger::info("[DxvkInterop] Bridged to DXVK Vulkan device: '{}' (API {}.{}.{}), queueFamily {}",
+		logger::info("[DXVKInterop] Bridged to DXVK Vulkan device: '{}' (API {}.{}.{}), queueFamily {}",
 			props.deviceName,
 			VK_API_VERSION_MAJOR(props.apiVersion),
 			VK_API_VERSION_MINOR(props.apiVersion),
 			VK_API_VERSION_PATCH(props.apiVersion),
 			queueFamilyIndex);
 	} else {
-		logger::info("[DxvkInterop] Bridged to DXVK Vulkan device (queueFamily {})", queueFamilyIndex);
+		logger::info("[DXVKInterop] Bridged to DXVK Vulkan device (queueFamily {})", queueFamilyIndex);
 	}
 
 	available = true;
 	return true;
 }
 
-bool DxvkInterop::GetVkImage(ID3D11Resource* a_resource, VkImage* a_outImage,
+bool DXVKInterop::GetVkImage(ID3D11Resource* a_resource, VkImage* a_outImage,
 	VkImageLayout* a_outLayout, VkImageCreateInfo* a_outInfo) const
 {
 	if (!available || !a_resource)
@@ -99,13 +99,13 @@ bool DxvkInterop::GetVkImage(ID3D11Resource* a_resource, VkImage* a_outImage,
 	return SUCCEEDED(surface->GetVulkanImageInfo(a_outImage, a_outLayout, info));
 }
 
-void DxvkInterop::FlushRenderingCommands() const
+void DXVKInterop::FlushRenderingCommands() const
 {
 	if (interopDevice)
 		interopDevice->FlushRenderingCommands();
 }
 
-void DxvkInterop::WaitDeviceIdle() const
+void DXVKInterop::WaitDeviceIdle() const
 {
 	if (!interopDevice)
 		return;
@@ -120,19 +120,19 @@ void DxvkInterop::WaitDeviceIdle() const
 	ReleaseSubmissionQueue();
 }
 
-void DxvkInterop::LockSubmissionQueue() const
+void DXVKInterop::LockSubmissionQueue() const
 {
 	if (interopDevice)
 		interopDevice->LockSubmissionQueue();
 }
 
-void DxvkInterop::ReleaseSubmissionQueue() const
+void DXVKInterop::ReleaseSubmissionQueue() const
 {
 	if (interopDevice)
 		interopDevice->ReleaseSubmissionQueue();
 }
 
-bool DxvkInterop::CreateCommandResources(uint32_t a_framesInFlight)
+bool DXVKInterop::CreateCommandResources(uint32_t a_framesInFlight)
 {
 	if (!available)
 		return false;
@@ -145,7 +145,7 @@ bool DxvkInterop::CreateCommandResources(uint32_t a_framesInFlight)
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	poolInfo.queueFamilyIndex = queueFamilyIndex;
 	if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-		logger::error("[DxvkInterop] vkCreateCommandPool failed");
+		logger::error("[DXVKInterop] vkCreateCommandPool failed");
 		commandPool = VK_NULL_HANDLE;
 		return false;
 	}
@@ -156,7 +156,7 @@ bool DxvkInterop::CreateCommandResources(uint32_t a_framesInFlight)
 	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocInfo.commandBufferCount = framesInFlight;
 	if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-		logger::error("[DxvkInterop] vkAllocateCommandBuffers failed");
+		logger::error("[DXVKInterop] vkAllocateCommandBuffers failed");
 		DestroyCommandResources();
 		return false;
 	}
@@ -167,7 +167,7 @@ bool DxvkInterop::CreateCommandResources(uint32_t a_framesInFlight)
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	for (uint32_t i = 0; i < framesInFlight; ++i) {
 		if (vkCreateFence(device, &fenceInfo, nullptr, &commandFences[i]) != VK_SUCCESS) {
-			logger::error("[DxvkInterop] vkCreateFence failed");
+			logger::error("[DXVKInterop] vkCreateFence failed");
 			DestroyCommandResources();
 			return false;
 		}
@@ -175,11 +175,11 @@ bool DxvkInterop::CreateCommandResources(uint32_t a_framesInFlight)
 
 	commandFrameIndex = 0;
 	pendingViewDeletes.assign(framesInFlight, {});
-	logger::info("[DxvkInterop] Command ring created ({} frames in flight, queueFamily {})", framesInFlight, queueFamilyIndex);
+	logger::info("[DXVKInterop] Command ring created ({} frames in flight, queueFamily {})", framesInFlight, queueFamilyIndex);
 	return true;
 }
 
-void DxvkInterop::DestroyCommandResources()
+void DXVKInterop::DestroyCommandResources()
 {
 	if (device == VK_NULL_HANDLE)
 		return;
@@ -213,7 +213,7 @@ void DxvkInterop::DestroyCommandResources()
 	commandFrameIndex = 0;
 }
 
-void DxvkInterop::DrainCommandRing()
+void DXVKInterop::DrainCommandRing()
 {
 	if (commandPool == VK_NULL_HANDLE || device == VK_NULL_HANDLE)
 		return;
@@ -236,7 +236,7 @@ void DxvkInterop::DrainCommandRing()
 	}
 }
 
-VkCommandBuffer DxvkInterop::BeginFrameCommandBuffer()
+VkCommandBuffer DXVKInterop::BeginFrameCommandBuffer()
 {
 	if (commandPool == VK_NULL_HANDLE)
 		return VK_NULL_HANDLE;
@@ -276,16 +276,16 @@ VkCommandBuffer DxvkInterop::BeginFrameCommandBuffer()
 				pendingViewDeletes.emplace_back();
 				next = framesInFlight;
 				++framesInFlight;
-				logger::info("[DxvkInterop] Command ring grown to {} (all slots in flight)", framesInFlight);
+				logger::info("[DXVKInterop] Command ring grown to {} (all slots in flight)", framesInFlight);
 			} else {
-				logger::warn("[DxvkInterop] ring growth failed — falling back to fence wait");
+				logger::warn("[DXVKInterop] ring growth failed — falling back to fence wait");
 				vkWaitForFences(device, 1, &commandFences[next], VK_TRUE, UINT64_MAX);
 			}
 		} else {
 			static bool s_warned = false;
 			if (!s_warned) {
 				s_warned = true;
-				logger::warn("[DxvkInterop] ring at max depth {} with all slots in flight — waiting (deadlock risk under SL queue-block)", kMaxRingDepth);
+				logger::warn("[DXVKInterop] ring at max depth {} with all slots in flight — waiting (deadlock risk under SL queue-block)", kMaxRingDepth);
 			}
 			vkWaitForFences(device, 1, &commandFences[next], VK_TRUE, UINT64_MAX);
 		}
@@ -312,19 +312,19 @@ VkCommandBuffer DxvkInterop::BeginFrameCommandBuffer()
 	VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	if (vkBeginCommandBuffer(cb, &beginInfo) != VK_SUCCESS) {
-		logger::error("[DxvkInterop] vkBeginCommandBuffer failed");
+		logger::error("[DXVKInterop] vkBeginCommandBuffer failed");
 		return VK_NULL_HANDLE;
 	}
 	return cb;
 }
 
-bool DxvkInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool a_waitIdle)
+bool DXVKInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool a_waitIdle)
 {
 	if (commandPool == VK_NULL_HANDLE || a_commandBuffer == VK_NULL_HANDLE)
 		return false;
 
 	if (vkEndCommandBuffer(a_commandBuffer) != VK_SUCCESS) {
-		logger::error("[DxvkInterop] vkEndCommandBuffer failed");
+		logger::error("[DXVKInterop] vkEndCommandBuffer failed");
 		return false;
 	}
 
@@ -343,14 +343,14 @@ bool DxvkInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool
 	ReleaseSubmissionQueue();
 
 	if (vr != VK_SUCCESS) {
-		logger::error("[DxvkInterop] vkQueueSubmit failed ({})", (int)vr);
+		logger::error("[DXVKInterop] vkQueueSubmit failed ({})", (int)vr);
 		return false;
 	}
 
 	if (a_waitIdle) {
 		vr = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
 		if (vr != VK_SUCCESS) {
-			logger::error("[DxvkInterop] upscaler completion wait failed ({})", static_cast<int>(vr));
+			logger::error("[DXVKInterop] upscaler completion wait failed ({})", static_cast<int>(vr));
 			return false;
 		}
 	}
@@ -358,7 +358,7 @@ bool DxvkInterop::SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool
 	return true;
 }
 
-void DxvkInterop::QueueViewsForDeferredDelete(const VkImageView* a_views, uint32_t a_count)
+void DXVKInterop::QueueViewsForDeferredDelete(const VkImageView* a_views, uint32_t a_count)
 {
 	// Tag the views to the ring slot the just-submitted command buffer used (commandFrameIndex is
 	// only advanced by the next BeginFrameCommandBuffer). They are destroyed when that slot's fence

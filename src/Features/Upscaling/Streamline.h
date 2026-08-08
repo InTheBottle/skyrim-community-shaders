@@ -24,7 +24,7 @@ public:
 	bool Initialize();
 
 	/** @brief Probes per-adapter feature support and resolves feature-specific entry points.
-	 *  Must be called after the D3D11/DXVK device exists and DxvkInterop is up. */
+	 *  Must be called after the D3D11/DXVK device exists and DXVKInterop is up. */
 	void SetVulkanDevice();
 
 	/** @brief slShutdown + frees the interposer. Safe to call when not initialized. */

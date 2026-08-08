@@ -75,10 +75,10 @@ IDXGIVkInteropFactory : public IUnknown
 	 * VkImages that back them, and the submission-queue locking DXVK requires
 	 * before foreign Vulkan work is submitted onto its queue.
 	 */
-class DxvkInterop
+class DXVKInterop
 {
 public:
-	static DxvkInterop* GetSingleton();
+	static DXVKInterop* GetSingleton();
 
 	/**
 		 * @brief Query the interop interfaces from the live D3D11 device.
@@ -177,7 +177,7 @@ public:
 	void QueueViewsForDeferredDelete(const VkImageView* a_views, uint32_t a_count);
 
 private:
-	DxvkInterop() = default;
+	DXVKInterop() = default;
 
 	bool available = false;
 

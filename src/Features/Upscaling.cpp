@@ -6,7 +6,7 @@
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
-#include "Upscaling/DxvkInterop.h"
+#include "Upscaling/DXVKInterop.h"
 #include "Upscaling/FrameGenController.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/Game.h"
@@ -793,7 +793,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			// evaluations now wait before their immediate D3D11 copy-back, but frame-generation-only
 			// preparation remains asynchronous. Drain the interop ring before freeing shared images so
 			// DXVK cannot recycle a backing VkImage under any remaining submission.
-			if (auto* dxvk = DxvkInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
+			if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
 				dxvk->DrainCommandRing();
 			DestroyUpscaledTexture();
 			DestroyHudlessTexture();
@@ -1023,7 +1023,7 @@ void Upscaling::SetupResources()
 
 	// Bridge to DXVK's own Vulkan device for Streamline interposition.
 	// On native D3D11 this is a no-op (IsAvailable() stays false).
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (dxvk->Initialize()) {
 		VkImage probeImage = VK_NULL_HANDLE;
 		VkImageCreateInfo probeInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };

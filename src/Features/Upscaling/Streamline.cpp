@@ -1,6 +1,6 @@
 #include "Streamline.h"
 
-#include "DxvkInterop.h"
+#include "DXVKInterop.h"
 #include "FrameGenController.h"
 
 #include "../Upscaling.h"
@@ -543,7 +543,7 @@ void Streamline::SetVulkanDevice()
 	if (!initialized || vulkanDeviceSet)
 		return;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk || !dxvk->IsAvailable()) {
 		logger::warn("[Streamline] DXVK interop unavailable — cannot hand Vulkan device to SL");
 		return;
@@ -646,7 +646,7 @@ void Streamline::SetVulkanDevice()
 void Streamline::Shutdown()
 {
 	// Free the cached DLSS-G resource views before tearing down the device.
-	if (auto* dxvk = DxvkInterop::GetSingleton(); dxvk && dxvk->IsAvailable()) {
+	if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->IsAvailable()) {
 		VkDevice vkDevice = dxvk->GetDevice();
 		if (auto vkDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(
 				dxvk->GetDeviceProcAddr()(vkDevice, "vkDestroyImageView"))) {
@@ -772,7 +772,7 @@ void Streamline::WaitDLSSGInputFence()
 	if (!fence || value == 0 || value <= g_sl.dlssgInputFenceWaited.load(std::memory_order_acquire))
 		return;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	VkDevice device = dxvk->GetDevice();
 	if (device == VK_NULL_HANDLE)
 		return;
@@ -1032,7 +1032,7 @@ static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, u
 // sl::Resource view (VkImageView) as MANDATORY (null faults slEvaluateFeature), so create a transient 2D
 // view (depth aspect for depth formats); the caller collects a_outView for destruction after the submit.
 // Returns false if the backing VkImage can't be obtained.
-static bool cs_WrapInteropImage(DxvkInterop* a_dxvk, VkDevice a_device, PFN_vkCreateImageView a_createView,
+static bool cs_WrapInteropImage(DXVKInterop* a_dxvk, VkDevice a_device, PFN_vkCreateImageView a_createView,
 	ID3D11Resource* a_res, sl::Resource& a_out, uint32_t a_w, uint32_t a_h, VkImageView& a_outView)
 {
 	a_outView = VK_NULL_HANDLE;
@@ -1070,7 +1070,7 @@ static bool cs_WrapInteropImage(DxvkInterop* a_dxvk, VkDevice a_device, PFN_vkCr
 
 // Destroy the transient views created by cs_WrapInteropImage. Called on every exit path (success, wrap
 // failure, and the no-command-buffer bail) so views never leak — EvaluateFSRFrameGen runs every frame.
-static void cs_DestroyViews(DxvkInterop* a_dxvk, VkDevice a_device, const VkImageView* a_views, int a_count)
+static void cs_DestroyViews(DXVKInterop* a_dxvk, VkDevice a_device, const VkImageView* a_views, int a_count)
 {
 	if (auto vkDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(
 			a_dxvk->GetDeviceProcAddr()(a_device, "vkDestroyImageView"))) {
@@ -1096,7 +1096,7 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	if (a_outputReady)
 		*a_outputReady = false;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk)
 		return sl::Result::eErrorNotInitialized;
 
@@ -1264,7 +1264,7 @@ bool Streamline::EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
 		return false;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	// DXVK itself is a hard requirement (load-time enforced), so the per-frame SL paths below only gate on
 	// whether the interop command ring is ready yet — a timing check, not a DXVK-availability check.
 	if (!dxvk->CommandResourcesReady())
@@ -1371,7 +1371,7 @@ bool Streamline::EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_color
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
 		return false;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
 		return false;
 	dxvk->FlushRenderingCommands();
@@ -1439,7 +1439,7 @@ bool Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 	if (!a_colorIn || !a_colorOut || !a_depth || !a_motionVectors)
 		return false;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
 		return false;
 	dxvk->FlushRenderingCommands();
@@ -1516,7 +1516,7 @@ void Streamline::EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_
 	if (!a_depth || !a_motionVectors)
 		return;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
 		return;
 	dxvk->FlushRenderingCommands();
@@ -1775,7 +1775,7 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 	if (!a_depth || !a_motionVectors)
 		return;
 
-	auto* dxvk = DxvkInterop::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
 	if (!dxvk->CommandResourcesReady())
 		return;
 
@@ -1939,7 +1939,7 @@ void Streamline::ClearDLSSGTags()
 		// Use a real command buffer when the interop ring is ready (most frames); fall back to a null
 		// command buffer at the very first present (before the ring exists) — null tags record no work.
 		VkCommandBuffer cmd = VK_NULL_HANDLE;
-		auto* dxvk = DxvkInterop::GetSingleton();
+		auto* dxvk = DXVKInterop::GetSingleton();
 		if (dxvk->CommandResourcesReady())
 			cmd = dxvk->BeginFrameCommandBuffer();
 		g_sl.slSetTagForFrame(*token, g_sl.viewport, tags, static_cast<uint32_t>(std::size(tags)), cmd);

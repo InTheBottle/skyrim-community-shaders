@@ -1,7 +1,7 @@
 #include "FrameGenController.h"
 
 #include "../Upscaling.h"
-#include "DxvkInterop.h"
+#include "DXVKInterop.h"
 #include "Streamline.h"
 
 #include "../../Globals.h"
@@ -135,7 +135,7 @@ namespace FrameGen
 		if (dlssgModeOn && a_target != Method::kDLSSG) {
 			const auto dims = CurrentDims(false);
 			sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight);
-			if (auto* dxvk = DxvkInterop::GetSingleton())
+			if (auto* dxvk = DXVKInterop::GetSingleton())
 				dxvk->WaitDeviceIdle();
 
 			dlssgModeOn = false;
