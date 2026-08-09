@@ -60,6 +60,8 @@ public:
 
 	/** @brief Whether the DXVK Vulkan device was resolved successfully. */
 	bool IsAvailable() const { return available; }
+	/** @brief Whether DXVK presents HDR10 through its NVIDIA scRGB compatibility path. */
+	bool UsesNvidiaHdr10ScRgbFallback() const { return nvidiaDevice; }
 
 	VkInstance GetInstance() const { return instance; }
 	VkPhysicalDevice GetPhysicalDevice() const { return physicalDevice; }
@@ -105,6 +107,7 @@ private:
 	DXVKInterop() = default;
 
 	bool available = false;
+	bool nvidiaDevice = false;
 
 	winrt::com_ptr<IDXGIVkInteropDevice> interopDevice;
 

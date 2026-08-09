@@ -1,5 +1,6 @@
 #include "FrameGenController.h"
 
+#include "../HDRDisplay.h"
 #include "../Upscaling.h"
 #include "DXVKInterop.h"
 #include "Streamline.h"
@@ -43,6 +44,12 @@ namespace FrameGen
 				(float)globals::game::graphicsState->screenHeight };
 			const auto render = Util::ConvertToDynamic(display, a_ignoreDynamicResolutionLock);
 			return { (uint32_t)render.x, (uint32_t)render.y, (uint32_t)display.x, (uint32_t)display.y };
+		}
+
+		bool IsHDRActive()
+		{
+			const auto& hdr = globals::features::hdrDisplay;
+			return hdr.loaded && hdr.settings.enableHDR;
 		}
 	}
 
@@ -116,11 +123,10 @@ namespace FrameGen
 		}
 
 		if (fsrDelivered == 1 && a_target != Method::kFSR) {
-			constexpr bool hdr = true;
 			const auto dims = CurrentDims(false);
 			const auto& s = globals::features::upscaling.settings;
 			(void)sl->SetFSRFrameGen(false, dims.renderWidth, dims.renderHeight,
-				dims.displayWidth, dims.displayHeight, hdr,
+				dims.displayWidth, dims.displayHeight, fsrHDRDelivered,
 				s.fgDebugView, s.fgDebugTearLines, s.fgDebugPacingLines, s.fgShowOnlyGenerated);
 			fsrDelivered = 0;
 			fsrVsyncRebakePending = false;
@@ -191,12 +197,13 @@ namespace FrameGen
 		}
 
 		const uint32_t debugSig = FSRDebugSignature(upscaling.settings);
-		if (fsrDelivered == 1 && debugSig == fsrDebugSigDelivered)
+		const bool hdr = IsHDRActive();
+		if (fsrDelivered == 1 && debugSig == fsrDebugSigDelivered && hdr == fsrHDRDelivered)
 			return;
 
 		const bool enableEdge = fsrDelivered != 1;
+		const bool hdrChanged = fsrDelivered == 1 && hdr != fsrHDRDelivered;
 
-		constexpr bool hdr = true;
 		const auto dims = CurrentDims(false);
 		const auto& s = upscaling.settings;
 		if (sl->SetFSRFrameGen(true,
@@ -204,6 +211,7 @@ namespace FrameGen
 				s.fgDebugView, s.fgDebugTearLines, s.fgDebugPacingLines, s.fgShowOnlyGenerated)) {
 			fsrDelivered = 1;
 			fsrDebugSigDelivered = debugSig;
+			fsrHDRDelivered = hdr;
 			owner = Method::kFSR;
 			fsrWrapVsync = s.vsync;
 			logger::info("[FrameGen] FSR-FG enable delivered - present owner: {}", Name(owner));
@@ -211,6 +219,8 @@ namespace FrameGen
 			// FFX installs its interpolation swapchain during vkCreateSwapchainKHR.
 			if (enableEdge)
 				Streamline::RequestDxvkSwapchainRecreate("FSR-FG wrap");
+			else if (hdrChanged)
+				Streamline::RequestDxvkSwapchainRecreate("FSR-FG HDR transfer change");
 		}
 	}
 

@@ -130,6 +130,11 @@ public:
 	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
 
+	winrt::com_ptr<ID3D11ComputeShader> hdrToScRGBCS;
+	ID3D11ComputeShader* GetHDRToScRGBCS();
+	winrt::com_ptr<ID3D11PixelShader> copyHudlessPS;
+	ID3D11PixelShader* GetCopyHudlessPS();
+
 	winrt::com_ptr<ID3D11DepthStencilState> upscaleDepthStencilState;
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
@@ -180,6 +185,10 @@ private:
 	void DestroyUpscaledTexture();
 	void CreateHudlessTexture();
 	void DestroyHudlessTexture();
+	ID3D11Resource* CaptureHudlessColor();
+	bool ConvertHDRToScRGB(ID3D11ShaderResourceView* a_source);
+	bool CopyHudlessColor(ID3D11ShaderResourceView* a_source);
+	void PrepareFrameGeneration(ID3D11Resource* a_hudlessColor);
 
 	struct Main_UpdateJitter
 	{

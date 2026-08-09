@@ -60,6 +60,7 @@ bool DXVKInterop::Initialize()
 			vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"))) {
 		VkPhysicalDeviceProperties props{};
 		pfnProps(physicalDevice, &props);
+		nvidiaDevice = props.vendorID == 0x10DE;
 		logger::info("[DXVKInterop] Bridged to DXVK Vulkan device: '{}' (API {}.{}.{}), queueFamily {}",
 			props.deviceName,
 			VK_API_VERSION_MAJOR(props.apiVersion),

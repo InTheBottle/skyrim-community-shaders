@@ -617,6 +617,12 @@ namespace Hooks
 			case WM_ACTIVATE:
 				Upscaling::NotifyWindowFocus(LOWORD(a_wParam) != WA_INACTIVE);
 				break;
+			case WM_SETFOCUS:
+				Upscaling::NotifyWindowFocus(true);
+				break;
+			case WM_KILLFOCUS:
+				Upscaling::NotifyWindowFocus(false);
+				break;
 			case WM_ENTERSIZEMOVE:
 				Upscaling::NotifyWindowModifying(true);
 				break;

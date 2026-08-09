@@ -3,6 +3,7 @@
 #include "../I18n/I18n.h"
 #include "Deferred.h"
 #include "DxvkLoader.h"
+#include "Features/Effects11/D3D11StateBackup.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
@@ -615,7 +616,6 @@ void Upscaling::DestroyUpscaledTexture()
 void Upscaling::CreateHudlessTexture()
 {
 	auto renderer = globals::game::renderer;
-	// Match the swapchain format used by frame-generation UI extraction.
 	auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 	if (!fb.SRV)
 		return;
@@ -627,7 +627,25 @@ void Upscaling::CreateHudlessTexture()
 
 	D3D11_TEXTURE2D_DESC texDesc{};
 	fbTexture->GetDesc(&texDesc);
-	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	const auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	const DXGI_FORMAT format = hdrActive ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+
+	if (hudlessTexture &&
+		hudlessTexture->desc.Width == texDesc.Width &&
+		hudlessTexture->desc.Height == texDesc.Height &&
+		hudlessTexture->desc.Format == format)
+		return;
+
+	if (hudlessTexture) {
+		if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->IsAvailable())
+			dxvk->WaitDeviceIdle();
+	}
+	DestroyHudlessTexture();
+
+	texDesc.Format = format;
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE |
+	                    (hdrActive ? D3D11_BIND_UNORDERED_ACCESS : D3D11_BIND_RENDER_TARGET);
 
 	hudlessTexture = new Texture2D(texDesc);
 	Util::SetResourceName(hudlessTexture->resource.get(), "Upscaling::HudlessTexture");
@@ -638,6 +656,18 @@ void Upscaling::CreateHudlessTexture()
 	srvDesc.Texture2D.MostDetailedMip = 0;
 	srvDesc.Texture2D.MipLevels = 1;
 	hudlessTexture->CreateSRV(srvDesc);
+
+	if (hdrActive) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = texDesc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		hudlessTexture->CreateUAV(uavDesc);
+	} else {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+		rtvDesc.Format = texDesc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		hudlessTexture->CreateRTV(rtvDesc);
+	}
 
 	logger::info("[Upscaling] Created hudless texture ({}x{}, format={})",
 		texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
@@ -650,6 +680,96 @@ void Upscaling::DestroyHudlessTexture()
 		hudlessTexture = nullptr;
 		logger::debug("[Upscaling] Destroyed hudless texture");
 	}
+}
+
+bool Upscaling::ConvertHDRToScRGB(ID3D11ShaderResourceView* a_source)
+{
+	if (!a_source || !hudlessTexture || !hudlessTexture->uav)
+		return false;
+
+	auto* shader = GetHDRToScRGBCS();
+	if (!shader)
+		return false;
+
+	auto* context = globals::d3d::context;
+	ID3D11ShaderResourceView* sources[] = { a_source };
+	ID3D11UnorderedAccessView* outputs[] = { hudlessTexture->uav.get() };
+	context->CSSetShaderResources(0, ARRAYSIZE(sources), sources);
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+	context->CSSetShader(shader, nullptr, 0);
+	context->Dispatch((hudlessTexture->desc.Width + 7) / 8, (hudlessTexture->desc.Height + 7) / 8, 1);
+
+	sources[0] = nullptr;
+	outputs[0] = nullptr;
+	context->CSSetShaderResources(0, ARRAYSIZE(sources), sources);
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+	context->CSSetShader(nullptr, nullptr, 0);
+	return true;
+}
+
+bool Upscaling::CopyHudlessColor(ID3D11ShaderResourceView* a_source)
+{
+	if (!a_source || !hudlessTexture || !hudlessTexture->rtv)
+		return false;
+
+	auto* vertexShader = GetUpscaleVS();
+	auto* pixelShader = GetCopyHudlessPS();
+	if (!vertexShader || !pixelShader)
+		return false;
+
+	auto* context = globals::d3d::context;
+	Effects11Util::D3D11ScopedPostFxBackup backup;
+	backup.Save(context);
+
+	context->IASetInputLayout(nullptr);
+	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(vertexShader, nullptr, 0);
+
+	D3D11_VIEWPORT viewport{};
+	viewport.Width = static_cast<float>(hudlessTexture->desc.Width);
+	viewport.Height = static_cast<float>(hudlessTexture->desc.Height);
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+	context->RSSetState(nullptr);
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0);
+
+	ID3D11ShaderResourceView* sources[] = { a_source };
+	context->PSSetShaderResources(0, ARRAYSIZE(sources), sources);
+	context->PSSetShader(pixelShader, nullptr, 0);
+	ID3D11RenderTargetView* output = hudlessTexture->rtv.get();
+	context->OMSetRenderTargets(1, &output, nullptr);
+	context->Draw(3, 0);
+
+	sources[0] = nullptr;
+	context->PSSetShaderResources(0, ARRAYSIZE(sources), sources);
+	backup.Restore(context);
+	backup.Release();
+	return true;
+}
+
+ID3D11Resource* Upscaling::CaptureHudlessColor()
+{
+	CreateHudlessTexture();
+	if (!hudlessTexture || !hudlessTexture->resource)
+		return nullptr;
+
+	auto& hdr = globals::features::hdrDisplay;
+	if (hdr.loaded && hdr.settings.enableHDR && hdr.hdrTexture && hdr.hdrTexture->srv) {
+		if (hdr.ComposeCleanCapture(hdr.hdrTexture->srv.get(), false) &&
+			hdr.outputTexture && hdr.outputTexture->srv &&
+			ConvertHDRToScRGB(hdr.outputTexture->srv.get()))
+			return hudlessTexture->resource.get();
+		return nullptr;
+	}
+
+	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+	if (!fb.SRV)
+		return nullptr;
+
+	return CopyHudlessColor(fb.SRV) ? hudlessTexture->resource.get() : nullptr;
 }
 
 void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
@@ -711,6 +831,28 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 		upscaleVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", {}, "vs_5_0"));
 	}
 	return upscaleVS.get();
+}
+
+ID3D11ComputeShader* Upscaling::GetHDRToScRGBCS()
+{
+	if (!hdrToScRGBCS) {
+		logger::debug("Compiling HDRToScRGBCS.hlsl");
+		std::vector<std::pair<const char*, const char*>> defines;
+		auto* dxvk = DXVKInterop::GetSingleton();
+		if ((dxvk->IsAvailable() || dxvk->Initialize()) && dxvk->UsesNvidiaHdr10ScRgbFallback())
+			defines.emplace_back("NVIDIA_HDR10_SCRGB_FALLBACK", "1");
+		hdrToScRGBCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/HDRToScRGBCS.hlsl", defines, "cs_5_0"));
+	}
+	return hdrToScRGBCS.get();
+}
+
+ID3D11PixelShader* Upscaling::GetCopyHudlessPS()
+{
+	if (!copyHudlessPS) {
+		logger::debug("Compiling CopyHudlessPS.hlsl");
+		copyHudlessPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/CopyHudlessPS.hlsl", {}, "ps_5_0"));
+	}
+	return copyHudlessPS.get();
 }
 
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
@@ -915,6 +1057,8 @@ void Upscaling::ClearShaderCache()
 	depthRefractionUpscalePS = nullptr;
 	underwaterMaskUpscalePS = nullptr;
 	upscaleVS = nullptr;
+	hdrToScRGBCS = nullptr;
+	copyHudlessPS = nullptr;
 }
 
 void UpdateCameraData()
@@ -1032,6 +1176,13 @@ void Upscaling::NotifyWindowModifying(bool a_modifying)
 
 bool Upscaling::IsWindowUnusable()
 {
+	if (const auto foregroundWindow = GetForegroundWindow()) {
+		DWORD foregroundProcess = 0;
+		GetWindowThreadProcessId(foregroundWindow, &foregroundProcess);
+		if (foregroundProcess != 0)
+			s_windowUnfocused.store(foregroundProcess != GetCurrentProcessId(), std::memory_order_relaxed);
+	}
+
 	return IsWindowGapActive() ||
 	       s_windowUnfocused.load(std::memory_order_relaxed) ||
 	       s_windowModifying.load(std::memory_order_relaxed);
@@ -1271,6 +1422,60 @@ void Upscaling::UpscaleDepth()
 	state->EndPerfEvent();
 }
 
+void Upscaling::PrepareFrameGeneration(ID3D11Resource* a_hudlessColor)
+{
+	auto* ui = globals::game::ui;
+	const bool gameplay = ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
+	const auto fgMethod = GetFrameGenMethod();
+	auto* renderer = globals::game::renderer;
+	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+
+	if (fgMethod == FrameGenMethod::kDLSSG) {
+		FrameGen::Controller::GetSingleton()->EngageDLSSG();
+
+		if (gameplay) {
+			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+			const auto renderSize = Util::ConvertToDynamic(displaySize, true);
+			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+			ID3D11Resource* fgDepth = (IsUpscalingActive() && depthCopy.texture) ? depthCopy.texture : depth.texture;
+
+			if (!IsUpscalingActive()) {
+				CreateUpscaledTexture();
+				auto& mainColor = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+				if (upscaledTexture && upscaledTexture->resource && mainColor.texture)
+					(void)Streamline::GetSingleton()->EvaluateFSR(
+						mainColor.texture, upscaledTexture->resource.get(), fgDepth, motionVector.texture,
+						(uint32_t)displaySize.x, (uint32_t)displaySize.y, (uint32_t)displaySize.x, (uint32_t)displaySize.y,
+						0, 0.0f, jitter.x, jitter.y);
+			}
+
+			static uint32_t s_lastTagFrame = UINT32_MAX;
+			const uint32_t tagFrame = globals::state->frameCount;
+			if (s_lastTagFrame != tagFrame) {
+				s_lastTagFrame = tagFrame;
+				Streamline::GetSingleton()->TagDLSSGResources(
+					fgDepth, motionVector.texture, a_hudlessColor,
+					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
+					(uint32_t)displaySize.x, (uint32_t)displaySize.y);
+			}
+			Streamline::GetSingleton()->LogReflexStatus();
+		}
+	} else if (fgMethod == FrameGenMethod::kFSR && gameplay) {
+		const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+		const auto renderSize = Util::ConvertToDynamic(displaySize, true);
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+		ID3D11Resource* fgDepth = (IsUpscalingActive() && depthCopy.texture) ? depthCopy.texture : depth.texture;
+		Streamline::GetSingleton()->EvaluateFSRFrameGen(
+			fgDepth, motionVector.texture, a_hudlessColor,
+			(uint32_t)renderSize.x, (uint32_t)renderSize.y,
+			(uint32_t)displaySize.x, (uint32_t)displaySize.y,
+			jitter.x, jitter.y);
+		Streamline::GetSingleton()->LogFSRFrameGenStats();
+	}
+}
+
 void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 {
 	Streamline::GetSingleton()->BeginRenderFrame();
@@ -1282,19 +1487,6 @@ void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 {
 	auto& upscaling = globals::features::upscaling;
-
-	// Capture the composited scene before the UI is drawn.
-	if (upscaling.IsFrameGenerationActive()) {
-		if (!upscaling.hudlessTexture || !upscaling.hudlessTexture->resource)
-			upscaling.CreateHudlessTexture();
-		auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
-		if (fb.SRV && upscaling.hudlessTexture && upscaling.hudlessTexture->resource) {
-			winrt::com_ptr<ID3D11Resource> fbResource;
-			fb.SRV->GetResource(fbResource.put());
-			if (fbResource)
-				globals::d3d::context->CopyResource(upscaling.hudlessTexture->resource.get(), fbResource.get());
-		}
-	}
 
 	upscaling.PostDisplay();
 
@@ -1327,71 +1519,6 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (windowUsable && (upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kXeSS || upscaleMethod == UpscaleMethod::kDLSS))
 		upscaling.PerformUpscaling();
 
-	if (windowUsable && upscaling.IsFrameGenerationActive()) {
-		auto fgMethod = upscaling.GetFrameGenMethod();
-		auto renderer = globals::game::renderer;
-		auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-
-		auto* ui = globals::game::ui;
-		const bool gameplay = ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
-		ID3D11Resource* hudless = (upscaling.hudlessTexture && upscaling.hudlessTexture->resource)
-		                              ? upscaling.hudlessTexture->resource.get()
-		                              : nullptr;
-
-		if (fgMethod == FrameGenMethod::kDLSSG) {
-			FrameGen::Controller::GetSingleton()->EngageDLSSG();
-
-			if (gameplay) {
-				const auto dispSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-				// Depth and motion vectors are valid only inside the dynamic render extent.
-				const auto rendSize = Util::ConvertToDynamic(dispSize, /*ignoreLock=*/true);
-
-				// Use the saved render-resolution depth after UpscaleDepth rewrites kMAIN.
-				auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-				auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
-				ID3D11Resource* fgDepth = (upscaling.IsUpscalingActive() && depthCopy.texture)
-				                              ? depthCopy.texture
-				                              : depth.texture;
-
-				// Interposed DLSS-G needs one Streamline evaluation per frame, including TAA.
-				if (!upscaling.IsUpscalingActive()) {
-					upscaling.CreateUpscaledTexture();
-					auto& mainColor = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-					if (upscaling.upscaledTexture && upscaling.upscaledTexture->resource && mainColor.texture)
-						(void)Streamline::GetSingleton()->EvaluateFSR(
-							mainColor.texture, upscaling.upscaledTexture->resource.get(), fgDepth, motionVector.texture,
-							(uint32_t)dispSize.x, (uint32_t)dispSize.y, (uint32_t)dispSize.x, (uint32_t)dispSize.y,
-							0, 0.0f, upscaling.jitter.x, upscaling.jitter.y);
-				}
-
-				static uint32_t s_lastTagFrame = UINT32_MAX;
-				const uint32_t tagFrame = globals::state->frameCount;
-				if (s_lastTagFrame != tagFrame) {
-					s_lastTagFrame = tagFrame;
-					Streamline::GetSingleton()->TagDLSSGResources(
-						fgDepth, motionVector.texture, hudless,
-						(uint32_t)rendSize.x, (uint32_t)rendSize.y,
-						(uint32_t)dispSize.x, (uint32_t)dispSize.y);
-				}
-				Streamline::GetSingleton()->LogReflexStatus();
-			}
-		} else if (fgMethod == FrameGenMethod::kFSR && gameplay) {
-			const auto dispSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-			const auto rendSize = Util::ConvertToDynamic(dispSize, /*ignoreLock=*/true);
-			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
-			ID3D11Resource* fgDepth = (upscaling.IsUpscalingActive() && depthCopy.texture)
-			                              ? depthCopy.texture
-			                              : depth.texture;
-			Streamline::GetSingleton()->EvaluateFSRFrameGen(
-				fgDepth, motionVector.texture, hudless,
-				(uint32_t)rendSize.x, (uint32_t)rendSize.y,
-				(uint32_t)dispSize.x, (uint32_t)dispSize.y,
-				upscaling.jitter.x, upscaling.jitter.y);
-			Streamline::GetSingleton()->LogFSRFrameGenStats();
-		}
-	}
-
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
 	bool hdrLoaded = globals::features::hdrDisplay.loaded;
@@ -1402,6 +1529,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
+
+	if (windowUsable && upscaling.IsFrameGenerationActive())
+		upscaling.PrepareFrameGeneration(upscaling.CaptureHudlessColor());
 
 	Util::SetTemporal(false);
 }

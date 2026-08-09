@@ -52,6 +52,7 @@ namespace FrameGen
 		// -1 until sl.fsr_g accepts its first state update.
 		int fsrDelivered = -1;
 		uint32_t fsrDebugSigDelivered = 0;
+		bool fsrHDRDelivered = false;
 		// FFX bakes VSync into its wrapped swapchain.
 		bool fsrWrapVsync = false;
 		bool fsrVsyncRebakePending = false;
