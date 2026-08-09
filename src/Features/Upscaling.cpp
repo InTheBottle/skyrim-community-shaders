@@ -501,6 +501,15 @@ bool Upscaling::IsFrameGenerationActive() const
 	return Streamline::GetSingleton()->IsFSRFGSupported();
 }
 
+bool Upscaling::ShouldUseFrameGenerationUI() const
+{
+	if (!IsFrameGenerationActive() || GetFrameGenMethod() != FrameGenMethod::kFSR)
+		return false;
+	auto* ui = globals::game::ui;
+	return Streamline::GetSingleton()->GetFrameGenerationMultiplier() >= 2 &&
+	       ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
+}
+
 bool Upscaling::GetEffectiveReflex() const
 {
 	if (IsFrameGenerationActive()) {
@@ -1467,8 +1476,10 @@ void Upscaling::PrepareFrameGeneration(ID3D11Resource* a_hudlessColor)
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
 		ID3D11Resource* fgDepth = (IsUpscalingActive() && depthCopy.texture) ? depthCopy.texture : depth.texture;
+		auto& hdr = globals::features::hdrDisplay;
+		ID3D11Resource* fgUI = ShouldUseFrameGenerationUI() && hdr.uiTexture ? hdr.uiTexture->resource.get() : nullptr;
 		Streamline::GetSingleton()->EvaluateFSRFrameGen(
-			fgDepth, motionVector.texture, a_hudlessColor,
+			fgDepth, motionVector.texture, a_hudlessColor, fgUI,
 			(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 			(uint32_t)displaySize.x, (uint32_t)displaySize.y,
 			jitter.x, jitter.y);

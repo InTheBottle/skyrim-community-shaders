@@ -754,8 +754,8 @@ void HDRDisplay::SetUIBuffer()
 {
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	// SDR mode: vanilla UI composites directly to kFRAMEBUFFER, no redirect needed
-	if (!settings.enableHDR)
+	// Capture UI separately for HDR output or FSR frame generation.
+	if (!settings.enableHDR && !globals::features::upscaling.ShouldUseFrameGenerationUI())
 		return;
 
 	// Don't redirect if the HDR compute shader isn't available - vanilla UI path works without it
@@ -778,7 +778,7 @@ void HDRDisplay::SetUIBuffer()
 
 bool HDRDisplay::UsesDeferredPresentComposite() const
 {
-	return loaded && settings.enableHDR &&
+	return loaded && (settings.enableHDR || globals::features::upscaling.ShouldUseFrameGenerationUI()) &&
 	       uiTexture && uiTexture->rtv && hdrOutputCS;
 }
 
@@ -893,12 +893,12 @@ HRESULT HDRDisplay::PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInter
 	return SwapChainPresentBottom::func(swapChain, syncInterval, flags);
 }
 
-void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
+void HDRDisplay::DrawImGuiForPresent(bool frameGenActive)
 {
 	if (frameGenActive) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
-	} else if (hdrReady && uiTexture && uiTexture->rtv && uiTexture->resource) {
+	} else if (UsesDeferredPresentComposite() && uiTexture && uiTexture->rtv && uiTexture->resource) {
 		ID3D11RenderTargetView* uiRTV = uiTexture->rtv.get();
 		D3D11_TEXTURE2D_DESC texDesc{};
 		uiTexture->resource->GetDesc(&texDesc);
@@ -979,7 +979,7 @@ HRESULT HDRDisplay::HandleSwapChainPresent(
 	UINT viewportCount = 1;
 	globals::d3d::context->RSGetViewports(&viewportCount, &savedViewport);
 
-	DrawImGuiForPresent(false, hdrReady);
+	DrawImGuiForPresent(false);
 	globals::menu->DrawOverlay();
 	globals::d3d::context->RSSetViewports(1, &savedViewport);
 
@@ -1016,6 +1016,7 @@ void HDRDisplay::ApplyHDR()
 	auto renderer = globals::game::renderer;
 
 	UpdateHDRData();
+	PrepareFrameGenerationUI();
 
 	state->BeginPerfEvent("HDR Processing");
 
@@ -1329,6 +1330,10 @@ void HDRDisplay::ClearShaderCache()
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
 	}
+	if (uiBrightnessCS) {
+		uiBrightnessCS->Release();
+		uiBrightnessCS = nullptr;
+	}
 }
 
 ID3D11ComputeShader* HDRDisplay::GetHDROutputCS()
@@ -1341,6 +1346,47 @@ ID3D11ComputeShader* HDRDisplay::GetHDROutputCS()
 		}
 	}
 	return hdrOutputCS;
+}
+
+ID3D11ComputeShader* HDRDisplay::GetUIBrightnessCS()
+{
+	if (!uiBrightnessCS) {
+		std::vector<std::pair<const char*, const char*>> defines;
+		uiBrightnessCS = static_cast<ID3D11ComputeShader*>(
+			Util::CompileShader(L"Data\\Shaders\\HDRDisplay\\UIBrightnessCS.hlsl", defines, "cs_5_0"));
+		if (!uiBrightnessCS)
+			logger::error("HDR: Failed to compile UIBrightnessCS.hlsl");
+	}
+	return uiBrightnessCS;
+}
+
+void HDRDisplay::PrepareFrameGenerationUI()
+{
+	if (!globals::features::upscaling.ShouldUseFrameGenerationUI() ||
+		!hdrDataCB || !uiTexture || !uiTexture->uav)
+		return;
+
+	auto* context = globals::d3d::context;
+	auto* shader = GetUIBrightnessCS();
+	if (!shader)
+		return;
+
+	ID3D11UnorderedAccessView* uavs[] = { uiTexture->uav.get() };
+	ID3D11Buffer* cbs[] = { hdrDataCB->CB() };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
+	context->CSSetShader(shader, nullptr, 0);
+
+	auto dispatchCount = Util::GetScreenDispatchCount(false);
+	globals::profiler->BeginPass("HDRDisplay::FrameGenerationUI");
+	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	globals::profiler->EndPass();
+
+	uavs[0] = nullptr;
+	cbs[0] = nullptr;
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 float HDRDisplay::GetDisplayMaxLuminance() const
@@ -1404,7 +1450,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	data.enableHDR = settings.enableHDR ? 1.f : 0.f;
 	data.paperWhite = static_cast<float>(settings.hdrPaperWhite);
 	data.peakNits = effectivePeakNits;
-	data.skipUIComposite = 0.f;
+	data.skipUIComposite = globals::features::upscaling.ShouldUseFrameGenerationUI() ? 1.f : 0.f;
 	data.uiBrightness = settings.hdrUIBrightness;
 	data.isSceneLinear = isSceneLinear ? 1.f : 0.f;
 	data.pad0 = isMainOrLoadingMenu ? 1.f : 0.f;

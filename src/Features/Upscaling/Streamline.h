@@ -59,7 +59,7 @@ public:
 
 	/** @brief Prepares FSR frame generation independently of the active upscaler. */
 	void EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
-		ID3D11Resource* a_hudlessColor,
+		ID3D11Resource* a_hudlessColor, ID3D11Resource* a_uiColor,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		float a_jitterX, float a_jitterY);

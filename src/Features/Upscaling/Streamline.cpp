@@ -834,7 +834,7 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight,
 	float a_jitterX, float a_jitterY, ID3D11Resource* a_hudlessColor = nullptr,
-	bool* a_outputReady = nullptr)
+	bool* a_outputReady = nullptr, ID3D11Resource* a_uiColor = nullptr)
 {
 	if (a_outputReady)
 		*a_outputReady = false;
@@ -878,20 +878,21 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	VkDevice vkDevice = dxvk->GetDevice();
 	auto vkCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(
 		dxvk->GetDeviceProcAddr()(vkDevice, "vkCreateImageView"));
-	VkImageView views[5] = {};
+	VkImageView views[6] = {};
 	int nv = 0;
 	const auto wrap = [&](ID3D11Resource* a_res, sl::Resource& a_out, uint32_t a_w, uint32_t a_h) -> bool {
 		VkImageView v = VK_NULL_HANDLE;
 		if (!cs_WrapInteropImage(dxvk, vkDevice, vkCreateImageView, a_res, a_out, a_w, a_h, v))
 			return false;
-		if (v != VK_NULL_HANDLE && nv < 5)
+		if (v != VK_NULL_HANDLE && nv < 6)
 			views[nv++] = v;
 		return true;
 	};
 
 	const bool haveColor = (a_colorIn && a_colorOut);
 	const bool haveHudless = (a_hudlessColor != nullptr);
-	sl::Resource colorInRes{}, colorOutRes{}, depthRes{}, mvecRes{}, hudlessRes{};
+	const bool haveUI = (a_uiColor != nullptr);
+	sl::Resource colorInRes{}, colorOutRes{}, depthRes{}, mvecRes{}, hudlessRes{}, uiRes{};
 	bool ok = wrap(a_depth, depthRes, a_renderWidth, a_renderHeight) &&
 	          wrap(a_motionVectors, mvecRes, a_renderWidth, a_renderHeight);
 	if (ok && haveColor)
@@ -899,6 +900,8 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 		     wrap(a_colorOut, colorOutRes, a_outputWidth, a_outputHeight);
 	if (ok && haveHudless)
 		ok = wrap(a_hudlessColor, hudlessRes, a_outputWidth, a_outputHeight);
+	if (ok && haveUI)
+		ok = wrap(a_uiColor, uiRes, a_outputWidth, a_outputHeight);
 	if (!ok) {
 		cs_DestroyViews(dxvk, vkDevice, views, nv);
 		return sl::Result::eErrorMissingInputParameter;
@@ -910,7 +913,7 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 
 	sl::Extent renderExtent{ 0, 0, a_renderWidth, a_renderHeight };
 	sl::Extent outputExtent{ 0, 0, a_outputWidth, a_outputHeight };
-	sl::ResourceTag tags[5];
+	sl::ResourceTag tags[6];
 	uint32_t nt = 0;
 	if (haveColor) {
 		tags[nt++] = sl::ResourceTag{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent };
@@ -921,6 +924,8 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	tags[nt++] = sl::ResourceTag{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eOnlyValidNow, &renderExtent };
 	if (haveHudless)
 		tags[nt++] = sl::ResourceTag{ &hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eOnlyValidNow, &outputExtent };
+	if (haveUI)
+		tags[nt++] = sl::ResourceTag{ &uiRes, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &outputExtent };
 
 	sl::Result evalRes = sl::Result::eErrorNotInitialized;
 	VkCommandBuffer cmd = dxvk->BeginFrameCommandBuffer();
@@ -1197,7 +1202,7 @@ bool Streamline::EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorO
 }
 
 void Streamline::EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
-	ID3D11Resource* a_hudlessColor,
+	ID3D11Resource* a_hudlessColor, ID3D11Resource* a_uiColor,
 	uint32_t a_renderWidth, uint32_t a_renderHeight,
 	uint32_t a_outputWidth, uint32_t a_outputHeight,
 	float a_jitterX, float a_jitterY)
@@ -1217,7 +1222,8 @@ void Streamline::EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_
 		const sl::ViewportHandle fgViewport{ 1 };
 		const sl::Result evalRes = cs_EvaluateFeatureCore(sl::kFeatureFSR_G, fgViewport,
 			nullptr, nullptr, a_depth, a_motionVectors,
-			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY, a_hudlessColor);
+			a_renderWidth, a_renderHeight, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY,
+			a_hudlessColor, nullptr, a_uiColor);
 
 		static sl::Result s_loggedRes = sl::Result::eErrorNotInitialized;
 		if (evalRes != s_loggedRes) {

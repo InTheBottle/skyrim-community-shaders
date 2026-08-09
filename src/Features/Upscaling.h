@@ -144,6 +144,8 @@ public:
 	void Upscale();
 
 	bool IsFrameGenerationActive() const;
+	/** @brief Returns whether FSR frame generation needs a separately composited UI texture. */
+	bool ShouldUseFrameGenerationUI() const;
 
 	/** @brief Returns the Reflex state required by the active frame generator. */
 	[[nodiscard]] bool GetEffectiveReflex() const;

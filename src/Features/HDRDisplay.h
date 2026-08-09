@@ -94,6 +94,8 @@ public:
 	bool UsesDeferredPresentComposite() const;
 	/** @brief Aligns kFRAMEBUFFER.RTV with uiTexture for engine paths when ImGui has already bound the OM. */
 	void SyncFramebufferUIRedirect();
+	/** @brief Converts the captured UI to the swap-chain encoding used by FSR frame generation. */
+	void PrepareFrameGenerationUI();
 
 	/** @brief Runs the HDR output compute shader to composite scene and UI, then copies to the back buffer. */
 	void ApplyHDR();
@@ -181,6 +183,9 @@ public:
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 	/** @brief Returns the HDR output compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetHDROutputCS();
+	ID3D11ComputeShader* uiBrightnessCS = nullptr;
+	/** @brief Returns the frame-generation UI conversion shader, compiling it on first use. */
+	ID3D11ComputeShader* GetUIBrightnessCS();
 
 	/** @brief Detects whether Windows HDR is currently active on the swap chain's monitor. */
 	static bool DetectHDR();
@@ -222,7 +227,7 @@ private:
 	std::unordered_map<ID3D11BlendState*, winrt::com_ptr<ID3D11BlendState>> patchedBlendStateCache;
 
 	HRESULT PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags);
-	void DrawImGuiForPresent(bool frameGenActive, bool hdrReady);
+	void DrawImGuiForPresent(bool frameGenActive);
 	void RunHDRBeforePresentChain(bool hdrReady);
 	HRESULT RunPresentChainWithHDR(
 		IDXGISwapChain* swapChain,
