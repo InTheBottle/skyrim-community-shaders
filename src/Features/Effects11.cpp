@@ -461,11 +461,9 @@ void Effects11::CheckCommonData()
 		ENBHelper::Update();
 
 		auto& settingManager = SettingManager::GetSingleton();
-		auto state = globals::state;
-		const bool inBlockedMenu = state->isMapMenuOpen || state->isStatsMenuOpen;
 		auto& effectManager = EffectManager::GetSingleton();
 
-		enableEffect = !inBlockedMenu && globals::shaderCache->IsEnabled() && settingManager.GetValue<bool>("UseEffect", "GLOBAL") && effectManager.IsPresetLoaded();
+		enableEffect = !globals::state->IsFullScreenMenuOpen() && globals::shaderCache->IsEnabled() && settingManager.GetValue<bool>("UseEffect", "GLOBAL") && effectManager.IsPresetLoaded();
 
 		auto& weatherManager = WeatherManager::GetSingleton();
 
@@ -625,7 +623,7 @@ void Effects11::DrawVolumetricRays()
 	if (globals::game::sky && globals::game::sky->flags.any(RE::Sky::Flags::kHideSky))
 		return;
 
-	if (globals::state->isMapMenuOpen || globals::state->isStatsMenuOpen)
+	if (globals::state->IsFullScreenMenuOpen())
 		return;
 
 	auto& settingManager = SettingManager::GetSingleton();
