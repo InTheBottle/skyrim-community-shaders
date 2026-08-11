@@ -20,6 +20,144 @@
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 
+#include <algorithm>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+
+namespace stl::detail
+{
+	namespace
+	{
+		// Objects whose vtable pointer detour_vfunc_tiered repointed at a plugin-owned clone.
+		// Every slot hooked on the same object must patch the same clone, and each clone must
+		// stay valid for as long as its object might dispatch through it - which includes
+		// process teardown after this DLL's static destructors have run - so the map is
+		// intentionally leaked and entries are never erased.
+		std::mutex clonedVTableMutex;
+		auto& clonedVTables = *new std::unordered_map<void*, std::unique_ptr<std::uintptr_t[]>>();
+
+		/**
+		 * @brief Copies vtable slots with fault containment, returning how many were readable.
+		 *
+		 * A vtable in memory Wine reports as MEM_FREE cannot be measured with VirtualQuery, so
+		 * the only safe bound on the copy is to attempt it page by page and stop at the first
+		 * page that faults; nothing already copied is lost.
+		 */
+		std::size_t CopyReadableSlots(std::uintptr_t* a_dst, const std::uintptr_t* a_src, std::size_t a_count) noexcept
+		{
+			std::size_t copied = 0;
+			__try {
+				while (copied < a_count) {
+					const auto cursor = reinterpret_cast<std::uintptr_t>(a_src + copied);
+					const auto pageEnd = (cursor & ~static_cast<std::uintptr_t>(0xFFF)) + 0x1000;
+					const auto chunk = std::min(a_count - copied, (pageEnd - cursor) / sizeof(std::uintptr_t));
+					std::memcpy(a_dst + copied, a_src + copied, chunk * sizeof(std::uintptr_t));
+					copied += chunk;
+				}
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+			}
+			return copied;
+		}
+	}
+
+	/**
+	 * @brief Hooks virtual slot a_idx of COM object a_object with a_thunk, escalating through
+	 * three mechanisms until one works. Returns the address the hook must call as the original
+	 * function.
+	 *
+	 * The tiers, ordered least to most invasive, each engaging only when the previous one is
+	 * impossible:
+	 *
+	 * 1. Detours patch of the slot's implementation. This is the standard mechanism and the
+	 *    only one that runs on Windows; the fallbacks are a no-op whenever it succeeds.
+	 * 2. In-place vtable slot swap: rewrite the function pointer inside the vtable itself.
+	 *    Covers environments where the implementation's code cannot be patched but the vtable
+	 *    is still ordinary memory whose protection can be changed.
+	 * 3. Vtable clone: copy the vtable into plugin memory, patch the copy, and repoint the
+	 *    object's vtable pointer at it. Requires no memory-protection change at all, at the
+	 *    cost of replacing the object's entire dispatch table.
+	 *
+	 * The escalation exists for Wine, notably CrossOver on macOS, where the D3D11
+	 * implementation is a translation layer (D3DMetal or DXMT) living in host-mapped memory
+	 * that Wine does not track: VirtualQuery reports those pages as MEM_FREE and every
+	 * protection-changing call on them fails with ERROR_INVALID_PARAMETER, code and vtable
+	 * pages alike. Tiers 1 and 2 both depend on such a call, so on that platform only the
+	 * clone can carry the hook. Redirecting the slot is sound because the COM ABI guarantees
+	 * calls dispatch through the vtable, whatever code implements it. Before this fallback
+	 * existed the failure was silent and the Map/Unmap hooks never installed there, leaving
+	 * the per-frame buffer snapshot permanently zeroed (upstream issue #1974: dark interiors,
+	 * Screen-Space Shadows banding, and more).
+	 */
+	std::uintptr_t detour_vfunc_tiered(void* a_object, std::size_t a_idx, void* a_thunk)
+	{
+		auto vtable = *static_cast<std::uintptr_t**>(a_object);
+		const auto original = vtable[a_idx];
+
+		// Tier 1: patch the implementation with Detours.
+		auto detoured = reinterpret_cast<PVOID>(original);
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		LONG detourResult = DetourAttach(&detoured, a_thunk);
+		if (detourResult == NO_ERROR)
+			detourResult = DetourTransactionCommit();
+		else
+			DetourTransactionAbort();
+		if (detourResult == NO_ERROR)
+			return reinterpret_cast<std::uintptr_t>(detoured);
+
+		std::scoped_lock lock(clonedVTableMutex);
+
+		// If an earlier hook already repointed this object at a clone, patch that clone;
+		// cloning again would discard the earlier hook. The slot value read above came from
+		// the clone, so returning it preserves chaining.
+		if (auto it = clonedVTables.find(a_object); it != clonedVTables.end() && it->second.get() == vtable) {
+			it->second[a_idx] = reinterpret_cast<std::uintptr_t>(a_thunk);
+			logger::warn("[Hooks] Detours could not patch virtual slot {} (error {}); patched the object's existing vtable clone", a_idx, detourResult);
+			return original;
+		}
+
+		MEMORY_BASIC_INFORMATION mbi{};
+		const bool queried = VirtualQuery(vtable, &mbi, sizeof(mbi)) == sizeof(mbi);
+
+		// Tier 2: swap the slot in place, keeping execute rights if the page has them.
+		constexpr DWORD executeProtects = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+		const DWORD writableProtect = (queried && (mbi.Protect & executeProtects) != 0) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+		DWORD previousProtect = 0;
+		if (VirtualProtect(&vtable[a_idx], sizeof(std::uintptr_t), writableProtect, &previousProtect)) {
+			vtable[a_idx] = reinterpret_cast<std::uintptr_t>(a_thunk);
+			DWORD restoredProtect = 0;
+			if (!VirtualProtect(&vtable[a_idx], sizeof(std::uintptr_t), previousProtect, &restoredProtect))
+				logger::warn("[Hooks] could not restore protection {:#x} on virtual slot {} (error {})", previousProtect, a_idx, GetLastError());
+			logger::warn("[Hooks] Detours could not patch virtual slot {} (error {}); swapped the vtable slot in place", a_idx, detourResult);
+			return original;
+		}
+		const DWORD protectResult = GetLastError();
+
+		// Tier 3: clone the vtable and repoint the object. The original table only needs to
+		// stay readable and the object's vtable pointer lives in an ordinary allocation, so
+		// nothing here needs a protection change. The copy is sized for the largest interface
+		// hooked this way (ID3D11DeviceContext4, ~147 virtual methods), clamped to the
+		// vtable's memory region where that is known, and fault-contained where it is not.
+		std::size_t slots = 160;
+		if (queried && mbi.State == MEM_COMMIT)
+			slots = (reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize - reinterpret_cast<std::uintptr_t>(vtable)) / sizeof(std::uintptr_t);
+		slots = std::clamp<std::size_t>(slots, a_idx + 1, max_cloned_vfunc_slots);
+
+		auto clone = std::make_unique<std::uintptr_t[]>(max_cloned_vfunc_slots);
+		if (CopyReadableSlots(clone.get(), vtable, slots) <= a_idx) {
+			logger::warn("[Hooks] virtual slot {} could not be hooked: Detours failed (error {}), the vtable page refused VirtualProtect (error {}), and the vtable was unreadable at that slot", a_idx, detourResult, protectResult);
+			return original;
+		}
+		clone[a_idx] = reinterpret_cast<std::uintptr_t>(a_thunk);
+		*static_cast<std::uintptr_t**>(a_object) = clone.get();
+		clonedVTables[a_object] = std::move(clone);
+		logger::warn("[Hooks] Detours could not patch virtual slot {} (error {}) and the vtable page refused VirtualProtect (error {}); repointed the object at a patched vtable clone", a_idx, detourResult, protectResult);
+		return original;
+	}
+}
+
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
