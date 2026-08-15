@@ -17,7 +17,6 @@
 #include <cfloat>
 #include <cmath>
 #include <format>
-#include <fstream>
 #include <nlohmann/json.hpp>
 
 #define I18N_KEY_PREFIX "feature.upscaling."
@@ -320,7 +319,8 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount - 1);
 		settings.upscaleMethod = enumCount - 1;
 	}
-	if (settings.upscaleMethodNoDLSS >= static_cast<uint>(UpscaleMethod::kDLSS))
+	if (settings.upscaleMethodNoDLSS >= static_cast<uint>(enumCount) ||
+		settings.upscaleMethodNoDLSS == static_cast<uint>(UpscaleMethod::kDLSS))
 		settings.upscaleMethodNoDLSS = static_cast<uint>(UpscaleMethod::kFSR);
 
 	constexpr auto fgMethodCount = 2;
@@ -430,23 +430,50 @@ void Upscaling::PostPostLoad()
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
-	auto method = (UpscaleMethod)settings.upscaleMethod;
-	if (method == UpscaleMethod::kDLSS &&
-		!Streamline::GetSingleton()->IsDLSSSupported()) {
-		method = (UpscaleMethod)settings.upscaleMethodNoDLSS;
-		if (method == UpscaleMethod::kDLSS)
+	auto* streamline = Streamline::GetSingleton();
+	auto* dxvk = DXVKInterop::GetSingleton();
+	if (streamline->HasDispatchFaulted() ||
+		(dxvk->IsAvailable() && !dxvk->CommandResourcesReady()))
+		return UpscaleMethod::kTAA;
+
+	auto method = static_cast<UpscaleMethod>(settings.upscaleMethod);
+	for (uint32_t fallback = 0; fallback < 3; ++fallback) {
+		if (method == UpscaleMethod::kDLSS &&
+			(!streamline->IsDLSSSupported() || IsUpscaleMethodFailed(method))) {
+			method = static_cast<UpscaleMethod>(settings.upscaleMethodNoDLSS);
+			if (method == UpscaleMethod::kDLSS)
+				method = UpscaleMethod::kFSR;
+			continue;
+		}
+		if (method == UpscaleMethod::kXeSS &&
+			(!streamline->IsXeSSSupported() || IsUpscaleMethodFailed(method))) {
 			method = UpscaleMethod::kFSR;
+			continue;
+		}
+		if (method == UpscaleMethod::kFSR &&
+			(!streamline->IsFSRSupported() || IsUpscaleMethodFailed(method)))
+			return UpscaleMethod::kTAA;
+		return method;
 	}
-	if (method == UpscaleMethod::kXeSS &&
-		!Streamline::GetSingleton()->IsXeSSSupported()) {
-		method = UpscaleMethod::kFSR;
-	}
-	// Avoid changing render resolution when the selected backend is unavailable.
-	if (method == UpscaleMethod::kFSR &&
-		!Streamline::GetSingleton()->IsFSRSupported()) {
-		method = UpscaleMethod::kTAA;
-	}
-	return method;
+	return UpscaleMethod::kTAA;
+}
+
+bool Upscaling::IsUpscaleMethodFailed(UpscaleMethod a_method) const
+{
+	const auto index = static_cast<size_t>(a_method);
+	return index < failedUpscaleMethods.size() && failedUpscaleMethods[index];
+}
+
+void Upscaling::MarkUpscaleMethodFailed(UpscaleMethod a_method)
+{
+	const auto index = static_cast<size_t>(a_method);
+	if (index >= failedUpscaleMethods.size() || failedUpscaleMethods[index])
+		return;
+
+	failedUpscaleMethods[index] = true;
+	const char* name = a_method == UpscaleMethod::kDLSS ? "DLSS" :
+	                   a_method == UpscaleMethod::kXeSS ? "XeSS" : "FSR";
+	logger::error("[Upscaling] {} evaluation failed; disabling that backend for this session", name);
 }
 
 void Upscaling::ApplyHardwareDefaults()
@@ -496,19 +523,30 @@ bool Upscaling::IsFrameGenerationActive() const
 {
 	if (!loaded || !settings.frameGeneration)
 		return false;
+	if (Streamline::GetSingleton()->HasDispatchFaulted() ||
+		DXVKInterop::GetSingleton()->HasCommandRingFault())
+		return false;
 	auto fgMethod = GetFrameGenMethod();
 	if (fgMethod == FrameGenMethod::kDLSSG)
 		return Streamline::GetSingleton()->IsDLSSGSupported();
 	return Streamline::GetSingleton()->IsFSRFGSupported();
 }
 
-bool Upscaling::ShouldUseFrameGenerationUI() const
+void Upscaling::BeginRenderFrame()
 {
-	if (!IsFrameGenerationActive() || GetFrameGenMethod() != FrameGenMethod::kFSR)
-		return false;
-	auto* ui = globals::game::ui;
-	return Streamline::GetSingleton()->GetFrameGenerationMultiplier() >= 2 &&
-	       ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
+	auto* dxvk = DXVKInterop::GetSingleton();
+	if (dxvk->HasCommandRingFault() &&
+		!Streamline::GetSingleton()->IsFSRFGLoaded() &&
+		!dxvk->RecoverCommandRing()) {
+		settings.frameGeneration = false;
+		logger::error("[Upscaling] Vulkan command-ring recovery failed; falling back to TAA");
+	}
+
+	auto& hdr = globals::features::hdrDisplay;
+	if (hdr.loaded)
+		hdr.BeginRenderFrame();
+	else
+		DXVKInterop::GetSingleton()->CommitPresenterSurfaceStateForRenderFrame();
 }
 
 bool Upscaling::GetEffectiveReflex() const
@@ -567,20 +605,64 @@ void Upscaling::ApplyDxvkFrameRateLimit(double a_fps)
 HRESULT Upscaling::PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags,
 	const std::function<HRESULT(IDXGISwapChain*, UINT, UINT)>& a_present)
 {
-	if (!IsFrameGenerationActive())
+	auto* dxvk = DXVKInterop::GetSingleton();
+	auto* streamline = Streamline::GetSingleton();
+	auto requestFaultTeardown = [&](const char* a_reason) -> HRESULT {
+		logger::error("[Upscaling] {} - disabling frame generation", a_reason);
+		settings.frameGeneration = false;
+		const uint32_t displayWidth = globals::game::graphicsState ? globals::game::graphicsState->screenWidth : 0;
+		const uint32_t displayHeight = globals::game::graphicsState ? globals::game::graphicsState->screenHeight : 0;
+		if (!streamline->HasDispatchFaulted() && streamline->IsDLSSGLoaded() &&
+			!streamline->SetDLSSGMode(false, displayWidth, displayHeight)) {
+			logger::error("[Upscaling] DLSS-G mode-off failed; continuing with device-idle teardown");
+		}
+		const bool completionProven = dxvk->HasPendingPresentWaitSemaphore() ?
+			dxvk->DiscardPendingPresentWaitSemaphore() : dxvk->WaitDeviceIdle();
+		if (!completionProven) {
+			logger::error("[Upscaling] frame-generation fault teardown deferred because GPU completion could not be proven");
+			return DXGI_STATUS_OCCLUDED;
+		}
+		if (streamline->IsFSRFGLoaded() &&
+			!streamline->DiscardFSRFrameGenerationPreparedFrame()) {
+			logger::critical("[Upscaling] FSR prepared frame could not be discarded safely; present blocked");
+			return E_FAIL;
+		}
+		// Ambiguous submissions keep their Vulkan views quarantined until FFX swapchain teardown.
+		const auto& hdr = globals::features::hdrDisplay;
+		dxvk->BeginPresenterColorSpaceTransition(hdr.loaded && hdr.IsHDREnabledForFrame(), true);
+		streamline->SetDLSSGDesiredLoaded(false);
+		streamline->SetFSRFGDesiredLoaded(false);
+		Streamline::RequestDxvkSwapchainRecreate(a_reason);
+		FrameGen::Controller::GetSingleton()->NotifyFaultTeardownRequested();
 		return a_present(a_swapChain, a_syncInterval, a_flags);
-
-	auto fgMethod = GetFrameGenMethod();
-
-	// DLSS-G requires a valid or passthrough tag for every present.
-	if (fgMethod == FrameGenMethod::kDLSSG) {
-		auto* streamline = Streamline::GetSingleton();
-		streamline->EnsureDLSSGPresentTag();
-		DXVKInterop::GetSingleton()->WaitLastSubmission();
+	};
+	if (streamline->HasDispatchFaulted() || dxvk->HasCommandRingFault()) {
+		settings.frameGeneration = false;
+		if (streamline->IsDLSSGLoaded() || streamline->IsFSRFGLoaded() ||
+			dxvk->HasPendingPresentWaitSemaphore())
+			return requestFaultTeardown("Vulkan frame-generation dispatch fault");
 		return a_present(a_swapChain, a_syncInterval, a_flags);
 	}
 
-	return a_present(a_swapChain, a_syncInterval, a_flags);
+	if (!IsFrameGenerationActive()) {
+		if (dxvk->HasPendingPresentWaitSemaphore() && !dxvk->PushPendingPresentWaitSemaphore())
+			return requestFaultTeardown("DLSS-G present synchronization failed");
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+	}
+
+	auto fgMethod = GetFrameGenMethod();
+	if (fgMethod != FrameGenMethod::kDLSSG) {
+		if (dxvk->HasPendingPresentWaitSemaphore() && !dxvk->PushPendingPresentWaitSemaphore())
+			return requestFaultTeardown("DLSS-G present synchronization failed");
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+	}
+
+	// DLSS-G requires a valid or passthrough tag for every present.
+	if ((dxvk->HasPendingPresentWaitSemaphore() || streamline->EnsureDLSSGPresentTag()) &&
+		dxvk->PushPendingPresentWaitSemaphore())
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+
+	return requestFaultTeardown("DLSS-G present synchronization failed");
 }
 
 void Upscaling::CreateUpscaledTexture()
@@ -627,38 +709,72 @@ void Upscaling::DestroyUpscaledTexture()
 
 void Upscaling::CreateHudlessTexture()
 {
-	auto renderer = globals::game::renderer;
-	auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
-	if (!fb.SRV)
-		return;
-	winrt::com_ptr<ID3D11Resource> fbResource;
-	fb.SRV->GetResource(fbResource.put());
-	winrt::com_ptr<ID3D11Texture2D> fbTexture;
-	if (!fbResource || FAILED(fbResource->QueryInterface(IID_PPV_ARGS(fbTexture.put()))) || !fbTexture)
-		return;
-
 	D3D11_TEXTURE2D_DESC texDesc{};
-	fbTexture->GetDesc(&texDesc);
-	const auto& hdr = globals::features::hdrDisplay;
-	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
-	const DXGI_FORMAT format = hdrActive ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+	auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.IsHDREnabledForFrame();
+	auto* dxvk = DXVKInterop::GetSingleton();
+	const auto encoding = dxvk->GetPresenterEncodingForFrame();
+	const VkFormat presenterFormat = dxvk->GetPresenterFormatForFrame();
+	const bool nativeHDR = hdrActive && encoding == DXVKInterop::PresenterEncoding::kHDR10;
+	const bool scRGBFallback = hdrActive && encoding == DXVKInterop::PresenterEncoding::kHDR10ScRGBFallback;
+	if (hdrActive) {
+		if ((!nativeHDR && !scRGBFallback) || !hdr.outputTexture || !hdr.outputTexture->resource)
+			return;
+		hdr.outputTexture->resource->GetDesc(&texDesc);
+		if (nativeHDR && texDesc.Format != DXGI_FORMAT_R10G10B10A2_UNORM) {
+			logger::error("[Upscaling] Native HDR output texture is not R10G10B10A2_UNORM (format={})",
+				static_cast<int>(texDesc.Format));
+			return;
+		}
+	} else {
+		auto renderer = globals::game::renderer;
+		auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+		if (!fb.SRV)
+			return;
+		winrt::com_ptr<ID3D11Resource> fbResource;
+		fb.SRV->GetResource(fbResource.put());
+		winrt::com_ptr<ID3D11Texture2D> fbTexture;
+		if (!fbResource || FAILED(fbResource->QueryInterface(IID_PPV_ARGS(fbTexture.put()))) || !fbTexture)
+			return;
+		fbTexture->GetDesc(&texDesc);
+	}
+
+	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+	if (nativeHDR && presenterFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+		format = DXGI_FORMAT_R10G10B10A2_UNORM;
+	} else if (scRGBFallback && presenterFormat == VK_FORMAT_R16G16B16A16_SFLOAT) {
+		format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	} else if (!hdrActive && encoding == DXVKInterop::PresenterEncoding::kSDR) {
+		if (presenterFormat == VK_FORMAT_B8G8R8A8_UNORM)
+			format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		else if (presenterFormat == VK_FORMAT_R8G8B8A8_UNORM)
+			format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	}
+	if (format == DXGI_FORMAT_UNKNOWN) {
+		logger::error("[Upscaling] Unsupported HUD-less presenter format {} for encoding {}",
+			static_cast<int>(presenterFormat), static_cast<int>(encoding));
+		return;
+	}
 
 	if (hudlessTexture &&
 		hudlessTexture->desc.Width == texDesc.Width &&
 		hudlessTexture->desc.Height == texDesc.Height &&
-		hudlessTexture->desc.Format == format)
+		hudlessTexture->desc.MipLevels == texDesc.MipLevels &&
+		hudlessTexture->desc.ArraySize == texDesc.ArraySize &&
+		hudlessTexture->desc.Format == format &&
+		hudlessTexture->desc.SampleDesc.Count == texDesc.SampleDesc.Count &&
+		hudlessTexture->desc.SampleDesc.Quality == texDesc.SampleDesc.Quality)
 		return;
 
-	if (hudlessTexture) {
-		Streamline::GetSingleton()->WaitDLSSGInputFence();
-		if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
-			dxvk->DrainCommandRing();
-	}
-	DestroyHudlessTexture();
+	if (!DestroyHudlessTexture())
+		return;
 
 	texDesc.Format = format;
-	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE |
-	                    (hdrActive ? D3D11_BIND_UNORDERED_ACCESS : D3D11_BIND_RENDER_TARGET);
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	if (scRGBFallback)
+		texDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+	else if (!hdrActive)
+		texDesc.BindFlags |= D3D11_BIND_RENDER_TARGET;
 
 	hudlessTexture = new Texture2D(texDesc);
 	Util::SetResourceName(hudlessTexture->resource.get(), "Upscaling::HudlessTexture");
@@ -670,12 +786,12 @@ void Upscaling::CreateHudlessTexture()
 	srvDesc.Texture2D.MipLevels = 1;
 	hudlessTexture->CreateSRV(srvDesc);
 
-	if (hdrActive) {
+	if (scRGBFallback) {
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = texDesc.Format;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 		hudlessTexture->CreateUAV(uavDesc);
-	} else {
+	} else if (!hdrActive) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
 		rtvDesc.Format = texDesc.Format;
 		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
@@ -686,13 +802,18 @@ void Upscaling::CreateHudlessTexture()
 		texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
 }
 
-void Upscaling::DestroyHudlessTexture()
+bool Upscaling::DestroyHudlessTexture(bool a_commandRingDrained)
 {
 	if (hudlessTexture) {
+		if (!a_commandRingDrained && !DXVKInterop::GetSingleton()->DrainCommandRing()) {
+			logger::error("[Upscaling] hudless texture destruction deferred because command completion could not be proven");
+			return false;
+		}
 		delete hudlessTexture;
 		hudlessTexture = nullptr;
 		logger::debug("[Upscaling] Destroyed hudless texture");
 	}
+	return true;
 }
 
 bool Upscaling::ConvertHDRToScRGB(ID3D11ShaderResourceView* a_source)
@@ -770,8 +891,29 @@ ID3D11Resource* Upscaling::CaptureHudlessColor()
 		return nullptr;
 
 	auto& hdr = globals::features::hdrDisplay;
-	if (hdr.loaded && hdr.settings.enableHDR && hdr.hdrTexture && hdr.hdrTexture->srv) {
-		if (hdr.ComposeCleanCapture(hdr.hdrTexture->srv.get(), false) &&
+	if (hdr.loaded && hdr.IsHDREnabledForFrame() && hdr.hdrTexture && hdr.hdrTexture->srv) {
+		ID3D11Texture2D* composed = hdr.ComposeCleanCapture(hdr.hdrTexture->srv.get(), false);
+		if (!composed)
+			return nullptr;
+
+		const auto encoding = DXVKInterop::GetSingleton()->GetPresenterEncodingForFrame();
+		if (encoding == DXVKInterop::PresenterEncoding::kHDR10) {
+			D3D11_TEXTURE2D_DESC sourceDesc{};
+			composed->GetDesc(&sourceDesc);
+			const auto& destinationDesc = hudlessTexture->desc;
+			if (sourceDesc.Width != destinationDesc.Width ||
+				sourceDesc.Height != destinationDesc.Height ||
+				sourceDesc.MipLevels != destinationDesc.MipLevels ||
+				sourceDesc.ArraySize != destinationDesc.ArraySize ||
+				sourceDesc.Format != destinationDesc.Format ||
+				sourceDesc.SampleDesc.Count != destinationDesc.SampleDesc.Count ||
+				sourceDesc.SampleDesc.Quality != destinationDesc.SampleDesc.Quality)
+				return nullptr;
+			globals::d3d::context->CopyResource(hudlessTexture->resource.get(), composed);
+			return hudlessTexture->resource.get();
+		}
+
+		if (encoding == DXVKInterop::PresenterEncoding::kHDR10ScRGBFallback &&
 			hdr.outputTexture && hdr.outputTexture->srv &&
 			ConvertHDRToScRGB(hdr.outputTexture->srv.get()))
 			return hudlessTexture->resource.get();
@@ -800,10 +942,12 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		                  previousUpscalingWasActive;
 		if (hadUpscale) {
 			// DXVK does not track resources referenced by foreign Vulkan submissions.
-			if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
-				dxvk->DrainCommandRing();
+			if (!DXVKInterop::GetSingleton()->DrainCommandRing()) {
+				logger::error("[Upscaling] method change deferred because command completion could not be proven");
+				return;
+			}
 			DestroyUpscaledTexture();
-			DestroyHudlessTexture();
+			DestroyHudlessTexture(true);
 		}
 		if (a_upscalemethod == UpscaleMethod::kFSR ||
 		    a_upscalemethod == UpscaleMethod::kDLSS ||
@@ -848,15 +992,22 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 
 ID3D11ComputeShader* Upscaling::GetHDRToScRGBCS()
 {
-	if (!hdrToScRGBCS) {
+	auto* dxvk = DXVKInterop::GetSingleton();
+	const auto encoding = dxvk->GetPresenterEncodingForFrame();
+	if (encoding != DXVKInterop::PresenterEncoding::kHDR10ScRGBFallback)
+		return nullptr;
+
+	const bool gammaEncode = dxvk->PresenterGammaEncodesHDR10ToScRGBForFrame();
+	auto& shader = gammaEncode ? hdrToScRGBFallbackGammaCS : hdrToScRGBFallbackCS;
+	if (!shader) {
 		logger::debug("Compiling HDRToScRGBCS.hlsl");
 		std::vector<std::pair<const char*, const char*>> defines;
-		auto* dxvk = DXVKInterop::GetSingleton();
-		if ((dxvk->IsAvailable() || dxvk->Initialize()) && dxvk->UsesNvidiaHdr10ScRgbFallback())
-			defines.emplace_back("NVIDIA_HDR10_SCRGB_FALLBACK", "1");
-		hdrToScRGBCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/HDRToScRGBCS.hlsl", defines, "cs_5_0"));
+		if (gammaEncode)
+			defines.emplace_back("HDR10_SCRGB_GAMMA_ENCODE", "1");
+		shader.attach((ID3D11ComputeShader*)Util::CompileShader(
+			L"Data/Shaders/Upscaling/HDRToScRGBCS.hlsl", defines, "cs_5_0"));
 	}
-	return hdrToScRGBCS.get();
+	return shader.get();
 }
 
 ID3D11PixelShader* Upscaling::GetCopyHudlessPS()
@@ -1066,7 +1217,8 @@ void Upscaling::ClearShaderCache()
 	depthRefractionUpscalePS = nullptr;
 	underwaterMaskUpscalePS = nullptr;
 	upscaleVS = nullptr;
-	hdrToScRGBCS = nullptr;
+	hdrToScRGBFallbackCS = nullptr;
+	hdrToScRGBFallbackGammaCS = nullptr;
 	copyHudlessPS = nullptr;
 }
 
@@ -1161,7 +1313,7 @@ bool Upscaling::IsUpscalingActive() const
 	return resolutionScale.x < .99f;
 }
 
-bool Upscaling::IsWindowGapActive()
+bool Upscaling::IsWindowMinimized()
 {
 	// Suspend all Streamline work while the swapchain cannot present.
 	static HWND s_window = nullptr;
@@ -1192,7 +1344,7 @@ bool Upscaling::IsWindowUnusable()
 			s_windowUnfocused.store(foregroundProcess != GetCurrentProcessId(), std::memory_order_relaxed);
 	}
 
-	return IsWindowGapActive() ||
+	return IsWindowMinimized() ||
 	       s_windowUnfocused.load(std::memory_order_relaxed) ||
 	       s_windowModifying.load(std::memory_order_relaxed);
 }
@@ -1202,12 +1354,13 @@ void Upscaling::Upscale()
 {
 	ZoneScoped;
 
-	if (IsWindowGapActive())
+	if (IsWindowMinimized())
 		return;
 
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
+	const auto method = GetUpscaleMethod();
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
@@ -1218,53 +1371,45 @@ void Upscaling::Upscale()
 		state->BeginPerfEvent("Upscaling");
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
-		if (GetUpscaleMethod() == UpscaleMethod::kFSR) {
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-			const auto renderSize = Util::ConvertToDynamic(displaySize);
-			if (upscaledTexture && upscaledTexture->resource) {
-				const bool outputReady = Streamline::GetSingleton()->EvaluateFSR(
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+		const auto renderSize = Util::ConvertToDynamic(displaySize);
+		auto result = Streamline::EvaluationResult::kFailed;
+
+		if (upscaledTexture && upscaledTexture->resource) {
+			switch (method) {
+			case UpscaleMethod::kFSR:
+				result = Streamline::GetSingleton()->EvaluateFSR(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
-					settings.qualityMode, settings.sharpnessFSR,
-					jitter.x, jitter.y);
-				if (outputReady)
-					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
-			}
-		} else if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-			const auto renderSize = Util::ConvertToDynamic(displaySize);
-			// DLSS input and output must not alias.
-			if (upscaledTexture && upscaledTexture->resource) {
-				const bool outputReady = Streamline::GetSingleton()->EvaluateDLSS(
+					settings.qualityMode, settings.sharpnessFSR, jitter.x, jitter.y);
+				break;
+			case UpscaleMethod::kDLSS:
+				result = Streamline::GetSingleton()->EvaluateDLSS(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
-					settings.qualityMode,
-					jitter.x, jitter.y);
-				if (outputReady)
-					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
-			}
-		} else if (GetUpscaleMethod() == UpscaleMethod::kXeSS) {
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			auto& depthTex = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-			const auto renderSize = Util::ConvertToDynamic(displaySize);
-			if (upscaledTexture && upscaledTexture->resource) {
-				const bool outputReady = Streamline::GetSingleton()->EvaluateXeSS(
+					settings.qualityMode, jitter.x, jitter.y);
+				break;
+			case UpscaleMethod::kXeSS:
+				result = Streamline::GetSingleton()->EvaluateXeSS(
 					main.texture, upscaledTexture->resource.get(), depthTex.texture, motionVector.texture,
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y,
-					settings.qualityMode, settings.sharpnessFSR,
-					jitter.x, jitter.y);
-				if (outputReady)
-					globals::d3d::context->CopyResource(main.texture, upscaledTexture->resource.get());
+					settings.qualityMode, settings.sharpnessFSR, jitter.x, jitter.y);
+				break;
+			default:
+				result = Streamline::EvaluationResult::kSkipped;
+				break;
 			}
 		}
+
+		if (result == Streamline::EvaluationResult::kReady)
+			context->CopyResource(main.texture, upscaledTexture->resource.get());
+		else if (result == Streamline::EvaluationResult::kFailed)
+			MarkUpscaleMethodFailed(method);
 
 		state->EndPerfEvent();
 		globals::profiler->EndPass();
@@ -1436,6 +1581,13 @@ void Upscaling::PrepareFrameGeneration(ID3D11Resource* a_hudlessColor)
 	auto* ui = globals::game::ui;
 	const bool gameplay = ui && !ui->GameIsPaused() && !globals::state->IsMainOrLoadingMenuOpen(ui);
 	const auto fgMethod = GetFrameGenMethod();
+	auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.IsHDREnabledForFrame();
+	if (!DXVKInterop::GetSingleton()->IsPresenterStateReadyForFrame(hdrActive) ||
+		(fgMethod == FrameGenMethod::kFSR &&
+		 !FrameGen::Controller::GetSingleton()->IsFSRPresenterReady()))
+		return;
+
 	auto* renderer = globals::game::renderer;
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -1468,7 +1620,6 @@ void Upscaling::PrepareFrameGeneration(ID3D11Resource* a_hudlessColor)
 					(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 					(uint32_t)displaySize.x, (uint32_t)displaySize.y);
 			}
-			Streamline::GetSingleton()->LogReflexStatus();
 		}
 	} else if (fgMethod == FrameGenMethod::kFSR && gameplay) {
 		const auto displaySize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
@@ -1476,23 +1627,23 @@ void Upscaling::PrepareFrameGeneration(ID3D11Resource* a_hudlessColor)
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
 		ID3D11Resource* fgDepth = (IsUpscalingActive() && depthCopy.texture) ? depthCopy.texture : depth.texture;
-		auto& hdr = globals::features::hdrDisplay;
-		ID3D11Resource* fgUI = ShouldUseFrameGenerationUI() && hdr.uiTexture ? hdr.uiTexture->resource.get() : nullptr;
-		Streamline::GetSingleton()->EvaluateFSRFrameGen(
-			fgDepth, motionVector.texture, a_hudlessColor, fgUI,
+		(void)Streamline::GetSingleton()->EvaluateFSRFrameGen(
+			fgDepth, motionVector.texture, a_hudlessColor,
 			(uint32_t)renderSize.x, (uint32_t)renderSize.y,
 			(uint32_t)displaySize.x, (uint32_t)displaySize.y,
 			jitter.x, jitter.y);
-		Streamline::GetSingleton()->LogFSRFrameGenStats();
+		Streamline::GetSingleton()->CaptureFSRFrameGenState();
 	}
 }
 
 void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 {
+	auto& upscaling = globals::features::upscaling;
+	upscaling.BeginRenderFrame();
 	Streamline::GetSingleton()->BeginRenderFrame();
-	globals::features::upscaling.ConfigureTAA();
+	upscaling.ConfigureTAA();
 	func(a_state);
-	globals::features::upscaling.ConfigureUpscaling(a_state);
+	upscaling.ConfigureUpscaling(a_state);
 }
 
 void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
@@ -1541,8 +1692,16 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
 
-	if (windowUsable && upscaling.IsFrameGenerationActive())
-		upscaling.PrepareFrameGeneration(upscaling.CaptureHudlessColor());
+	if (windowUsable && upscaling.IsFrameGenerationActive()) {
+		const auto& hdr = globals::features::hdrDisplay;
+		const bool hdrActive = hdr.loaded && hdr.IsHDREnabledForFrame();
+		const auto fgMethod = upscaling.GetFrameGenMethod();
+		const bool presenterReady = DXVKInterop::GetSingleton()->IsPresenterStateReadyForFrame(hdrActive);
+		const bool fsrReady = fgMethod != FrameGenMethod::kFSR ||
+		                      FrameGen::Controller::GetSingleton()->IsFSRPresenterReady();
+		if (presenterReady && fsrReady)
+			upscaling.PrepareFrameGeneration(upscaling.CaptureHudlessColor());
+	}
 
 	Util::SetTemporal(false);
 }

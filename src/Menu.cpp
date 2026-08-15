@@ -1035,7 +1035,6 @@ void Menu::ProcessInputEventQueue()
 			io.AddInputCharacter(event.keyCode);
 			continue;
 		}
-
 		if (event.device == RE::INPUT_DEVICE::kMouse) {
 			logger::trace("Detect mouse scan code {} value {} pressed: {}", event.keyCode, event.value, event.IsPressed());
 			auto* ew = EditorWindow::GetSingleton();

@@ -69,7 +69,7 @@ public:
 	virtual void DataLoaded() override;
 	/** @brief Creates HDR, output, and UI textures, constant buffer, and upgrades LDR render targets. */
 	virtual void SetupResources() override;
-	/** @brief Releases cached HDR output and UI brightness compute shaders. */
+	/** @brief Releases the cached HDR output compute shader. */
 	virtual void ClearShaderCache() override;
 	/** @brief Installs HDR pipeline hooks when the Upscaling feature is not loaded. */
 	virtual void PostPostLoad() override;
@@ -80,6 +80,10 @@ public:
 	void UpdateHDRData() const;
 	/** @brief Sets the swap chain color space to HDR10 (PQ/BT.2020) or SDR (sRGB) based on settings. */
 	void UpdateSwapChainColorSpace() const;
+	/** @brief Applies the requested HDR mode and resets per-render UI state before rendering starts. */
+	void BeginRenderFrame();
+	/** @brief Returns the HDR mode latched for the current rendered frame. */
+	bool IsHDREnabledForFrame() const { return hdrEnabledForFrame; }
 
 	/** @brief Redirects kFRAMEBUFFER to the float16 HDR texture so ISHDR can write values above 1.0. */
 	void RedirectFramebuffer();
@@ -90,12 +94,10 @@ public:
 	void SetUIBuffer();
 	/** @brief Clears the UI texture and restores the original kFRAMEBUFFER.RTV. */
 	void ClearUIBuffer();
-	/** @brief Returns true when non-FG HDR deferred compositing is active (composite after Present-hook mods). */
+	/** @brief Returns true when HDR deferred compositing is active (composite after Present-hook mods). */
 	bool UsesDeferredPresentComposite() const;
 	/** @brief Aligns kFRAMEBUFFER.RTV with uiTexture for engine paths when ImGui has already bound the OM. */
 	void SyncFramebufferUIRedirect();
-	/** @brief Converts the captured UI to the swap-chain encoding used by FSR frame generation. */
-	void PrepareFrameGenerationUI();
 
 	/** @brief Runs the HDR output compute shader to composite scene and UI, then copies to the back buffer. */
 	void ApplyHDR();
@@ -156,11 +158,11 @@ public:
 		float enableHDR;                 ///< 1.0 = HDR output with PQ, 0.0 = SDR output with gamma
 		float paperWhite;                ///< Reference white brightness in nits for HDR
 		float peakNits;                  ///< Maximum display brightness in nits for HDR
-		float skipUIComposite;           ///< 1.0 = FG handles UI, skip our compositing
-		float uiBrightness;              ///< UI brightness multiplier (Frame Gen compositing)
+		float pad0;
+		float uiBrightness;              ///< HDR UI brightness multiplier
 		float isSceneLinear;             ///< 1.0 = Linear Lighting active, scene already linear
-		float pad0;                      ///< 1.0 = main menu/loading screen active
-		float fgTweenMenuMidAlphaBoost;  ///< 1.0 = TweenMenu (pause) open — FG UIBrightnessCS mid-alpha boost only
+		float isMainOrLoadingMenu;        ///< 1.0 = main menu/loading screen active
+		float pad1;
 		float previewSDR;                ///< 1.0 = emit sRGB SDR (crop preview) instead of PQ HDR10
 		float applyAutoHDR;              ///< 1.0 = Effects11 replaced ISHDR, so expand its SDR result into HDR
 		float pad2;
@@ -183,9 +185,6 @@ public:
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 	/** @brief Returns the HDR output compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetHDROutputCS();
-	ID3D11ComputeShader* uiBrightnessCS = nullptr;
-	/** @brief Returns the frame-generation UI conversion shader, compiling it on first use. */
-	ID3D11ComputeShader* GetUIBrightnessCS();
 
 	/** @brief Detects whether Windows HDR is currently active on the swap chain's monitor. */
 	static bool DetectHDR();
@@ -223,18 +222,18 @@ public:
 private:
 	bool showHDRWarningPopup = false;
 	bool pendingHDREnable = false;
+	bool hdrEnabledForFrame = false;
 	bool presentSuppressed = false;
 	std::unordered_map<ID3D11BlendState*, winrt::com_ptr<ID3D11BlendState>> patchedBlendStateCache;
 
 	HRESULT PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags);
-	void DrawImGuiForPresent(bool frameGenActive);
+	void DrawImGuiForPresent();
 	void RunHDRBeforePresentChain(bool hdrReady);
 	HRESULT RunPresentChainWithHDR(
 		IDXGISwapChain* swapChain,
 		UINT syncInterval,
 		UINT flags,
 		bool hdrReady,
-		bool frameGenActive,
 		const std::function<HRESULT(IDXGISwapChain*, UINT, UINT)>& presentChain);
 
 	// Bind scene (t0), UI (t1, may be null), UAV (u0), CB (b0); dispatch the output CS; unbind.

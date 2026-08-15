@@ -162,14 +162,14 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Checkbox(T(TKEY("show_vram"), "Show VRAM Usage"), &this->settings.ShowVRAM);
 		ImGui::Checkbox(T(TKEY("show_cs_passes"), "Show CS Render Passes"), &this->settings.ShowCSPasses);
 
-		const bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
+		bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 		if (this->settings.ShowFPS && isFrameGenerationActive) {
 			ImGui::Checkbox(T(TKEY("show_pre_fg_graph"), "Show Pre-FG Frametime Graph"), &this->settings.ShowPreFGFrameTimeGraph);
 
 			ImGui::Checkbox(T(TKEY("show_post_fg_graph"), "Show Post-FG Frametime Graph"), &this->settings.ShowPostFGFrameTimeGraph);
 			if (ImGui::IsItemHovered()) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s", T(TKEY("post_fg_graph_tooltip"), "FSR Frame Generation uses calculated timing data (2x Pre-FG).\nDLSS Frame Generation provides measured timing data."));
+					ImGui::Text("%s", T(TKEY("post_fg_graph_tooltip"), "Post-FG timing is estimated from the pre-FG frame time and the presentation multiplier reported by the active frame-generation backend."));
 				}
 			}
 		} else if (this->settings.ShowFPS) {

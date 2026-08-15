@@ -50,8 +50,6 @@ public:
 	bool settingCustomShader = false;
 	RE::BSShader* currentShader = nullptr;
 	std::string adapterDescription = "";
-	uint32_t adapterVendorId = 0;
-	uint32_t adapterDeviceId = 0;
 
 	uint32_t currentVertexDescriptor = 0;
 	uint32_t currentPixelDescriptor = 0;
@@ -204,17 +202,8 @@ public:
 	/** @brief Inserts a single-point GPU performance marker. */
 	void SetPerfMarker(std::string_view title);
 
-	/** @brief Stores the GPU adapter identity. */
-	void SetAdapterDescription(const std::wstring& description, uint32_t vendorId = 0, uint32_t deviceId = 0);
-
-	/** @brief Returns whether the active GPU is Intel. */
-	[[nodiscard]] bool IsIntelGPU() const { return adapterVendorId == 0x8086; }
-
-	/** @brief Returns the active GPU vendor ID. */
-	[[nodiscard]] uint32_t GetAdapterVendorId() const { return adapterVendorId; }
-
-	/** @brief Returns the active GPU device ID. */
-	[[nodiscard]] uint32_t GetAdapterDeviceId() const { return adapterDeviceId; }
+	/** @brief Converts and stores the GPU adapter description from wide string. */
+	void SetAdapterDescription(const std::wstring& description);
 
 	bool frameAnnotations = false;
 

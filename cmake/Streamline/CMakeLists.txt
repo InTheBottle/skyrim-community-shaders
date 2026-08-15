@@ -8,5 +8,3 @@ target_include_directories(
 if(MSVC)
   target_compile_options(Streamline INTERFACE /wd5103)
 endif()
-
-# Runtime DLLs are staged by the top-level project from package/ and fork artifacts.

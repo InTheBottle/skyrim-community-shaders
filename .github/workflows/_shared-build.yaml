@@ -81,7 +81,7 @@ jobs:
             - name: Build Streamline fork plugins
               shell: pwsh
               run: |
-                  ./tools/build-streamline.ps1
+                  ./tools/build-streamline.ps1 -Required
                   if ($LASTEXITCODE -ne 0) {
                     throw "Streamline fork build failed with exit code $LASTEXITCODE"
                   }
@@ -100,13 +100,14 @@ jobs:
               shell: bash
               run: echo "sha=$(git -C extern/dxvk rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-            # Include the build-option salt so flag changes cannot reuse stale DXVK binaries.
-            - name: Cache DXVK build
+            # Keep trusted-saved caches in a versioned namespace so entries
+            # written before the restore-only policy cannot be reused.
+            - name: Restore DXVK build cache
               id: cache_dxvk
-              uses: actions/cache@v5
+              uses: actions/cache/restore@v5
               with:
                   path: extern/dxvk/build
-                  key: ${{ runner.os }}-dxvk-avx2ndebug-vksdk-${{ steps.dxvk_sha.outputs.sha }}
+                  key: ${{ runner.os }}-dxvk-trusted-v1-avx2ndebug-vksdk-${{ steps.dxvk_sha.outputs.sha }}
 
             - name: Install DXVK build tools (meson and ninja)
               if: steps.cache_dxvk.outputs.cache-hit != 'true'
@@ -121,6 +122,13 @@ jobs:
               run: |
                   meson setup extern/dxvk/build extern/dxvk --buildtype release -Db_ndebug=true -Dcpp_args="/arch:AVX2" -Denable_d3d8=false -Denable_d3d9=false -Denable_d3d10=false
                   ninja -C extern/dxvk/build
+
+            - name: Save DXVK build cache (trusted events only)
+              if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && steps.cache_dxvk.outputs.cache-hit != 'true'
+              uses: actions/cache/save@v5
+              with:
+                  path: extern/dxvk/build
+                  key: ${{ runner.os }}-dxvk-trusted-v1-avx2ndebug-vksdk-${{ steps.dxvk_sha.outputs.sha }}
 
             - name: Build using run-cmake
               uses: lukka/run-cmake@v10
@@ -137,10 +145,26 @@ jobs:
                     'amd_fidelityfx_vk.dll',
                     'dxvk_d3d11.dll',
                     'dxvk_dxgi.dll',
-                    'sl.interposer.dll',
+                    'dxvk.license.txt',
+                    'fidelityfx.license.txt',
+                    'libxess.dll',
+                    'license.txt',
+                    'NvLowLatencyVk.dll',
+                    'nvngx_dlss.dll',
+                    'nvngx_dlss.license.txt',
+                    'nvngx_dlssg.dll',
+                    'reflex.license.txt',
+                    'sl.common.dll',
+                    'sl.dlss.dll',
+                    'sl.dlss_g.dll',
                     'sl.fsr.dll',
                     'sl.fsr_g.dll',
-                    'sl.xess.dll'
+                    'sl.interposer.dll',
+                    'sl.pcl.dll',
+                    'sl.reflex.dll',
+                    'sl.xess.dll',
+                    'xess.license.txt',
+                    'xess.third-party-programs.txt'
                   )
                   $missing = @($required | Where-Object {
                     -not (Test-Path (Join-Path $runtimeDir $_) -PathType Leaf)
@@ -154,6 +178,17 @@ jobs:
                   })
                   if ($legacy.Count -ne 0) {
                     throw "AIO contains legacy DX12 runtimes: $($legacy.FullName -join ', ')"
+                  }
+
+                  $archives = @(Get-ChildItem -LiteralPath dist -File | Where-Object {
+                    $_.Name -match '^CommunityShaders_AIO-.*\.(7z|zip)$'
+                  })
+                  if ($archives.Count -eq 0) {
+                    throw 'Build did not produce an AIO archive'
+                  }
+                  $oversized = @($archives | Where-Object { $_.Length -ge 100000000 })
+                  if ($oversized.Count -ne 0) {
+                    throw "AIO archive must be under 100 MB: $($oversized.Name -join ', ')"
                   }
 
             - name: Extract version from CMake

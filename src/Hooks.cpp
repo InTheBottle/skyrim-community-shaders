@@ -19,7 +19,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Upscaling.h"
-#include "Features/Upscaling/FrameGenController.h"
+#include "Features/Upscaling/DXVKInterop.h"
 #include "Features/Upscaling/Streamline.h"
 #include "Features/VolumetricLighting.h"
 
@@ -325,9 +325,6 @@ struct IDXGISwapChain_Present
 {
 	static HRESULT WINAPI thunk(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 	{
-		if (Upscaling::IsWindowUnusable())
-			return func(This, SyncInterval, Flags);
-
 		globals::state->Reset();
 
 		// DLSS-G on Vulkan requires SyncInterval 0.
@@ -342,15 +339,10 @@ struct IDXGISwapChain_Present
 			}
 		}
 
-		// Bridged markers surround vkQueuePresentKHR on DXVK's submit thread.
 		auto* streamline = Streamline::GetSingleton();
 		streamline->SetPCLMarker(Streamline::PclMarker::RenderSubmitEnd);
 		streamline->SetPCLMarker(Streamline::PclMarker::TriggerFlash);
-		const bool bridgedMarkers = streamline->PresentMarkersBridged();
-		if (bridgedMarkers)
-			streamline->NotifyPresentQueued();
-		else
-			streamline->SetPCLMarker(Streamline::PclMarker::PresentStart);
+		streamline->SetPCLMarker(Streamline::PclMarker::PresentStart);
 
 		HRESULT retval = globals::features::hdrDisplay.HandleSwapChainPresent(
 			This,
@@ -362,10 +354,16 @@ struct IDXGISwapChain_Present
 					[&](IDXGISwapChain* sc, UINT si, UINT f) { return func(sc, si, f); });
 			});
 
-		if (!bridgedMarkers)
-			streamline->SetPCLMarker(Streamline::PclMarker::PresentEnd);
+		streamline->SetPCLMarker(Streamline::PclMarker::PresentEnd);
 
-		streamline->CaptureDLSSGInputFence();
+		auto* dxvk = DXVKInterop::GetSingleton();
+		const bool presentSucceeded = SUCCEEDED(retval);
+		if (presentSucceeded)
+			dxvk->RefreshPresenterSurfaceState();
+		if (retval == S_OK && streamline->IsFSRFGPresentOwner())
+			dxvk->NotifyFSRFrameConsumed();
+		dxvk->NotifyPresentWaitQueued();
+		streamline->CaptureDLSSGPresentState();
 
 		globals::features::screenshotFeature.ProcessCaptureRequest();
 
@@ -401,7 +399,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 {
 	DXGI_ADAPTER_DESC adapterDesc;
 	pAdapter->GetDesc(&adapterDesc);
-	globals::state->SetAdapterDescription(adapterDesc.Description, adapterDesc.VendorId, adapterDesc.DeviceId);
+	globals::state->SetAdapterDescription(adapterDesc.Description);
 
 	logger::info("D3D11CreateDeviceAndSwapChain intercepted (forcing D3D_FEATURE_LEVEL_11_1)");
 

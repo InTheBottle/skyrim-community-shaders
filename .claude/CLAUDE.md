@@ -277,7 +277,7 @@ Central coordination point providing access to all major subsystems:
 
 -   `globals::d3d::*` - DirectX 11 device, context, and swapchain access
 -   `globals::game::*` - Skyrim graphics state (shadowState, renderer, shaders)
--   `globals::upscaling` - Vulkan upscaling and frame-generation integration
+-   `globals::features::upscaling` - Vulkan upscaling and frame-generation integration
 
 **Feature Registry** (`globals::features::`):
 All graphics features are globally accessible for cross-feature coordination:

@@ -19,12 +19,10 @@ public:
 	/** @brief Resolves feature support after the DXVK device is available. */
 	void SetVulkanDevice();
 
-	/** @brief Shuts down Streamline and releases the interposer. */
-	void Shutdown();
-
-	[[nodiscard]] bool IsInitialized() const { return initialized; }
 	/** @brief Returns whether feature support is final for this session. */
 	[[nodiscard]] bool IsFeatureSupportResolved() const { return vulkanDeviceSet || disabledByConfig; }
+	/** @brief Whether a guarded Streamline call faulted and frame generation must be torn down. */
+	[[nodiscard]] bool HasDispatchFaulted() const;
 
 	/** @brief Disables interposition when no Streamline feature is configured. */
 	void SetDisabledByConfig() { disabledByConfig = true; }
@@ -36,21 +34,29 @@ public:
 	[[nodiscard]] bool IsFSRSupported() const { return featureFSR; }
 	[[nodiscard]] bool IsFSRFGSupported() const { return featureFSRFG; }
 
-	[[nodiscard]] bool EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	/** @brief Outcome of one regular upscaler evaluation. */
+	enum class EvaluationResult : uint8_t
+	{
+		kReady,
+		kSkipped,
+		kFailed,
+	};
+
+	[[nodiscard]] EvaluationResult EvaluateDLSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		uint32_t a_qualityMode,
 		float a_jitterX, float a_jitterY);
 
-	[[nodiscard]] bool EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	[[nodiscard]] EvaluationResult EvaluateXeSS(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		uint32_t a_qualityMode, float a_sharpness,
 		float a_jitterX, float a_jitterY);
 
-	[[nodiscard]] bool EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
+	[[nodiscard]] EvaluationResult EvaluateFSR(ID3D11Resource* a_colorIn, ID3D11Resource* a_colorOut,
 		ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
@@ -58,18 +64,17 @@ public:
 		float a_jitterX, float a_jitterY);
 
 	/** @brief Prepares FSR frame generation independently of the active upscaler. */
-	void EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
-		ID3D11Resource* a_hudlessColor, ID3D11Resource* a_uiColor,
+	[[nodiscard]] bool EvaluateFSRFrameGen(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+		ID3D11Resource* a_hudlessColor,
 		uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_outputWidth, uint32_t a_outputHeight,
 		float a_jitterX, float a_jitterY);
 
-	[[nodiscard]] bool SetFSRFrameGen(bool a_enable, uint32_t a_renderWidth, uint32_t a_renderHeight,
-		uint32_t a_displayWidth, uint32_t a_displayHeight, bool a_hdr,
+	[[nodiscard]] bool SetFSRFrameGen(bool a_enable, bool a_hdr,
 		bool a_debugView = false, bool a_debugTearLines = false, bool a_debugPacingLines = false,
 		bool a_onlyPresentGenerated = false);
 
-	void LogFSRFrameGenStats();
+	void CaptureFSRFrameGenState();
 
 	/** @brief Updates Reflex and its optional frame-limit interval in microseconds. */
 	void UpdateReflex(bool a_enable, bool a_boost, uint32_t a_frameLimitUs = 0);
@@ -89,25 +94,20 @@ public:
 	void SetPCLMarker(PclMarker a_marker);
 
 	/** @brief Updates DLSS-G mode and generated-frame count. */
-	void SetDLSSGMode(bool a_enable, uint32_t a_displayWidth, uint32_t a_displayHeight,
+	bool SetDLSSGMode(bool a_enable, uint32_t a_displayWidth, uint32_t a_displayHeight,
 		uint32_t a_numFramesToGenerate = 1, bool a_autoMode = false, bool a_dynamic = false,
 		float a_dynamicTargetFps = 0.0f);
 
 	/** @brief Establishes the Streamline frame ID at render-frame start. */
 	void BeginRenderFrame();
-
-	/** @brief Returns whether present markers are emitted by DXVK's submit thread. */
-	[[nodiscard]] bool PresentMarkersBridged() const;
-	/** @brief Queues the current frame ID for bridged present markers. */
-	void NotifyPresentQueued();
+	/** @brief Discards any prepared FSR frame that did not reach Present. */
+	[[nodiscard]] bool DiscardFSRFrameGenerationPreparedFrame();
 
 	/** @brief Queries and caches DLSS-G capabilities on the present thread. */
 	void QueryDLSSGCapabilities();
 
-	/** @brief Captures the completion fence protecting live frame-generation inputs. */
-	void CaptureDLSSGInputFence();
-	/** @brief Waits before overwriting live frame-generation inputs. */
-	void WaitDLSSGInputFence();
+	/** @brief Updates DLSS-G state after the real present completes. */
+	void CaptureDLSSGPresentState();
 	[[nodiscard]] uint32_t GetDLSSGMaxFramesToGenerate() const;
 
 	/** @brief Returns the latest number of frames presented per rendered frame. */
@@ -123,15 +123,14 @@ public:
 	void SetFSRFGDesiredLoaded(bool a_loaded);
 	[[nodiscard]] bool IsFSRFGLoaded() const;
 	[[nodiscard]] bool IsFSRFGLoadSettled() const;
-
-	void LogReflexStatus();
+	[[nodiscard]] bool IsFSRFGPresentOwner() const;
 
 	void TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		ID3D11Resource* a_hudlessColor, uint32_t a_renderWidth, uint32_t a_renderHeight,
 		uint32_t a_displayWidth, uint32_t a_displayHeight);
 
 	void ClearDLSSGTags();
-	void EnsureDLSSGPresentTag();
+	[[nodiscard]] bool EnsureDLSSGPresentTag();
 
 	/** @brief Registers Streamline ownership of DXVK present pacing. */
 	static void RegisterDxvkOwnershipPredicate();

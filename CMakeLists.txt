@@ -48,14 +48,14 @@ option(
 )
 option(
     AIO_ZIP_TO_DIST
-    "Zip the base mod and addons to a AIO zip file in dist."
+    "Package the base mod and addons as an AIO archive in dist."
     ON
 )
 option(TRACY_SUPPORT "Enable support for tracy profiler" OFF)
 option(ENABLE_ENB_EXTENDER "Enable ENBExtender reimplementation (weather blending, time-of-day, technique bindings)" ON)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
-message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
+message("\tAIO archive to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 
 # #######################################################################################################################
@@ -97,7 +97,6 @@ find_package(cppwinrt CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
-find_package(directx-headers CONFIG REQUIRED)
 find_package(effects11 CONFIG REQUIRED)
 
 if(DEVBENCH_BRIDGE)
@@ -161,7 +160,6 @@ target_link_libraries(
         unordered_dense::unordered_dense
         efsw::efsw
         Tracy::TracyClient
-        Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
         Microsoft::Effects11
         windowsapp
@@ -501,19 +499,20 @@ install(
     COMPONENT DXVK
 )
 
-# Signed runtimes ship from package/; locally built fork plugins are staged below.
+# Prebuilt runtimes ship from package/; locally built fork plugins are staged below.
 # FSR requires the pinned Vulkan runtime to be present and unmodified.
 set(_FFX_VK_RUNTIME "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/bin/amd_fidelityfx_vk.dll")
 if(NOT EXISTS "${_FFX_VK_RUNTIME}")
     message(FATAL_ERROR "Missing Vulkan FSR runtime: ${_FFX_VK_RUNTIME}")
 endif()
 set(_FFX_VK_PINNED "${CMAKE_SOURCE_DIR}/extern/Streamline/external/fidelityfx-bin/amd_fidelityfx_vk.dll")
-if(EXISTS "${_FFX_VK_PINNED}")
-    file(SHA256 "${_FFX_VK_RUNTIME}" _FFX_VK_RUNTIME_SHA256)
-    file(SHA256 "${_FFX_VK_PINNED}" _FFX_VK_PINNED_SHA256)
-    if(NOT _FFX_VK_RUNTIME_SHA256 STREQUAL _FFX_VK_PINNED_SHA256)
-        message(FATAL_ERROR "Packaged Vulkan FSR runtime does not match the pinned Streamline fork")
-    endif()
+if(NOT EXISTS "${_FFX_VK_PINNED}")
+    message(FATAL_ERROR "Missing pinned Vulkan FSR runtime: ${_FFX_VK_PINNED}; run git lfs pull in extern/Streamline")
+endif()
+file(SHA256 "${_FFX_VK_RUNTIME}" _FFX_VK_RUNTIME_SHA256)
+file(SHA256 "${_FFX_VK_PINNED}" _FFX_VK_PINNED_SHA256)
+if(NOT _FFX_VK_RUNTIME_SHA256 STREQUAL _FFX_VK_PINNED_SHA256)
+    message(FATAL_ERROR "Packaged Vulkan FSR runtime does not match the pinned Streamline fork")
 endif()
 
 # Reject legacy backend binaries in Vulkan package inputs.
@@ -542,6 +541,7 @@ install(
 set(_DXVK_LICENSE "${CMAKE_SOURCE_DIR}/extern/dxvk/LICENSE")
 set(_FFX_LICENSE "${CMAKE_SOURCE_DIR}/extern/Streamline/external/fidelityfx-sdk/LICENSE.txt")
 set(_XESS_LICENSE "${CMAKE_SOURCE_DIR}/extern/Streamline/external/xess/LICENSE.txt")
+set(_XESS_THIRD_PARTY_NOTICES "${CMAKE_SOURCE_DIR}/extern/Streamline/external/xess/third-party-programs.txt")
 install(
     FILES "${_DXVK_LICENSE}"
     DESTINATION SKSE/Plugins/CommunityShaders/bin
@@ -559,6 +559,21 @@ install(
     DESTINATION SKSE/Plugins/CommunityShaders/bin
     RENAME xess.license.txt
     COMPONENT Streamline
+)
+install(
+    FILES "${_XESS_THIRD_PARTY_NOTICES}"
+    DESTINATION SKSE/Plugins/CommunityShaders/bin
+    RENAME xess.third-party-programs.txt
+    COMPONENT Streamline
+)
+set(
+    _AIO_RUNTIME_INPUTS
+    ${_DXVK_RUNTIME_DLLS}
+    ${_SL_FORK_DLLS}
+    "${_DXVK_LICENSE}"
+    "${_FFX_LICENSE}"
+    "${_XESS_LICENSE}"
+    "${_XESS_THIRD_PARTY_NOTICES}"
 )
 
 # #######################################################################################################################
@@ -611,11 +626,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     endforeach()
     list(
         APPEND _AIO_PACKAGE_FILES
-        ${_DXVK_RUNTIME_DLLS}
-        ${_SL_FORK_DLLS}
-        "${_DXVK_LICENSE}"
-        "${_FFX_LICENSE}"
-        "${_XESS_LICENSE}"
+        ${_AIO_RUNTIME_INPUTS}
     )
 
     # Prepare AIO by copying files only when different. This avoids updating
@@ -638,7 +649,14 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         get_filename_component(_runtime_name "${_runtime_file}" NAME)
         file(APPEND "${_runtime_paths_file}" "SKSE/Plugins/CommunityShaders/bin/${_runtime_name}\n")
     endforeach()
-    foreach(_runtime_name IN ITEMS dxvk.license.txt fidelityfx.license.txt xess.license.txt)
+    foreach(
+        _runtime_name
+        IN ITEMS
+            dxvk.license.txt
+            fidelityfx.license.txt
+            xess.license.txt
+            xess.third-party-programs.txt
+    )
         file(APPEND "${_runtime_paths_file}" "SKSE/Plugins/CommunityShaders/bin/${_runtime_name}\n")
     endforeach()
 
@@ -721,6 +739,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_DXVK_LICENSE}" "${_aio_runtime_dir}/dxvk.license.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_FFX_LICENSE}" "${_aio_runtime_dir}/fidelityfx.license.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_XESS_LICENSE}" "${_aio_runtime_dir}/xess.license.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_XESS_THIRD_PARTY_NOTICES}" "${_aio_runtime_dir}/xess.third-party-programs.txt"
     )
 
     # Remove CORE from AIO if it exists (keep rest intact)
@@ -1135,7 +1154,7 @@ if(ZIP_TO_DIST)
     endforeach()
 endif()
 
-# Create a AIO zip for easier testing
+# Create an AIO archive for easier testing
 if(AIO_ZIP_TO_DIST)
     if(NOT SEVENZ_EXECUTABLE)
         message(FATAL_ERROR "7-Zip is required for the maximum-compression AIO package")
@@ -1151,6 +1170,9 @@ if(AIO_ZIP_TO_DIST)
         )
     endif()
 
+    # Use a stamp-producing custom command so the archive is rebuilt only when
+    # its inputs change. The timestamped archive name itself is not a stable
+    # output that CMake can track across configure runs.
     # Solid LZMA2 keeps the Vulkan AIO below the distribution size limit.
     set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
@@ -1271,7 +1293,7 @@ if(TARGET PREPARE_AIO)
 else()
     add_custom_command(
         OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-        DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
+        DEPENDS ${PROJECT_NAME} ${CORE_SOURCES} ${_AIO_RUNTIME_INPUTS}
         COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
         COMMENT "Installing to AIO folder"
     )
@@ -1317,7 +1339,7 @@ else()
     if(SEVENZ_EXECUTABLE)
         add_custom_command(
             OUTPUT ${AIO_PACKAGE}
-            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
+            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES} ${_AIO_RUNTIME_INPUTS}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
@@ -1331,7 +1353,7 @@ else()
     else()
         add_custom_command(
             OUTPUT ${AIO_PACKAGE}
-            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
+            DEPENDS ${PROJECT_NAME} ${CORE_SOURCES} ${_AIO_RUNTIME_INPUTS}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"

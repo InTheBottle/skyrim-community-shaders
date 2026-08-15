@@ -992,14 +992,10 @@ void State::SetPerfMarker(std::string_view title)
 	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
 }
 
-void State::SetAdapterDescription(const std::wstring& description, uint32_t vendorId, uint32_t deviceId)
+void State::SetAdapterDescription(const std::wstring& description)
 {
 	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
 	adapterDescription = converter.to_bytes(description);
-	if (vendorId != 0)
-		adapterVendorId = vendorId;
-	if (deviceId != 0)
-		adapterDeviceId = deviceId;
 }
 
 void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] bool a_prepass)
@@ -1199,5 +1195,4 @@ bool State::HasDirectionalShadows() const
 {
 	return !Util::IsInterior() || globals::features::interiorSun.IsActiveInteriorSun();
 }
-
 

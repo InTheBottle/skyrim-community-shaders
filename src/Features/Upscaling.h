@@ -1,12 +1,12 @@
 #pragma once
 
-/** @brief Provides Vulkan-backed temporal upscaling and frame generation. */
-
 #include "Feature.h"
+#include <array>
 #include <atomic>
 #include <d3d11_4.h>
 #include <winrt/base.h>
 
+/** @brief Provides Vulkan-backed temporal upscaling and frame generation. */
 struct Upscaling : Feature
 {
 private:
@@ -24,8 +24,11 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.upscaling.description", "Advanced upscaling technologies for improved performance"),
-			{ T("feature.upscaling.key_feature_2", "FSR (FidelityFX Super Resolution) support"),
-				T("feature.upscaling.key_feature_3", "TAA (Temporal Anti-Aliasing) support") } };
+			{ T("feature.upscaling.key_feature_1", "DLSS (Deep Learning Super Sampling) support"),
+				T("feature.upscaling.key_feature_2", "FSR (FidelityFX Super Resolution) support"),
+				T("feature.upscaling.key_feature_5", "XeSS (Xe Super Sampling) support"),
+				T("feature.upscaling.key_feature_3", "TAA (Temporal Anti-Aliasing) support"),
+				T("feature.upscaling.key_feature_4", "FSR 3 and DLSS frame generation support") } };
 	};
 
 	float2 jitter = { 0, 0 };
@@ -86,7 +89,7 @@ public:
 	bool isWindowed = false;
 
 	/** @brief Returns whether the game window is minimized. */
-	static bool IsWindowGapActive();
+	static bool IsWindowMinimized();
 
 	static void NotifyWindowFocus(bool a_focused);        // WM_ACTIVATEAPP / WM_ACTIVATE
 	static void NotifyWindowModifying(bool a_modifying);  // WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE
@@ -130,7 +133,8 @@ public:
 	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
 
-	winrt::com_ptr<ID3D11ComputeShader> hdrToScRGBCS;
+	winrt::com_ptr<ID3D11ComputeShader> hdrToScRGBFallbackCS;
+	winrt::com_ptr<ID3D11ComputeShader> hdrToScRGBFallbackGammaCS;
 	ID3D11ComputeShader* GetHDRToScRGBCS();
 	winrt::com_ptr<ID3D11PixelShader> copyHudlessPS;
 	ID3D11PixelShader* GetCopyHudlessPS();
@@ -144,8 +148,6 @@ public:
 	void Upscale();
 
 	bool IsFrameGenerationActive() const;
-	/** @brief Returns whether FSR frame generation needs a separately composited UI texture. */
-	bool ShouldUseFrameGenerationUI() const;
 
 	/** @brief Returns the Reflex state required by the active frame generator. */
 	[[nodiscard]] bool GetEffectiveReflex() const;
@@ -183,10 +185,17 @@ public:
 	static double GetRefreshRate(HWND a_window);
 
 private:
+	static constexpr size_t kUpscaleMethodCount = static_cast<size_t>(UpscaleMethod::kXeSS) + 1;
+	std::array<bool, kUpscaleMethodCount> failedUpscaleMethods{};
+
+	[[nodiscard]] bool IsUpscaleMethodFailed(UpscaleMethod a_method) const;
+	void MarkUpscaleMethodFailed(UpscaleMethod a_method);
+
+	void BeginRenderFrame();
 	void CreateUpscaledTexture();
 	void DestroyUpscaledTexture();
 	void CreateHudlessTexture();
-	void DestroyHudlessTexture();
+	bool DestroyHudlessTexture(bool a_commandRingDrained = false);
 	ID3D11Resource* CaptureHudlessColor();
 	bool ConvertHDRToScRGB(ID3D11ShaderResourceView* a_source);
 	bool CopyHudlessColor(ID3D11ShaderResourceView* a_source);

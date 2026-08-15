@@ -1,6 +1,6 @@
-# RenderDoc Runtime DLL
+# RenderDoc Runtime Metadata
 
-This directory contains the RenderDoc runtime library for frame capture functionality.
+This directory documents the RenderDoc runtime and retains its license. The runtime DLL itself is stored in `package/SKSE/Plugins/CommunityShaders/bin/` for the unified package layout.
 
 ## Version
 
@@ -37,7 +37,7 @@ To update to a newer version of RenderDoc:
 1. Update the vcpkg port version in `cmake/ports/renderdoc/vcpkg.json`
 2. Update the REF in `cmake/ports/renderdoc/portfile.cmake`
 3. Download the new Windows x64 installer from https://renderdoc.org/builds
-4. Extract `renderdoc.dll` and replace it in this directory
+4. Extract `renderdoc.dll` and replace it in `package/SKSE/Plugins/CommunityShaders/bin/`
 5. Update the version number in this README
 6. Verify LICENSE.md is current (check RenderDoc repository)
 

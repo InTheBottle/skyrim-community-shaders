@@ -4,7 +4,9 @@
 // Keep the declarations ABI-compatible with DXVK's dxgi_interfaces.h.
 
 #include <d3d11.h>
-#include <dxgi1_6.h>
+#include <cstdint>
+#include <mutex>
+#include <utility>
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <winrt/base.h>
@@ -41,18 +43,51 @@ IDXGIVkInteropDevice : public IUnknown
 	virtual void STDMETHODCALLTYPE ReleaseSubmissionQueue() = 0;
 };
 
-MIDL_INTERFACE("4c5e1b0d-b0c8-4131-bfd8-9b2476f7f408")
-IDXGIVkInteropFactory : public IUnknown
-{
-	virtual void STDMETHODCALLTYPE GetVulkanInstance(
-		VkInstance * pInstance,
-		PFN_vkGetInstanceProcAddr * ppfnVkGetInstanceProcAddr) = 0;
-};
-
 /** @brief Accesses DXVK's Vulkan device through its D3D11 interop interfaces. */
 class DXVKInterop
 {
 public:
+	enum class PresenterEncoding : uint8_t
+	{
+		kUnknown,
+		kSDR,
+		kHDR10,
+		kHDR10ScRGBFallback,
+	};
+
+	class CommandTransaction
+	{
+	public:
+		CommandTransaction() = default;
+		CommandTransaction(CommandTransaction&&) noexcept = default;
+		CommandTransaction& operator=(CommandTransaction&&) noexcept = default;
+		CommandTransaction(const CommandTransaction&) = delete;
+		CommandTransaction& operator=(const CommandTransaction&) = delete;
+
+		explicit operator bool() const
+		{
+			return owner != nullptr && commandBuffer != VK_NULL_HANDLE && ringLock.owns_lock();
+		}
+		VkCommandBuffer GetCommandBuffer() const { return commandBuffer; }
+		/** @brief Whether a fault left this transaction's queue submission potentially in flight. */
+		bool SubmissionMayBeInFlight() const { return submissionMayBeInFlight; }
+
+	private:
+		friend class DXVKInterop;
+
+		CommandTransaction(DXVKInterop* a_owner, uint32_t a_slot, VkCommandBuffer a_commandBuffer,
+			std::unique_lock<std::recursive_mutex>&& a_ringLock) :
+			owner(a_owner), slot(a_slot), commandBuffer(a_commandBuffer), ringLock(std::move(a_ringLock))
+		{}
+
+		DXVKInterop* owner = nullptr;
+		uint32_t slot = UINT32_MAX;
+		VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+		bool submitted = false;
+		bool submissionMayBeInFlight = false;
+		std::unique_lock<std::recursive_mutex> ringLock;
+	};
+
 	static DXVKInterop* GetSingleton();
 
 	/** @brief Resolves DXVK's interop interfaces and Vulkan handles. */
@@ -60,8 +95,26 @@ public:
 
 	/** @brief Whether the DXVK Vulkan device was resolved successfully. */
 	bool IsAvailable() const { return available; }
-	/** @brief Whether DXVK presents HDR10 through its NVIDIA scRGB compatibility path. */
-	bool UsesNvidiaHdr10ScRgbFallback() const { return nvidiaDevice; }
+
+	/** @brief Reads the latest successfully created presenter surface state from DXVK. */
+	bool RefreshPresenterSurfaceState();
+	/** @brief Latches a presenter state for the render frame at a render boundary. */
+	void CommitPresenterSurfaceStateForRenderFrame();
+	/** @brief Starts a color-space transition before changing or recreating the swap chain.
+	 *  @param a_hdr The output mode the recreated presenter must report.
+	 *  @param a_requireNewSerial Whether an explicit recreation must advance the presenter serial.
+	 */
+	void BeginPresenterColorSpaceTransition(bool a_hdr, bool a_requireNewSerial = false);
+	/** @brief Cancels a failed color-space transition for the requested output mode. */
+	void CancelPresenterColorSpaceTransition(bool a_hdr);
+	/** @brief Returns the effective presenter encoding latched for this render frame. */
+	PresenterEncoding GetPresenterEncodingForFrame() const;
+	/** @brief Returns the Vulkan surface format latched for this render frame. */
+	VkFormat GetPresenterFormatForFrame() const;
+	/** @brief Whether DXVK gamma-encodes the HDR10-to-scRGB present blit for this render frame. */
+	bool PresenterGammaEncodesHDR10ToScRGBForFrame() const;
+	/** @brief Whether the latched presenter state exactly matches this frame's output mode. */
+	bool IsPresenterStateReadyForFrame(bool a_hdr) const;
 
 	VkInstance GetInstance() const { return instance; }
 	VkPhysicalDevice GetPhysicalDevice() const { return physicalDevice; }
@@ -73,14 +126,8 @@ public:
 	bool GetVkImage(ID3D11Resource* a_resource, VkImage* a_outImage,
 		VkImageLayout* a_outLayout = nullptr, VkImageCreateInfo* a_outInfo = nullptr) const;
 
-	/** @brief Flush outstanding D3D11 rendering before foreign Vulkan submits. */
-	void FlushRenderingCommands() const;
 	/** @brief Drains DXVK submissions without racing its queue thread. */
-	void WaitDeviceIdle() const;
-	/** @brief Lock DXVK's submission queue around a foreign Vulkan submit (drains pending work). */
-	void LockSubmissionQueue() const;
-	/** @brief Release DXVK's submission queue after a foreign Vulkan submit. */
-	void ReleaseSubmissionQueue() const;
+	[[nodiscard]] bool WaitDeviceIdle();
 
 	/** @brief Creates the Streamline command-buffer ring. */
 	bool CreateCommandResources(uint32_t a_framesInFlight = 3);
@@ -89,25 +136,96 @@ public:
 	void DestroyCommandResources();
 
 	/** @brief Drains ring submissions before interop resources are destroyed. */
-	void DrainCommandRing();
+	[[nodiscard]] bool DrainCommandRing();
 
 	/** @brief Whether the command ring is ready (CreateCommandResources succeeded). */
-	bool CommandResourcesReady() const { return commandPool != VK_NULL_HANDLE; }
+	bool CommandResourcesReady() const;
+	/** @brief Whether an ambiguous submission fault quarantined the command ring. */
+	bool HasCommandRingFault() const;
+	/** @brief Recreates a quarantined command ring after proving the Vulkan device idle. */
+	[[nodiscard]] bool RecoverCommandRing();
+	/** @brief Whether a tag submission can be GPU-ordered before DXVK's next present. */
+	bool PresentWaitInteropReady() const;
+	/** @brief Whether frame generation shares DXVK's game submission queue. */
+	bool FrameGenerationQueueInteropReady() const;
 
 	/** @brief Begins an available command buffer from the ring. */
-	VkCommandBuffer BeginFrameCommandBuffer();
+	CommandTransaction BeginFrameCommandBuffer();
 
 	/** @brief Submits a ring command buffer on DXVK's queue. */
-	bool SubmitFrameCommandBuffer(VkCommandBuffer a_commandBuffer, bool a_waitIdle = false);
+	bool SubmitFrameCommandBuffer(CommandTransaction& a_transaction,
+		bool a_signalForNextPresent = false);
+
+	/** @brief Gives DXVK the semaphore signaled by the latest present-tag submission. */
+	bool PushPendingPresentWaitSemaphore();
+	/** @brief Whether a submitted present-tag semaphore still needs to be pushed. */
+	bool HasPendingPresentWaitSemaphore() const;
+	/** @brief Replaces an unpushed semaphore after proving its signal submission complete. */
+	[[nodiscard]] bool DiscardPendingPresentWaitSemaphore();
+	/** @brief Reconciles the one-shot semaphore after DXVK acknowledges the outer present. */
+	void NotifyPresentWaitQueued();
 
 	/** @brief Defers image-view destruction until the current ring slot completes. */
-	void QueueViewsForDeferredDelete(const VkImageView* a_views, uint32_t a_count);
+	void QueueViewsForDeferredDelete(const CommandTransaction& a_transaction,
+		const VkImageView* a_views, uint32_t a_count);
+	/** @brief Holds D3D resources until the current ring slot completes. */
+	void QueueResourcesForDeferredRelease(const CommandTransaction& a_transaction,
+		ID3D11Resource* const* a_resources, uint32_t a_count);
+	/** @brief Holds resources consumed by frame generation across the matching outer present. */
+	void QueueResourcesForPresent(const CommandTransaction& a_transaction,
+		ID3D11Resource* const* a_resources, uint32_t a_count);
+	/** @brief Retains backing images permanently after ambiguous Vulkan view destruction. */
+	void QuarantineResourcesAfterVulkanDestructionFault(
+		ID3D11Resource* const* a_resources, uint32_t a_count);
+	/** @brief Holds accepted FSR views until the matching outer present consumes them. */
+	void QueueViewsForFSRPresent(const CommandTransaction& a_transaction,
+		const VkImageView* a_views, uint32_t a_count);
+	/** @brief Holds partially accepted FSR views until confirmed FFX teardown. */
+	void QuarantineViewsUntilFSRSwapchainTeardown(const CommandTransaction& a_transaction,
+		const VkImageView* a_views, uint32_t a_count);
+	/** @brief Fence-gates accepted FSR views after the plugin consumes or discards them. */
+	void NotifyFSRFrameConsumed();
+	/** @brief Quarantines accepted views when a failed present removed the plugin frame without proving consumption. */
+	void QuarantineUnconsumedFSRPresentViews();
+	/** @brief Releases FSR present lifetimes after its swapchain teardown completed successfully. */
+	void ReleaseRetainedPresentResourcesAfterFSRSwapchainTeardown();
 
 private:
 	DXVKInterop() = default;
 
+	struct PresenterSurfaceState
+	{
+		uint64_t serial = 0;
+		VkFormat format = VK_FORMAT_UNDEFINED;
+		VkColorSpaceKHR requestedColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+		VkColorSpaceKHR effectiveColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+		uint32_t flags = 0;
+	};
+
+	struct FSRPresentViewGroup
+	{
+		uint32_t slot = UINT32_MAX;
+		std::vector<VkImageView> views;
+	};
+
+	struct PresentWaitSubmission
+	{
+		uint32_t slot = UINT32_MAX;
+		uint64_t generation = 0;
+	};
+
+	using GetPresenterSurfaceStateFn = uint64_t (*)(uint32_t*, uint32_t*, uint32_t*);
+	using GetPresenterSurfaceState2Fn = uint64_t (*)(uint32_t*, uint32_t*, uint32_t*, uint32_t*);
+	static constexpr uint32_t kPresenterSurfaceFlagGammaEncodeHDR10ToScRGB = 1u << 0;
+
+	static VkColorSpaceKHR RequestedPresenterColorSpace(bool a_hdr);
+	static PresenterEncoding ClassifyPresenterEncoding(const PresenterSurfaceState& a_state);
+	static bool PresenterStateMatches(
+		const PresenterSurfaceState& a_state, VkColorSpaceKHR a_requestedColorSpace);
+	bool ClearReleasedPresentWaitsAfterIdle();
+	void ReleaseRetainedFSRResourcesIfSafe();
+
 	bool available = false;
-	bool nvidiaDevice = false;
 
 	winrt::com_ptr<IDXGIVkInteropDevice> interopDevice;
 
@@ -120,12 +238,46 @@ private:
 	PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 	PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr = nullptr;
 	PFN_vkDestroyImageView vkDestroyImageView = nullptr;
+	GetPresenterSurfaceStateFn getPresenterSurfaceState = nullptr;
+	GetPresenterSurfaceState2Fn getPresenterSurfaceState2 = nullptr;
 
+	mutable std::mutex presenterStateMutex;
+	PresenterSurfaceState observedPresenterState;
+	PresenterSurfaceState committedPresenterState;
+	bool presenterTransitionPending = false;
+	uint64_t presenterTransitionBaselineSerial = 0;
+	VkColorSpaceKHR presenterTransitionRequestedColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+
+	mutable std::recursive_mutex commandRingMutex;
 	VkCommandPool commandPool = VK_NULL_HANDLE;
 	std::vector<VkCommandBuffer> commandBuffers;
 	std::vector<VkFence> commandFences;
-	// Indexed with commandBuffers and commandFences.
+	std::vector<VkSemaphore> presentWaitSemaphores;
+	std::vector<bool> presentWaitInUse;
+	uint32_t pendingPresentWaitSlot = UINT32_MAX;
+	uint32_t pushedPresentWaitSlot = UINT32_MAX;
+	uint64_t pushedPresentWaitGeneration = 0;
+	std::vector<PresentWaitSubmission> outstandingPresentWaitSubmissions;
+	uint64_t (*pushPresentWaitSemaphore)(VkSemaphore) = nullptr;
+	uint32_t (*getPresentWaitSemaphoreState)(uint64_t) = nullptr;
+	uint32_t (*clearPresentWaitSemaphore)(uint64_t) = nullptr;
+	uint32_t (*cancelPresentWaitSemaphore)(VkSemaphore) = nullptr;
+	uint32_t (*releaseQueuedPresentWaitSemaphoresAfterIdle)() = nullptr;
+	bool presentWaitInteropTerminalFault = false;
+	bool synchronousPresentControlAvailable = false;
+	bool presentQueueSplit = false;
+	bool commandRingFaulted = false;
+	bool vulkanResourceDestructionTerminalFault = false;
+	mutable bool commandRingSubmissionsIdleProven = false;
+	mutable bool submissionQueueLockUncertain = false;
+	// Indexed with the command ring.
 	std::vector<std::vector<VkImageView>> pendingViewDeletes;
+	std::vector<std::vector<winrt::com_ptr<ID3D11Resource>>> pendingResourceReleases;
+	// FFX may consume tagged images on its own queues after host evaluation.
+	std::vector<winrt::com_ptr<ID3D11Resource>> retainedPresentResources;
+	std::vector<FSRPresentViewGroup> pendingFSRPresentViewGroups;
+	std::vector<FSRPresentViewGroup> quarantinedFSRPresentViewGroups;
+	bool fsrSwapchainTeardownConfirmed = false;
 	uint32_t framesInFlight = 0;
 	uint32_t commandFrameIndex = 0;
 };

@@ -4,10 +4,15 @@
 
 .PARAMETER Config
     MSBuild configuration. Defaults to Develop.
+
+.PARAMETER Required
+    Fail instead of reusing stale output or skipping when build prerequisites
+    are unavailable. Shipping and CI-parity builds enable this switch.
 #>
 [CmdletBinding()]
 param(
-    [string]$Config = 'Develop'
+    [string]$Config = 'Develop',
+    [switch]$Required
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,11 +34,15 @@ if (-not (Test-Path (Join-Path $SlSrc 'premake.lua'))) {
     Write-Host "[build-streamline] initializing extern/Streamline submodule..."
     # PowerShell 5.1 treats Git progress on stderr as a terminating error.
     $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & git -C $RepoRoot submodule update --init --force -- extern/Streamline 2>&1 | Write-Host
+    & git -C $RepoRoot submodule update --init -- extern/Streamline 2>&1 | Write-Host
     $ErrorActionPreference = $prevEAP
 }
 if (-not (Test-Path (Join-Path $SlSrc 'premake.lua'))) {
-    Write-Warning "[build-streamline] extern/Streamline still not checked out after submodule init. Skipping (mod ships without the fork plugins)."
+    if ($Required) {
+        Write-Error "[build-streamline] extern/Streamline is required but could not be initialized"
+        exit 1
+    }
+    Write-Warning "[build-streamline] extern/Streamline still not checked out after submodule init. Skipping optional Streamline build; use -Required for packaging/CI."
     exit 0
 }
 
@@ -43,19 +52,42 @@ $xessInc = Join-Path $SlSrc 'external\xess\inc'
 if ((-not (Test-Path $ffxInc)) -or (-not (Test-Path $xessInc))) {
     Write-Host "[build-streamline] initializing Streamline nested submodules (FFX / XeSS headers)..."
     $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & git -C $SlSrc submodule update --init --force -- external/fidelityfx-sdk external/xess 2>&1 | Write-Host
+    & git -C $SlSrc submodule update --init -- external/fidelityfx-sdk external/xess 2>&1 | Write-Host
     $ErrorActionPreference = $prev
-    if (-not (Test-Path $ffxInc))  { Write-Warning "[build-streamline] FFX headers ($ffxInc) missing; sl.fsr may fail to compile." }
-    if (-not (Test-Path $xessInc)) { Write-Warning "[build-streamline] XeSS headers ($xessInc) missing; sl.xess may fail to compile." }
+    $missingHeaders = @()
+    if (-not (Test-Path $ffxInc))  { $missingHeaders += $ffxInc }
+    if (-not (Test-Path $xessInc)) { $missingHeaders += $xessInc }
+    if ($missingHeaders.Count -ne 0) {
+        if ($Required) {
+            Write-Error "[build-streamline] required dependency headers are missing: $($missingHeaders -join ', ')"
+            exit 1
+        }
+        Write-Warning "[build-streamline] dependency headers are missing: $($missingHeaders -join ', ')"
+    }
 }
 
 # Dirty tracked sources bypass the commit-based incremental skip.
 $sha = ''
 try { $sha = (& git -C $SlSrc rev-parse HEAD 2>$null) } catch {}
-if (-not $sha) { $sha = 'unknown' }
+if ($LASTEXITCODE -ne 0 -or -not $sha) {
+    if ($Required) {
+        Write-Error "[build-streamline] could not resolve the extern/Streamline revision"
+        exit 1
+    }
+    $sha = 'unknown'
+}
 $short = $sha.Substring(0, [Math]::Min(8, $sha.Length))
-$dirty = $false
-try { $dirty = [bool](& git -C $SlSrc status --porcelain --untracked-files=no 2>$null) } catch { $dirty = $true }
+$statusOutput = $null
+try { $statusOutput = (& git -C $SlSrc status --porcelain --untracked-files=no 2>$null) } catch {}
+if ($LASTEXITCODE -ne 0) {
+    if ($Required) {
+        Write-Error "[build-streamline] could not verify the extern/Streamline working tree"
+        exit 1
+    }
+    $dirty = $true
+} else {
+    $dirty = [bool]$statusOutput
+}
 $Stamp = Join-Path $Artifacts ".cs-sl-sha-$Config"
 
 $dlls     = $plugins | ForEach-Object { Get-PluginDll $_ }
@@ -79,10 +111,18 @@ if (Test-Path $vswhere) {
 }
 if (-not $msbuild -or -not (Test-Path $msbuild)) {
     if ($haveDlls) {
+        if ($Required) {
+            Write-Error "[build-streamline] MSBuild is required to verify the Streamline fork build at $short"
+            exit 1
+        }
         Write-Warning "[build-streamline] MSBuild not found; reusing the existing fork plugins (they may be stale vs $short)."
         exit 0
     }
-    Write-Warning "[build-streamline] MSBuild not found and no fork plugins present - the mod will ship WITHOUT the fork sl.* plugins (DLSS/FSR/XeSS unavailable). Install Visual Studio 2022+ with the C++ workload."
+    if ($Required) {
+        Write-Error "[build-streamline] MSBuild is required and no fork plugins are available; install Visual Studio with the C++ workload"
+        exit 1
+    }
+    Write-Warning "[build-streamline] MSBuild not found and no fork plugins present. Skipping optional Streamline build; use -Required for packaging/CI. Install Visual Studio 2022+ with the C++ workload."
     exit 0
 }
 

@@ -1076,7 +1076,7 @@ void EditorWindow::RenderUI()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(T(TKEY("window"), "Window"))) {
-			const bool hdrActive = globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR;
+			const bool hdrActive = globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.IsHDREnabledForFrame();
 			if (hdrActive)
 				ImGui::BeginDisabled();
 			if (ImGui::Checkbox(T(TKEY("viewport"), "Viewport"), &settings.showViewport)) {
@@ -1476,7 +1476,7 @@ void EditorWindow::SetupResources()
 
 bool EditorWindow::IsViewportActive() const
 {
-	return settings.showViewport && !(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR);
+	return settings.showViewport && !(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.IsHDREnabledForFrame());
 }
 
 void EditorWindow::UpdateOpenState()
@@ -2255,6 +2255,10 @@ void EditorWindow::RestoreVanityCamera()
 void EditorWindow::HideGameMenus()
 {
 	if (gameMenusHidden)
+		return;
+
+	// The viewport blur reads the live back buffer, which stops updating while game menus are hidden.
+	if (IsViewportActive())
 		return;
 
 	if (auto ui = RE::UI::GetSingleton()) {

@@ -4,7 +4,7 @@
 
 #include "BackgroundBlur.h"
 #include "../Features/HDRDisplay.h"
-#include "../Features/Upscaling.h"
+#include "../Features/Upscaling/Streamline.h"
 #include "../Globals.h"
 #include "../ShaderCache.h"
 #include "../State.h"
@@ -110,7 +110,7 @@ namespace BackgroundBlur
 			ID3D11RenderTargetView* rtv = nullptr;
 		};
 
-		UIBufferViews GetHDRUIBufferViews(HDRDisplay& hdr, Upscaling&)
+		UIBufferViews GetHDRUIBufferViews(HDRDisplay& hdr)
 		{
 			if (hdr.uiTexture && hdr.uiTexture->srv && hdr.uiTexture->rtv)
 				return { hdr.uiTexture->srv.get(), hdr.uiTexture->rtv.get() };
@@ -545,6 +545,10 @@ namespace BackgroundBlur
 			return;
 		}
 
+		if (Streamline::GetSingleton()->IsDLSSGLoaded()) {
+			return;
+		}
+
 		if (!initialized || initializationFailed) {
 			return;
 		}
@@ -555,11 +559,9 @@ namespace BackgroundBlur
 			return;
 		}
 
-		auto& upscaling = globals::features::upscaling;
-
 		auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
 		bool hdrActive = hdr &&
-		                 hdr->settings.enableHDR && hdr->hdrDataCB && hdr->outputTexture &&
+		                 hdr->IsHDREnabledForFrame() && hdr->hdrDataCB && hdr->outputTexture &&
 		                 hdr->hdrTexture && hdr->hdrTexture->resource && hdr->hdrTexture->srv && hdr->hdrTexture->rtv;
 
 		// Startup main/loading back buffer can be black until DataLoaded and initial shader work finish.
@@ -568,7 +570,7 @@ namespace BackgroundBlur
 
 		winrt::com_ptr<ID3D11Texture2D> currentTexture;
 		winrt::com_ptr<ID3D11RenderTargetView> currentRTV;
-		ID3D11ShaderResourceView* sourceSRV = nullptr;  // Non-owning; lifetime is managed elsewhere.
+		ID3D11ShaderResourceView* sourceSRV = nullptr;  // Non-owning; lifetime managed elsewhere
 		UIBufferViews uiBuffer;
 
 		// Blur the HDR target before UI composition.
@@ -577,7 +579,7 @@ namespace BackgroundBlur
 			sourceSRV = hdr->hdrTexture->srv.get();
 			currentRTV = hdr->hdrTexture->rtv;
 
-			uiBuffer = GetHDRUIBufferViews(*hdr, upscaling);
+			uiBuffer = GetHDRUIBufferViews(*hdr);
 		} else {
 			// Normal path: get current render target
 			ID3D11RenderTargetView* rawRTV = nullptr;
@@ -677,7 +679,7 @@ namespace BackgroundBlur
 			float cornerRadius = window->WindowRounding;
 
 			// Perform blur for this window area with rounded corners
-			// Pass UI buffer SRV/RTV for compositing and clearing during upscaling gameplay
+			// Pass the HDR UI buffer for compositing and clearing when it is active.
 			PerformBlur(currentTexture.get(), sourceSRV, currentRTV.get(), windowMin, windowMax, cornerRadius, uiBuffer.srv, uiBuffer.rtv);
 		}
 	}

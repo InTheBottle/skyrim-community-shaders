@@ -27,6 +27,10 @@ namespace FrameGen
 
 		/** @brief Enables DLSS-G after its load transition has settled. */
 		void EngageDLSSG();
+		/** @brief Records a present-time fault teardown already requested by the host. */
+		void NotifyFaultTeardownRequested();
+		/** @brief Whether FSR frame generation can consume resources for this render frame. */
+		[[nodiscard]] bool IsFSRPresenterReady() const;
 
 	private:
 		Controller() = default;
@@ -38,7 +42,7 @@ namespace FrameGen
 		};
 
 		void StepPhaseCompletion();
-		void StepModeTeardown(Method a_target);
+		bool StepModeTeardown(Method a_target);
 		void StepLoadState(Method a_target);
 		void StepFSRDelivery(Method a_target);
 
@@ -56,5 +60,6 @@ namespace FrameGen
 		// FFX bakes VSync into its wrapped swapchain.
 		bool fsrWrapVsync = false;
 		bool fsrVsyncRebakePending = false;
+		bool faultRecoveryRequested = false;
 	};
 }

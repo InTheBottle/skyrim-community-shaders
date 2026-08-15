@@ -49,7 +49,12 @@ namespace FrameGen
 		bool IsHDRActive()
 		{
 			const auto& hdr = globals::features::hdrDisplay;
-			return hdr.loaded && hdr.settings.enableHDR;
+			return hdr.loaded && hdr.IsHDREnabledForFrame();
+		}
+
+		void BeginPresenterRecreateTransition()
+		{
+			DXVKInterop::GetSingleton()->BeginPresenterColorSpaceTransition(IsHDRActive(), true);
 		}
 	}
 
@@ -69,16 +74,55 @@ namespace FrameGen
 	{
 		// Wait for settings and hardware fallbacks to settle.
 		if (!globals::features::upscaling.loaded ||
-			!Streamline::GetSingleton()->IsFeatureSupportResolved())
+			!Streamline::GetSingleton()->IsFeatureSupportResolved() ||
+			!globals::game::graphicsState)
 			return;
 
 		if (Upscaling::IsWindowUnusable())
 			return;
 
+		auto* streamline = Streamline::GetSingleton();
+		const bool dispatchFaulted = streamline->HasDispatchFaulted();
+		if (dispatchFaulted)
+			globals::features::upscaling.settings.frameGeneration = false;
+
+		if (dispatchFaulted || faultRecoveryRequested) {
+			if (!faultRecoveryRequested) {
+				auto* dxvk = DXVKInterop::GetSingleton();
+				const bool completionProven = dxvk->HasPendingPresentWaitSemaphore() ?
+					dxvk->DiscardPendingPresentWaitSemaphore() : dxvk->WaitDeviceIdle();
+				if (!completionProven) {
+					logger::error("[FrameGen] Streamline fault teardown deferred because GPU completion could not be proven");
+					return;
+				}
+				streamline->SetDLSSGDesiredLoaded(false);
+				streamline->SetFSRFGDesiredLoaded(false);
+				faultRecoveryRequested = true;
+				BeginPresenterRecreateTransition();
+				Streamline::RequestDxvkSwapchainRecreate("Streamline dispatch fault");
+				phase = Phase::kTransitioning;
+				logger::error("[FrameGen] Streamline faulted; forcing frame-generation teardown at swapchain recreation");
+			}
+			if (phase == Phase::kTransitioning) {
+				if (!streamline->IsDLSSGLoadSettled() || !streamline->IsFSRFGLoadSettled() ||
+					streamline->IsDLSSGLoaded() || streamline->IsFSRFGLoaded())
+					return;
+				if (!DXVKInterop::GetSingleton()->DrainCommandRing()) {
+					logger::error("[FrameGen] Streamline fault cleanup deferred because command completion could not be proven");
+					return;
+				}
+				StepPhaseCompletion();
+			}
+			if (!dispatchFaulted && phase == Phase::kIdle)
+				faultRecoveryRequested = false;
+			return;
+		}
+
 		const Method target = DesiredMethod();
 
 		StepPhaseCompletion();
-		StepModeTeardown(target);
+		if (!StepModeTeardown(target))
+			return;
 		StepLoadState(target);
 		StepFSRDelivery(target);
 	}
@@ -94,7 +138,8 @@ namespace FrameGen
 
 		if (sl->IsDLSSGLoaded()) {
 			const auto dims = CurrentDims(false);
-			sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight);
+			if (!sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight))
+				return;
 			owner = Method::kDLSSG;
 		} else if (sl->IsFSRFGLoaded()) {
 			owner = Method::kFSR;
@@ -107,33 +152,47 @@ namespace FrameGen
 		logger::info("[FrameGen] FG method switch settled - present owner: {}", Name(owner));
 	}
 
-	void Controller::StepModeTeardown(Method a_target)
+	bool Controller::StepModeTeardown(Method a_target)
 	{
 		auto* sl = Streamline::GetSingleton();
+		if (!sl->IsDLSSGLoaded() && (dlssgModeOn || owner == Method::kDLSSG)) {
+			dlssgModeOn = false;
+			if (owner == Method::kDLSSG)
+				owner = Method::kNone;
+			logger::warn("[FrameGen] DLSS-G was unloaded before mode teardown - reconciled local state");
+		}
 
 		// Streamline requires DLSS-G to be disabled and drained before teardown.
 		if (dlssgModeOn && a_target != Method::kDLSSG) {
 			const auto dims = CurrentDims(false);
-			sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight);
-			if (auto* dxvk = DXVKInterop::GetSingleton())
-				dxvk->WaitDeviceIdle();
+			if (!sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight))
+				return false;
+			if (!DXVKInterop::GetSingleton()->WaitDeviceIdle()) {
+				logger::error("[FrameGen] DLSS-G teardown deferred because device idle could not be proven");
+				return false;
+			}
 
 			dlssgModeOn = false;
 			logger::info("[FrameGen] DLSS-G interpolation off + device drained (leaving DLSS-G)");
 		}
 
 		if (fsrDelivered == 1 && a_target != Method::kFSR) {
-			const auto dims = CurrentDims(false);
+			if (!DXVKInterop::GetSingleton()->DrainCommandRing()) {
+				logger::error("[FrameGen] FSR-FG teardown deferred because command completion could not be proven");
+				return false;
+			}
 			const auto& s = globals::features::upscaling.settings;
-			(void)sl->SetFSRFrameGen(false, dims.renderWidth, dims.renderHeight,
-				dims.displayWidth, dims.displayHeight, fsrHDRDelivered,
-				s.fgDebugView, s.fgDebugTearLines, s.fgDebugPacingLines, s.fgShowOnlyGenerated);
+			if (!sl->SetFSRFrameGen(false, fsrHDRDelivered,
+					s.fgDebugView, s.fgDebugTearLines, s.fgDebugPacingLines, s.fgShowOnlyGenerated))
+				return false;
 			fsrDelivered = 0;
 			fsrVsyncRebakePending = false;
 			if (owner == Method::kFSR)
 				owner = Method::kNone;
 			logger::info("[FrameGen] FSR-FG unwrapped (leaving FSR-FG)");
 		}
+
+		return true;
 	}
 
 	void Controller::StepLoadState(Method a_target)
@@ -152,7 +211,8 @@ namespace FrameGen
 		if (sl->IsDLSSGLoaded() == wantDLSSG && sl->IsFSRFGLoaded() == wantFSRFG) {
 			if (wantDLSSG && owner != Method::kDLSSG) {
 				const auto dims = CurrentDims(false);
-				sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight);
+				if (!sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight))
+					return;
 				owner = Method::kDLSSG;
 				logger::info("[FrameGen] DLSS-G already loaded - registered + adopted as present owner");
 			} else if (wantFSRFG && owner != Method::kFSR) {
@@ -164,13 +224,14 @@ namespace FrameGen
 
 		sl->SetDLSSGDesiredLoaded(wantDLSSG);
 		sl->SetFSRFGDesiredLoaded(wantFSRFG);
+		BeginPresenterRecreateTransition();
 		Streamline::RequestDxvkSwapchainRecreate("FG method switch");
 		phase = Phase::kTransitioning;
 		if (owner == Method::kDLSSG && !wantDLSSG)
 			owner = Method::kNone;
 		if (owner == Method::kFSR && !wantFSRFG)
 			owner = Method::kNone;
-		logger::info("[FrameGen] FG method switch requested: DLSS-G load={} FSR-FG load={} (swapchain recreate, guide section 18)",
+		logger::info("[FrameGen] FG method switch requested: DLSS-G load={} FSR-FG load={} (swapchain recreate)",
 			wantDLSSG, wantFSRFG);
 	}
 
@@ -190,6 +251,7 @@ namespace FrameGen
 			} else {
 				fsrVsyncRebakePending = false;
 				fsrWrapVsync = upscaling.settings.vsync;
+				BeginPresenterRecreateTransition();
 				Streamline::RequestDxvkSwapchainRecreate("FSR-FG vsync change");
 			}
 		} else {
@@ -204,10 +266,8 @@ namespace FrameGen
 		const bool enableEdge = fsrDelivered != 1;
 		const bool hdrChanged = fsrDelivered == 1 && hdr != fsrHDRDelivered;
 
-		const auto dims = CurrentDims(false);
 		const auto& s = upscaling.settings;
-		if (sl->SetFSRFrameGen(true,
-				dims.renderWidth, dims.renderHeight, dims.displayWidth, dims.displayHeight, hdr,
+		if (sl->SetFSRFrameGen(true, hdr,
 				s.fgDebugView, s.fgDebugTearLines, s.fgDebugPacingLines, s.fgShowOnlyGenerated)) {
 			fsrDelivered = 1;
 			fsrDebugSigDelivered = debugSig;
@@ -217,11 +277,25 @@ namespace FrameGen
 			logger::info("[FrameGen] FSR-FG enable delivered - present owner: {}", Name(owner));
 
 			// FFX installs its interpolation swapchain during vkCreateSwapchainKHR.
-			if (enableEdge)
+			if (enableEdge) {
+				BeginPresenterRecreateTransition();
 				Streamline::RequestDxvkSwapchainRecreate("FSR-FG wrap");
-			else if (hdrChanged)
+			} else if (hdrChanged) {
+				BeginPresenterRecreateTransition();
 				Streamline::RequestDxvkSwapchainRecreate("FSR-FG HDR transfer change");
+			}
 		}
+	}
+
+	bool Controller::IsFSRPresenterReady() const
+	{
+		if (phase != Phase::kIdle || DesiredMethod() != Method::kFSR || fsrDelivered != 1 ||
+			!Streamline::GetSingleton()->IsFSRFGLoaded())
+			return false;
+
+		const bool hdr = IsHDRActive();
+		return fsrHDRDelivered == hdr &&
+		       DXVKInterop::GetSingleton()->IsPresenterStateReadyForFrame(hdr);
 	}
 
 	void Controller::EngageDLSSG()
@@ -241,9 +315,16 @@ namespace FrameGen
 		const uint32_t numFramesToGenerate = s.frameGenMultiplier > 1 ? s.frameGenMultiplier - 1 : 1;
 		const float dynTargetFps = dynamic ? static_cast<float>(upscaling.GetTargetFrameRate()) : 0.0f;
 
-		sl->SetDLSSGMode(true, dims.displayWidth, dims.displayHeight,
-			numFramesToGenerate, useAuto, useDynamic, dynTargetFps);
-		dlssgModeOn = true;
+		if (sl->SetDLSSGMode(true, dims.displayWidth, dims.displayHeight,
+				numFramesToGenerate, useAuto, useDynamic, dynTargetFps))
+			dlssgModeOn = true;
+	}
+
+	void Controller::NotifyFaultTeardownRequested()
+	{
+		dlssgModeOn = false;
+		faultRecoveryRequested = true;
+		phase = Phase::kTransitioning;
 	}
 
 }
