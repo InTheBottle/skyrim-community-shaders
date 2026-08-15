@@ -55,7 +55,7 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 		float3 samplePos = positionMS.xyz * t;
 
 		float shadow = 1.0;
-
+		
 #if defined(TERRAIN_SHADOWS)
 		shadow = TerrainShadows::GetTerrainShadow(samplePos + cameraOffset, LinearSampler);
 #endif
