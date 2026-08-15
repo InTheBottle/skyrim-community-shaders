@@ -274,7 +274,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 if (SharedData::enbSettings.EnableRain) {
 	float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, input.RaindropData.xy);
     float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
-	clip(alpha - (4.0 / 255.0));
+   	clip(alpha - (4.0 / 255.0));
 	raindropNormal.y = 1.0 - raindropNormal.y;
 
     // Reconstruct camera-relative worldspace position (camera at origin).
