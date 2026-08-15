@@ -15,7 +15,7 @@ namespace FrameGen
 		Method DesiredMethod()
 		{
 			auto& upscaling = globals::features::upscaling;
-			if (!upscaling.settings.frameGeneration)
+			if (!upscaling.IsFrameGenerationActive())
 				return Method::kNone;
 			return upscaling.GetFrameGenMethod() == Upscaling::FrameGenMethod::kDLSSG
 			           ? Method::kDLSSG
