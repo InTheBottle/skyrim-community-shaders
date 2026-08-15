@@ -480,24 +480,26 @@ install(CODE
 
 # Stage prefixed DXVK DLLs without colliding with the system D3D modules.
 set(DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/extern/dxvk/build/src")
-if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
-    install(
-        CODE
-        "
-        execute_process(
-            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-                -File \"${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1\"
-                -Src \"${DXVK_BUILD_DIR}\"
-                -Dst \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/bin\"
-            RESULT_VARIABLE _dxvk_stage_rc
-        )
-        if(NOT _dxvk_stage_rc EQUAL 0)
-            message(FATAL_ERROR \"stage-dxvk-dlls.ps1 failed with code \${_dxvk_stage_rc}\")
-        endif()
-        "
-        COMPONENT DXVK
+set(_DXVK_RUNTIME_DLLS
+    "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll"
+    "${DXVK_BUILD_DIR}/dxgi/dxvk_dxgi.dll"
+)
+install(
+    CODE
+    "
+    execute_process(
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File \"${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1\"
+            -Src \"${DXVK_BUILD_DIR}\"
+            -Dst \"\${CMAKE_INSTALL_PREFIX}/SKSE/Plugins/CommunityShaders/bin\"
+        RESULT_VARIABLE _dxvk_stage_rc
     )
-endif()
+    if(NOT _dxvk_stage_rc EQUAL 0)
+        message(FATAL_ERROR \"stage-dxvk-dlls.ps1 failed with code \${_dxvk_stage_rc}\")
+    endif()
+    "
+    COMPONENT DXVK
+)
 
 # Signed runtimes ship from package/; locally built fork plugins are staged below.
 # FSR requires the pinned Vulkan runtime to be present and unmodified.
@@ -525,19 +527,39 @@ if(_LEGACY_UPSCALING_RUNTIMES)
     message(FATAL_ERROR "Legacy upscaling runtimes found in Vulkan package inputs: ${_LEGACY_UPSCALING_RUNTIMES}")
 endif()
 
-# Only stage plugins requested by Streamline initialization.
-file(GLOB _SL_FORK_DLLS "${CMAKE_SOURCE_DIR}/extern/Streamline/_artifacts/sl.*/Develop_x64/sl.*.dll")
-list(FILTER _SL_FORK_DLLS INCLUDE REGEX "sl\\.(fsr|fsr_g|xess|interposer)\\.dll$")
-if(_SL_FORK_DLLS)
-    message(STATUS "Staging Streamline fork plugins: ${_SL_FORK_DLLS}")
-    install(
-        FILES ${_SL_FORK_DLLS}
-        DESTINATION SKSE/Plugins/CommunityShaders/bin
-        COMPONENT Streamline
-    )
-else()
-    message(WARNING "Streamline fork plugins not built (extern/Streamline/_artifacts empty) — DLSS/FSR/XeSS will be unavailable at runtime")
-endif()
+# Only stage plugins requested by Streamline initialization. Explicit paths make
+# a missing build output fail package installation instead of silently omitting it.
+set(_SL_FORK_DLLS)
+foreach(_plugin IN ITEMS sl.interposer sl.fsr sl.fsr_g sl.xess)
+    list(APPEND _SL_FORK_DLLS "${CMAKE_SOURCE_DIR}/extern/Streamline/_artifacts/${_plugin}/Develop_x64/${_plugin}.dll")
+endforeach()
+install(
+    FILES ${_SL_FORK_DLLS}
+    DESTINATION SKSE/Plugins/CommunityShaders/bin
+    COMPONENT Streamline
+)
+
+set(_DXVK_LICENSE "${CMAKE_SOURCE_DIR}/extern/dxvk/LICENSE")
+set(_FFX_LICENSE "${CMAKE_SOURCE_DIR}/extern/Streamline/external/fidelityfx-sdk/LICENSE.txt")
+set(_XESS_LICENSE "${CMAKE_SOURCE_DIR}/extern/Streamline/external/xess/LICENSE.txt")
+install(
+    FILES "${_DXVK_LICENSE}"
+    DESTINATION SKSE/Plugins/CommunityShaders/bin
+    RENAME dxvk.license.txt
+    COMPONENT DXVK
+)
+install(
+    FILES "${_FFX_LICENSE}"
+    DESTINATION SKSE/Plugins/CommunityShaders/bin
+    RENAME fidelityfx.license.txt
+    COMPONENT Streamline
+)
+install(
+    FILES "${_XESS_LICENSE}"
+    DESTINATION SKSE/Plugins/CommunityShaders/bin
+    RENAME xess.license.txt
+    COMPONENT Streamline
+)
 
 # #######################################################################################################################
 # # Automatic AIO preparation (incremental copy system)
@@ -587,6 +609,14 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
+    list(
+        APPEND _AIO_PACKAGE_FILES
+        ${_DXVK_RUNTIME_DLLS}
+        ${_SL_FORK_DLLS}
+        "${_DXVK_LICENSE}"
+        "${_FFX_LICENSE}"
+        "${_XESS_LICENSE}"
+    )
 
     # Prepare AIO by copying files only when different. This avoids updating
     # timestamps for unchanged files and prevents downstream incremental
@@ -600,6 +630,16 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     file(WRITE "${_feature_paths_file}" "")
     foreach(_fpath IN LISTS FEATURE_PATHS)
         file(APPEND "${_feature_paths_file}" "${_fpath}\n")
+    endforeach()
+
+    set(_runtime_paths_file "${CMAKE_CURRENT_BINARY_DIR}/runtime_paths.txt")
+    file(WRITE "${_runtime_paths_file}" "")
+    foreach(_runtime_file IN LISTS _DXVK_RUNTIME_DLLS _SL_FORK_DLLS)
+        get_filename_component(_runtime_name "${_runtime_file}" NAME)
+        file(APPEND "${_runtime_paths_file}" "SKSE/Plugins/CommunityShaders/bin/${_runtime_name}\n")
+    endforeach()
+    foreach(_runtime_name IN ITEMS dxvk.license.txt fidelityfx.license.txt xess.license.txt)
+        file(APPEND "${_runtime_paths_file}" "SKSE/Plugins/CommunityShaders/bin/${_runtime_name}\n")
     endforeach()
 
     # Ensure SKSE/Plugins dir exists
@@ -620,6 +660,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         -DAIO_DIR="${AIO_DIR}"
         -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
         -DFEATURE_PATHS_FILE="${_feature_paths_file}"
+        -DRUNTIME_PATHS_FILE="${_runtime_paths_file}"
         -P
         "${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake"
     )
@@ -659,27 +700,28 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         APPEND _prepare_aio_cmds
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/dxvk"
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${AIO_DIR}/SKSE/Plugins/CommunityShaders/Streamline"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_runtime_dir}"
     )
 
-    # Stage a local DXVK build when available.
-    if(EXISTS "${DXVK_BUILD_DIR}/d3d11/dxvk_d3d11.dll")
-        list(
-            APPEND _prepare_aio_cmds
-            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-                -File "${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1"
-                -Src "${DXVK_BUILD_DIR}"
-                -Dst "${_aio_runtime_dir}"
-        )
-    endif()
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_SOURCE_DIR}/tools/stage-dxvk-dlls.ps1"
+            -Src "${DXVK_BUILD_DIR}"
+            -Dst "${_aio_runtime_dir}"
+    )
 
     # Stage locally built Streamline fork plugins.
-    if(_SL_FORK_DLLS)
-        list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${_aio_runtime_dir}")
-        foreach(_sl IN LISTS _SL_FORK_DLLS)
-            list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl}" "${_aio_runtime_dir}/")
-            list(APPEND _AIO_PACKAGE_FILES "${_sl}")
-        endforeach()
-    endif()
+    foreach(_sl IN LISTS _SL_FORK_DLLS)
+        list(APPEND _prepare_aio_cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl}" "${_aio_runtime_dir}/")
+    endforeach()
+
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_DXVK_LICENSE}" "${_aio_runtime_dir}/dxvk.license.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_FFX_LICENSE}" "${_aio_runtime_dir}/fidelityfx.license.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_XESS_LICENSE}" "${_aio_runtime_dir}/xess.license.txt"
+    )
 
     # Remove CORE from AIO if it exists (keep rest intact)
     list(
@@ -1096,7 +1138,7 @@ endif()
 # Create a AIO zip for easier testing
 if(AIO_ZIP_TO_DIST)
     if(NOT SEVENZ_EXECUTABLE)
-        message(FATAL_ERROR "7-Zip is required for the sub-100 MB AIO package")
+        message(FATAL_ERROR "7-Zip is required for the maximum-compression AIO package")
     endif()
 
     if(NOT ZIP_TO_DIST)
@@ -1278,11 +1320,13 @@ else()
             DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
             COMMAND ${CMAKE_COMMAND} -E rm -f "${AIO_PACKAGE}"
             COMMAND
                 ${CMAKE_COMMAND} -E chdir ${AIO_DIR} "${SEVENZ_EXECUTABLE}" a -t7z
                 "${AIO_PACKAGE}" "*" -mx=9 -m0=lzma2 -md=128m -mfb=273 -ms=on -mmt=on -bd -y
             COMMENT "Creating maximum-compression AIO package (full install)"
+            VERBATIM
         )
     else()
         add_custom_command(
@@ -1290,10 +1334,13 @@ else()
             DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
             COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${AIO_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_PATH}"
+            COMMAND ${CMAKE_COMMAND} -E rm -f "${AIO_PACKAGE}"
             COMMAND
                 ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
                 ${AIO_PACKAGE} --format=zip -- .
             COMMENT "Creating fallback AIO zip package (full install)"
+            VERBATIM
         )
     endif()
 endif()
@@ -1301,7 +1348,7 @@ add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
 
 message("*************************************************************")
 message("Community Shaders configuration complete")
-message("To prepare a ZIP package of AIO, Core, or Features")
+message("To prepare a package of AIO (.7z when 7-Zip is found), Core, or Features")
 message("  Build cmake targets:")
 message("    - Package-Core: Core package")
 message("    - Package-AIO-Manual: AIO package (manual)")

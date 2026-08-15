@@ -62,10 +62,11 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 {
 	DXGI_ADAPTER_DESC adapterDesc;
 	pAdapter->GetDesc(&adapterDesc);
-	globals::state->SetAdapterDescription(adapterDesc.Description, adapterDesc.VendorId);
+	globals::state->SetAdapterDescription(adapterDesc.Description);
 
 	auto& upscaling = globals::features::upscaling;
 
+	// FLIP_DISCARD requires BufferCount >= 2 and a flip-model-compatible (non-sRGB) format.
 	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	if (pSwapChainDesc->BufferCount < 2)
 		pSwapChainDesc->BufferCount = 2;
@@ -573,7 +574,9 @@ HRESULT Upscaling::PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT 
 
 	// DLSS-G requires a valid or passthrough tag for every present.
 	if (fgMethod == FrameGenMethod::kDLSSG) {
-		Streamline::GetSingleton()->EnsureDLSSGPresentTag();
+		auto* streamline = Streamline::GetSingleton();
+		streamline->EnsureDLSSGPresentTag();
+		DXVKInterop::GetSingleton()->WaitLastSubmission();
 		return a_present(a_swapChain, a_syncInterval, a_flags);
 	}
 
@@ -647,8 +650,9 @@ void Upscaling::CreateHudlessTexture()
 		return;
 
 	if (hudlessTexture) {
-		if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->IsAvailable())
-			dxvk->WaitDeviceIdle();
+		Streamline::GetSingleton()->WaitDLSSGInputFence();
+		if (auto* dxvk = DXVKInterop::GetSingleton(); dxvk && dxvk->CommandResourcesReady())
+			dxvk->DrainCommandRing();
 	}
 	DestroyHudlessTexture();
 
@@ -1033,10 +1037,6 @@ void Upscaling::SetupResources()
 	DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&rasterizerDesc, upscaleRasterizerState.put()));
 
 	CheckResources(GetUpscaleMethod());
-
-	if (globals::features::hdrDisplay.loaded) {
-		globals::features::hdrDisplay.SetupResources();
-	}
 
 	auto* dxvk = DXVKInterop::GetSingleton();
 	if (dxvk->Initialize()) {
