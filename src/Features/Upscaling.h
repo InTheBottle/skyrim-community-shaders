@@ -153,6 +153,10 @@ public:
 	[[nodiscard]] int GetMonitorRefreshRate() const;
 	/** @brief Returns the configured frame-rate cap, or zero when uncapped. */
 	[[nodiscard]] int GetTargetFrameRate() const;
+	/** @brief Returns the rendered-frame cap after accounting for fixed frame generation. */
+	[[nodiscard]] double GetRenderedFrameRateLimit() const;
+	/** @brief Returns the fixed DLSS-G multiplier clamped to the reported hardware limit. */
+	[[nodiscard]] uint32_t GetFixedDLSSGMultiplier() const;
 	/** @brief Applies the non-Reflex frame-rate limit through DXVK. */
 	void ApplyDxvkFrameRateLimit(double a_fps);
 

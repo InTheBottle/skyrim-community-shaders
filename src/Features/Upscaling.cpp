@@ -589,6 +589,34 @@ int Upscaling::GetTargetFrameRate() const
 	return std::max(1, static_cast<int>(std::lround(static_cast<double>(GetMonitorRefreshRate()) / divisor)));
 }
 
+uint32_t Upscaling::GetFixedDLSSGMultiplier() const
+{
+	uint32_t multiplier = std::clamp(settings.frameGenMultiplier, 2u, 6u);
+	const uint32_t maxFrames = Streamline::GetSingleton()->GetDLSSGMaxFramesToGenerate();
+	if (maxFrames > 0u)
+		multiplier = std::min(multiplier, maxFrames + 1u);
+	return multiplier;
+}
+
+double Upscaling::GetRenderedFrameRateLimit() const
+{
+	const int targetFps = GetTargetFrameRate();
+	if (targetFps <= 0 || !IsFrameGenerationActive())
+		return static_cast<double>(targetFps);
+
+	switch (GetFrameGenMethod()) {
+	case FrameGenMethod::kFSR:
+		return static_cast<double>(targetFps) / 2.0;
+	case FrameGenMethod::kDLSSG:
+		// Dynamic MFG owns the final-output target. Fixed MFG needs the rendered
+		// cadence reduced so real + generated frames add up to that target.
+		return settings.dlssgDynamic ? static_cast<double>(targetFps) :
+		                               static_cast<double>(targetFps) / GetFixedDLSSGMultiplier();
+	default:
+		return static_cast<double>(targetFps);
+	}
+}
+
 void Upscaling::ApplyDxvkFrameRateLimit(double a_fps)
 {
 	using SetFrameRateFn = void (*)(double);
