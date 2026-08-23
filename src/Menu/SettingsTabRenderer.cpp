@@ -6,12 +6,12 @@
 #include <windows.h>
 
 #include "BackgroundBlur.h"
+#include "CursorLoader.h"
 #include "Features/ScreenshotFeature.h"
 #include "FontSelector.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
-#include "CursorLoader.h"
 #include "IconLoader.h"
 #include "Menu.h"
 #include "ShaderCache.h"
@@ -235,23 +235,7 @@ void SettingsTabRenderer::RenderShadersTab()
 			shaderCache->SetDiskCache(useDiskCache);
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.enable_disk_cache_tooltip", "Disables loading shaders from disk and prevents saving compiled shaders to disk cache."));
-		}
-
-		bool skipUnchanged = shaderCache->IsSkipUnchangedShaders();
-		ImGui::BeginDisabled(!useDiskCache);
-		if (ImGui::Checkbox(T("menu.settings.skip_unchanged_shaders", "Skip Unchanged Shaders"), &skipUnchanged)) {
-			shaderCache->SetSkipUnchangedShaders(skipUnchanged);
-		}
-		ImGui::EndDisabled();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.skip_unchanged_shaders_tooltip",
-								  "When enabled, each shader is recompiled from source only if its .hlsl file "
-								  "is newer than the cached .bin on disk. "
-								  "Shaders whose source has not changed are loaded directly from the disk cache, "
-								  "avoiding the full startup compilation cost. "
-								  "Useful for iterative testing: change a shader file and only that shader is rebuilt. "
-								  "Requires 'Enable Disk Cache' to be active."));
+			ImGui::Text("%s", T("menu.settings.enable_disk_cache_tooltip", "Load compiled shaders from the shared disk cache and save newly compiled shaders for every supported game version."));
 		}
 
 		bool useAsync = shaderCache->IsAsync();
@@ -527,9 +511,9 @@ void SettingsTabRenderer::RenderBehaviorTab()
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T("menu.settings.use_custom_cursor_tooltip",
-				"Loads cursor PNGs from the active theme folder (Themes/<preset>/).\n"
-				"Supported files include cursor.png (arrow), cursor_text.png (typing), cursor_resize_ew.png, cursor_resize_ns.png, and more.\n"
-				"Missing types fall back to the default ImGui cursor. Configure per-type hotspots in theme JSON."));
+								  "Loads cursor PNGs from the active theme folder (Themes/<preset>/).\n"
+								  "Supported files include cursor.png (arrow), cursor_text.png (typing), cursor_resize_ew.png, cursor_resize_ns.png, and more.\n"
+								  "Missing types fall back to the default ImGui cursor. Configure per-type hotspots in theme JSON."));
 		}
 
 		if (themeSettings.UseCustomCursor) {

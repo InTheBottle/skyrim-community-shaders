@@ -53,18 +53,19 @@ public:
 
 	uint32_t currentVertexDescriptor = 0;
 	uint32_t currentPixelDescriptor = 0;
-	spdlog::level::level_enum logLevel = spdlog::level::info;
-	bool enableDeveloperMode = false;  ///< Explicit developer mode toggle; also enabled when log level is debug/trace.
+	std::atomic<spdlog::level::level_enum> logLevel{ spdlog::level::info };
+	std::atomic_bool enableDeveloperMode{ false };  ///< Explicit developer mode toggle; also enabled when log level is debug/trace.
 	std::string shaderDefinesString = "";
-	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
+	std::vector<std::pair<std::string, std::string>> shaderDefines{};
+	mutable std::mutex shaderDefinesMutex;
 
 	float timer = 0;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
 	// Frame time tracking per shader type (in milliseconds)
-	float frameTimePerType[RE::BSShader::Type::Total + 1];      ///< Per-type frame time in milliseconds.
-	float smoothFrameTimePerType[RE::BSShader::Type::Total + 1]; ///< EMA-smoothed per-type frame time in milliseconds.
+	float frameTimePerType[RE::BSShader::Type::Total + 1];        ///< Per-type frame time in milliseconds.
+	float smoothFrameTimePerType[RE::BSShader::Type::Total + 1];  ///< EMA-smoothed per-type frame time in milliseconds.
 
 	// Timing state for per-type frame time tracking using QueryPerformanceCounter
 	LARGE_INTEGER frameTimingFrequency;
@@ -119,30 +120,24 @@ public:
 	void SaveTheme();
 
 	/**
-	 * @brief Validates the disk shader cache against all loaded features.
-	 * @param a_ini The cache INI to validate against.
-	 * @return True if all feature cache entries are still valid.
-	 */
-	bool ValidateCache(CSimpleIniA& a_ini);
-	/**
-	 * @brief Writes each feature's cache metadata into the disk cache INI.
-	 * @param a_ini The cache INI to write into.
-	 */
-	void WriteDiskCacheInfo(CSimpleIniA& a_ini);
-
-	/**
 	 * @brief Sets the global log level and flushes on that level.
 	 * @param a_level The spdlog severity level to apply.
 	 */
 	void SetLogLevel(spdlog::level::level_enum a_level = spdlog::level::info);
-	spdlog::level::level_enum GetLogLevel();
+	spdlog::level::level_enum GetLogLevel() const noexcept;
+
+	/** @brief Sets the explicit developer-mode toggle. */
+	void SetDeveloperMode(bool a_enabled) noexcept;
+	/** @brief Returns the explicit toggle, excluding activation through debug/trace logging. */
+	bool IsDeveloperModeExplicitlyEnabled() const noexcept;
 
 	/**
 	 * @brief Parses a semicolon-delimited "NAME=VALUE" string into shader defines.
 	 * @param defines Semicolon-separated define string (e.g. "FOO=1;BAR=2").
 	 */
 	void SetDefines(std::string defines);
-	std::vector<std::pair<std::string, std::string>>* GetDefines();
+	/** @brief Returns an immutable snapshot safe for asynchronous shader compilation. */
+	std::vector<std::pair<std::string, std::string>> GetDefines() const;
 
 	/**
 	 * @brief Checks whether the given shader type is enabled.
@@ -165,7 +160,7 @@ public:
 	 * Developer mode enables advanced options. Use at your own risk.
 	 * @return True if in developer mode.
 	 */
-	bool IsDeveloperMode();
+	bool IsDeveloperMode() const noexcept;
 
 	/**
 	 * @brief Adds UAV access support to a render target.
@@ -234,33 +229,33 @@ public:
 	/**
 	 * Bitflags describing extra shader-specific properties.
 	 */
-	
+
 	/**
 	 * Bitflags describing extra feature-specific properties related to terrain displacement and material models.
 	 */
-	
+
 	/**
 	 * Checks whether the main menu or loading menu is cached as open.
 	 * @returns true if either the main menu or loading menu is open, false otherwise.
 	 */
-	
+
 	/**
 	 * Checks whether the main menu or loading menu is open, querying the UI if provided.
 	 * @param ui Pointer to the UI manager; if non-null, performs live menu checks as a fallback.
 	 * @returns true if the main menu or loading menu is open, false otherwise.
 	 */
-	
+
 	/**
 	 * Updates the shared constant buffer data based on world state and rendering pass.
 	 * @param a_inWorld Whether the camera is in world space.
 	 * @param a_prepass Whether this is a prepass rendering phase.
 	 */
-	
+
 	/**
 	 * Updates sky shader permutation based on the current render pass.
 	 * @param a_pass The render pass to inspect.
 	 */
-	
+
 	/**
 	 * Checks whether directional shadows are available for the current scene.
 	 * @returns true if directional shadows are present, false otherwise.

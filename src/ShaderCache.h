@@ -149,6 +149,24 @@ namespace SIE
 		Total,
 	};
 
+	struct ShaderCompilationPolicySnapshot
+	{
+		std::uint64_t sourceGeneration;
+		bool useDiskCache;
+	};
+
+	struct VertexShaderDeleter
+	{
+		void operator()(RE::BSGraphics::VertexShader* a_shader) const noexcept
+		{
+			if (a_shader) {
+				std::destroy_at(a_shader);
+				::operator delete(a_shader);
+			}
+		}
+	};
+	using OwnedVertexShader = std::unique_ptr<RE::BSGraphics::VertexShader, VertexShaderDeleter>;
+
 	class ShaderCompilationTask
 	{
 	public:
@@ -160,8 +178,8 @@ namespace SIE
 		};
 		ShaderCompilationTask(ShaderClass shaderClass, const RE::BSShader& shader,
 			uint32_t descriptor);
-		/** @brief Compiles the shader, writing the result to the ShaderCache. */
-		void Perform() const;
+		/** @brief Compiles the shader against one immutable cache-policy/source snapshot. */
+		void Perform(const ShaderCompilationPolicySnapshot& policySnapshot) const;
 
 		/** @brief Returns a unique hash identifying this shader class, type, and descriptor combo. */
 		size_t GetId() const;
@@ -179,6 +197,10 @@ namespace SIE
 		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
 		/** @brief Gets the QPC timestamp when this task was enqueued. */
 		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
+		/** @brief Assigns the unique token for one concrete worker dispatch. */
+		void SetDispatchToken(std::uint64_t token) { dispatchToken = token; }
+		/** @brief Gets the unique token for one concrete worker dispatch. */
+		std::uint64_t GetDispatchToken() const { return dispatchToken; }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -191,6 +213,7 @@ namespace SIE
 		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		int cachedPriority;
 		int64_t enqueuedQpc = 0;
+		std::uint64_t dispatchToken = 0;
 	};
 }
 
@@ -242,10 +265,12 @@ namespace SIE
 
 		/** @brief Blocks until a task is available or the stop token is signalled. */
 		std::optional<ShaderCompilationTask> WaitTake(std::stop_token stoken);
+		/** @brief Returns true only while this exact token is the active dispatch for its task. */
+		bool IsCurrentDispatch(const ShaderCompilationTask& task);
 		/** @brief Enqueues a task for compilation. */
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
-		void Complete(const ShaderCompilationTask& task);
+		void Complete(const ShaderCompilationTask& task, std::uint64_t sourceGeneration);
 		/** @brief Resets all task queues and counters for a fresh compilation pass. */
 		void Clear();
 		/** @brief Formats a millisecond duration into a human-readable time string. */
@@ -313,14 +338,32 @@ namespace SIE
 		std::set<ShaderCompilationTask, TaskPriorityLess> tasksInProgress;
 		std::set<ShaderCompilationTask, TaskPriorityLess> processedTasks;  // completed or failed
 		std::condition_variable_any conditionVariable;
+		std::uint64_t nextDispatchToken = 1;
 	};
 
 	struct ShaderCacheResult
 	{
-		ID3DBlob* blob;
+		winrt::com_ptr<ID3DBlob> blob;
 		ShaderCompilationTask::Status status;
 		system_clock::time_point compileTime = system_clock::now();
-		bool loadedFromDisk = false;  /**< true when the shader blob was read from the disk cache rather than compiled */
+		bool loadedFromDisk = false;       /**< true when the shader blob was read from the disk cache rather than compiled */
+		std::uint64_t claimGeneration = 0; /**< source generation owning a Pending entry; zero for resolved entries */
+		std::uint64_t claimToken = 0;      /**< unique owner identity for a Pending single-flight claim */
+
+		ShaderCacheResult(
+			ID3DBlob* a_blob,
+			ShaderCompilationTask::Status a_status,
+			system_clock::time_point a_compileTime = system_clock::now(),
+			bool a_loadedFromDisk = false,
+			std::uint64_t a_claimGeneration = 0,
+			std::uint64_t a_claimToken = 0) :
+			status(a_status), compileTime(a_compileTime), loadedFromDisk(a_loadedFromDisk),
+			claimGeneration(a_claimGeneration), claimToken(a_claimToken)
+		{
+			if (a_blob) {
+				blob.copy_from(a_blob);
+			}
+		}
 	};
 
 	class UpdateListener;
@@ -381,14 +424,10 @@ namespace SIE
 		void SetDiskCache(bool value);
 		/** @brief Deletes the entire on-disk shader cache directory. */
 		void DeleteDiskCache();
-		/** @brief Validates disk cache integrity against current shader sources and feature set. */
+		/** @brief Atomically clears live shader state and the entire on-disk shader cache. */
+		void ClearAndDeleteDiskCache();
+		/** @brief Prepares and prunes the shared content-addressed disk cache. */
 		void ValidateDiskCache();
-		/** @brief Writes cache metadata (version, feature list) to the disk cache directory. */
-		void WriteDiskCacheInfo();
-		/** Gets whether unchanged shaders are skipped during recompilation. */
-		bool IsSkipUnchangedShaders() const;
-		/** Sets whether unchanged shaders are skipped during recompilation. */
-		void SetSkipUnchangedShaders(bool value);
 		/** Gets whether the filesystem watcher for hot-reload is active. */
 		bool UseFileWatcher() const;
 		/** Sets whether the filesystem watcher for hot-reload is active. */
@@ -438,28 +477,84 @@ namespace SIE
 		* @returns bool whether a shader was found in the `hlslToShaderMap`
 		*
 		* @note The function assumes that `a_path` corresponds to shaders stored in `hlslToShaderMap`.
-		* If the path is not found in the map, the function does nothing. Also, only files compiled
-		* during session will be identified. Disk cached shaders will not be cleared and a further
-		* cache clear may be necessary.
+		* If the path is not found in the map, the function does nothing. Every source processed
+		* during this session is tracked, including shared-cache hits.
 		*
 		* @threadsafe The function locks the internal map (`mapMutex`) to ensure thread safety when
 		* accessing or modifying shared shader map data.
 		*/
 		bool Clear(const std::string& a_path);
 
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk = false);
+		bool AddCompletedShader(
+			ShaderClass shaderClass,
+			const RE::BSShader& shader,
+			uint32_t descriptor,
+			std::string_view cacheKey,
+			ID3DBlob* a_blob,
+			bool fromDisk = false,
+			std::string_view cacheRecipeID = {},
+			std::uint64_t sourceGeneration = 0,
+			std::uint64_t claimToken = 0);
+		/**
+		 * @brief Atomically publishes a compiled object and records its in-memory/source mappings.
+		 *
+		 * Serialization with NotifyShaderSourceChanged prevents an obsolete worker from
+		 * publishing a recipe after the watcher has already removed that generation.
+		 */
+		bool CommitCompletedShader(
+			ShaderClass shaderClass,
+			const RE::BSShader& shader,
+			uint32_t descriptor,
+			std::string_view cacheKey,
+			ID3DBlob* a_blob,
+			bool fromDisk,
+			std::string_view cacheRecipeID,
+			std::uint64_t sourceGeneration,
+			std::uint64_t claimToken,
+			bool publishObject);
+		void TrackShaderSource(
+			ShaderClass shaderClass,
+			const RE::BSShader& shader,
+			uint32_t descriptor,
+			std::string_view cacheKey,
+			std::string_view cacheRecipeID = {});
+		bool TrackShaderSourceForGeneration(
+			ShaderClass shaderClass,
+			const RE::BSShader& shader,
+			uint32_t descriptor,
+			std::string_view cacheKey,
+			std::uint64_t sourceGeneration);
+		bool RegisterDependenciesForClaim(
+			ShaderFileDependencyTracker* a_dependencyTracker,
+			const std::string& sourcePath,
+			const std::vector<std::string>& includes,
+			std::string_view cacheKey,
+			std::uint64_t sourceGeneration,
+			std::uint64_t claimToken);
+		bool RemoveRejectedDiskCacheRecipeForClaim(
+			std::string_view recipeID,
+			std::string_view expectedObjectSHA256,
+			std::uint64_t expectedByteLength,
+			std::string_view cacheKey,
+			std::uint64_t sourceGeneration,
+			std::uint64_t claimToken);
 
 		enum class ClaimResult
 		{
 			CacheHit,  // Already compiled; use the returned blob
 			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
 		};
-		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key);
-		void ResolvePendingFailure(const std::string& key);
+		std::pair<ClaimResult, winrt::com_ptr<ID3DBlob>> ClaimCompilation(
+			const std::string& key, std::uint64_t sourceGeneration, std::uint64_t& claimToken);
+		void AbandonCompilation(
+			const std::string& key, std::uint64_t sourceGeneration, std::uint64_t claimToken);
+		/** @brief Invalidates in-flight source snapshots after any HLSL/HLSLI filesystem event. */
+		void NotifyShaderSourceChanged() noexcept;
+		[[nodiscard]] std::uint64_t GetShaderSourceGeneration() const noexcept;
 
-		ID3DBlob* GetCompletedShader(const std::string& a_key);
-		ID3DBlob* GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
-		ID3DBlob* GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
+		winrt::com_ptr<ID3DBlob> GetCompletedShader(const std::string& a_key);
+		winrt::com_ptr<ID3DBlob> GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
+		winrt::com_ptr<ID3DBlob> GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		bool IsShaderLoadedFromDisk(const std::string& a_key);
 		ShaderCompilationTask::Status GetShaderStatus(const std::string& a_key);
 		std::string GetShaderStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
@@ -472,10 +567,16 @@ namespace SIE
 
 		RE::BSGraphics::VertexShader* MakeAndAddVertexShader(const RE::BSShader& shader,
 			uint32_t descriptor);
+		RE::BSGraphics::VertexShader* MakeAndAddVertexShader(const RE::BSShader& shader,
+			uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot);
 		RE::BSGraphics::PixelShader* MakeAndAddPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor);
+		RE::BSGraphics::PixelShader* MakeAndAddPixelShader(const RE::BSShader& shader,
+			uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot);
 		RE::BSGraphics::ComputeShader* MakeAndAddComputeShader(const RE::BSShader& shader,
 			uint32_t descriptor);
+		RE::BSGraphics::ComputeShader* MakeAndAddComputeShader(const RE::BSShader& shader,
+			uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot);
 
 		static std::string GetDefinesString(const RE::BSShader& shader, uint32_t descriptor);
 
@@ -770,14 +871,22 @@ namespace SIE
 			RE::BSShader::Type type;
 			std::uint32_t descriptor;
 			SIE::ShaderClass shaderClass;
-			std::wstring diskPath;
+			std::string cacheRecipeID;
 
 			bool operator<(const hlslRecord& other) const
 			{
-				return key < other.key;
+				return std::tie(key, type, descriptor, shaderClass) <
+				       std::tie(other.key, other.type, other.descriptor, other.shaderClass);
 			}
 		};
 		ShaderCache();
+		[[nodiscard]] ShaderCompilationPolicySnapshot CaptureShaderCompilationPolicy();
+		[[nodiscard]] std::optional<ShaderCompilationPolicySnapshot> CaptureShaderCompilationPolicyForDispatch(
+			const ShaderCompilationTask& task);
+		void AdvanceShaderSourceGenerationLocked() noexcept;
+		void ClearMemoryCachesLocked();
+		void ClearFeatureShaderCaches();
+		void DeleteDiskCacheLocked();
 		void ManageCompilationSet(std::stop_token stoken);
 		void ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task);
 
@@ -788,17 +897,20 @@ namespace SIE
 			ankerl::unordered_dense::map<uint32_t, std::unique_ptr<ShaderType>>,
 			RE::BSShader::Type::Total>;
 
-		ShaderMapArray<RE::BSGraphics::VertexShader> vertexShaders;
+		using VertexShaderMapArray = std::array<
+			ankerl::unordered_dense::map<uint32_t, OwnedVertexShader>,
+			RE::BSShader::Type::Total>;
+
+		VertexShaderMapArray vertexShaders;
 		ShaderMapArray<RE::BSGraphics::PixelShader> pixelShaders;
 		ShaderMapArray<RE::BSGraphics::ComputeShader> computeShaders;
 
 		bool isEnabled = true;
-		bool isDiskCache = true;
-		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
+		std::atomic_bool isDiskCache{ true };
 		bool isAsync = true;
 		bool isDump = false;
 		bool hideError = false;
-		bool useFileWatcher = false;
+		std::atomic_bool useFileWatcher{ false };
 
 		std::stop_source ssource;
 		std::mutex vertexShadersMutex;
@@ -808,6 +920,9 @@ namespace SIE
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
 		std::condition_variable mapCV;                                                            // signalled when a Pending entry transitions to Completed/Failed
+		std::mutex shaderPublicationMutex;                                                        // serializes source generations with persistent publication
+		std::atomic<std::uint64_t> shaderSourceGeneration{ 0 };                                   // increments before processing every HLSL/HLSLI file event
+		std::uint64_t nextShaderClaimToken = 1;                                                   // guarded by mapMutex; zero is never issued
 		ankerl::unordered_dense::map<std::string, system_clock::time_point> modifiedShaderMap{};  // hashmap when a shader source file last modified
 		std::mutex modifiedMapMutex;                                                              // guard for modifiedShaderMap
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap
@@ -843,7 +958,12 @@ namespace SIE
 		 *
 		 * @return Void. Updates internal state and modifies `clearCache` and `fileDone` by reference.
 		 */
-		void UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache* cache, bool& clearCache, bool& retFlag);
+		static void UpdateCache(
+			const std::filesystem::path& filePath,
+			SIE::ShaderCache* cache,
+			ShaderFileDependencyTracker* dependencyTracker,
+			bool& clearCache,
+			bool& retFlag);
 		void processQueue();
 		void handleFileAction(efsw::WatchID, const std::string& dir, const std::string& filename, efsw::Action action, std::string) override;
 

@@ -188,20 +188,6 @@ namespace ShaderStorage
 		       BuildExecutablePathID(a_identity.executableSHA256);
 	}
 
-	std::filesystem::path BuildCachePath(
-		std::string_view a_loader,
-		std::uint32_t a_descriptor,
-		std::string_view a_definesSuffix,
-		std::string_view a_extension)
-	{
-		const auto filename = std::format(
-			"{:X}{}.{}",
-			a_descriptor,
-			a_definesSuffix,
-			SanitizePathComponent(a_extension));
-		return GetRuntimeCacheRoot() / SanitizePathComponent(a_loader) / filename;
-	}
-
 	std::optional<std::filesystem::path> BuildDumpPath(
 		const std::filesystem::path& a_dumpRoot,
 		std::string_view a_loader,
@@ -263,21 +249,10 @@ namespace ShaderStorage
 		return session;
 	}
 
-	const std::filesystem::path& GetRuntimeCacheRoot()
-	{
-		static const auto path = BuildRuntimeRoot("Data/ShaderCache", GetRuntimeIdentity());
-		return path;
-	}
-
 	const std::filesystem::path& GetRuntimeDumpRoot()
 	{
 		static const auto path = BuildRuntimeRoot("Data/ShaderDump", GetRuntimeIdentity()) / GetDumpSessionID();
 		return path;
-	}
-
-	std::filesystem::path GetCacheInfoPath()
-	{
-		return GetRuntimeCacheRoot() / "Info.ini";
 	}
 
 	std::optional<std::string> SHA256(std::span<const std::uint8_t> a_data)

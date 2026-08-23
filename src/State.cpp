@@ -10,13 +10,12 @@
 #include "Features/CloudShadows.h"
 #include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
-#include "Features/SkySync.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/Skin.h"
-#include "Features/Skylighting.h"
 #include "Features/SkySync.h"
+#include "Features/Skylighting.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
@@ -25,6 +24,7 @@
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "ShaderCache.h"
+#include "ShaderTools/LegacyShaderCompatibility.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
 #include "Utils/SphericalHarmonics.h"
@@ -508,8 +508,8 @@ void State::SaveToJson(nlohmann::json& settings)
 
 	json advanced;
 	advanced["Dump Shaders"] = shaderCache->IsDump();
-	advanced["Log Level"] = logLevel;
-	advanced["Developer Mode"] = enableDeveloperMode;
+	advanced["Log Level"] = GetLogLevel();
+	advanced["Developer Mode"] = IsDeveloperModeExplicitlyEnabled();
 	advanced["Shader Defines"] = shaderDefinesString;
 	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
@@ -521,7 +521,6 @@ void State::SaveToJson(nlohmann::json& settings)
 	json general;
 	general["Enable Shaders"] = shaderCache->IsEnabled();
 	general["Enable Disk Cache"] = shaderCache->IsDiskCache();
-	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
 	general["Language"] = I18n::GetSingleton()->GetCurrentLocale();
 
@@ -580,9 +579,9 @@ void State::LoadFromJson(nlohmann::json& settings)
 		if (advanced.contains("Dump Shaders") && advanced["Dump Shaders"].is_boolean())
 			shaderCache->SetDump(advanced["Dump Shaders"]);
 		if (advanced.contains("Log Level") && advanced["Log Level"].is_number_integer())
-			logLevel = magic_enum::enum_cast<spdlog::level::level_enum>(advanced["Log Level"].get<int>()).value_or(spdlog::level::info);
+			logLevel.store(magic_enum::enum_cast<spdlog::level::level_enum>(advanced["Log Level"].get<int>()).value_or(spdlog::level::info), std::memory_order_relaxed);
 		if (advanced.contains("Developer Mode") && advanced["Developer Mode"].is_boolean())
-			enableDeveloperMode = advanced["Developer Mode"];
+			SetDeveloperMode(advanced["Developer Mode"].get<bool>());
 		if (advanced.contains("Shader Defines") && advanced["Shader Defines"].is_string())
 			SetDefines(advanced["Shader Defines"]);
 		if (advanced.contains("Compiler Threads") && advanced["Compiler Threads"].is_number_integer())
@@ -603,8 +602,6 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetEnabled(general["Enable Shaders"]);
 		if (general.contains("Enable Disk Cache") && general["Enable Disk Cache"].is_boolean())
 			shaderCache->SetDiskCache(general["Enable Disk Cache"]);
-		if (general.contains("Skip Unchanged Shaders") && general["Skip Unchanged Shaders"].is_boolean())
-			shaderCache->SetSkipUnchangedShaders(general["Skip Unchanged Shaders"]);
 		if (general.contains("Enable Async") && general["Enable Async"].is_boolean())
 			shaderCache->SetAsync(general["Enable Async"]);
 
@@ -675,41 +672,36 @@ void State::Save(ConfigMode a_configMode)
 	}
 }
 
-bool State::ValidateCache(CSimpleIniA& a_ini)
-{
-	bool valid = true;
-	for (auto* feature : Feature::GetFeatureList())
-		valid = valid && feature->ValidateCache(a_ini);
-	return valid;
-}
-
-void State::WriteDiskCacheInfo(CSimpleIniA& a_ini)
-{
-	for (auto* feature : Feature::GetFeatureList())
-		feature->WriteDiskCacheInfo(a_ini);
-}
-
 void State::SetLogLevel(spdlog::level::level_enum a_level)
 {
-	logLevel = a_level;
-	spdlog::set_level(logLevel);
-	spdlog::flush_on(logLevel);
-	logger::info("Log Level set to {} ({})", magic_enum::enum_name(logLevel), magic_enum::enum_integer(logLevel));
+	logLevel.store(a_level, std::memory_order_relaxed);
+	spdlog::set_level(a_level);
+	spdlog::flush_on(a_level);
+	logger::info("Log Level set to {} ({})", magic_enum::enum_name(a_level), magic_enum::enum_integer(a_level));
 }
 
-spdlog::level::level_enum State::GetLogLevel()
+spdlog::level::level_enum State::GetLogLevel() const noexcept
 {
-	return logLevel;
+	return logLevel.load(std::memory_order_relaxed);
+}
+
+void State::SetDeveloperMode(bool a_enabled) noexcept
+{
+	enableDeveloperMode.store(a_enabled, std::memory_order_relaxed);
+}
+
+bool State::IsDeveloperModeExplicitlyEnabled() const noexcept
+{
+	return enableDeveloperMode.load(std::memory_order_relaxed);
 }
 
 void State::SetDefines(std::string a_defines)
 {
-	shaderDefines.clear();
-	shaderDefinesString = "";
-	std::string name = "";
-	std::string definition = "";
+	std::vector<std::pair<std::string, std::string>> parsedDefines;
+	std::string parsedDefinesString;
 	auto defines = pystring::split(a_defines, ";");
 	for (const auto& define : defines) {
+		std::string definition;
 		auto cleanedDefine = pystring::strip(define);
 		auto token = pystring::split(cleanedDefine, "=");
 		if (token.empty() || token[0].empty())
@@ -718,20 +710,28 @@ void State::SetDefines(std::string a_defines)
 			logger::warn("Define string has too many '='; ignoring {}", define);
 			continue;
 		}
-		name = pystring::strip(token[0]);
+		auto name = pystring::strip(token[0]);
 		if (token.size() == 2) {
 			definition = pystring::strip(token[1]);
 		}
-		shaderDefinesString += pystring::strip(define) + ";";
-		shaderDefines.push_back(std::pair(name, definition));
+		parsedDefinesString += pystring::strip(define) + ";";
+		parsedDefines.emplace_back(name, definition);
 	}
-	shaderDefinesString = shaderDefinesString.substr(0, shaderDefinesString.size() - 1);
+	if (!parsedDefinesString.empty()) {
+		parsedDefinesString.pop_back();
+	}
+	{
+		std::scoped_lock lock{ shaderDefinesMutex };
+		shaderDefines = std::move(parsedDefines);
+	}
+	shaderDefinesString = std::move(parsedDefinesString);
 	logger::debug("Shader Defines set to {}", shaderDefinesString);
 }
 
-std::vector<std::pair<std::string, std::string>>* State::GetDefines()
+std::vector<std::pair<std::string, std::string>> State::GetDefines() const
 {
-	return &shaderDefines;
+	std::scoped_lock lock{ shaderDefinesMutex };
+	return shaderDefines;
 }
 
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
@@ -748,9 +748,9 @@ bool State::IsShaderEnabled(const RE::BSShader& a_shader)
 	return ShaderEnabled(a_shader.shaderType.get());
 }
 
-bool State::IsDeveloperMode()
+bool State::IsDeveloperMode() const noexcept
 {
-	return enableDeveloperMode || GetLogLevel() <= spdlog::level::debug;
+	return IsDeveloperModeExplicitlyEnabled() || GetLogLevel() <= spdlog::level::debug;
 }
 
 void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties& a_properties)
@@ -865,6 +865,15 @@ void State::SetupResources()
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
 {
 	auto deferred = globals::deferred;
+
+	// The shared HLSL is the native Skyrim 1.7 contract. Translate only the
+	// legacy descriptor encoding at the runtime boundary so every executable
+	// compiles and caches the same Utility permutations.
+	if (a_shader.shaderType.get() == RE::BSShader::Type::Utility &&
+		!LegacyShaderCompatibility::IsNativeLatestContract()) {
+		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
+		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
+	}
 
 	if (a_shader.shaderType.get() != RE::BSShader::Type::Utility && a_shader.shaderType.get() != RE::BSShader::Type::ImageSpace) {
 		switch (a_shader.shaderType.get()) {
@@ -1197,5 +1206,3 @@ bool State::HasDirectionalShadows() const
 {
 	return !Util::IsInterior() || globals::features::interiorSun.IsActiveInteriorSun();
 }
-
-

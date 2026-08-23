@@ -126,10 +126,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 					break;
 				}
 
-				if (shaderCache->IsDiskCache()) {
-					shaderCache->WriteDiskCacheInfo();
-				}
-
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
 			}
 

@@ -251,9 +251,10 @@ namespace Util
 	{
 		auto* shaderCache = globals::shaderCache;
 		if (shaderCache) {
-			shaderCache->Clear();
 			if (shaderCache->IsDiskCache()) {
-				shaderCache->DeleteDiskCache();
+				shaderCache->ClearAndDeleteDiskCache();
+			} else {
+				shaderCache->Clear();
 			}
 		}
 	}

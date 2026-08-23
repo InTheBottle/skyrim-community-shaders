@@ -154,7 +154,7 @@ void DumpShader(const RE::BSShader* thisClass, const ShaderType* shader, std::sp
 			}
 		} else {
 			nlohmann::json record{
-				{ "schema_version", ShaderStorage::STORAGE_SCHEMA_VERSION },
+				{ "schema_version", ShaderStorage::DUMP_SCHEMA_VERSION },
 				{ "runtime_version", runtimeIdentity.runtimeVersion },
 				{ "executable_sha256", runtimeIdentity.executableSHA256 },
 				{ "dump_session", ShaderStorage::GetDumpSessionID() },

@@ -9,7 +9,7 @@
 
 namespace ShaderStorage
 {
-	inline constexpr std::uint32_t STORAGE_SCHEMA_VERSION = 2;
+	inline constexpr std::uint32_t DUMP_SCHEMA_VERSION = 2;
 	inline constexpr std::size_t EXECUTABLE_PATH_ID_HEX_LENGTH = 24;
 	inline constexpr std::size_t DUMP_SESSION_ID_HEX_LENGTH = 24;
 	inline constexpr std::size_t LOADER_READABLE_PREFIX_LENGTH = 12;
@@ -27,12 +27,6 @@ namespace ShaderStorage
 	[[nodiscard]] std::filesystem::path BuildRuntimeRoot(
 		const std::filesystem::path& a_base,
 		const RuntimeIdentity& a_identity);
-	[[nodiscard]] std::filesystem::path BuildCachePath(
-		std::string_view a_loader,
-		std::uint32_t a_descriptor,
-		std::string_view a_definesSuffix,
-		std::string_view a_extension);
-
 	[[nodiscard]] std::optional<std::filesystem::path> BuildDumpPath(
 		const std::filesystem::path& a_dumpRoot,
 		std::string_view a_loader,
@@ -42,9 +36,7 @@ namespace ShaderStorage
 
 	[[nodiscard]] const RuntimeIdentity& GetRuntimeIdentity();
 	[[nodiscard]] const std::string& GetDumpSessionID();
-	[[nodiscard]] const std::filesystem::path& GetRuntimeCacheRoot();
 	[[nodiscard]] const std::filesystem::path& GetRuntimeDumpRoot();
-	[[nodiscard]] std::filesystem::path GetCacheInfoPath();
 
 	[[nodiscard]] std::optional<std::string> SHA256(std::span<const std::uint8_t> a_data);
 	[[nodiscard]] std::optional<std::string> SHA256File(const std::filesystem::path& a_path);

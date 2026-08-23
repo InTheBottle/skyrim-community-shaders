@@ -265,15 +265,4 @@ namespace Util
 										   });
 	}
 
-	std::string GetShaderDefinesSuffix(const std::string& definesStr)
-	{
-		if (definesStr.empty())
-			return {};
-		uint32_t h = 2166136261u;  // FNV-1a 32-bit offset basis
-		for (unsigned char c : definesStr) {
-			h ^= c;
-			h *= 16777619u;  // FNV prime
-		}
-		return std::format("_{:08X}", h);
-	}
 }  // namespace Util
