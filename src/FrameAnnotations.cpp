@@ -1,5 +1,6 @@
 #include "FrameAnnotations.h"
 
+#include "ShaderTools/RuntimeShaderStorage.h"
 #include "State.h"
 #include "Util.h"
 
@@ -35,7 +36,7 @@ namespace FrameAnnotations
 					descriptor = (*globals::game::currentPixelShader)->id;
 				}
 				const std::string definesSuffix = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
-				std::string diskPath = std::format("Data/ShaderCache/{}/{:X}{}.pso", shader->fxpFilename, descriptor, definesSuffix);
+				const auto diskPath = ShaderStorage::BuildCachePath(shader->fxpFilename, descriptor, definesSuffix, "pso").string();
 				const std::string passName = std::format("[{}:{:X}] ({:X}) <{}> {} -> {}", magic_enum::enum_name(ShaderType), descriptor, pass->passEnum,
 					pass->accumulationHint, pass->geometry->name.c_str(), diskPath);
 				globals::state->BeginPerfEvent(passName);

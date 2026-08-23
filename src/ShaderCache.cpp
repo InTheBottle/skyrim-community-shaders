@@ -1,6 +1,8 @@
 #include "ShaderCache.h"
 #include "Globals.h"
 #include "ShaderFileWatcher.h"
+#include "ShaderTools/LegacyShaderCompatibility.h"
+#include "ShaderTools/RuntimeShaderStorage.h"
 #include "Util.h"
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -281,7 +283,8 @@ namespace SIE
 		{
 			const auto technique = descriptor & 0b1111;
 			size_t lastIndex = 0;
-			if (technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth)) {
+			if (technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepthStencil) ||
+				technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth)) {
 				defines[lastIndex++] = { "RENDER_DEPTH", nullptr };
 			}
 			if (descriptor & static_cast<uint32_t>(ShaderCache::GrassShaderFlags::AlphaTest)) {
@@ -509,6 +512,12 @@ namespace SIE
 			using enum ShaderCache::UtilityShaderFlags;
 
 			size_t lastIndex = 0;
+			const auto shadowMaskFlags = static_cast<uint32_t>(RenderShadowmask) |
+			                             static_cast<uint32_t>(RenderShadowmaskDpb) |
+			                             static_cast<uint32_t>(RenderShadowmaskPb) |
+			                             static_cast<uint32_t>(RenderShadowmaskSpot);
+			const bool hasShadowMask = (descriptor & shadowMaskFlags) != 0;
+			const bool usesLatestShaderContract = LegacyShaderCompatibility::IsNativeLatestContract();
 
 			if (descriptor & static_cast<uint32_t>(Vc)) {
 				defines[lastIndex++] = { "VC", nullptr };
@@ -585,7 +594,10 @@ namespace SIE
 				}
 			}
 
-			if (descriptor & static_cast<uint32_t>(GrayscaleMask)) {
+			// Skyrim 1.7 reuses bit 20 as part of the one-hot shadow-filter selector for
+			// shadow-mask techniques. Legacy runtimes retain its grayscale-mask meaning.
+			if ((descriptor & static_cast<uint32_t>(GrayscaleMask)) &&
+				!(usesLatestShaderContract && hasShadowMask)) {
 				defines[lastIndex++] = { "GRAYSCALE_MASK", nullptr };
 			}
 			if (descriptor & static_cast<uint32_t>(RenderShadowmask)) {
@@ -613,14 +625,32 @@ namespace SIE
 				defines[lastIndex++] = { "LOCALMAP_FOGOFWAR", nullptr };
 			}
 
-			if (descriptor & (static_cast<uint32_t>(RenderShadowmask) |
-								 static_cast<uint32_t>(RenderShadowmaskDpb) |
-								 static_cast<uint32_t>(RenderShadowmaskPb) |
-								 static_cast<uint32_t>(RenderShadowmaskSpot))) {
-				static constexpr std::array<const char*, 5> shadowFilters = { { "0", "1", "2",
-					"3", "4" } };
-				const size_t shadowFilterIndex = std::clamp((descriptor >> 17) & 0b111, 0u, 4u);
-				defines[lastIndex++] = { "SHADOWFILTER", shadowFilters[shadowFilterIndex] };
+			if (hasShadowMask) {
+				// The shared shader contract is Skyrim 1.7's native one-hot selector:
+				// 2 is fixed 3x3 and 4/8 are the two PCF aliases. Leave 1.7 untouched;
+				// only translate the legacy selector 3 into its 1.7 equivalent.
+				auto shaderFilter = (descriptor >> 17) &
+				                    (usesLatestShaderContract ? 0xFu : 0x7u);
+				if (!usesLatestShaderContract && shaderFilter == 3) {
+					shaderFilter = 4;
+				}
+				switch (shaderFilter) {
+				case 0:
+				case 1:
+				case 2:
+				case 4:
+				case 8:
+					break;
+				default:
+					logger::error("Unsupported Utility shadow-filter selector {:#x} in descriptor {:#010x}", shaderFilter, descriptor);
+					shaderFilter = 0;
+					break;
+				}
+
+				static constexpr std::array<const char*, 9> shadowFilters = {
+					{ "0", "1", "2", nullptr, "4", nullptr, nullptr, nullptr, "8" }
+				};
+				defines[lastIndex++] = { "SHADOWFILTER", shadowFilters[shaderFilter] };
 			} else if ((!(descriptor & static_cast<uint32_t>(OpaqueEffect)) &&
 						   (descriptor &
 							   static_cast<uint32_t>(RenderShadowmap))) ||
@@ -880,13 +910,25 @@ namespace SIE
 				{ "ScaleMask", 13 },
 			};
 
-			grassVS.insert({ "ShadowClampValue", 14 });
-
 			const auto& grassPSConstants = ShaderConstants::GrassPS::Get();
 
 			auto& grassPS = result[static_cast<size_t>(RE::BSShader::Type::Grass)]
 								  [static_cast<size_t>(ShaderClass::Pixel)];
 			grassPS = {
+				{ "WorldViewProj", grassPSConstants.WorldViewProj },
+				{ "WorldView", grassPSConstants.WorldView },
+				{ "World", grassPSConstants.World },
+				{ "PreviousWorld", grassPSConstants.PreviousWorld },
+				{ "FogNearColor", grassPSConstants.FogNearColor },
+				{ "WindVector", grassPSConstants.WindVector },
+				{ "WindTimer", grassPSConstants.WindTimer },
+				{ "DirLightDirection", grassPSConstants.DirLightDirection },
+				{ "PreviousWindTimer", grassPSConstants.PreviousWindTimer },
+				{ "DirLightColor", grassPSConstants.DirLightColor },
+				{ "AlphaParam1", grassPSConstants.AlphaParam1 },
+				{ "AmbientColor", grassPSConstants.AmbientColor },
+				{ "AlphaParam2", grassPSConstants.AlphaParam2 },
+				{ "ScaleMask", grassPSConstants.ScaleMask },
 				{ "PBRFlags", grassPSConstants.PBRFlags },
 				{ "PBRParams1", grassPSConstants.PBRParams1 },
 				{ "PBRParams2", grassPSConstants.PBRParams2 },
@@ -1286,18 +1328,19 @@ namespace SIE
 		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
 		{
 			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
-			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
-
-			const auto wname = std::wstring(name.begin(), name.end());
+			std::string_view extension;
 			switch (shaderClass) {
 			case ShaderClass::Pixel:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.pso", wname, descriptor, suffix);
+				extension = "pso";
+				break;
 			case ShaderClass::Vertex:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
+				extension = "vso";
+				break;
 			case ShaderClass::Compute:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
+				extension = "cso";
+				break;
 			}
-			return {};
+			return extension.empty() ? std::wstring{} : ShaderStorage::BuildCachePath(name, descriptor, suffixNarrow, extension).wstring();
 		}
 
 		static std::string GetShaderString(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool hashkey)
@@ -1526,7 +1569,7 @@ namespace SIE
 
 			// save shader to disk
 			if (useDiskCache) {
-				auto directoryPath = std::format("Data/ShaderCache/{}", shader.fxpFilename);
+				auto directoryPath = std::filesystem::path(diskPath).parent_path();
 				if (!std::filesystem::is_directory(directoryPath)) {
 					try {
 						std::filesystem::create_directories(directoryPath);
@@ -1720,12 +1763,12 @@ namespace SIE
 					RE::ImageSpaceManager::GetCurrentIndex(ISDepthOfFieldFogged) },
 				{ "BSImagespaceShaderDepthOfFieldMaskedFogged",
 					RE::ImageSpaceManager::GetCurrentIndex(ISDepthOfFieldMaskedFogged) },
-				// { "BSImagespaceShaderDistantBlur", RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlur) },
-				// { "BSImagespaceShaderDistantBlurFogged",
-				// 	RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlurFogged) },
-				// { "BSImagespaceShaderDistantBlurMaskedFogged",
-				// 	RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlurMaskedFogged) },
-				// { "BSImagespaceShaderDoubleVision", RE::ImageSpaceManager::GetCurrentIndex(ISDoubleVision) },
+				{ "BSImagespaceShaderDistantBlur", RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlur) },
+				{ "BSImagespaceShaderDistantBlurFogged",
+					RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlurFogged) },
+				{ "BSImagespaceShaderDistantBlurMaskedFogged",
+					RE::ImageSpaceManager::GetCurrentIndex(ISDistantBlurMaskedFogged) },
+				{ "BSImagespaceShaderDoubleVision", RE::ImageSpaceManager::GetCurrentIndex(ISDoubleVision) },
 				{ "BSImagespaceShaderISDownsample", RE::ImageSpaceManager::GetCurrentIndex(ISDownsample) },
 				{ "BSImagespaceShaderISDownsampleIgnoreBrightest",
 					RE::ImageSpaceManager::GetCurrentIndex(ISDownsampleIgnoreBrightest) },
@@ -1780,15 +1823,14 @@ namespace SIE
 				// { "BSImagespaceShaderWorldMap", RE::ImageSpaceManager::GetCurrentIndex(ISWorldMap) },
 				// { "BSImagespaceShaderWorldMapNoSkyBlur",
 				// 	RE::ImageSpaceManager::GetCurrentIndex(ISWorldMapNoSkyBlur) },
-				// { "BSImagespaceShaderISMinify", RE::ImageSpaceManager::GetCurrentIndex(ISMinify) },
-				// { "BSImagespaceShaderISMinifyContrast", RE::ImageSpaceManager::GetCurrentIndex(ISMinifyContrast) },
+				{ "BSImagespaceShaderISMinify", RE::ImageSpaceManager::GetCurrentIndex(ISMinify) },
+				{ "BSImagespaceShaderISMinifyContrast", RE::ImageSpaceManager::GetCurrentIndex(ISMinifyContrast) },
 				// { "BSImagespaceShaderNoiseNormalmap", RE::ImageSpaceManager::GetCurrentIndex(ISNoiseNormalmap) },
 				// { "BSImagespaceShaderNoiseScrollAndBlend",
 				// 	RE::ImageSpaceManager::GetCurrentIndex(ISNoiseScrollAndBlend) },
-				// { "BSImagespaceShaderRadialBlur",
-				// 	RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlur) },
-				// { "BSImagespaceShaderRadialBlurHigh", RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlurHigh) },
-				// { "BSImagespaceShaderRadialBlurMedium", RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlurMedium) },
+				{ "BSImagespaceShaderRadialBlur", RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlur) },
+				{ "BSImagespaceShaderRadialBlurHigh", RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlurHigh) },
+				{ "BSImagespaceShaderRadialBlurMedium", RE::ImageSpaceManager::GetCurrentIndex(ISRadialBlurMedium) },
 				{ "BSImagespaceShaderRefraction", RE::ImageSpaceManager::GetCurrentIndex(ISRefraction) },
 				{ "BSImagespaceShaderISSAOCompositeSAO", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCompositeSAO) },
 				{ "BSImagespaceShaderISSAOCompositeFog", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCompositeFog) },
@@ -1808,7 +1850,6 @@ namespace SIE
 				{ "BSImagespaceShaderVolumetricLightingBlurHCS", RE::ImageSpaceManager::GetCurrentIndex(ISVolumetricLightingBlurHCS) },
 				{ "BSImagespaceShaderVolumetricLightingBlurVCS", RE::ImageSpaceManager::GetCurrentIndex(ISVolumetricLightingBlurVCS) },
 
-				{ "BSImagespaceShaderGraphicsTextureFilterMode", RE::ImageSpaceManager::GetCurrentIndex(ISGraphicsTextureFilterMode) },
 				{ "BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDownsampleHierarchicalDepthBufferCS) },
 				{ "BSImagespaceShaderISDiffScaleDownsampleDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDiffScaleDownsampleDepthBufferCS) },
 				{ "BSImagespaceShaderISTransformLvl7PreTest", RE::ImageSpaceManager::GetCurrentIndex(ISTransformLvl7PreTest) },
@@ -2384,8 +2425,9 @@ namespace SIE
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
 		try {
-			std::filesystem::remove_all(L"Data/ShaderCache");
-			logger::info("Deleted disk cache");
+			const auto& cacheRoot = ShaderStorage::GetRuntimeCacheRoot();
+			std::filesystem::remove_all(cacheRoot);
+			logger::info("Deleted disk cache for runtime identity at {}", cacheRoot.string());
 		} catch (std::filesystem::filesystem_error const& ex) {
 			logger::error("Failed to delete disk cache: {}", ex.what());
 		}
@@ -2393,10 +2435,46 @@ namespace SIE
 
 	void ShaderCache::ValidateDiskCache()
 	{
+		const auto& runtimeIdentity = ShaderStorage::GetRuntimeIdentity();
+		const auto infoPath = ShaderStorage::GetCacheInfoPath();
 		CSimpleIniA ini;
 		ini.SetUnicode();
-		ini.LoadFile(L"Data\\ShaderCache\\Info.ini");
+		ini.LoadFile(infoPath.c_str());
 		bool valid = true;
+
+		const auto schemaVersion = std::to_string(ShaderStorage::STORAGE_SCHEMA_VERSION);
+		if (auto cachedSchema = ini.GetValue("Cache", "StorageSchemaVersion")) {
+			if (schemaVersion != cachedSchema) {
+				logger::info("Disk cache outdated: storage schema changed (current: {}, cached: {})", schemaVersion, cachedSchema);
+				valid = false;
+			}
+		} else {
+			logger::info("Disk cache outdated: no storage schema found");
+			valid = false;
+		}
+
+		if (auto cachedRuntime = ini.GetValue("Cache", "RuntimeVersion")) {
+			if (runtimeIdentity.runtimeVersion != cachedRuntime) {
+				logger::info(
+					"Disk cache outdated: runtime changed (current: {}, cached: {})",
+					runtimeIdentity.runtimeVersion,
+					cachedRuntime);
+				valid = false;
+			}
+		} else {
+			logger::info("Disk cache outdated: no runtime version found");
+			valid = false;
+		}
+
+		if (auto cachedExecutableHash = ini.GetValue("Cache", "ExecutableSHA256")) {
+			if (runtimeIdentity.executableSHA256 != cachedExecutableHash) {
+				logger::info("Disk cache outdated: game executable identity changed");
+				valid = false;
+			}
+		} else {
+			logger::info("Disk cache outdated: no game executable identity found");
+			valid = false;
+		}
 
 		// Check plugin version
 		if (auto pluginVersion = ini.GetValue("Cache", "PluginVersion")) {
@@ -2417,20 +2495,45 @@ namespace SIE
 		}
 
 		if (valid) {
-			logger::info("Using disk cache");
+			logger::info("Using runtime-scoped disk cache at {}", ShaderStorage::GetRuntimeCacheRoot().string());
 		} else {
 			DeleteDiskCache();
+		}
+
+		const auto legacyInfoPath = std::filesystem::path(L"Data/ShaderCache/Info.ini");
+		if (std::filesystem::exists(legacyInfoPath)) {
+			logger::info("Ignoring legacy unscoped shader cache metadata at {}", legacyInfoPath.string());
 		}
 	}
 
 	void ShaderCache::WriteDiskCacheInfo()
 	{
+		const auto& runtimeIdentity = ShaderStorage::GetRuntimeIdentity();
+		const auto infoPath = ShaderStorage::GetCacheInfoPath();
+		std::error_code directoryError;
+		std::filesystem::create_directories(infoPath.parent_path(), directoryError);
+		if (directoryError) {
+			logger::error("Failed to create disk cache metadata directory {}: {}", infoPath.parent_path().string(), directoryError.message());
+			return;
+		}
+
 		CSimpleIniA ini;
 		ini.SetUnicode();
+		const auto schemaVersion = std::to_string(ShaderStorage::STORAGE_SCHEMA_VERSION);
+		ini.SetValue("Cache", "StorageSchemaVersion", schemaVersion.c_str());
+		ini.SetValue("Cache", "RuntimeVersion", runtimeIdentity.runtimeVersion.c_str());
+		ini.SetValue("Cache", "ExecutableSHA256", runtimeIdentity.executableSHA256.c_str());
 		ini.SetValue("Cache", "PluginVersion", Plugin::VERSION.string().c_str());
 		globals::state->WriteDiskCacheInfo(ini);
-		ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
-		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
+		if (ini.SaveFile(infoPath.c_str()) < 0) {
+			logger::error("Failed to save disk cache info to {}", infoPath.string());
+			return;
+		}
+		logger::info(
+			"Saved disk cache info (plugin version: {}, runtime: {}) to {}",
+			Plugin::VERSION.string(),
+			runtimeIdentity.runtimeVersion,
+			infoPath.string());
 	}
 
 	ShaderCache::ShaderCache()
@@ -2983,7 +3086,7 @@ namespace SIE
 		// still reads high briefly, which would otherwise underflow uint64_t (logs as ~2^64-1).
 		const uint64_t total = compilationSet.totalTasks.load(std::memory_order_relaxed);
 		const uint64_t done = compilationSet.completedTasks.load(std::memory_order_relaxed) +
-		                     compilationSet.failedTasks.load(std::memory_order_relaxed);
+		                      compilationSet.failedTasks.load(std::memory_order_relaxed);
 		// This task has already finished running, but Complete(task) has not yet updated the counters.
 		// Include the current task in the local progress snapshot so the logged remaining count is accurate.
 		const uint64_t doneIncludingCurrent = (done < total) ? (done + 1) : total;

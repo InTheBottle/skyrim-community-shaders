@@ -1,7 +1,11 @@
 #include "Hooks.h"
 
 #include "ShaderTools/BSShaderHooks.h"
+#include "ShaderTools/LegacyGraphicsCompatibility.h"
+#include "ShaderTools/LegacyShaderCompatibility.h"
+#include "ShaderTools/RuntimeShaderStorage.h"
 #include "Utils/ExternalEmittance.h"
+#include "Utils/VersionedRelocation.h"
 
 #include "Feature.h"
 #include "Globals.h"
@@ -13,60 +17,194 @@
 #include "Features/Effects11.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
-#include "Features/ScreenshotFeature.h"
 #include "Features/LightLimitFix.h"
+#include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 
-std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
+#include <nlohmann/json.hpp>
+
+#include <fstream>
+#include <unordered_map>
+
+namespace
+{
+	using ShaderBytecode = std::vector<std::uint8_t>;
+
+	std::unordered_map<void*, std::shared_ptr<const ShaderBytecode>> ShaderBytecodeMap;
+	std::mutex ShaderBytecodeMutex;
+	std::mutex ShaderDumpMutex;
+	std::unordered_map<std::string, std::string> ManifestedDumpLoaders;
+	bool ManifestWritesDisabled = false;
+
+	[[nodiscard]] bool DisableManifestWrites(const std::filesystem::path& a_dumpRoot, std::string_view a_reason)
+	{
+		ManifestWritesDisabled = true;
+		std::ofstream invalidMarker(a_dumpRoot / "manifest.invalid", std::ios::trunc);
+		invalidMarker << a_reason << '\n';
+		invalidMarker.flush();
+		invalidMarker.close();
+		return !invalidMarker.fail();
+	}
+}
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
 {
+	if (!Shader || !Bytecode || BytecodeLength == 0) {
+		logger::warn("Ignoring invalid shader bytecode capture (shader {}, bytecode {}, size {})", Shader, Bytecode, BytecodeLength);
+		return;
+	}
+
 	// Grab a copy since the pointer isn't going to be valid forever
-	auto codeCopy = std::make_unique<uint8_t[]>(BytecodeLength);
-	memcpy(codeCopy.get(), Bytecode, BytecodeLength);
+	auto codeCopy = std::make_shared<ShaderBytecode>(BytecodeLength);
+	memcpy(codeCopy->data(), Bytecode, BytecodeLength);
 	logger::debug(fmt::runtime("Saving shader at index {:x} with {} bytes:\t{:x}"), (std::uintptr_t)Shader, BytecodeLength, (std::uintptr_t)Bytecode);
-	ShaderBytecodeMap.emplace(Shader, std::make_pair(std::move(codeCopy), BytecodeLength));
+	std::scoped_lock lock(ShaderBytecodeMutex);
+	ShaderBytecodeMap.insert_or_assign(Shader, std::move(codeCopy));
 }
 
-const std::pair<std::unique_ptr<uint8_t[]>, size_t>& GetShaderBytecode(void* Shader)
+std::shared_ptr<const ShaderBytecode> GetShaderBytecode(void* Shader)
 {
 	logger::debug(fmt::runtime("Loading shader at index {:x}"), (std::uintptr_t)Shader);
-	return ShaderBytecodeMap.at(Shader);
+	std::scoped_lock lock(ShaderBytecodeMutex);
+	const auto entry = ShaderBytecodeMap.find(Shader);
+	return entry == ShaderBytecodeMap.end() ? nullptr : entry->second;
 }
 
 template <class ShaderType>
-void DumpShader(const REX::BSShader* thisClass, const ShaderType* shader, const std::pair<std::unique_ptr<uint8_t[]>, size_t>& bytecode)
+void DumpShader(const RE::BSShader* thisClass, const ShaderType* shader, std::span<const std::uint8_t> bytecode)
 {
 	static_assert(std::is_same_v<ShaderType, RE::BSGraphics::VertexShader> || std::is_same_v<ShaderType, RE::BSGraphics::PixelShader>);
 
-	uint8_t* dxbcData = new uint8_t[bytecode.second];
-	size_t dxbcLen = bytecode.second;
-	memcpy(dxbcData, bytecode.first.get(), bytecode.second);
-
 	constexpr auto shaderExtStr = std::is_same_v<ShaderType, RE::BSGraphics::VertexShader> ? "vs" : "ps";
 	constexpr auto shaderTypeStr = std::is_same_v<ShaderType, RE::BSGraphics::VertexShader> ? "vertex" : "pixel";
+	const std::string_view loaderType = thisClass->fxpFilename ? thisClass->fxpFilename : "Unknown";
+	const auto bytecodeHash = ShaderStorage::SHA256(bytecode);
+	if (!bytecodeHash) {
+		logger::error("Failed to hash {} shader {} with descriptor {:X}; dump skipped", shaderTypeStr, loaderType, shader->id);
+		return;
+	}
 
-	std::string dumpDir = std::format("Data\\ShaderDump\\{}\\{:X}.{}.bin", thisClass->m_LoaderType, shader->id, shaderExtStr);
-	auto directoryPath = std::format("Data\\ShaderDump\\{}", thisClass->m_LoaderType);
-	logger::debug(fmt::runtime("Dumping {} shader {} with id {:x} at {}"), shaderTypeStr, thisClass->m_LoaderType, shader->id, dumpDir);
+	const auto& runtimeIdentity = ShaderStorage::GetRuntimeIdentity();
+	const auto& dumpRoot = ShaderStorage::GetRuntimeDumpRoot();
+	const auto dumpPath = ShaderStorage::BuildDumpPath(
+		dumpRoot,
+		loaderType,
+		shader->id,
+		shaderExtStr,
+		*bytecodeHash);
+	if (!dumpPath) {
+		logger::error("Failed to identify {} shader loader {}; dump skipped", shaderTypeStr, loaderType);
+		return;
+	}
+	const auto manifestPath = dumpRoot / "manifest.jsonl";
 
-	if (!std::filesystem::is_directory(directoryPath)) {
-		try {
-			std::filesystem::create_directories(directoryPath);
-		} catch (std::filesystem::filesystem_error const& ex) {
-			logger::error("Failed to create folder: {}", ex.what());
+	std::scoped_lock lock(ShaderDumpMutex);
+	try {
+		std::filesystem::create_directories(dumpPath->parent_path());
+
+		const bool writeDump = !std::filesystem::exists(*dumpPath);
+		if (!writeDump) {
+			const auto existingHash = ShaderStorage::SHA256File(*dumpPath);
+			if (!existingHash || *existingHash != *bytecodeHash) {
+				const auto reason = std::format(
+					"Shader bytecode hash prefix collision at {}; expected full SHA-256 {}, existing SHA-256 {}",
+					dumpPath->string(),
+					*bytecodeHash,
+					existingHash.value_or("unavailable"));
+				const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
+				logger::critical(
+					"{}. The existing dump will not be overwritten and this session is invalid{}",
+					reason,
+					markerWritten ? "" : "; invalid marker creation also failed");
+				return;
+			}
 		}
-	}
 
-	if (FILE* file; fopen_s(&file, dumpDir.c_str(), "wb") == 0) {
-		fwrite(dxbcData, 1, dxbcLen, file);
-		fclose(file);
-	}
+		if (writeDump) {
+			std::ofstream stream(*dumpPath, std::ios::binary | std::ios::trunc);
+			stream.write(reinterpret_cast<const char*>(bytecode.data()), static_cast<std::streamsize>(bytecode.size()));
+			stream.close();
+			if (!stream || ShaderStorage::SHA256File(*dumpPath) != bytecodeHash) {
+				logger::error("Failed to write a verified shader dump to {}", dumpPath->string());
+				return;
+			}
+		}
 
-	delete[] dxbcData;
+		const auto relativePath = std::filesystem::relative(*dumpPath, dumpRoot).generic_string();
+		if (ManifestWritesDisabled) {
+			logger::error("Shader dump {} is unmanifested because this session manifest is invalid", dumpPath->string());
+			return;
+		}
+		if (const auto manifested = ManifestedDumpLoaders.find(relativePath); manifested != ManifestedDumpLoaders.end()) {
+			if (manifested->second != loaderType) {
+				const auto reason = std::format(
+					"Shader loader hash prefix collision at {}; loaders {} and {} resolve to the same path",
+					relativePath,
+					manifested->second,
+					loaderType);
+				const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
+				logger::critical(
+					"{}. This session is invalid{}",
+					reason,
+					markerWritten ? "" : "; invalid marker creation also failed");
+				return;
+			}
+		} else {
+			nlohmann::json record{
+				{ "schema_version", ShaderStorage::STORAGE_SCHEMA_VERSION },
+				{ "runtime_version", runtimeIdentity.runtimeVersion },
+				{ "executable_sha256", runtimeIdentity.executableSHA256 },
+				{ "dump_session", ShaderStorage::GetDumpSessionID() },
+				{ "source", "BSShader::LoadShaders" },
+				{ "loader", std::string(loaderType) },
+				{ "descriptor", shader->id },
+				{ "descriptor_hex", std::format("{:X}", shader->id) },
+				{ "stage", shaderExtStr },
+				{ "bytecode_sha256", *bytecodeHash },
+				{ "bytecode_size", bytecode.size() },
+				{ "path", relativePath }
+			};
+
+			const auto originalManifestSize = std::filesystem::exists(manifestPath) ? std::filesystem::file_size(manifestPath) : 0;
+			const auto serializedRecord = record.dump() + '\n';
+			std::ofstream manifest(manifestPath, std::ios::app | std::ios::binary);
+			manifest.write(serializedRecord.data(), static_cast<std::streamsize>(serializedRecord.size()));
+			manifest.flush();
+			manifest.close();
+			if (manifest.fail()) {
+				std::error_code rollbackError;
+				std::filesystem::resize_file(manifestPath, originalManifestSize, rollbackError);
+				if (rollbackError) {
+					const auto reason = std::format(
+						"Manifest append and rollback failed: {}",
+						rollbackError.message());
+					const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
+					logger::critical(
+						"Failed to append {} and rollback failed ({}); further manifest writes are disabled for this session{}",
+						manifestPath.string(),
+						rollbackError.message(),
+						markerWritten ? "" : "; invalid marker creation also failed");
+				} else {
+					logger::error("Failed to append shader dump manifest {}; append was rolled back", manifestPath.string());
+				}
+				return;
+			}
+			ManifestedDumpLoaders.emplace(relativePath, loaderType);
+		}
+
+		logger::debug(
+			"Dumped {} shader {} descriptor {:X}, SHA-256 {} to {}",
+			shaderTypeStr,
+			loaderType,
+			shader->id,
+			*bytecodeHash,
+			dumpPath->string());
+	} catch (const std::filesystem::filesystem_error& ex) {
+		logger::error("Failed to dump shader: {}", ex.what());
+	}
 }
 
 struct BSShader_LoadShaders
@@ -86,8 +224,11 @@ struct BSShader_LoadShaders
 
 			for (const auto& entry : shader->vertexShaders) {
 				if (entry->shader && shaderCache->IsDump()) {
-					const auto& bytecode = GetShaderBytecode(entry->shader);
-					DumpShader((REX::BSShader*)shader, entry, bytecode);
+					if (const auto bytecode = GetShaderBytecode(entry->shader)) {
+						DumpShader(shader, entry, std::span(*bytecode));
+					} else {
+						logger::warn("No captured bytecode for vertex shader {} descriptor {:X}", shader->fxpFilename, entry->id);
+					}
 				}
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
@@ -96,8 +237,11 @@ struct BSShader_LoadShaders
 			}
 			for (const auto& entry : shader->pixelShaders) {
 				if (entry->shader && shaderCache->IsDump()) {
-					const auto& bytecode = GetShaderBytecode(entry->shader);
-					DumpShader((REX::BSShader*)shader, entry, bytecode);
+					if (const auto bytecode = GetShaderBytecode(entry->shader)) {
+						DumpShader(shader, entry, std::span(*bytecode));
+					} else {
+						logger::warn("No captured bytecode for pixel shader {} descriptor {:X}", shader->fxpFilename, entry->id);
+					}
 				}
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
@@ -107,7 +251,7 @@ struct BSShader_LoadShaders
 				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
 			}
 		}
-		BSShaderHooks::hk_LoadShaders((REX::BSShader*)shader, stream);
+		BSShaderHooks::hk_LoadShaders(shader, stream);
 	};
 	static inline REL::Relocation<decltype(thunk)> func;
 };
@@ -218,6 +362,7 @@ namespace GrassExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			func(shader, pass, renderFlags);
+			LegacyShaderCompatibility::BindLegacyGrassPerGeometryToPixelShader();
 
 			auto state = globals::state;
 
@@ -412,7 +557,7 @@ struct ID3D11Device_CreateVertexShader
 		HRESULT hr = func(This, pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader);
 
 		if (SUCCEEDED(hr))
-			RegisterShaderBytecode(*ppVertexShader, pShaderBytecode, BytecodeLength);
+			RegisterShaderBytecode(ppVertexShader ? *ppVertexShader : nullptr, pShaderBytecode, BytecodeLength);
 
 		return hr;
 	}
@@ -426,7 +571,7 @@ struct ID3D11Device_CreatePixelShader
 		HRESULT hr = func(This, pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader);
 
 		if (SUCCEEDED(hr))
-			RegisterShaderBytecode(*ppPixelShader, pShaderBytecode, BytecodeLength);
+			RegisterShaderBytecode(ppPixelShader ? *ppPixelShader : nullptr, pShaderBytecode, BytecodeLength);
 
 		return hr;
 	}
@@ -487,8 +632,8 @@ struct BSInputDeviceManager_PollInputDevices
 
 			if (*a_events) {
 				if (auto device = (*a_events)->GetDevice()) {
-						// Block all devices except gamepad when menu is open
-						blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
+					// Block all devices except gamepad when menu is open
+					blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
 				}
 			}
 		}
@@ -929,7 +1074,7 @@ namespace Hooks
 			void* a6,
 			void* a7)
 		{
-			auto enableIBLF = (float*)(REL::RelocationID(513510, 391362).address());
+			auto* enableIBLF = reinterpret_cast<bool*>(REL::RelocationID(513510, 391362).address());
 			*enableIBLF = false;
 
 			func(a1, a2, a3, a4, a5, a6, a7);
@@ -995,6 +1140,9 @@ namespace Hooks
 		stl::detour_thunk<CSShadersSupport::BSImagespaceShader_DispatchComputeShader>(REL::RelocationID(100952, 107734));
 		stl::write_vfunc<0x1, WaterBlendHistory::BSImagespaceShader_Render>(RE::VTABLE_BSImagespaceShaderISWaterBlend[3]);
 
+		LegacyShaderCompatibility::InstallImageSpaceAdapters();
+		LegacyGraphicsCompatibility::Install();
+
 		logger::info("Hooking BSComputeShader");
 		stl::write_vfunc<0x02, CSShadersSupport::BSComputeShader_Dispatch>(RE::VTABLE_BSComputeShader[0]);
 
@@ -1014,7 +1162,7 @@ namespace Hooks
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);
 		stl::write_vfunc<0x6, SkyExtensions::BSSkyShader_SetupGeometry>(RE::VTABLE_BSSkyShader[0]);
-		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate(0x45B, 0x4F5));
+		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + Util::VersionedRelocation::Select(0x45B, 0x4F5, 0x4FD));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 
@@ -1045,7 +1193,7 @@ namespace Hooks
 			}
 		}
 
-		stl::write_thunk_call<BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights>(REL::RelocationID(100565, 107300).address() + REL::Relocate(0x523, 0xB0E));
+		stl::write_thunk_call<BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights>(REL::RelocationID(100565, 107300).address() + Util::VersionedRelocation::Select(0x523, 0xB0E, 0xB30));
 	}
 
 	void InstallEarlyHooks()
