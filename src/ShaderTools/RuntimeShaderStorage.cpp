@@ -301,7 +301,7 @@ namespace ShaderStorage
 			return std::nullopt;
 		}
 
-		std::array<std::uint8_t, 1024 * 1024> buffer{};
+		std::vector<std::uint8_t> buffer(1024 * 1024);
 		while (stream) {
 			stream.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
 			const auto bytesRead = stream.gcount();
