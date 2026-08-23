@@ -4,8 +4,6 @@
 
 -   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
 -   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
--   **[Skyrim 1.7.99 Port](./skyrim-1.7.99-port.md)** - Compatibility evidence and validation status
--   **[Skyrim 1.7.99 Shader Delta](./reference/skyrim-1.7.99/README.md)** - Complete compact shader-delta reference
 
 ## Quick Links
 
