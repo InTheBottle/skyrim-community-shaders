@@ -57,42 +57,6 @@ namespace LegacyGraphicsCompatibility
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct Renderer_Begin
-		{
-			static void thunk(RE::BSGraphics::Renderer* a_renderer, std::uint32_t a_windowID)
-			{
-				if (a_renderer) {
-					auto& rendererData = a_renderer->GetRuntimeData();
-					auto& window = rendererData.renderWindows[0];
-					if (!rendererData.requestedWindowSizeChange && window.hWnd && window.swapChain) {
-						REX::W32::BOOL fullscreen{};
-						REX::W32::RECT clientRect{};
-						REX::W32::DXGI_SWAP_CHAIN_DESC swapChainDescription{};
-						if (SUCCEEDED(window.swapChain->GetFullscreenState(std::addressof(fullscreen), nullptr)) &&
-							REX::W32::GetClientRect(window.hWnd, std::addressof(clientRect)) &&
-							SUCCEEDED(window.swapChain->GetDesc(std::addressof(swapChainDescription)))) {
-							const auto clientWidth = static_cast<std::uint32_t>(clientRect.x2) -
-							                         static_cast<std::uint32_t>(clientRect.x1);
-							const auto clientHeight = static_cast<std::uint32_t>(clientRect.y2) -
-							                          static_cast<std::uint32_t>(clientRect.y1);
-							const bool legacyWillReset = rendererData.fullScreen && !fullscreen &&
-							                             reinterpret_cast<REX::W32::HWND>(::GetForegroundWindow()) == window.hWnd;
-							const bool extentsDiffer = clientWidth != swapChainDescription.bufferDesc.width ||
-							                           clientHeight != swapChainDescription.bufferDesc.height;
-							if (extentsDiffer && !legacyWillReset) {
-								resetWindow(a_renderer, 0);
-							}
-						}
-					}
-				}
-
-				func(a_renderer, a_windowID);
-			}
-
-			static inline REL::Relocation<decltype(thunk)> func;
-			static inline REL::Relocation<void(RE::BSGraphics::Renderer*, std::uint32_t)> resetWindow;
-		};
-
 		class ScopedCameraProjectionScale
 		{
 		public:
@@ -497,39 +461,6 @@ namespace LegacyGraphicsCompatibility
 			logger::info("Installed legacy AlphaBlend bounds-to-extents adapter");
 		}
 
-		void InstallRendererWindowExtentAdapter()
-		{
-			const auto begin = REL::RelocationID(75460, 77245).address();
-			const auto resetWindow = REL::RelocationID(75454, 77239).address();
-			const bool beginVerified = REL::Module::IsSE() ?
-			                               REL::verify_code(
-											   begin,
-											   REL::make_pattern<
-												   "41 56 48 83 EC 60 4C 8B F1 4C 89 7C 24 50 48 8B 49 70 44 8B FA">()) :
-			                               REL::verify_code(
-											   begin,
-											   REL::make_pattern<
-												   "41 56 41 57 48 83 EC 58 4C 8B F1 44 8B FA 48 8B 49 70">());
-			const bool resetVerified = REL::Module::IsSE() ?
-			                               REL::verify_code(
-											   resetWindow,
-											   REL::make_pattern<
-												   "48 89 5C 24 18 57 48 81 EC C0 00 00 00 8B C2 48 8B F9 48 8D 1C 80 48 C1 E3 04 48 03 D9 48 83 7B 70 00">()) :
-			                               REL::verify_code(
-											   resetWindow,
-											   REL::make_pattern<
-												   "4C 8B DC 49 89 5B 20 57 48 81 EC C0 00 00 00 8B C2 48 8B F9 48 8D 1C 80 48 C1 E3 04 48 03 D9 48 83 7B 70 00">());
-			if (!beginVerified || !resetVerified) {
-				logger::error("Legacy Renderer::Begin/ResetWindow functions do not match the verified Steam 1.5.97/1.6.1170 binaries; window-extent adapter not installed");
-				return;
-			}
-
-			Renderer_Begin::func = begin;
-			Renderer_Begin::resetWindow = resetWindow;
-			stl::detour_thunk<Renderer_Begin>(begin);
-			logger::info("Installed legacy Renderer::Begin client/swap-chain extent adapter");
-		}
-
 		void InstallStateCameraProjectionAdapter()
 		{
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
@@ -691,7 +622,6 @@ namespace LegacyGraphicsCompatibility
 		}
 
 		InstallAlphaBlendExtentsAdapter();
-		InstallRendererWindowExtentAdapter();
 		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
 		InstallShadowSceneNodeInitialization();
