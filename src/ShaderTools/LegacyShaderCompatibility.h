@@ -14,8 +14,8 @@ namespace LegacyShaderCompatibility
 		ImageSpaceSelectorSource source;
 	};
 
-	/** Returns true when the executable already supplies the native 1.7 shader contract. */
-	[[nodiscard]] bool IsNativeLatestContract() noexcept;
+	/** Returns true on previous game versions. */
+	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
 	/**
 	 * Translates the legacy Utility shadow-filter encoding to Skyrim 1.7's

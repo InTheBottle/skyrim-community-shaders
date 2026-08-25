@@ -870,7 +870,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 	// legacy descriptor encoding at the runtime boundary so every executable
 	// compiles and caches the same Utility permutations.
 	if (a_shader.shaderType.get() == RE::BSShader::Type::Utility &&
-		!LegacyShaderCompatibility::IsNativeLatestContract()) {
+		LegacyShaderCompatibility::IsLegacyVersion()) {
 		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
 		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
 	}

@@ -26,7 +26,7 @@ namespace LegacyGraphicsCompatibility
 
 		[[nodiscard]] bool IsLegacyFlatRuntime() noexcept
 		{
-			return !REL::Module::IsVR() && !LegacyShaderCompatibility::IsNativeLatestContract();
+			return !REL::Module::IsVR() && LegacyShaderCompatibility::IsLegacyVersion();
 		}
 
 		[[nodiscard]] std::uintptr_t ReadRelativeCallTarget(std::uintptr_t a_callSite) noexcept

@@ -77,7 +77,7 @@ namespace LegacyShaderCompatibility
 		{
 			static void thunk(RE::ImageSpaceEffectDepthOfField* a_effect, RE::BSTriShape* a_shape, RE::ImageSpaceEffectParam* a_param)
 			{
-				if (IsNativeLatestContract() || !a_effect) {
+				if (!IsLegacyVersion() || !a_effect) {
 					func(a_effect, a_shape, a_param);
 					return;
 				}
@@ -97,7 +97,7 @@ namespace LegacyShaderCompatibility
 		{
 			static void thunk(void* a_imageSpaceShader, RE::BSTriShape* a_shape, RE::ImageSpaceEffectParam* a_param)
 			{
-				if (IsNativeLatestContract()) {
+				if (!IsLegacyVersion()) {
 					func(a_imageSpaceShader, a_shape, a_param);
 					return;
 				}
@@ -138,14 +138,14 @@ namespace LegacyShaderCompatibility
 		};
 	}
 
-	bool IsNativeLatestContract() noexcept
+	bool IsLegacyVersion() noexcept
 	{
-		return REL::Module::IsAE() && REL::Module::IsAtLeast(SKSE::RUNTIME_SSE_1_7_99);
+		return !REL::Module::IsAE() || !REL::Module::IsAtLeast(SKSE::RUNTIME_SSE_1_7_99);
 	}
 
 	void BindLegacyGrassPerGeometryToPixelShader()
 	{
-		if (IsNativeLatestContract()) {
+		if (!IsLegacyVersion()) {
 			return;
 		}
 
@@ -185,7 +185,7 @@ namespace LegacyShaderCompatibility
 
 	void InstallImageSpaceAdapters()
 	{
-		if (IsNativeLatestContract()) {
+		if (!IsLegacyVersion()) {
 			return;
 		}
 
