@@ -250,6 +250,19 @@ struct BSShader_LoadShaders
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
 				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
 			}
+
+			if (shaderCache->IsDiskCache() && shader->shaderType.get() == RE::BSShader::Type::Effect) {
+				// Supported runtimes do not enumerate an identical Effect shader table.
+				// Prewarm the minimal union on every runtime so the shared cache contains
+				// the same recipes and immutable objects regardless of launch order.
+				constexpr auto sharedRuntimeUnionDescriptor =
+					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MultBlend) |
+					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MotionVectorsNormals);
+				shaderCache->GetPixelShader(*shader, sharedRuntimeUnionDescriptor);
+				shaderCache->GetPixelShader(*shader,
+					sharedRuntimeUnionDescriptor |
+						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred));
+			}
 		}
 		BSShaderHooks::hk_LoadShaders(shader, stream);
 	};
