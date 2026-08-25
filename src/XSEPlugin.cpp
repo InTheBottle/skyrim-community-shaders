@@ -195,6 +195,10 @@ bool Load()
 		errors.push_back(errorMessage);
 	};
 
+	if (!LoadLibrary(L"Data/SKSE/Plugins/EngineFixes.dll")) {
+		pushMissingDllError(stl::utf16_to_utf8(L"Data/SKSE/Plugins/EngineFixes.dll").value_or("<unicode conversion error>"s));
+	}
+
 	// Empty RequiredDLLs array, if necessary we can add a dll here in the future without needing to modify the plugin loading logic.
 	const std::array<LPCWSTR, 0> requiredDLLs{};
 
