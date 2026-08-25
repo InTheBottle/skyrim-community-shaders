@@ -2,6 +2,6 @@
 
 namespace LegacyGraphicsCompatibility
 {
-	/** Installs binary-proven Skyrim 1.7 graphics behavior on flat legacy runtimes. */
+	/** Installs Skyrim 1.7 changes on previous game versions */
 	void Install();
 }
