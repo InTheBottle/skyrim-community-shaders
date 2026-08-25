@@ -48,8 +48,6 @@ namespace LegacyGraphicsCompatibility
 				std::int32_t a_right,
 				std::int32_t a_bottom)
 			{
-				// Skyrim 1.7 corrected this call from { left, top, right, bottom }
-				// to the viewport helper's { x, y, width, height } contract.
 				const auto width = std::bit_cast<std::int32_t>(
 					static_cast<std::uint32_t>(a_right) - static_cast<std::uint32_t>(a_left));
 				const auto height = std::bit_cast<std::int32_t>(
@@ -199,9 +197,6 @@ namespace LegacyGraphicsCompatibility
 
 			[[nodiscard]] bool Apply(std::span<const RequestedFlag> a_requested) noexcept
 			{
-				// The 1.7 function assigns immediately before each child call.  Legacy
-				// can assign once around the synchronous chain only when aliased slots
-				// do not request conflicting values.
 				for (std::size_t i = 0; i < a_requested.size(); ++i) {
 					if (!a_requested[i].first) {
 						continue;
@@ -346,7 +341,6 @@ namespace LegacyGraphicsCompatibility
 
 				auto* shaderParam = static_cast<RE::ImageSpaceShaderParam*>(a_effect->effectParams[8]);
 				if (shaderParam->pixelConstantGroup && shaderParam->pixelConstantGroupSize > 0) {
-					// Skyrim 1.7 changed the slot-8 shader's c0.x selector from 0 to 1.
 					shaderParam->pixelConstantGroup[0] = 1.0F;
 				}
 				return result;
@@ -368,8 +362,6 @@ namespace LegacyGraphicsCompatibility
 			{
 				auto* result = func(a_this, a_arg2, a_arg3, a_arg4, a_arg5, a_arg6, a_arg7);
 				if (result) {
-					// Skyrim 1.7 added three durable zero stores.  The following
-					// lighting/camera tail begins at 0x2E8 and is initialized normally.
 					std::memset(reinterpret_cast<std::byte*>(result) + 0x2CC, 0, 0x18);
 				}
 				return result;

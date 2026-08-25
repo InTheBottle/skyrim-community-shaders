@@ -14,14 +14,8 @@ namespace LegacyGraphicsCompatibility
 		ImageSpaceSelectorSource source;
 	};
 
-	/** Returns true on previous game versions. */
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
-	/**
-	 * Translates the legacy Utility shadow-filter encoding to Skyrim 1.7's
-	 * one-hot selector. Bit 20 remains the legacy grayscale flag outside the
-	 * shadow-mask family, but is selector bit 3 for 1.7 shadow masks.
-	 */
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept
 	{
 		constexpr std::uint32_t shadowMaskTechniques = 0x01E00000;
@@ -46,14 +40,8 @@ namespace LegacyGraphicsCompatibility
 				  ((1u << 21) | (4u << 17)));
 	static_assert(NormalizeLegacyUtilityDescriptor(1u << 20) == (1u << 20));
 
-	/** Binds the legacy Grass VS PerGeometry block as the shared 1.7 PS contract. */
 	void BindLegacyGrassPerGeometryToPixelShader();
 
-	/**
-	 * Returns the legacy-only dynamic-sampling selector required by a shared 1.7
-	 * image-space shader. This is a pure contract lookup and does not inspect the
-	 * running executable.
-	 */
 	[[nodiscard]] constexpr std::optional<ImageSpaceSelectorTranslation> GetLegacyImageSpaceSelectorTranslation(
 		RE::ImageSpaceManager::ImageSpaceEffectEnum a_effect) noexcept
 	{
@@ -61,8 +49,6 @@ namespace LegacyGraphicsCompatibility
 
 		switch (a_effect) {
 		case ISDoubleVision:
-			// blurParams.x (b2:c0.x). ImageSpaceEffectGetHit::UpdateParams
-			// writes 1.0 in 1.7; the legacy writer left this lane at zero.
 			return ImageSpaceSelectorTranslation{ 0, ImageSpaceSelectorSource::kAlwaysAdjusted };
 		case ISDepthOfField:
 		case ISDepthOfFieldFogged:
@@ -70,13 +56,10 @@ namespace LegacyGraphicsCompatibility
 		case ISDistantBlur:
 		case ISDistantBlurFogged:
 		case ISDistantBlurMaskedFogged:
-			// invScreenRes.z (b2:c0.z). The 1.7 CPU writer converts the
-			// active ImageSpaceEffect::unk88 flag to 0.0/1.0.
 			return ImageSpaceSelectorTranslation{ 2, ImageSpaceSelectorSource::kImageSpaceEffectUnk88 };
 		case ISRadialBlur:
 		case ISRadialBlurMedium:
 		case ISRadialBlurHigh:
-			// Center.w (b2:c1.w), from the same 1.7 effect flag.
 			return ImageSpaceSelectorTranslation{ 7, ImageSpaceSelectorSource::kImageSpaceEffectUnk88 };
 		default:
 			return std::nullopt;
@@ -93,10 +76,6 @@ namespace LegacyGraphicsCompatibility
 		return 0.0F;
 	}
 
-	/**
-	 * Applies the pure legacy translation to a reflected pixel constant group.
-	 * The caller owns runtime gating and restoration of the prior value.
-	 */
 	[[nodiscard]] constexpr bool TranslateLegacyImageSpaceConstants(
 		RE::ImageSpaceManager::ImageSpaceEffectEnum a_effect,
 		bool a_imageSpaceEffectUnk88,
@@ -112,6 +91,5 @@ namespace LegacyGraphicsCompatibility
 		return true;
 	}
 
-	/** Installs Skyrim 1.7 changes on previous game versions */
 	void Install();
 }

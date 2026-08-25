@@ -87,9 +87,6 @@ namespace LegacyGraphicsCompatibility
 					return;
 				}
 
-				// Legacy DepthOfField::Render does not copy the parent selector to all
-				// six DOF/Distant children. Carry it across the synchronous child calls
-				// without changing persistent child state, and restore nested contexts.
 				const ScopedDepthOfFieldSelectorContext selectorContext(a_effect->unk88);
 				func(a_effect, a_shape, a_param);
 			}
@@ -129,8 +126,6 @@ namespace LegacyGraphicsCompatibility
 
 				bool imageSpaceEffectUnk88 = static_cast<RE::ImageSpaceEffect*>(a_imageSpaceShader)->unk88;
 				if constexpr (usesDepthOfFieldParentSelector<EffectType>) {
-					// The parent wrapper is authoritative during a DOF render. Keep the
-					// child value as a safe fallback for out-of-band child draws.
 					if (depthOfFieldSelectorContext) {
 						imageSpaceEffectUnk88 = *depthOfFieldSelectorContext;
 					}
