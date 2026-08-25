@@ -145,10 +145,6 @@ namespace LegacyShaderCompatibility
 
 	void BindLegacyGrassPerGeometryToPixelShader()
 	{
-		// Skyrim 1.7 supplies the same 22-register grass PerGeometry block to
-		// both shader stages. Legacy runtimes already fill and bind that exact
-		// block for the vertex stage, so share it with the pixel stage as well.
-		// This keeps 1.7 untouched and avoids runtime-specific staging globals.
 		if (IsNativeLatestContract()) {
 			return;
 		}
