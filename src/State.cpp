@@ -25,7 +25,6 @@
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "ShaderCache.h"
-#include "ShaderTools/LegacyShaderCompatibility.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
 #include "Utils/SphericalHarmonics.h"
@@ -866,11 +865,6 @@ void State::SetupResources()
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
 {
 	auto deferred = globals::deferred;
-	if (a_shader.shaderType.get() == RE::BSShader::Type::Utility &&
-		LegacyShaderCompatibility::IsLegacyVersion()) {
-		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
-		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
-	}
 
 	if (a_shader.shaderType.get() != RE::BSShader::Type::Utility && a_shader.shaderType.get() != RE::BSShader::Type::ImageSpace) {
 		switch (a_shader.shaderType.get()) {
@@ -1203,4 +1197,5 @@ bool State::HasDirectionalShadows() const
 {
 	return !Util::IsInterior() || globals::features::interiorSun.IsActiveInteriorSun();
 }
+
 

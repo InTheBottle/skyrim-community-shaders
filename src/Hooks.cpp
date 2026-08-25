@@ -39,6 +39,16 @@ namespace
 	std::unordered_map<std::string, std::string> ManifestedDumpLoaders;
 	bool ManifestWritesDisabled = false;
 
+	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
+	{
+		if (a_shader.shaderType.get() != RE::BSShader::Type::Utility ||
+			!LegacyShaderCompatibility::IsLegacyVersion()) {
+			return;
+		}
+		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
+		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
+	}
+
 	[[nodiscard]] bool DisableManifestWrites(const std::filesystem::path& a_dumpRoot, std::string_view a_reason)
 	{
 		ManifestWritesDisabled = true;
@@ -232,6 +242,7 @@ struct BSShader_LoadShaders
 				}
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
+				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				shaderCache->GetVertexShader(*shader, vertexShaderDesriptor);
 			}
@@ -245,6 +256,7 @@ struct BSShader_LoadShaders
 				}
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
+				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
@@ -283,6 +295,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	state->modifiedVertexDescriptor = vertexDescriptor;
 	state->modifiedPixelDescriptor = pixelDescriptor;
 
+	NormalizeLegacyUtilityDescriptors(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 
 	// Only check against non-shader bits
