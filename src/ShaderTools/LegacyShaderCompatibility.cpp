@@ -185,9 +185,6 @@ namespace LegacyShaderCompatibility
 
 	void InstallImageSpaceAdapters()
 	{
-		// The native executable already owns the shared shader contract. Avoid
-		// mutating its image-space vtables at all; the thunk guard remains as a
-		// defensive check in case this install contract changes later.
 		if (IsNativeLatestContract()) {
 			return;
 		}
