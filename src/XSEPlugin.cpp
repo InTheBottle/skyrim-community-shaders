@@ -126,6 +126,10 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 					break;
 				}
 
+				if (shaderCache->IsDiskCache()) {
+					shaderCache->WriteDiskCacheInfo();
+				}
+
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
 			}
 
@@ -174,7 +178,7 @@ bool Load()
 		L"Data/SKSE/Plugins/NVIDIA_Reflex.dll",
 		L"Data/SKSE/Plugins/MARA.dll",
 		L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll",
-		L"Data/SKSE/Plugins/DynamicWetness.dll"
+	    L"Data/SKSE/Plugins/DynamicWetness.dll"
 	};
 
 	for (const auto dll : incompatibleDLLs) {

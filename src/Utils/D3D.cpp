@@ -159,16 +159,14 @@ namespace Util
 			}
 		}
 
-		const bool developerMode = globals::state->IsDeveloperMode();
-		if (developerMode) {
+		if (globals::state->IsDeveloperMode()) {
 			macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
 			macros.push_back({ "D3DCOMPILE_DEBUG", "" });
 		}
 		auto shaderDefines = globals::state->GetDefines();
-		if (!shaderDefines.empty()) {
-			for (const auto& [name, definition] : shaderDefines) {
-				macros.push_back({ name.c_str(), definition.c_str() });
-			}
+		if (!shaderDefines->empty()) {
+			for (unsigned int i = 0; i < shaderDefines->size(); i++)
+				macros.push_back({ shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() });
 		}
 		if (!_stricmp(ProgramType, "ps_5_0"))
 			macros.push_back({ "PSHADER", "" });
@@ -193,7 +191,7 @@ namespace Util
 		macros.push_back({ nullptr, nullptr });
 
 		// Compiler setup
-		uint32_t flags = !developerMode ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
+		uint32_t flags = !globals::state->IsDeveloperMode() ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
 		if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed))
 			flags |= D3DCOMPILE_PARTIAL_PRECISION;
 		if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed))
@@ -204,15 +202,15 @@ namespace Util
 		if (globals::shaderCache->IsDiskCache())
 			flags |= D3DCOMPILE_SKIP_VALIDATION;
 
-		winrt::com_ptr<ID3DBlob> shaderBlob;
-		winrt::com_ptr<ID3DBlob> shaderErrors;
+		ID3DBlob* shaderBlob;
+		ID3DBlob* shaderErrors;
 
 		if (!std::filesystem::exists(FilePath)) {
 			logger::error("Failed to compile shader; {} does not exist", str);
 			return nullptr;
 		}
 		logger::debug("Compiling {} with {}", str, DefinesToString(macros));
-		if (FAILED(D3DCompileFromFile(FilePath, macros.data(), &include, Program, ProgramType, flags, 0, shaderBlob.put(), shaderErrors.put()))) {
+		if (FAILED(D3DCompileFromFile(FilePath, macros.data(), &include, Program, ProgramType, flags, 0, &shaderBlob, &shaderErrors))) {
 			logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? static_cast<char*>(shaderErrors->GetBufferPointer()) : "Unknown error");
 			return nullptr;
 		}

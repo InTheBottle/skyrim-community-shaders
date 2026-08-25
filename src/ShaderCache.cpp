@@ -1,8 +1,7 @@
 #include "ShaderCache.h"
 #include "Globals.h"
 #include "ShaderFileWatcher.h"
-#include "ShaderTools/RuntimeShaderStorage.h"
-#include "ShaderTools/ShaderDiskCache.h"
+#include "ShaderTools/LegacyShaderCompatibility.h"
 #include "Util.h"
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -15,6 +14,8 @@
 #include "State.h"
 
 #include "Features/DynamicCubemaps.h"
+
+#include "Plugin.h"
 
 namespace SIE
 {
@@ -78,33 +79,7 @@ namespace SIE
 
 	namespace SShaderCache
 	{
-		class CheckedShaderMacros
-		{
-		public:
-			CheckedShaderMacros(std::span<D3D_SHADER_MACRO> a_storage, bool& a_overflow) :
-				storage(a_storage), overflow(std::addressof(a_overflow)) {}
-
-			D3D_SHADER_MACRO& operator[](std::size_t a_index) noexcept
-			{
-				if (a_index >= storage.size()) {
-					*overflow = true;
-					return overflowSink;
-				}
-				return storage[a_index];
-			}
-
-			[[nodiscard]] D3D_SHADER_MACRO* data() const noexcept { return storage.data(); }
-			[[nodiscard]] std::size_t size() const noexcept { return storage.size(); }
-			[[nodiscard]] auto begin() const noexcept { return storage.begin(); }
-			[[nodiscard]] auto end() const noexcept { return storage.end(); }
-
-		private:
-			std::span<D3D_SHADER_MACRO> storage;
-			bool* overflow;
-			D3D_SHADER_MACRO overflowSink{};
-		};
-
-		static void GetShaderDefines(const RE::BSShader&, uint32_t, CheckedShaderMacros);
+		static void GetShaderDefines(const RE::BSShader&, uint32_t, D3D_SHADER_MACRO*);
 		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false);
 		/**
 		 * @brief Resolve image-space shader descriptor when applicable.
@@ -159,7 +134,7 @@ namespace SIE
 			return 0x3F & (descriptor >> 24);
 		}
 
-		static void GetLightingShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			static REL::Relocation<void(uint32_t, D3D_SHADER_MACRO*)> VanillaGetLightingShaderDefines(RELOCATION_ID(101631, 108698));
 			VanillaGetLightingShaderDefines(descriptor, defines.data());
@@ -185,7 +160,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetBloodSplaterShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetBloodSplaterShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			size_t lastIndex = 0;
 			if (descriptor == static_cast<uint32_t>(ShaderCache::BloodSplatterShaderTechniques::Splatter)) {
@@ -203,7 +178,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetDistantTreeShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetDistantTreeShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			const auto technique = descriptor & 1;
 			size_t lastIndex = 0;
@@ -227,7 +202,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetSkyShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetSkyShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			using enum ShaderCache::SkyShaderTechniques;
 
@@ -303,7 +278,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetGrassShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetGrassShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			const auto technique = descriptor & 0b1111;
 			size_t lastIndex = 0;
@@ -324,7 +299,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetParticleShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetParticleShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			using enum ShaderCache::ParticleShaderTechniques;
 
@@ -370,7 +345,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetEffectShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetEffectShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			size_t lastIndex = 0;
 
@@ -466,7 +441,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetWaterShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetWaterShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			size_t lastIndex = 0;
 			defines[lastIndex++] = { "WATER", nullptr };
@@ -531,7 +506,7 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetUtilityShaderDefines(uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetUtilityShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			using enum ShaderCache::UtilityShaderFlags;
 
@@ -617,9 +592,6 @@ namespace SIE
 				}
 			}
 
-			// Skyrim 1.7 reuses bit 20 as part of the one-hot shadow-filter selector for
-			// shadow-mask techniques. Legacy descriptors are normalized before they
-			// reach the compiler, so macro generation is runtime-independent.
 			if ((descriptor & static_cast<uint32_t>(GrayscaleMask)) &&
 				!hasShadowMask) {
 				defines[lastIndex++] = { "GRAYSCALE_MASK", nullptr };
@@ -650,8 +622,6 @@ namespace SIE
 			}
 
 			if (hasShadowMask) {
-				// The shared shader contract is Skyrim 1.7's native one-hot selector:
-				// 2 is fixed 3x3 and 4/8 are the two PCF aliases.
 				auto shaderFilter = (descriptor >> 17) & 0xFu;
 				switch (shaderFilter) {
 				case 0:
@@ -698,7 +668,7 @@ namespace SIE
 			defines[lastIndex++] = { nullptr, nullptr };
 		}
 
-		static void GetImagespaceShaderDefines(const RE::BSShader& shader, CheckedShaderMacros defines)
+		static void GetImagespaceShaderDefines(const RE::BSShader& shader, std::span<D3D_SHADER_MACRO> defines)
 		{
 			auto& isShader = const_cast<RE::BSImagespaceShader&>(static_cast<const RE::BSImagespaceShader&>(shader));
 			auto* macros = reinterpret_cast<RE::BSImagespaceShader::ShaderMacro*>(defines.data());
@@ -720,7 +690,7 @@ namespace SIE
 			return;
 		}
 
-		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, CheckedShaderMacros defines)
+		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			switch (shader.shaderType.get()) {
 			case RE::BSShader::Type::Grass:
@@ -1153,65 +1123,29 @@ namespace SIE
 			return -1;
 		}
 
-		static std::string MergeDefinesString(std::span<const D3D_SHADER_MACRO> a_defines, bool a_sort = false)
+		static std::string MergeDefinesString(std::array<D3D_SHADER_MACRO, 64>& defines, bool a_sort = false)
 		{
-			std::vector<std::pair<std::string_view, std::string_view>> defines;
-			for (const auto& define : a_defines) {
-				if (!define.Name) {
+			std::string result;
+			if (a_sort)
+				std::sort(std::begin(defines), std::end(defines), [](const D3D_SHADER_MACRO& a, const D3D_SHADER_MACRO& b) {
+					return a.Name > b.Name;
+				});
+			for (const auto& def : defines) {
+				if (def.Name != nullptr) {
+					result += def.Name;
+					if (def.Definition != nullptr && !std::string_view(def.Definition).empty()) {
+						result += "=";
+						result += def.Definition;
+					}
+					result += ' ';
+				} else {
+					if (a_sort)  // sometimes the sort messes up so null entries get interspersed
+						continue;
 					break;
 				}
-				defines.emplace_back(define.Name, define.Definition ? define.Definition : "");
-			}
-
-			std::string result;
-			if (a_sort) {
-				std::ranges::sort(defines, std::greater{});
-			}
-			for (const auto& [name, definition] : defines) {
-				result += name;
-				if (!definition.empty()) {
-					result += "=";
-					result += definition;
-				}
-				result += ' ';
 			}
 			return result;
 		}
-
-		struct OwnedShaderDefines
-		{
-			struct Entry
-			{
-				std::string name;
-				std::string definition;
-				bool hasDefinition = false;
-			};
-
-			std::vector<Entry> entries;
-			std::vector<D3D_SHADER_MACRO> macros;
-
-			OwnedShaderDefines(const OwnedShaderDefines&) = delete;
-			OwnedShaderDefines& operator=(const OwnedShaderDefines&) = delete;
-			OwnedShaderDefines(OwnedShaderDefines&&) noexcept = default;
-			OwnedShaderDefines& operator=(OwnedShaderDefines&&) noexcept = default;
-
-			explicit OwnedShaderDefines(std::span<const D3D_SHADER_MACRO> a_defines)
-			{
-				for (const auto& define : a_defines) {
-					if (!define.Name) {
-						break;
-					}
-					entries.push_back({ define.Name, define.Definition ? define.Definition : "", define.Definition != nullptr });
-				}
-				macros.reserve(entries.size() + 1);
-				for (const auto& entry : entries) {
-					macros.push_back({ entry.name.c_str(), entry.hasDefinition ? entry.definition.c_str() : nullptr });
-				}
-				macros.push_back({ nullptr, nullptr });
-			}
-
-			[[nodiscard]] std::span<const D3D_SHADER_MACRO> Get() const { return macros; }
-		};
 
 		static void AddAttribute(uint64_t& desc, RE::BSGraphics::Vertex::Attribute attribute)
 		{
@@ -1380,200 +1314,34 @@ namespace SIE
 			mapBufferConsts("PerGeometry", bufferSizes[2]);
 		}
 
-		static std::optional<OwnedShaderDefines> GetEffectiveShaderDefines(
-			ShaderClass a_shaderClass,
-			const RE::BSShader& a_shader,
-			std::uint32_t a_descriptor,
-			bool a_developerMode)
+		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
 		{
-			// Shader-specific generators have a small, fixed native catalog. Keep a
-			// generous reserved tail while bounding the user-controlled prefix so no
-			// malformed setting can overrun a fixed macro array.
-			constexpr std::size_t kMacroCapacity = 1024;
-			constexpr std::size_t kGeneratorReserve = 256;
-			std::vector<D3D_SHADER_MACRO> rawDefines(kMacroCapacity);
-			std::size_t lastIndex = 0;
-			if (a_shaderClass == ShaderClass::Vertex) {
-				rawDefines[lastIndex++] = { "VSHADER", nullptr };
-			} else if (a_shaderClass == ShaderClass::Pixel) {
-				rawDefines[lastIndex++] = { "PSHADER", nullptr };
-			} else if (a_shaderClass == ShaderClass::Compute) {
-				rawDefines[lastIndex++] = { "CSHADER", nullptr };
-			}
+			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
+			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
-			if (a_developerMode) {
-				rawDefines[lastIndex++] = { "D3DCOMPILE_SKIP_OPTIMIZATION", nullptr };
-				rawDefines[lastIndex++] = { "D3DCOMPILE_DEBUG", nullptr };
-			}
-
-			const auto userDefines = globals::state->GetDefines();
-			if (userDefines.size() > kMacroCapacity - kGeneratorReserve - lastIndex - 1) {
-				logger::error("Too many custom shader defines ({}); maximum supported is {}",
-					userDefines.size(), kMacroCapacity - kGeneratorReserve - lastIndex - 1);
-				return std::nullopt;
-			}
-			for (const auto& [name, definition] : userDefines) {
-				rawDefines[lastIndex++] = { name.c_str(), definition.c_str() };
-			}
-			rawDefines[lastIndex] = { nullptr, nullptr };
-			bool macroOverflow = false;
-			GetShaderDefines(a_shader, a_descriptor,
-				CheckedShaderMacros{ std::span{ rawDefines }.subspan(lastIndex), macroOverflow });
-			if (macroOverflow) {
-				logger::error("Shader macro generation exceeded the supported capacity of {}", kMacroCapacity - 1);
-				return std::nullopt;
-			}
-
-			const auto terminator = std::ranges::find_if(rawDefines, [](const D3D_SHADER_MACRO& a_macro) {
-				return a_macro.Name == nullptr;
-			});
-			if (terminator == rawDefines.end()) {
-				logger::error("Shader macro generation exceeded the supported capacity of {}", kMacroCapacity - 1);
-				return std::nullopt;
-			}
-			return OwnedShaderDefines(std::span(rawDefines.begin(), std::next(terminator)));
-		}
-
-		static std::uint32_t GetShaderCompileFlags(bool a_developerMode)
-		{
-			std::uint32_t flags = !a_developerMode ?
-			                          (D3DCOMPILE_ENABLE_STRICTNESS |
-										  D3DCOMPILE_OPTIMIZATION_LEVEL3 |
-										  D3DCOMPILE_SKIP_VALIDATION) :
-			                          D3DCOMPILE_DEBUG;
-			if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed)) {
-				flags |= D3DCOMPILE_PARTIAL_PRECISION;
-			}
-			if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed)) {
-				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
-			}
-			return flags;
-		}
-
-		static const std::optional<std::string>& GetD3DCompilerSHA256()
-		{
-			static const auto identity = []() -> std::optional<std::string> {
-				const auto module = ::GetModuleHandleW(L"d3dcompiler_47.dll");
-				if (!module) {
-					logger::error("Cannot identify d3dcompiler_47.dll; persistent shader cache is unavailable");
-					return std::nullopt;
-				}
-
-				std::wstring modulePath(32768, L'\0');
-				const auto length = ::GetModuleFileNameW(module, modulePath.data(), static_cast<DWORD>(modulePath.size()));
-				if (length == 0 || length >= modulePath.size()) {
-					logger::error("Cannot resolve d3dcompiler_47.dll path; persistent shader cache is unavailable");
-					return std::nullopt;
-				}
-				modulePath.resize(length);
-				const auto hash = ShaderStorage::SHA256File(modulePath);
-				if (!hash) {
-					logger::error("Cannot hash d3dcompiler_47.dll; persistent shader cache is unavailable");
-				}
-				return hash;
-			}();
-			return identity;
-		}
-
-		static std::string CanonicalizeShaderSourceName(std::string a_sourceName)
-		{
-			std::ranges::transform(a_sourceName, a_sourceName.begin(), [](unsigned char a_character) {
-				return a_character == '\\' ? '/' : static_cast<char>(std::tolower(a_character));
-			});
-			return a_sourceName;
-		}
-
-		static std::optional<std::string> BuildCacheRecipeID(
-			std::span<const std::uint8_t> a_preprocessedSource,
-			std::string_view a_sourceName,
-			std::string_view a_profile,
-			std::uint32_t a_flags,
-			std::uint32_t a_stripFlags)
-		{
-			const auto sourceHash = ShaderStorage::SHA256(a_preprocessedSource);
-			const auto& compilerHash = GetD3DCompilerSHA256();
-			if (!sourceHash || !compilerHash) {
-				return std::nullopt;
-			}
-
-			const auto recipe = std::format(
-				"community-shaders-recipe-v3\n"
-				"preprocessed-sha256={}\n"
-				"source={}\n"
-				"entry=main\n"
-				"profile={}\n"
-				"flags1={:08x}\n"
-				"flags2=00000000\n"
-				"strip-flags={:08x}\n"
-				"compiler-sha256={}\n",
-				*sourceHash,
-				a_sourceName,
-				a_profile,
-				a_flags,
-				a_stripFlags,
-				*compilerHash);
-			return ShaderStorage::SHA256(std::span(
-				reinterpret_cast<const std::uint8_t*>(recipe.data()), recipe.size()));
-		}
-
-		static bool IsExpectedShaderBytecode(ID3DBlob& a_blob, ShaderClass a_shaderClass)
-		{
-			winrt::com_ptr<ID3D11ShaderReflection> reflector;
-			if (FAILED(D3DReflect(a_blob.GetBufferPointer(), a_blob.GetBufferSize(), IID_PPV_ARGS(&reflector)))) {
-				return false;
-			}
-
-			D3D11_SHADER_DESC description{};
-			if (FAILED(reflector->GetDesc(&description)) ||
-				D3D11_SHVER_GET_MAJOR(description.Version) != 5 ||
-				D3D11_SHVER_GET_MINOR(description.Version) != 0) {
-				return false;
-			}
-
-			const auto type = D3D11_SHVER_GET_TYPE(description.Version);
-			switch (a_shaderClass) {
-			case ShaderClass::Vertex:
-				return type == D3D11_SHVER_VERTEX_SHADER;
+			const auto wname = std::wstring(name.begin(), name.end());
+			switch (shaderClass) {
 			case ShaderClass::Pixel:
-				return type == D3D11_SHVER_PIXEL_SHADER;
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.pso", wname, descriptor, suffix);
+			case ShaderClass::Vertex:
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
 			case ShaderClass::Compute:
-				return type == D3D11_SHVER_COMPUTE_SHADER;
-			default:
-				return false;
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
 			}
-		}
-
-		static std::string GetSourceShaderFile(const RE::BSShader& a_shader)
-		{
-			return a_shader.shaderType == RE::BSShader::Type::ImageSpace ?
-			           static_cast<const RE::BSImagespaceShader&>(a_shader).originalShaderName :
-			           a_shader.fxpFilename;
-		}
-
-		static std::string BuildShaderString(
-			ShaderClass a_shaderClass,
-			const RE::BSShader& a_shader,
-			std::uint32_t a_descriptor,
-			bool a_hashKey,
-			std::span<const D3D_SHADER_MACRO> a_defines,
-			std::uint32_t a_flags)
-		{
-			const auto sourceShaderFile = GetSourceShaderFile(a_shader);
-			if (a_hashKey) {
-				return fmt::format("{}:{}:{}:{:08X}", sourceShaderFile, magic_enum::enum_name(a_shaderClass), MergeDefinesString(a_defines), a_flags);
-			}
-			return fmt::format("{}:{}:{:X}:{}:{:08X}", sourceShaderFile, magic_enum::enum_name(a_shaderClass), a_descriptor, MergeDefinesString(a_defines), a_flags);
+			return {};
 		}
 
 		static std::string GetShaderString(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool hashkey)
 		{
-			const bool developerMode = globals::state->IsDeveloperMode();
-			const auto defines = GetEffectiveShaderDefines(shaderClass, shader, descriptor, developerMode);
-			if (!defines) {
-				return fmt::format("INVALID_SHADER_DEFINES:{}:{}:{:X}",
-					magic_enum::enum_name(shader.shaderType.get()), magic_enum::enum_name(shaderClass), descriptor);
-			}
-			return BuildShaderString(shaderClass, shader, descriptor, hashkey, defines->Get(), GetShaderCompileFlags(developerMode));
+			auto sourceShaderFile = shader.fxpFilename;
+			std::array<D3D_SHADER_MACRO, 64> defines{};
+			SIE::SShaderCache::GetShaderDefines(shader, descriptor, std::span{ defines });
+			std::string result;
+			if (hashkey)  // generate hashkey so don't include descriptor
+				result = fmt::format("{}:{}:{}", sourceShaderFile, magic_enum::enum_name(shaderClass), SIE::SShaderCache::MergeDefinesString(defines, true));
+			else
+				result = fmt::format("{}:{}:{:X}:{}", sourceShaderFile, magic_enum::enum_name(shaderClass), descriptor, SIE::SShaderCache::MergeDefinesString(defines, true));
+			return result;
 		}
 
 		std::string GetTypeFromShaderString(const std::string& a_key)
@@ -1594,181 +1362,157 @@ namespace SIE
 		 * and compiles from HLSL source if necessary. Records include dependencies for
 		 * hot-reload invalidation.
 		 *
-		 * @param policySnapshot Immutable source-generation and disk-cache policy captured before dispatch.
+		 * @param useDiskCache Whether to use disk cache for reading and writing compiled shaders.
 		 * @param dependencyTracker Optional tracker for include dependency registration;
 		 *                          enables cache invalidation when dependencies change.
 		 *
 		 * @return Compiled shader blob, or nullptr if compilation failed or source file not found.
 		 */
-		static winrt::com_ptr<ID3DBlob> CompileShader(
-			ShaderClass shaderClass,
-			const RE::BSShader& shader,
-			uint32_t descriptor,
-			const ShaderCompilationPolicySnapshot& policySnapshot,
-			ShaderFileDependencyTracker* dependencyTracker)
+		static ID3DBlob* CompileShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool useDiskCache, ShaderFileDependencyTracker* dependencyTracker)
 		{
 			if (!SShaderCache::ResolveImageSpaceDescriptor(shader, descriptor)) {
-				return {};
+				return nullptr;
 			}
 
 			auto& cache = ShaderCache::Instance();
-			const auto sourceGeneration = policySnapshot.sourceGeneration;
-			const bool useDiskCache = policySnapshot.useDiskCache;
-			const bool developerMode = globals::state->IsDeveloperMode();
-			const auto defines = GetEffectiveShaderDefines(shaderClass, shader, descriptor, developerMode);
-			if (!defines) {
-				return {};
-			}
-			const auto flags = GetShaderCompileFlags(developerMode);
-			const auto key = BuildShaderString(shaderClass, shader, descriptor, true, defines->Get(), flags);
+			auto key = SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 
 			// Atomically check the shaderMap and either:
 			//  - return the blob if already Completed (cache hit),
 			//  - wait if another thread is compiling (Pending),
 			//  - claim the slot with Pending if nobody started yet.
-			std::uint64_t claimToken = 0;
-			winrt::com_ptr<ID3DBlob> cachedBlob;
-			const auto claimResult = cache.ClaimCompilation(key, sourceGeneration, claimToken, cachedBlob);
-			struct PendingClaimGuard
-			{
-				ShaderCache& cache;
-				const std::string& key;
-				std::uint64_t generation;
-				std::uint64_t token;
-				bool active;
-
-				~PendingClaimGuard()
-				{
-					if (active) {
-						cache.AbandonCompilation(key, generation, token);
-					}
-				}
-
-				void Release() noexcept { active = false; }
-			} pendingClaim{ cache, key, sourceGeneration, claimToken, claimResult == ShaderCache::ClaimResult::Claimed };
-			const auto commit = [&](ID3DBlob* a_blob, bool a_fromDisk, std::string_view a_recipeID, bool a_publishObject) {
-				const bool committed = cache.CommitCompletedShader(shaderClass, shader, descriptor, key, a_blob,
-					a_fromDisk, a_recipeID, sourceGeneration, claimToken, a_publishObject);
-				if (committed) {
-					pendingClaim.Release();
-				}
-				return committed;
-			};
-			if (cache.GetShaderSourceGeneration() != sourceGeneration) {
-				return {};
-			}
+			auto [claimResult, cachedBlob] = cache.ClaimCompilation(key);
 			if (claimResult == ShaderCache::ClaimResult::CacheHit) {
-				if (!cache.TrackShaderSourceForGeneration(shaderClass, shader, descriptor, key, sourceGeneration)) {
-					return {};
-				}
 				cache.IncCacheHitTasks();
 				return cachedBlob;
 			}
 
 			const auto type = shader.shaderType.get();
 
-			const std::wstring path = GetShaderPath(GetSourceShaderFile(shader));
+			// check diskcache
+			auto diskPath = GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
+			ID3DBlob* shaderBlob = nullptr;
+
+			if (useDiskCache && std::filesystem::exists(diskPath)) {
+				// Determine whether the disk-cached shader is still valid.
+				bool diskCacheOutdated = false;
+				if (cache.UseFileWatcher()) {
+					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
+					auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath));
+					diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
+					if (diskCacheOutdated)
+						logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
+				} else if (cache.IsSkipUnchangedShaders()) {
+					// No file watcher: compare disk-cache mtime directly against the .hlsl source file mtime.
+					std::error_code ec;
+					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
+					if (ec) {
+						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
+					} else {
+						const std::wstring shaderSourcePath = GetShaderPath(
+							shader.shaderType == RE::BSShader::Type::ImageSpace ?
+								static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+								shader.fxpFilename);
+						if (std::filesystem::exists(shaderSourcePath)) {
+							const auto sourceTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(shaderSourcePath, ec));
+							if (ec) {
+								logger::debug("Failed to read source mtime for {}: {}", Util::WStringToString(shaderSourcePath), ec.message());
+							} else if (sourceTime > diskCacheTime) {
+								diskCacheOutdated = true;
+								logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+							}
+						}
+					}
+				}
+
+				if (diskCacheOutdated) {
+					// Fall through to recompile from source.
+				} else if (FAILED(D3DReadFileToBlob(diskPath.c_str(), &shaderBlob))) {
+					logger::error("Failed to load {} shader {}::{:X}", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
+
+					if (shaderBlob != nullptr) {
+						shaderBlob->Release();
+					}
+				} else {
+					logger::debug("Loaded shader from {}", Util::WStringToString(diskPath));
+					cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true);
+					return shaderBlob;
+				}
+			}
+
+			// prepare preprocessor defines
+			std::array<D3D_SHADER_MACRO, 64> defines{};
+			auto lastIndex = 0;
+			if (shaderClass == ShaderClass::Vertex) {
+				defines[lastIndex++] = { "VSHADER", nullptr };
+			} else if (shaderClass == ShaderClass::Pixel) {
+				defines[lastIndex++] = { "PSHADER", nullptr };
+			} else if (shaderClass == ShaderClass::Compute) {
+				defines[lastIndex++] = { "CSHADER", nullptr };
+			}
+			if (globals::state->IsDeveloperMode()) {
+				defines[lastIndex++] = { "D3DCOMPILE_SKIP_OPTIMIZATION", nullptr };
+				defines[lastIndex++] = { "D3DCOMPILE_DEBUG", nullptr };
+			}
+			auto shaderDefines = globals::state->GetDefines();
+			if (!shaderDefines->empty()) {
+				for (unsigned int i = 0; i < shaderDefines->size(); i++)
+					defines[lastIndex++] = { shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() };
+			}
+			defines[lastIndex] = { nullptr, nullptr };  // do final entry
+			GetShaderDefines(shader, descriptor, std::span{ defines }.subspan(lastIndex));
+
+			const std::wstring path = GetShaderPath(
+				shader.shaderType == RE::BSShader::Type::ImageSpace ?
+					static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+					shader.fxpFilename);
 			auto pathString = Util::WStringToString(path);
-			const auto canonicalSourceName = CanonicalizeShaderSourceName(pathString);
 			if (!std::filesystem::exists(path)) {
 				logger::error("Failed to compile {} shader {}::{:X}: {} does not exist", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor, pathString);
-				(void)commit(nullptr, false, {}, false);
-				return {};
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr);
+				return nullptr;
+			}
+			logger::debug("Compiling {} {}:{}:{:X} to {}", pathString, magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor, MergeDefinesString(defines));
+
+			// compile shaders — match Utils/D3D.cpp CompileShader flag policy (strictness, optional toggles, validation).
+			ID3DBlob* errorBlob = nullptr;
+			uint32_t flags = !globals::state->IsDeveloperMode() ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
+			if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed)) {
+				flags |= D3DCOMPILE_PARTIAL_PRECISION;
+			}
+			if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed)) {
+				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
+			}
+			if (useDiskCache) {
+				flags |= D3DCOMPILE_SKIP_VALIDATION;
 			}
 
-			// Match Utils/D3D.cpp's shader-compiler flag policy.
-			const auto* profile = GetShaderProfile(shaderClass);
-			if (!profile) {
-				(void)commit(nullptr, false, {}, false);
-				return {};
-			}
-
-			const std::uint32_t stripFlags = developerMode ? 0 :
-			                                                 (D3DCOMPILER_STRIP_DEBUG_INFO |
-																 D3DCOMPILER_STRIP_TEST_BLOBS |
-																 D3DCOMPILER_STRIP_PRIVATE_DATA);
-
-			winrt::com_ptr<ID3DBlob> sourceBlob;
-			if (FAILED(D3DReadFileToBlob(path.c_str(), sourceBlob.put())) || !sourceBlob) {
-				logger::error("Failed to read shader source {}", pathString);
-				(void)commit(nullptr, false, {}, false);
-				return {};
-			}
-
+			// Track includes
 			TrackingIncludeHandler includeHandler(std::filesystem::path(path).parent_path());
-			winrt::com_ptr<ID3DBlob> preprocessedBlob;
-			winrt::com_ptr<ID3DBlob> preprocessErrorBlob;
-			const auto preprocessResult = D3DPreprocess(
-				sourceBlob->GetBufferPointer(), sourceBlob->GetBufferSize(), canonicalSourceName.c_str(),
-				defines->Get().data(), &includeHandler, preprocessedBlob.put(), preprocessErrorBlob.put());
-
-			if (FAILED(preprocessResult) || !preprocessedBlob) {
-				if (preprocessErrorBlob) {
-					logger::error("Failed to preprocess {} shader {}::{:X}:\n{}",
-						magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor,
-						static_cast<char*>(preprocessErrorBlob->GetBufferPointer()));
-				} else {
-					logger::error("Failed to preprocess {} shader {}::{:X}",
-						magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
-				}
-				(void)commit(nullptr, false, {}, false);
-				return {};
-			}
-			if (preprocessErrorBlob) {
-				logger::debug("Shader preprocess logs:\n{}", static_cast<char*>(preprocessErrorBlob->GetBufferPointer()));
-			}
-			if (cache.GetShaderSourceGeneration() != sourceGeneration) {
-				return {};
-			}
-			if (dependencyTracker && !cache.RegisterDependenciesForClaim(
-										 dependencyTracker, pathString, includeHandler.includes, key, sourceGeneration, claimToken)) {
-				return {};
+			const HRESULT compileResult = D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
+				GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
+			// If the include handler captured any includes, register them so the watcher
+			// can invalidate dependents even if this compilation fails. Do NOT clear
+			// mappings when there are no captured includes to avoid removing prior
+			// dependency information on transient failures.
+			if (dependencyTracker && !includeHandler.includes.empty()) {
+				dependencyTracker->RegisterDependencies(Util::WStringToString(path), includeHandler.includes);
 			}
 
-			const auto preprocessedBytes = std::span(
-				reinterpret_cast<const std::uint8_t*>(preprocessedBlob->GetBufferPointer()),
-				preprocessedBlob->GetBufferSize());
-			const auto recipeID = useDiskCache ?
-			                          BuildCacheRecipeID(preprocessedBytes, canonicalSourceName, profile, flags, stripFlags) :
-			                          std::nullopt;
-			const std::string_view recipeIDView = recipeID ? std::string_view(*recipeID) : std::string_view{};
-
-			winrt::com_ptr<ID3DBlob> shaderBlob;
-			if (recipeID) {
-				if (const auto cached = ShaderDiskCache::Lookup(*recipeID)) {
-					if (SUCCEEDED(D3DReadFileToBlob(cached->path.c_str(), shaderBlob.put())) && shaderBlob &&
-						IsExpectedShaderBytecode(*shaderBlob, shaderClass)) {
-						logger::debug("Loaded shared shader object {}", cached->objectSHA256);
-						if (!commit(shaderBlob.get(), true, recipeIDView, false)) {
-							return {};
-						}
-						return shaderBlob;
-					}
-					logger::warn("Rejected invalid shared shader object {} for {} shader {}::{:X}",
-						cached->objectSHA256, magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
-					shaderBlob = nullptr;
-					if (!cache.RemoveRejectedDiskCacheRecipeForClaim(*recipeID, cached->objectSHA256,
-							cached->byteLength, key, sourceGeneration, claimToken)) {
-						return {};
-					}
-				}
-			}
-
-			logger::debug("Compiling {} {}:{}:{:X} to {}", pathString, magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor, MergeDefinesString(defines->Get()));
-			winrt::com_ptr<ID3DBlob> errorBlob;
-			const HRESULT compileResult = D3DCompile(
-				preprocessedBlob->GetBufferPointer(), preprocessedBlob->GetBufferSize(), canonicalSourceName.c_str(),
-				nullptr, nullptr, "main", profile, flags, 0, shaderBlob.put(), errorBlob.put());
-
-			if (FAILED(compileResult) || !shaderBlob) {
+			if (FAILED(compileResult)) {
 				if (errorBlob != nullptr) {
 					logger::error("Failed to compile {} shader {}::{:X}:\n{}",
 						magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor,
 						static_cast<char*>(errorBlob->GetBufferPointer()));
+					errorBlob->Release();
 				} else {
 					logger::error("Failed to compile {} shader {}::{:X}",
 						magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
 				}
+				if (shaderBlob != nullptr) {
+					shaderBlob->Release();
+				}
+
 #ifdef TRACY_ENABLE
 				{
 					// Timeline annotation: a (re)compile failed. Pairs with the
@@ -1780,12 +1524,11 @@ namespace SIE
 				}
 #endif
 
-				(void)commit(nullptr, false, recipeIDView, false);
-				return {};
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr);
+				return nullptr;
 			}
-			if (errorBlob) {
+			if (errorBlob)
 				logger::debug("Shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
-			}
 			logger::debug("Compiled shader {}:{}:{:X}", magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
 
 #ifdef TRACY_ENABLE
@@ -1799,24 +1542,42 @@ namespace SIE
 			}
 #endif
 
-			if (stripFlags != 0) {
-				winrt::com_ptr<ID3DBlob> strippedShaderBlob;
-				if (FAILED(D3DStripShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), stripFlags, strippedShaderBlob.put())) ||
-					!strippedShaderBlob) {
-					logger::error("Failed to strip {} shader {}::{:X}", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
-					(void)commit(nullptr, false, recipeIDView, false);
-					return {};
-				}
+			// strip debug info
+			if (!globals::state->IsDeveloperMode()) {
+				ID3DBlob* strippedShaderBlob = nullptr;
+
+				const uint32_t stripFlags = D3DCOMPILER_STRIP_DEBUG_INFO |
+				                            D3DCOMPILER_STRIP_TEST_BLOBS |
+				                            D3DCOMPILER_STRIP_PRIVATE_DATA;
+
+				D3DStripShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), stripFlags, &strippedShaderBlob);
 				std::swap(shaderBlob, strippedShaderBlob);
+				strippedShaderBlob->Release();
 			}
 
-			if (!commit(shaderBlob.get(), false, recipeIDView, true)) {
-				return {};
+			// save shader to disk
+			if (useDiskCache) {
+				auto directoryPath = std::format("Data/ShaderCache/{}", shader.fxpFilename);
+				if (!std::filesystem::is_directory(directoryPath)) {
+					try {
+						std::filesystem::create_directories(directoryPath);
+					} catch (std::filesystem::filesystem_error const& ex) {
+						logger::error("Failed to create folder: {}", ex.what());
+					}
+				}
+
+				const HRESULT saveResult = D3DWriteBlobToFile(shaderBlob, diskPath.c_str(), true);
+				if (FAILED(saveResult)) {
+					logger::error("Failed to save shader to {}", Util::WStringToString(diskPath));
+				} else {
+					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
+				}
 			}
+			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob);
 			return shaderBlob;
 		}
 
-		OwnedVertexShader CreateVertexShader(ID3DBlob& shaderData,
+		std::unique_ptr<RE::BSGraphics::VertexShader> CreateVertexShader(ID3DBlob& shaderData,
 			const RE::BSShader& shader, uint32_t descriptor)
 		{
 			static const auto perTechniqueBuffersArray =
@@ -1827,13 +1588,12 @@ namespace SIE
 				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524759, 411375));
 			static const auto bufferData = REL::Relocation<void*>(RELOCATION_ID(524965, 411446));
 
-			auto* rawPtr = static_cast<std::uint8_t*>(
-				::operator new(sizeof(RE::BSGraphics::VertexShader) + shaderData.GetBufferSize()));
-			std::memset(rawPtr, 0, sizeof(RE::BSGraphics::VertexShader));
-			auto* shaderPtr = new (rawPtr) RE::BSGraphics::VertexShader;
+			auto rawPtr =
+				new uint8_t[sizeof(RE::BSGraphics::VertexShader) + shaderData.GetBufferSize()];
+			auto shaderPtr = new (rawPtr) RE::BSGraphics::VertexShader;
 			memcpy(rawPtr + sizeof(RE::BSGraphics::VertexShader), shaderData.GetBufferPointer(),
 				shaderData.GetBufferSize());
-			OwnedVertexShader newShader{ shaderPtr };
+			std::unique_ptr<RE::BSGraphics::VertexShader> newShader{ shaderPtr };
 			newShader->byteCodeSize = (uint32_t)shaderData.GetBufferSize();
 			newShader->id = descriptor;
 			newShader->vertexDesc = 0;
@@ -2260,9 +2020,8 @@ namespace SIE
 		}
 	}
 
-	void ShaderCache::ClearMemoryCachesLocked()
+	void ShaderCache::Clear()
 	{
-		AdvanceShaderSourceGenerationLocked();
 		{
 			std::lock_guard lockGuardV(vertexShadersMutex);
 			for (auto& shaders : vertexShaders) {
@@ -2294,32 +2053,17 @@ namespace SIE
 			std::unique_lock lockM{ mapMutex };
 			shaderMap.clear();
 		}
-		mapCV.notify_all();
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
 		}
-		dependencyTracker->Clear();
 		compilationSet.Clear();
-	}
-
-	void ShaderCache::ClearFeatureShaderCaches()
-	{
 		globals::deferred->ClearShaderCache();
 		for (auto* feature : Feature::GetFeatureList()) {
 			if (feature->loaded) {
 				feature->ClearShaderCache();
 			}
 		}
-	}
-
-	void ShaderCache::Clear()
-	{
-		{
-			std::scoped_lock publicationLock{ shaderPublicationMutex };
-			ClearMemoryCachesLocked();
-		}
-		ClearFeatureShaderCaches();
 	}
 
 	template <typename ShaderType, typename MutexType>
@@ -2342,13 +2086,10 @@ namespace SIE
 	}
 	bool ShaderCache::Clear(const std::string& a_path)
 	{
-		std::unique_lock publicationLock{ shaderPublicationMutex };
-		AdvanceShaderSourceGenerationLocked();
 		std::string lowerFilePath = Util::FixFilePath(a_path);
 
 		// Step 1: Lock hlslMapMutex to find and copy the relevant entries
 		std::set<hlslRecord> entries;
-		std::unordered_set<std::string> retainedRecipes;
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			auto it = hlslToShaderMap.find(lowerFilePath);
@@ -2359,19 +2100,9 @@ namespace SIE
 
 			entries = it->second;  // Copy the entries
 			hlslToShaderMap.erase(it);
-			for (const auto& [source, remainingEntries] : hlslToShaderMap) {
-				for (const auto& remainingEntry : remainingEntries) {
-					if (!remainingEntry.cacheRecipeID.empty()) {
-						retainedRecipes.insert(remainingEntry.cacheRecipeID);
-					}
-				}
-			}
 		}
-		dependencyTracker->UnregisterDependencies(a_path);
 
 		// Step 2: Process the copied entries without holding hlslMapMutex
-		std::vector<std::string> obsoleteRecipes;
-		obsoleteRecipes.reserve(entries.size());
 		for (auto& entry : entries) {
 			// Remove shader key from shaderMap
 			{
@@ -2394,19 +2125,21 @@ namespace SIE
 				logger::warn("Unexpected shader class: {}", static_cast<int>(entry.shaderClass));
 				break;
 			}
-			if (!entry.cacheRecipeID.empty() && !retainedRecipes.contains(entry.cacheRecipeID)) {
-				obsoleteRecipes.push_back(entry.cacheRecipeID);
+
+			// Delete the associated file
+			const auto& filePath = entry.diskPath;
+			const auto& filePathString = Util::WStringToString(filePath);
+			{
+				std::scoped_lock lockD{ compilationSet.compilationMutex };
+				std::error_code ec;  // Use the error_code overload to avoid exceptions for non-critical errors like the file not existing.
+				if (const bool removed = std::filesystem::remove(filePath, ec); ec) {
+					logger::warn("Error while trying to delete {}: {}", filePathString, ec.message());
+				} else if (removed) {
+					logger::debug("Deleted {}", filePathString);
+				}  // If !removed and no error, the file didn't exist, which is fine.
 			}
 
 			logger::debug("Marking recompile for shader: {}", entry.key);
-		}
-		mapCV.notify_all();
-		if (!obsoleteRecipes.empty()) {
-			std::ranges::sort(obsoleteRecipes);
-			obsoleteRecipes.erase(std::unique(obsoleteRecipes.begin(), obsoleteRecipes.end()), obsoleteRecipes.end());
-			if (!ShaderDiskCache::RemoveRecipes(obsoleteRecipes)) {
-				logger::warn("Failed to reclaim one or more obsolete shared shader recipes after editing {}", a_path);
-			}
 		}
 
 		if (!entries.empty()) {
@@ -2419,165 +2152,47 @@ namespace SIE
 
 	void ShaderCache::Clear(RE::BSShader::Type a_type)
 	{
-		std::unique_lock publicationLock{ shaderPublicationMutex };
-		AdvanceShaderSourceGenerationLocked();
 		logger::debug("Clearing cache for {}", magic_enum::enum_name(a_type));
+		std::lock_guard lockGuardV(vertexShadersMutex);
 		{
-			std::lock_guard lockGuardV(vertexShadersMutex);
 			for (auto& [id, shader] : vertexShaders[static_cast<size_t>(a_type)]) {
 				shader->shader->Release();
 			}
 			vertexShaders[static_cast<size_t>(a_type)].clear();
 		}
+		std::lock_guard lockGuardP(pixelShadersMutex);
 		{
-			std::lock_guard lockGuardP(pixelShadersMutex);
 			for (auto& [id, shader] : pixelShaders[static_cast<size_t>(a_type)]) {
 				shader->shader->Release();
 			}
 			pixelShaders[static_cast<size_t>(a_type)].clear();
 		}
+		std::lock_guard lockGuardC(computeShadersMutex);
 		{
-			std::lock_guard lockGuardC(computeShadersMutex);
 			for (auto& [id, shader] : computeShaders[static_cast<size_t>(a_type)]) {
 				shader->shader->Release();
 			}
 			computeShaders[static_cast<size_t>(a_type)].clear();
 		}
-
-		std::vector<std::string> obsoleteRecipes;
-		std::vector<std::string> untrackedSources;
-		std::unordered_set<std::string> retainedRecipes;
-		{
-			std::unique_lock lockH{ hlslMapMutex };
-			for (auto source = hlslToShaderMap.begin(); source != hlslToShaderMap.end();) {
-				auto& entries = source->second;
-				for (auto entry = entries.begin(); entry != entries.end();) {
-					if (entry->type == a_type) {
-						if (!entry->cacheRecipeID.empty()) {
-							obsoleteRecipes.push_back(entry->cacheRecipeID);
-						}
-						entry = entries.erase(entry);
-					} else {
-						++entry;
-					}
-				}
-				if (entries.empty()) {
-					untrackedSources.push_back(source->first);
-					source = hlslToShaderMap.erase(source);
-				} else {
-					++source;
-				}
-			}
-			for (const auto& [source, remainingEntries] : hlslToShaderMap) {
-				for (const auto& remainingEntry : remainingEntries) {
-					if (!remainingEntry.cacheRecipeID.empty()) {
-						retainedRecipes.insert(remainingEntry.cacheRecipeID);
-					}
-				}
-			}
-		}
-		for (const auto& source : untrackedSources) {
-			dependencyTracker->UnregisterDependencies(source);
-		}
-		if (!obsoleteRecipes.empty()) {
-			std::erase_if(obsoleteRecipes, [&](const std::string& recipeID) {
-				return retainedRecipes.contains(recipeID);
-			});
-		}
-		if (!obsoleteRecipes.empty()) {
-			std::ranges::sort(obsoleteRecipes);
-			obsoleteRecipes.erase(std::unique(obsoleteRecipes.begin(), obsoleteRecipes.end()), obsoleteRecipes.end());
-			if (!ShaderDiskCache::RemoveRecipes(obsoleteRecipes)) {
-				logger::warn("Failed to reclaim one or more obsolete shared shader recipes for {}",
-					magic_enum::enum_name(a_type));
-			}
-		}
 		ClearShaderMap(a_type);
 		compilationSet.Clear();
 	}
 
-	bool ShaderCache::AddCompletedShader(
-		ShaderClass shaderClass,
-		const RE::BSShader& shader,
-		uint32_t descriptor,
-		std::string_view cacheKey,
-		ID3DBlob* a_blob,
-		bool fromDisk,
-		std::string_view cacheRecipeID,
-		std::uint64_t sourceGeneration,
-		std::uint64_t claimToken)
+	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk)
 	{
+		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
+		auto keyWithDescriptor = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false);
 		auto status = a_blob ? ShaderCompilationTask::Status::Completed : ShaderCompilationTask::Status::Failed;
-		logger::debug("Adding {} shader to map: {}::{:X}", magic_enum::enum_name(status), cacheKey, descriptor);
+		logger::debug("Adding {} shader to map: {}", magic_enum ::enum_name(status), keyWithDescriptor);
 		{
 			std::unique_lock lockM{ mapMutex };
-			const auto pending = shaderMap.find(std::string(cacheKey));
-			const bool ownsPending = pending != shaderMap.end() &&
-			                         pending->second.status == ShaderCompilationTask::Status::Pending &&
-			                         pending->second.claimGeneration == sourceGeneration &&
-			                         pending->second.claimToken == claimToken;
-			if (shaderSourceGeneration.load(std::memory_order_acquire) != sourceGeneration || !ownsPending) {
-				if (ownsPending) {
-					shaderMap.erase(pending);
-				}
-				lockM.unlock();
-				mapCV.notify_all();
-				logger::debug("Discarded stale shader result after a source change: {}::{:X}", cacheKey, descriptor);
-				return false;
-			}
-			shaderMap.insert_or_assign(std::string(cacheKey), ShaderCacheResult{ a_blob, status, system_clock::now(), fromDisk });
+			shaderMap.insert_or_assign(key, ShaderCacheResult{ a_blob, status, system_clock::now(), fromDisk });
 		}
-		mapCV.notify_all();  // Wake threads waiting on a Pending-to-completed/failed transition.
-		TrackShaderSource(shaderClass, shader, descriptor, cacheKey, cacheRecipeID);
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			(void)Clear(Util::WStringToString(SIE::SShaderCache::GetShaderPath(SIE::SShaderCache::GetSourceShaderFile(shader))));
-			return false;
-		}
-		return true;
-	}
-
-	bool ShaderCache::CommitCompletedShader(
-		ShaderClass shaderClass,
-		const RE::BSShader& shader,
-		uint32_t descriptor,
-		std::string_view cacheKey,
-		ID3DBlob* a_blob,
-		bool fromDisk,
-		std::string_view cacheRecipeID,
-		std::uint64_t sourceGeneration,
-		std::uint64_t claimToken,
-		bool publishObject)
-	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			AbandonCompilation(std::string(cacheKey), sourceGeneration, claimToken);
-			return false;
-		}
-		{
-			std::scoped_lock mapLock{ mapMutex };
-			const auto pending = shaderMap.find(std::string(cacheKey));
-			if (pending == shaderMap.end() || pending->second.status != ShaderCompilationTask::Status::Pending ||
-				pending->second.claimGeneration != sourceGeneration || pending->second.claimToken != claimToken) {
-				return false;
-			}
-		}
-
-		if (publishObject && a_blob && !cacheRecipeID.empty() && !ShaderDiskCache::Publish(cacheRecipeID, std::span(reinterpret_cast<const std::uint8_t*>(a_blob->GetBufferPointer()), a_blob->GetBufferSize()))) {
-			logger::error("Failed to publish shared shader recipe {}", cacheRecipeID);
-		}
-
-		return AddCompletedShader(
-			shaderClass, shader, descriptor, cacheKey, a_blob, fromDisk, cacheRecipeID, sourceGeneration, claimToken);
-	}
-
-	void ShaderCache::TrackShaderSource(
-		ShaderClass shaderClass,
-		const RE::BSShader& shader,
-		uint32_t descriptor,
-		std::string_view cacheKey,
-		std::string_view cacheRecipeID)
-	{
-		const std::wstring path = SIE::SShaderCache::GetShaderPath(SIE::SShaderCache::GetSourceShaderFile(shader));
+		mapCV.notify_all();  // wake threads waiting on a Pending→Completed/Failed transition
+		const std::wstring path = SIE::SShaderCache::GetShaderPath(
+			shader.shaderType == RE::BSShader::Type::ImageSpace ?
+				static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+				shader.fxpFilename);
 		auto pathString = Util::WStringToString(path);
 		// Always create or update an hlsl->shader record so failing compiles are
 		// trackable and can be invalidated by the file watcher. This allows
@@ -2586,22 +2201,16 @@ namespace SIE
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			auto it = hlslToShaderMap.find(lowerFilePath);
-			hlslRecord newRecord{ std::string(cacheKey), shader.shaderType.get(), descriptor, shaderClass, std::string(cacheRecipeID) };
+			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass) };
 
 			if (it != hlslToShaderMap.end()) {
 				auto& entries = it->second;
 
-				// Find and remove the exact source/descriptor record before updating it.
+				// Find and remove existing record with the same key
 				auto existingRecord = std::find_if(entries.begin(), entries.end(),
-					[&](const hlslRecord& r) {
-						return r.key == cacheKey && r.type == shader.shaderType.get() &&
-					           r.descriptor == descriptor && r.shaderClass == shaderClass;
-					});
+					[&](const hlslRecord& r) { return r.key == key; });
 
 				if (existingRecord != entries.end()) {
-					if (newRecord.cacheRecipeID.empty()) {
-						newRecord.cacheRecipeID = existingRecord->cacheRecipeID;
-					}
 					entries.erase(existingRecord);  // Remove the old record
 				}
 
@@ -2612,82 +2221,12 @@ namespace SIE
 				hlslToShaderMap.emplace(lowerFilePath, std::set<hlslRecord>{ newRecord });
 			}
 		}
+
+		return a_blob != nullptr;
 	}
 
-	bool ShaderCache::TrackShaderSourceForGeneration(
-		ShaderClass shaderClass,
-		const RE::BSShader& shader,
-		uint32_t descriptor,
-		std::string_view cacheKey,
-		std::uint64_t sourceGeneration)
+	std::pair<ShaderCache::ClaimResult, ID3DBlob*> ShaderCache::ClaimCompilation(const std::string& key)
 	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			return false;
-		}
-		TrackShaderSource(shaderClass, shader, descriptor, cacheKey);
-		return true;
-	}
-
-	bool ShaderCache::RegisterDependenciesForClaim(
-		ShaderFileDependencyTracker* a_dependencyTracker,
-		const std::string& sourcePath,
-		const std::vector<std::string>& includes,
-		std::string_view cacheKey,
-		std::uint64_t sourceGeneration,
-		std::uint64_t claimToken)
-	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			return false;
-		}
-		{
-			std::scoped_lock mapLock{ mapMutex };
-			const auto pending = shaderMap.find(std::string(cacheKey));
-			if (pending == shaderMap.end() || pending->second.status != ShaderCompilationTask::Status::Pending ||
-				pending->second.claimGeneration != sourceGeneration || pending->second.claimToken != claimToken) {
-				return false;
-			}
-		}
-		a_dependencyTracker->RegisterDependencies(sourcePath, includes);
-		return true;
-	}
-
-	bool ShaderCache::RemoveRejectedDiskCacheRecipeForClaim(
-		std::string_view recipeID,
-		std::string_view expectedObjectSHA256,
-		std::uint64_t expectedByteLength,
-		std::string_view cacheKey,
-		std::uint64_t sourceGeneration,
-		std::uint64_t claimToken)
-	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			return false;
-		}
-		{
-			std::scoped_lock mapLock{ mapMutex };
-			const auto pending = shaderMap.find(std::string(cacheKey));
-			if (pending == shaderMap.end() || pending->second.status != ShaderCompilationTask::Status::Pending ||
-				pending->second.claimGeneration != sourceGeneration || pending->second.claimToken != claimToken) {
-				return false;
-			}
-		}
-
-		if (!ShaderDiskCache::RemoveRecipeIfMatches(
-				recipeID, expectedObjectSHA256, expectedByteLength)) {
-			logger::warn("Failed to conditionally remove rejected shared shader recipe {}", recipeID);
-		}
-		return true;
-	}
-
-	ShaderCache::ClaimResult ShaderCache::ClaimCompilation(
-		const std::string& key,
-		std::uint64_t sourceGeneration,
-		std::uint64_t& claimToken,
-		winrt::com_ptr<ID3DBlob>& cachedBlob)
-	{
-		cachedBlob = {};
 		std::unique_lock lockM{ mapMutex };
 
 		for (;;) {
@@ -2697,9 +2236,7 @@ namespace SIE
 				if (entry.status == ShaderCompilationTask::Status::Completed) {
 					if (entry.blob) {
 						logger::debug("Shader already compiled; using cache: {}", key);
-						claimToken = 0;
-						cachedBlob = entry.blob;
-						return ClaimResult::CacheHit;
+						return { ClaimResult::CacheHit, entry.blob };
 					}
 					break;  // Completed with nullptr blob — re-compile
 				}
@@ -2715,25 +2252,18 @@ namespace SIE
 		}
 
 		// Claim the slot as Pending before releasing the lock
-		claimToken = nextShaderClaimToken++;
-		if (nextShaderClaimToken == 0) {
-			nextShaderClaimToken = 1;
-		}
-		shaderMap.insert_or_assign(
-			key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now(), false, sourceGeneration, claimToken });
-		return ClaimResult::Claimed;
+		shaderMap.insert_or_assign(key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now() });
+		return { ClaimResult::Claimed, nullptr };
 	}
 
-	void ShaderCache::AbandonCompilation(
-		const std::string& key, std::uint64_t sourceGeneration, std::uint64_t claimToken)
+	void ShaderCache::ResolvePendingFailure(const std::string& key)
 	{
 		bool changed = false;
 		{
 			std::unique_lock lockM{ mapMutex };
-			const auto it = shaderMap.find(key);
-			if (it != shaderMap.end() && it->second.status == ShaderCompilationTask::Status::Pending &&
-				it->second.claimGeneration == sourceGeneration && it->second.claimToken == claimToken) {
-				shaderMap.erase(it);
+			auto it = shaderMap.find(key);
+			if (it != shaderMap.end() && it->second.status == ShaderCompilationTask::Status::Pending) {
+				it->second = ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Failed, system_clock::now() };
 				changed = true;
 			}
 		}
@@ -2742,59 +2272,7 @@ namespace SIE
 		}
 	}
 
-	ShaderCompilationPolicySnapshot ShaderCache::CaptureShaderCompilationPolicy()
-	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		return {
-			shaderSourceGeneration.load(std::memory_order_relaxed),
-			isDiskCache.load(std::memory_order_relaxed),
-		};
-	}
-
-	std::optional<ShaderCompilationPolicySnapshot> ShaderCache::CaptureShaderCompilationPolicyForDispatch(
-		const ShaderCompilationTask& task)
-	{
-		// Keep the publication lock while validating the dispatch token. Clear and
-		// SetDiskCache take the same publication->compilation lock order, so a task
-		// can never pair a canceled token with the replacement generation/policy.
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (!compilationSet.IsCurrentDispatch(task)) {
-			return std::nullopt;
-		}
-		return ShaderCompilationPolicySnapshot{
-			shaderSourceGeneration.load(std::memory_order_relaxed),
-			isDiskCache.load(std::memory_order_relaxed),
-		};
-	}
-
-	void ShaderCache::AdvanceShaderSourceGenerationLocked() noexcept
-	{
-		{
-			std::unique_lock lockM{ mapMutex };
-			shaderSourceGeneration.fetch_add(1, std::memory_order_acq_rel);
-			for (auto entry = shaderMap.begin(); entry != shaderMap.end();) {
-				if (entry->second.status == ShaderCompilationTask::Status::Pending) {
-					entry = shaderMap.erase(entry);
-				} else {
-					++entry;
-				}
-			}
-		}
-		mapCV.notify_all();
-	}
-
-	void ShaderCache::NotifyShaderSourceChanged() noexcept
-	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		AdvanceShaderSourceGenerationLocked();
-	}
-
-	std::uint64_t ShaderCache::GetShaderSourceGeneration() const noexcept
-	{
-		return shaderSourceGeneration.load(std::memory_order_acquire);
-	}
-
-	winrt::com_ptr<ID3DBlob> ShaderCache::GetCompletedShader(const std::string& a_key)
+	ID3DBlob* ShaderCache::GetCompletedShader(const std::string& a_key)
 	{
 		std::string type = SIE::SShaderCache::GetTypeFromShaderString(a_key);
 		UpdateShaderModifiedTime(type);
@@ -2805,23 +2283,23 @@ namespace SIE
 					a_key,
 					std::format("{:%H:%M:%S}", shaderMap.at(a_key).compileTime),
 					std::format("{:%H:%M:%S}", GetModifiedShaderMapTime(type)));
-				return {};
+				return nullptr;
 			}
 			auto status = shaderMap.at(a_key).status;
 			if (status != ShaderCompilationTask::Status::Pending)
 				return shaderMap.at(a_key).blob;
 		}
-		return {};
+		return nullptr;
 	}
 
-	winrt::com_ptr<ID3DBlob> ShaderCache::GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader,
+	ID3DBlob* ShaderCache::GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader,
 		uint32_t descriptor)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		return GetCompletedShader(key);
 	}
 
-	winrt::com_ptr<ID3DBlob> ShaderCache::GetCompletedShader(const ShaderCompilationTask& a_task)
+	ID3DBlob* ShaderCache::GetCompletedShader(const ShaderCompilationTask& a_task)
 	{
 		auto key = a_task.GetString();
 		return GetCompletedShader(key);
@@ -2878,8 +2356,6 @@ namespace SIE
 		}
 		ssource.request_stop();            // signals any legacy stop_token users
 		managementJthread.request_stop();  // stops management thread + in-flight compilations
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		AdvanceShaderSourceGenerationLocked();
 		compilationSet.Clear();
 	}
 
@@ -2915,71 +2391,75 @@ namespace SIE
 
 	bool ShaderCache::IsDiskCache() const
 	{
-		return isDiskCache.load(std::memory_order_relaxed);
+		return isDiskCache;
 	}
 
 	void ShaderCache::SetDiskCache(bool value)
 	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		if (isDiskCache.exchange(value, std::memory_order_acq_rel) != value) {
-			AdvanceShaderSourceGenerationLocked();
-			compilationSet.Clear();
-		}
+		isDiskCache = value;
+	}
+
+	bool ShaderCache::IsSkipUnchangedShaders() const
+	{
+		return isSkipUnchangedShaders;
+	}
+
+	void ShaderCache::SetSkipUnchangedShaders(bool value)
+	{
+		isSkipUnchangedShaders = value;
 	}
 
 	void ShaderCache::DeleteDiskCache()
 	{
-		std::scoped_lock publicationLock{ shaderPublicationMutex };
-		AdvanceShaderSourceGenerationLocked();
-		DeleteDiskCacheLocked();
-	}
-
-	void ShaderCache::ClearAndDeleteDiskCache()
-	{
-		{
-			std::scoped_lock publicationLock{ shaderPublicationMutex };
-			ClearMemoryCachesLocked();
-			DeleteDiskCacheLocked();
-		}
-		ClearFeatureShaderCaches();
-	}
-
-	void ShaderCache::DeleteDiskCacheLocked()
-	{
-		if (ShaderDiskCache::Clear()) {
-			logger::info("Deleted shared content-addressed shader cache at {}", ShaderDiskCache::GetRoot().string());
-		} else {
-			logger::error("Failed to delete shared shader cache at {}", ShaderDiskCache::GetRoot().string());
+		std::scoped_lock lock{ compilationSet.compilationMutex };
+		try {
+			std::filesystem::remove_all(L"Data/ShaderCache");
+			logger::info("Deleted disk cache");
+		} catch (std::filesystem::filesystem_error const& ex) {
+			logger::error("Failed to delete disk cache: {}", ex.what());
 		}
 	}
 
 	void ShaderCache::ValidateDiskCache()
 	{
-		const auto& sharedRoot = ShaderDiskCache::GetRoot();
-		if (sharedRoot.empty()) {
-			logger::error("Shared shader cache is unavailable; disabling persistent shader caching");
-			SetDiskCache(false);
-			return;
-		}
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.LoadFile(L"Data\\ShaderCache\\Info.ini");
+		bool valid = true;
 
-		// v1/v2 files were keyed by runtime, executable and raw descriptor and
-		// cannot be imported safely. Remove them once the shared CAS is available.
-		const std::filesystem::path obsoleteRoot{ L"Data/ShaderCache" };
-		std::error_code cleanupError;
-		if (std::filesystem::exists(obsoleteRoot, cleanupError)) {
-			const auto removed = std::filesystem::remove_all(obsoleteRoot, cleanupError);
-			if (cleanupError) {
-				logger::warn("Failed to remove obsolete per-install shader cache {}: {}", obsoleteRoot.string(), cleanupError.message());
-			} else if (removed != 0) {
-				logger::info("Removed {} obsolete per-runtime shader cache entries", removed);
+		// Check plugin version
+		if (auto pluginVersion = ini.GetValue("Cache", "PluginVersion")) {
+			if (strcmp(Plugin::VERSION.string().c_str(), pluginVersion) != 0) {
+				logger::info("Disk cache outdated: plugin version changed (current: {}, cached: {})",
+					Plugin::VERSION.string(), pluginVersion);
+				valid = false;
 			}
+		} else {
+			logger::info("Disk cache outdated: no plugin version found");
+			valid = false;
 		}
 
-		if (!ShaderDiskCache::Prune()) {
-			logger::warn("Shared shader cache pruning did not complete; valid entries remain usable");
+		// Check feature validation
+		if (!(globals::state->ValidateCache(ini))) {
+			logger::info("Disk cache outdated: feature validation failed");
+			valid = false;
 		}
 
-		logger::info("Using one shared content-addressed shader cache at {}", sharedRoot.string());
+		if (valid) {
+			logger::info("Using disk cache");
+		} else {
+			DeleteDiskCache();
+		}
+	}
+
+	void ShaderCache::WriteDiskCacheInfo()
+	{
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.SetValue("Cache", "PluginVersion", Plugin::VERSION.string().c_str());
+		globals::state->WriteDiskCacheInfo(ini);
+		ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
+		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
 	}
 
 	ShaderCache::ShaderCache()
@@ -2996,15 +2476,16 @@ namespace SIE
 
 	bool ShaderCache::UseFileWatcher() const
 	{
-		return useFileWatcher.load(std::memory_order_acquire);
+		return useFileWatcher;
 	}
 
 	void ShaderCache::SetFileWatcher(bool value)
 	{
-		const auto oldValue = useFileWatcher.exchange(value, std::memory_order_acq_rel);
-		if (value && !oldValue)
+		auto oldValue = useFileWatcher;
+		useFileWatcher = value;
+		if (useFileWatcher && !oldValue)
 			StartFileWatcher();
-		else if (!value && oldValue)
+		else if (!useFileWatcher && oldValue)
 			StopFileWatcher();
 	}
 
@@ -3039,10 +2520,9 @@ namespace SIE
 	{
 		logger::info("Stopping FileWatcher");
 		// Set flag first so processQueue()'s loop condition becomes false before we join.
-		useFileWatcher.store(false, std::memory_order_release);
+		useFileWatcher = false;
 		if (fileWatcher) {
 			fileWatcher->removeWatch(watchID);
-			delete fileWatcher;
 			fileWatcher = nullptr;
 		}
 		if (listener) {
@@ -3104,15 +2584,8 @@ namespace SIE
 	RE::BSGraphics::VertexShader* ShaderCache::MakeAndAddVertexShader(const RE::BSShader& shader,
 		uint32_t descriptor)
 	{
-		return MakeAndAddVertexShader(shader, descriptor, CaptureShaderCompilationPolicy());
-	}
-
-	RE::BSGraphics::VertexShader* ShaderCache::MakeAndAddVertexShader(const RE::BSShader& shader,
-		uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot)
-	{
-		const auto sourceGeneration = policySnapshot.sourceGeneration;
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, policySnapshot, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, isDiskCache, dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateVertexShader(*shaderBlob, shader,
@@ -3128,16 +2601,10 @@ namespace SIE
 				if (newShader->shader != nullptr) {
 					newShader->shader->Release();
 				}
-			} else if (GetShaderSourceGeneration() == sourceGeneration) {
-				auto& typeCache = vertexShaders[static_cast<size_t>(shader.shaderType.get())];
-				if (const auto existing = typeCache.find(descriptor); existing != typeCache.end()) {
-					newShader->shader->Release();
-					newShader->shader = nullptr;
-					return existing->second.get();
-				}
-				return typeCache.emplace(descriptor, std::move(newShader)).first->second.get();
-			} else if (newShader->shader != nullptr) {
-				newShader->shader->Release();
+			} else {
+				return vertexShaders[static_cast<size_t>(shader.shaderType.get())]
+				    .insert_or_assign(descriptor, std::move(newShader))
+				    .first->second.get();
 			}
 		}
 		return nullptr;
@@ -3146,15 +2613,8 @@ namespace SIE
 	RE::BSGraphics::PixelShader* ShaderCache::MakeAndAddPixelShader(const RE::BSShader& shader,
 		uint32_t descriptor)
 	{
-		return MakeAndAddPixelShader(shader, descriptor, CaptureShaderCompilationPolicy());
-	}
-
-	RE::BSGraphics::PixelShader* ShaderCache::MakeAndAddPixelShader(const RE::BSShader& shader,
-		uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot)
-	{
-		const auto sourceGeneration = policySnapshot.sourceGeneration;
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, policySnapshot, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, isDiskCache, dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreatePixelShader(*shaderBlob, shader,
@@ -3170,16 +2630,10 @@ namespace SIE
 				if (newShader->shader != nullptr) {
 					newShader->shader->Release();
 				}
-			} else if (GetShaderSourceGeneration() == sourceGeneration) {
-				auto& typeCache = pixelShaders[static_cast<size_t>(shader.shaderType.get())];
-				if (const auto existing = typeCache.find(descriptor); existing != typeCache.end()) {
-					newShader->shader->Release();
-					newShader->shader = nullptr;
-					return existing->second.get();
-				}
-				return typeCache.emplace(descriptor, std::move(newShader)).first->second.get();
-			} else if (newShader->shader != nullptr) {
-				newShader->shader->Release();
+			} else {
+				return pixelShaders[static_cast<size_t>(shader.shaderType.get())]
+				    .insert_or_assign(descriptor, std::move(newShader))
+				    .first->second.get();
 			}
 		}
 		return nullptr;
@@ -3188,15 +2642,8 @@ namespace SIE
 	RE::BSGraphics::ComputeShader* ShaderCache::MakeAndAddComputeShader(const RE::BSShader& shader,
 		uint32_t descriptor)
 	{
-		return MakeAndAddComputeShader(shader, descriptor, CaptureShaderCompilationPolicy());
-	}
-
-	RE::BSGraphics::ComputeShader* ShaderCache::MakeAndAddComputeShader(const RE::BSShader& shader,
-		uint32_t descriptor, const ShaderCompilationPolicySnapshot& policySnapshot)
-	{
-		const auto sourceGeneration = policySnapshot.sourceGeneration;
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, policySnapshot, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, isDiskCache, dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateComputeShader(*shaderBlob, shader,
@@ -3212,16 +2659,10 @@ namespace SIE
 				if (newShader->shader != nullptr) {
 					newShader->shader->Release();
 				}
-			} else if (GetShaderSourceGeneration() == sourceGeneration) {
-				auto& typeCache = computeShaders[static_cast<size_t>(shader.shaderType.get())];
-				if (const auto existing = typeCache.find(descriptor); existing != typeCache.end()) {
-					newShader->shader->Release();
-					newShader->shader = nullptr;
-					return existing->second.get();
-				}
-				return typeCache.emplace(descriptor, std::move(newShader)).first->second.get();
-			} else if (newShader->shader != nullptr) {
-				newShader->shader->Release();
+			} else {
+				return computeShaders[static_cast<size_t>(shader.shaderType.get())]
+				    .insert_or_assign(descriptor, std::move(newShader))
+				    .first->second.get();
 			}
 		}
 		return nullptr;
@@ -3229,15 +2670,10 @@ namespace SIE
 
 	std::string ShaderCache::GetDefinesString(const RE::BSShader& shader, uint32_t descriptor)
 	{
-		std::array<D3D_SHADER_MACRO, 1024> defines{};
-		bool macroOverflow = false;
-		SIE::SShaderCache::GetShaderDefines(
-			shader, descriptor, SIE::SShaderCache::CheckedShaderMacros{ std::span{ defines }, macroOverflow });
-		if (macroOverflow) {
-			return "INVALID_SHADER_DEFINES";
-		}
+		std::array<D3D_SHADER_MACRO, 64> defines{};
+		SIE::SShaderCache::GetShaderDefines(shader, descriptor, std::span{ defines });
 
-		return SIE::SShaderCache::MergeDefinesString(std::span{ defines }, true);
+		return SIE::SShaderCache::MergeDefinesString(defines, true);
 	}
 
 	uint64_t ShaderCache::GetCachedHitTasks()
@@ -3368,19 +2804,16 @@ namespace SIE
 	{
 		std::string_view shaderTypeStr = magic_enum::enum_name(a_type);
 
-		{
-			std::unique_lock lockM{ SIE::ShaderCache::mapMutex };
-			logger::debug("Clearing shaderMap of {}", shaderTypeStr);
-			for (auto it = shaderMap.begin(); it != shaderMap.end();) {
-				auto typeInKey = SIE::SShaderCache::GetTypeFromShaderString(it->first);
-				if (typeInKey == shaderTypeStr) {
-					it = shaderMap.erase(it);
-				} else {
-					++it;
-				}
+		std::unique_lock lockM{ SIE::ShaderCache::mapMutex };
+		logger::debug("Clearing shaderMap of {}", shaderTypeStr);
+		for (auto it = shaderMap.begin(); it != shaderMap.end();) {
+			auto typeInKey = SIE::SShaderCache::GetTypeFromShaderString(it->first);
+			if (typeInKey == shaderTypeStr) {
+				it = shaderMap.erase(it);
+			} else {
+				++it;
 			}
 		}
-		mapCV.notify_all();
 	}
 
 	void ShaderCache::InsertModifiedShaderMap(const std::string& a_shader, std::chrono::time_point<std::chrono::system_clock> a_time)
@@ -3481,10 +2914,12 @@ namespace SIE
 			info.shaderClass = shaderClass;
 			info.descriptor = descriptor;
 
-			// Recipe paths are content-derived during preprocessing; active tracking
-			// deliberately reports the single shared cache root instead of rebuilding
-			// a descriptor/runtime-specific filename.
-			info.diskPath = ShaderDiskCache::GetRoot().wstring();
+			// Construct disk path
+			info.diskPath = SIE::SShaderCache::GetDiskPath(
+				shader.shaderType == RE::BSShader::Type::ImageSpace ?
+					static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+					shader.fxpFilename,
+				descriptor, shaderClass);
 		}
 
 		info.isActive = true;
@@ -3548,13 +2983,8 @@ namespace SIE
 		if (stoken.stop_requested()) {
 			return;
 		}
-		const auto policySnapshot = CaptureShaderCompilationPolicyForDispatch(task);
-		if (!policySnapshot || stoken.stop_requested()) {
-			return;
-		}
 
 		const auto taskKey = task.GetString();
-		const auto sourceGeneration = policySnapshot->sourceGeneration;
 
 		// Run all shader compilation work at below-normal priority.
 		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
@@ -3567,15 +2997,13 @@ namespace SIE
 		                               0.0;
 
 		try {
-			task.Perform(*policySnapshot);
+			task.Perform();
 		} catch (const std::exception& e) {
 			logger::error("Unhandled exception compiling shader task {}: {}", taskKey, e.what());
+			ResolvePendingFailure(taskKey);
 		} catch (...) {
 			logger::error("Unhandled non-standard exception compiling shader task {}", taskKey);
-		}
-
-		if (GetShaderSourceGeneration() != sourceGeneration) {
-			return;
+			ResolvePendingFailure(taskKey);
 		}
 
 		QueryPerformanceCounter(&end);
@@ -3584,7 +3012,7 @@ namespace SIE
 		// still reads high briefly, which would otherwise underflow uint64_t (logs as ~2^64-1).
 		const uint64_t total = compilationSet.totalTasks.load(std::memory_order_relaxed);
 		const uint64_t done = compilationSet.completedTasks.load(std::memory_order_relaxed) +
-		                      compilationSet.failedTasks.load(std::memory_order_relaxed);
+		                     compilationSet.failedTasks.load(std::memory_order_relaxed);
 		// This task has already finished running, but Complete(task) has not yet updated the counters.
 		// Include the current task in the local progress snapshot so the logged remaining count is accurate.
 		const uint64_t doneIncludingCurrent = (done < total) ? (done + 1) : total;
@@ -3637,7 +3065,7 @@ namespace SIE
 			return;
 		}
 
-		compilationSet.Complete(task, sourceGeneration);
+		compilationSet.Complete(task);
 	}
 
 	ShaderCompilationTask::ShaderCompilationTask(ShaderClass aShaderClass,
@@ -3648,17 +3076,17 @@ namespace SIE
 		cachedPriority(ComputePriority(aShaderClass, aShader, aDescriptor))
 	{}
 
-	void ShaderCompilationTask::Perform(const ShaderCompilationPolicySnapshot& policySnapshot) const
+	void ShaderCompilationTask::Perform() const
 	{
 		ZoneScoped;
 		ZoneText(GetString().c_str(), GetString().size());
 
 		if (shaderClass == ShaderClass::Vertex) {
-			ShaderCache::Instance().MakeAndAddVertexShader(shader, descriptor, policySnapshot);
+			ShaderCache::Instance().MakeAndAddVertexShader(shader, descriptor);
 		} else if (shaderClass == ShaderClass::Pixel) {
-			ShaderCache::Instance().MakeAndAddPixelShader(shader, descriptor, policySnapshot);
+			ShaderCache::Instance().MakeAndAddPixelShader(shader, descriptor);
 		} else if (shaderClass == ShaderClass::Compute) {
-			ShaderCache::Instance().MakeAndAddComputeShader(shader, descriptor, policySnapshot);
+			ShaderCache::Instance().MakeAndAddComputeShader(shader, descriptor);
 		}
 	}
 
@@ -3780,10 +3208,6 @@ namespace SIE
 
 		ShaderCompilationTask task = *bestIt;
 		availableTasks.erase(bestIt);
-		task.SetDispatchToken(nextDispatchToken++);
-		if (nextDispatchToken == 0) {
-			nextDispatchToken = 1;
-		}
 
 		if (task.GetPriority() >= kHeavyPriorityThreshold) {
 			heavyTasksInFlight.fetch_add(1, std::memory_order_relaxed);
@@ -3791,13 +3215,6 @@ namespace SIE
 
 		tasksInProgress.insert(task);
 		return task;
-	}
-
-	bool CompilationSet::IsCurrentDispatch(const ShaderCompilationTask& task)
-	{
-		std::scoped_lock lock(compilationMutex);
-		const auto active = tasksInProgress.find(task);
-		return active != tasksInProgress.end() && active->GetDispatchToken() == task.GetDispatchToken();
 	}
 
 	void CompilationSet::Add(const ShaderCompilationTask& task)
@@ -3858,7 +3275,7 @@ namespace SIE
 	 *
 	 * @param task The compilation task that has completed.
 	 */
-	void CompilationSet::Complete(const ShaderCompilationTask& task, std::uint64_t sourceGeneration)
+	void CompilationSet::Complete(const ShaderCompilationTask& task)
 	{
 		auto& cache = ShaderCache::Instance();
 		auto key = task.GetString();
@@ -3881,16 +3298,6 @@ namespace SIE
 		// Perform all completion operations under one mutex acquisition
 		{
 			std::scoped_lock lock(compilationMutex);
-			if (cache.GetShaderSourceGeneration() != sourceGeneration) {
-				return;
-			}
-			// Clear() removes in-flight tasks when their source snapshot becomes
-			// obsolete. Do not resurrect such a task in processedTasks when its
-			// worker eventually returns.
-			const auto activeDispatch = tasksInProgress.find(task);
-			if (activeDispatch == tasksInProgress.end() || activeDispatch->GetDispatchToken() != task.GetDispatchToken()) {
-				return;
-			}
 
 			// Update task counters
 			if (shaderBlob) {
@@ -4086,12 +3493,7 @@ namespace SIE
 	UpdateListener::UpdateListener(ShaderFileDependencyTracker* deps_) :
 		deps(deps_) {}
 
-	void UpdateListener::UpdateCache(
-		const std::filesystem::path& filePath,
-		SIE::ShaderCache* cache,
-		ShaderFileDependencyTracker* dependencyTracker,
-		bool& clearCache,
-		bool& fileDone)
+	void UpdateListener::UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache* cache, bool& clearCache, bool& fileDone)
 	{
 		fileDone = true;
 		// Skip directories
@@ -4103,10 +3505,11 @@ namespace SIE
 		const std::string shaderTypeString = filePath.stem().string();
 		std::chrono::time_point<std::chrono::system_clock> modifiedTime{};
 		auto shaderType = magic_enum::enum_cast<RE::BSShader::Type>(shaderTypeString, magic_enum::case_insensitive);
-		// Check if the file exists and get its modified time. Deleted and moved
-		// source paths still need invalidation, so absence is not an early return.
+		// Check if the file exists and get its modified time
 		if (std::filesystem::exists(filePath)) {
 			modifiedTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(filePath));
+		} else {
+			return;
 		}
 
 		// Ensure the file is not a directory and is a valid shader file (.hlsl)
@@ -4115,9 +3518,7 @@ namespace SIE
 			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 		if (!std::filesystem::is_directory(filePath) && lowerExtension == ".hlsl") {
 			// Update cache with the modified shader
-			if (modifiedTime != std::chrono::system_clock::time_point{}) {
-				cache->InsertModifiedShaderMap(shaderTypeString, modifiedTime);
-			}
+			cache->InsertModifiedShaderMap(shaderTypeString, modifiedTime);
 
 			// Attempt to mark the shader for recompilation
 			bool foundPath = cache->Clear(filePath.string());
@@ -4149,14 +3550,9 @@ namespace SIE
 				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 #endif
 			// Invalidate all .hlsl files that depend on this .hlsli
-			auto dependents = dependencyTracker->GetDependents(pathStr);
-			if (dependents.empty()) {
-				clearCache = true;
-			}
+			auto dependents = deps->GetDependents(pathStr);
 			for (const auto& hlsl : dependents) {
-				if (!cache->Clear(hlsl)) {
-					clearCache = true;
-				}
+				cache->Clear(hlsl);
 			}
 		}
 		// Indicate that file processing is not yet complete
@@ -4166,77 +3562,54 @@ namespace SIE
 	void UpdateListener::processQueue()
 	{
 		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+		std::unique_lock lock(actionMutex, std::defer_lock);
 		auto cache = globals::shaderCache;
 		while (cache->UseFileWatcher()) {
-			std::vector<fileAction> actions;
-			{
-				std::lock_guard lock(actionMutex);
-				actions.swap(queue);
-			}
-
-			if (!actions.empty()) {
-				if (auto* taskInterface = SKSE::GetTaskInterface()) {
-					taskInterface->AddTask([cache, dependencyTracker = deps, actions = std::move(actions)]() mutable {
-						bool clearCache = false;
-						for (const fileAction& fAction : actions) {
-							const std::filesystem::path filePath = std::filesystem::path(std::format("{}\\{}", fAction.dir, fAction.filename));
-							bool fileDone = false;
-							switch (fAction.action) {
-							case efsw::Actions::Add:
-								logger::debug("Detected Added path {}", filePath.string());
-								UpdateCache(filePath, cache, dependencyTracker, clearCache, fileDone);
-								break;
-							case efsw::Actions::Delete:
-								logger::debug("Detected Deleted path {}", filePath.string());
-								UpdateCache(filePath, cache, dependencyTracker, clearCache, fileDone);
-								break;
-							case efsw::Actions::Modified:
-								if (!std::filesystem::is_directory(filePath)) {
-									logger::debug("Detected Changed path {}", filePath.string());
-								}
-								UpdateCache(filePath, cache, dependencyTracker, clearCache, fileDone);
-								break;
-							case efsw::Actions::Moved:
-								logger::debug("Detected Moved path {}", filePath.string());
-								if (!fAction.oldFilename.empty()) {
-									UpdateCache(std::filesystem::path(fAction.dir) / fAction.oldFilename,
-										cache, dependencyTracker, clearCache, fileDone);
-								}
-								UpdateCache(filePath, cache, dependencyTracker, clearCache, fileDone);
-								break;
-							default:
-								logger::error("Filewatcher received invalid action {}", magic_enum::enum_name(fAction.action));
-							}
-							if (fileDone) {
-								continue;
-							}
+			lock.lock();
+			if (!queue.empty()) {
+				bool clearCache = false;
+				for (fileAction fAction : queue) {
+					const std::filesystem::path filePath = std::filesystem::path(std::format("{}\\{}", fAction.dir, fAction.filename));
+					bool fileDone = false;
+					switch (fAction.action) {
+					case efsw::Actions::Add:
+						logger::debug("Detected Added path {}", filePath.string());
+						UpdateCache(filePath, cache, clearCache, fileDone);
+						break;
+					case efsw::Actions::Delete:
+						logger::debug("Detected Deleted path {}", filePath.string());
+						break;
+					case efsw::Actions::Modified:
+						if (!std::filesystem::is_directory(filePath)) {
+							logger::debug("Detected Changed path {}", filePath.string());
 						}
-						if (clearCache) {
-							cache->Clear();
-						}
-					});
-				} else {
-					logger::error("SKSE task interface unavailable; shader source invalidation was not applied");
+						UpdateCache(filePath, cache, clearCache, fileDone);
+						break;
+					case efsw::Actions::Moved:
+						logger::debug("Detected Moved path {}", filePath.string());
+						break;
+					default:
+						logger::error("Filewatcher received invalid action {}", magic_enum::enum_name(fAction.action));
+					}
+					if (fileDone)
+						continue;
 				}
+				if (clearCache) {
+					cache->DeleteDiskCache();
+					cache->Clear();
+				}
+				queue.clear();
 			}
+			lock.unlock();
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
-		std::lock_guard lock(actionMutex);
 		queue.clear();
 	}
 
 	void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string& dir, const std::string& filename, efsw::Action action, std::string oldFilename)
 	{
-		auto extension = std::filesystem::path(filename).extension().string();
-		std::ranges::transform(extension, extension.begin(), [](unsigned char a_character) {
-			return static_cast<char>(std::tolower(a_character));
-		});
-		if (extension == ".hlsl" || extension == ".hlsli") {
-			ShaderCache::Instance().NotifyShaderSourceChanged();
-		}
 		std::lock_guard lock(actionMutex);
-		if (queue.empty() || queue.back().action != action || queue.back().dir != dir ||
-			queue.back().filename != filename || queue.back().oldFilename != oldFilename) {
+		if (queue.empty() || (queue.back().action != action && queue.back().filename != filename)) {
 			// only add if not a duplicate; esfw is very spammy
 			queue.push_back({ watchid, dir, filename, action, oldFilename });
 		}

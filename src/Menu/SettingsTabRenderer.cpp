@@ -238,6 +238,22 @@ void SettingsTabRenderer::RenderShadersTab()
 			ImGui::Text("%s", T("menu.settings.enable_disk_cache_tooltip", "Disables loading shaders from disk and prevents saving compiled shaders to disk cache."));
 		}
 
+		bool skipUnchanged = shaderCache->IsSkipUnchangedShaders();
+		ImGui::BeginDisabled(!useDiskCache);
+		if (ImGui::Checkbox(T("menu.settings.skip_unchanged_shaders", "Skip Unchanged Shaders"), &skipUnchanged)) {
+			shaderCache->SetSkipUnchangedShaders(skipUnchanged);
+		}
+		ImGui::EndDisabled();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.settings.skip_unchanged_shaders_tooltip",
+								  "When enabled, each shader is recompiled from source only if its .hlsl file "
+								  "is newer than the cached .bin on disk. "
+								  "Shaders whose source has not changed are loaded directly from the disk cache, "
+								  "avoiding the full startup compilation cost. "
+								  "Useful for iterative testing: change a shader file and only that shader is rebuilt. "
+								  "Requires 'Enable Disk Cache' to be active."));
+		}
+
 		bool useAsync = shaderCache->IsAsync();
 		if (ImGui::Checkbox(T("menu.settings.enable_async", "Enable Async"), &useAsync)) {
 			shaderCache->SetAsync(useAsync);

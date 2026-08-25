@@ -170,7 +170,6 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 			ImGui::TableNextColumn();
 			if (ImGui::Button(T("menu.restore_settings", "Restore Saved Settings"), { -1, 0 })) {
 				globals::state->Load();
-				shaderCache->Clear();
 			}
 
 			// Clear Shader Cache Button
@@ -253,7 +252,6 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 			T("menu.restore_settings", "Restore Saved Settings"),
 			[]() {
 				globals::state->Load();
-				globals::shaderCache->Clear();
 			} });
 	}
 	if (uiIcons.clearCache.texture) {

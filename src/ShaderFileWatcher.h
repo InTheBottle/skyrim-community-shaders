@@ -23,9 +23,15 @@ namespace SIE
 		{
 			std::lock_guard lock(mutex);
 			std::string normalizedHlsl = Util::FixFilePath(hlslFile);
-			// Different descriptor permutations can select different conditional
-			// includes from the same source. Keep their union until that source is
-			// explicitly invalidated so no live permutation loses its reverse edge.
+			auto it = hlslToIncludes.find(normalizedHlsl);
+			if (it != hlslToIncludes.end()) {
+				for (const auto& oldInc : it->second) {
+					hlsliToHlsl[oldInc].erase(normalizedHlsl);
+					if (hlsliToHlsl[oldInc].empty())
+						hlsliToHlsl.erase(oldInc);
+				}
+			}
+			hlslToIncludes[normalizedHlsl].clear();
 			for (const auto& inc : includes) {
 				std::string normalizedInc = Util::FixFilePath(inc);
 				hlslToIncludes[normalizedHlsl].insert(normalizedInc);

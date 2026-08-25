@@ -92,7 +92,6 @@ void AdvancedSettingsRenderer::RenderLoggingSection()
 	if (ImGui::Combo(T("menu.advanced.log_level", "Log Level"), &item_current, items, IM_ARRAYSIZE(items))) {
 		ImGui::SameLine();
 		globals::state->SetLogLevel(static_cast<spdlog::level::level_enum>(item_current));
-		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.log_level_tooltip", "Log level. Trace is most verbose. Default is info. Debug and Trace also enable Developer Mode."));
@@ -520,11 +519,8 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 	auto shaderCache = globals::shaderCache;
 	auto state = globals::state;
 
-	bool enableDeveloperMode = state->IsDeveloperModeExplicitlyEnabled();
-	if (ImGui::Checkbox(T("menu.advanced.enable_developer_mode", "Enable Developer Mode"), &enableDeveloperMode)) {
-		state->SetDeveloperMode(enableDeveloperMode);
-		logger::info("Developer Mode {}", enableDeveloperMode ? "enabled" : "disabled");
-		shaderCache->Clear();
+	if (ImGui::Checkbox(T("menu.advanced.enable_developer_mode", "Enable Developer Mode"), &state->enableDeveloperMode)) {
+		logger::info("Developer Mode {}", state->enableDeveloperMode ? "enabled" : "disabled");
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.enable_developer_mode_tooltip",
@@ -532,7 +528,7 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 							  "Also enabled automatically when Log Level is debug or trace. "
 							  "Use at your own risk."));
 	}
-	if (!state->IsDeveloperModeExplicitlyEnabled() && state->GetLogLevel() <= spdlog::level::debug) {
+	if (!state->enableDeveloperMode && state->GetLogLevel() <= spdlog::level::debug) {
 		ImGui::TextDisabled("%s", T("menu.advanced.developer_mode_via_log_level",
 									  "Currently active because Log Level is debug/trace."));
 	}

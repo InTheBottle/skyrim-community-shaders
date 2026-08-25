@@ -443,7 +443,10 @@ namespace
 			// Delete on disk AND drop the in-memory cache — otherwise existing variants keep
 			// serving from memory and the promised full recompile never happens (mirrors
 			// PerformClearShaderCache and the ShaderCache invalidation path).
-			task->AddTask([cache]() { cache->ClearAndDeleteDiskCache(); });
+			task->AddTask([cache]() {
+				cache->DeleteDiskCache();
+				cache->Clear();
+			});
 			return json{ { "action", "deleteDisk" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "on-disk + in-memory shader cache cleared; a full recompile follows (cold-compile benchmark)" } };
 		}
 		return json{ { "error", "unknown action (clear|deleteDisk)" }, { "action", action } };
