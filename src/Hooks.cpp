@@ -2,7 +2,6 @@
 
 #include "ShaderTools/BSShaderHooks.h"
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
-#include "ShaderTools/LegacyShaderCompatibility.h"
 #include "Utils/ExternalEmittance.h"
 #include "Utils/VersionedRelocation.h"
 
@@ -36,11 +35,11 @@ namespace
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
 		if (a_shader.shaderType.get() != RE::BSShader::Type::Utility ||
-			!LegacyShaderCompatibility::IsLegacyVersion()) {
+			!LegacyGraphicsCompatibility::IsLegacyVersion()) {
 			return;
 		}
-		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
-		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
+		a_vertexDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
+		a_pixelDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
 	}
 }
 
@@ -263,7 +262,7 @@ namespace GrassExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			func(shader, pass, renderFlags);
-			LegacyShaderCompatibility::BindLegacyGrassPerGeometryToPixelShader();
+			LegacyGraphicsCompatibility::BindLegacyGrassPerGeometryToPixelShader();
 
 			auto state = globals::state;
 
@@ -1041,7 +1040,6 @@ namespace Hooks
 		stl::detour_thunk<CSShadersSupport::BSImagespaceShader_DispatchComputeShader>(REL::RelocationID(100952, 107734));
 		stl::write_vfunc<0x1, WaterBlendHistory::BSImagespaceShader_Render>(RE::VTABLE_BSImagespaceShaderISWaterBlend[3]);
 
-		LegacyShaderCompatibility::InstallImageSpaceAdapters();
 		LegacyGraphicsCompatibility::Install();
 
 		logger::info("Hooking BSComputeShader");

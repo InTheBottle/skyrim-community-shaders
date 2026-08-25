@@ -1,7 +1,12 @@
-#include "LegacyShaderCompatibility.h"
+#include "LegacyGraphicsCompatibility.h"
 
-namespace LegacyShaderCompatibility
+namespace LegacyGraphicsCompatibility
 {
+	namespace detail
+	{
+		void InstallShaderAdapters();
+	}
+
 	namespace
 	{
 		thread_local std::optional<bool> depthOfFieldSelectorContext;
@@ -170,8 +175,6 @@ namespace LegacyShaderCompatibility
 			return;
 		}
 
-		// ApplyPSConstantGroup also updates Skyrim VR's D3D state cache. Restore
-		// the shader-owned pointer immediately; only the active binding is shared.
 		auto& pixelGroup = shadowState->GetPSConstantGroup(level);
 		struct RestoreBuffer
 		{
@@ -183,7 +186,7 @@ namespace LegacyShaderCompatibility
 		RE::BSGraphics::Renderer::ApplyPSConstantGroup(level);
 	}
 
-	void InstallImageSpaceAdapters()
+	void detail::InstallShaderAdapters()
 	{
 		if (!IsLegacyVersion()) {
 			return;

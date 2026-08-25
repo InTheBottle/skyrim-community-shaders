@@ -1,12 +1,15 @@
 #include "LegacyGraphicsCompatibility.h"
 
-#include "LegacyShaderCompatibility.h"
-
 #include <bit>
 #include <mutex>
 
 namespace LegacyGraphicsCompatibility
 {
+	namespace detail
+	{
+		void InstallShaderAdapters();
+	}
+
 	namespace
 	{
 		constexpr std::size_t fullScreenBlurSlotCount = 11;
@@ -26,7 +29,7 @@ namespace LegacyGraphicsCompatibility
 
 		[[nodiscard]] bool IsLegacyFlatRuntime() noexcept
 		{
-			return !REL::Module::IsVR() && LegacyShaderCompatibility::IsLegacyVersion();
+			return !REL::Module::IsVR() && IsLegacyVersion();
 		}
 
 		[[nodiscard]] std::uintptr_t ReadRelativeCallTarget(std::uintptr_t a_callSite) noexcept
@@ -619,6 +622,7 @@ namespace LegacyGraphicsCompatibility
 			return;
 		}
 
+		detail::InstallShaderAdapters();
 		InstallAlphaBlendExtentsAdapter();
 		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();

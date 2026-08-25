@@ -1,7 +1,6 @@
 #include "ShaderCache.h"
 #include "Globals.h"
 #include "ShaderFileWatcher.h"
-#include "ShaderTools/LegacyShaderCompatibility.h"
 #include "Util.h"
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
