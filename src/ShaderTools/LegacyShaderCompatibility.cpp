@@ -97,8 +97,6 @@ namespace LegacyShaderCompatibility
 		{
 			static void thunk(void* a_imageSpaceShader, RE::BSTriShape* a_shape, RE::ImageSpaceEffectParam* a_param)
 			{
-				// The 1.7 executable already owns this contract. Keep its
-				// parameter object completely untouched, including reads.
 				if (IsNativeLatestContract()) {
 					func(a_imageSpaceShader, a_shape, a_param);
 					return;
