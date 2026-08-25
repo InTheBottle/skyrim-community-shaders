@@ -1,4 +1,0 @@
-set(SOURCE_DIR "@CMAKE_SOURCE_DIR@")
-set(STAGE_DIR "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
-include("@CMAKE_SOURCE_DIR@/cmake/PackageNotices.cmake")
-cs_normalize_package_notices("${SOURCE_DIR}" "${STAGE_DIR}" ON)

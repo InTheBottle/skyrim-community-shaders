@@ -615,8 +615,6 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// Skyrim 1.7 owns all of these contracts natively.  VR was not present
-		// in the three-runtime proof corpus and must receive no inferred writes.
 		if (!IsLegacyFlatRuntime()) {
 			return;
 		}

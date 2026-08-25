@@ -430,18 +430,19 @@ namespace
 			return json{ { "error", "SKSE task interface unavailable" } };
 		const uint frame = EnqueuedFrame();
 
-		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem),
-		// so marshal them to the main thread. Recompiles are observable via inspect(kind=shadercache)
+		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem)
+		// — marshal to the main thread. Recompiles are observable via inspect(kind=shadercache)
 		// + the communityshaders.shaderRecompiled event. NOTE clear vs deleteDisk: clear only drops
-		// the in-memory maps, so with the disk cache enabled shaders reload from the shared CAS
-		// rather than recompiling; only deleteDisk guarantees a cold recompile.
+		// the in-memory maps, so with the disk cache enabled shaders reload from Data/ShaderCache
+		// rather than recompiling — only deleteDisk guarantees a cold recompile.
 		if (action == "clear") {
 			task->AddTask([cache]() { cache->Clear(); });
 			return json{ { "action", "clear" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "in-memory cache dropped; shaders reload from the disk cache if present, else recompile (use deleteDisk to force a cold recompile)" } };
 		}
 		if (action == "deleteDisk") {
-			// Delete on disk AND drop the in-memory cache as one publication transaction;
-			// otherwise a worker can repopulate memory between the two operations.
+			// Delete on disk AND drop the in-memory cache — otherwise existing variants keep
+			// serving from memory and the promised full recompile never happens (mirrors
+			// PerformClearShaderCache and the ShaderCache invalidation path).
 			task->AddTask([cache]() { cache->ClearAndDeleteDiskCache(); });
 			return json{ { "action", "deleteDisk" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "on-disk + in-memory shader cache cleared; a full recompile follows (cold-compile benchmark)" } };
 		}
@@ -641,7 +642,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("communityshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Community Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from the shared content-addressed cache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the shared on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via communityshaders.inspect kind=shadercache and the communityshaders.shaderRecompiled event. Read-only status is communityshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
+			R"({"description":"Manage Community Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via communityshaders.inspect kind=shadercache and the communityshaders.shaderRecompiled event. Read-only status is communityshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
 		dvb->RegisterTool("communityshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
@@ -665,7 +666,7 @@ namespace DevBenchBridge
  * inspection, shader caching, capture operations, and settings persistence.
  * If DevBench is unavailable, no action is taken.
  */
-	void Install() {}  // inert until built with DEVBENCH_BRIDGE_ENABLED
+void Install() {}  // inert until built with DEVBENCH_BRIDGE_ENABLED
 }
 
 #endif

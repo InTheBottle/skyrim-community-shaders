@@ -100,7 +100,9 @@ void AdvancedSettingsRenderer::RenderLoggingSection()
 
 	// Shader Defines input
 	auto& shaderDefines = globals::state->shaderDefinesString;
-	ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines);
+	if (ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines)) {
+		globals::state->SetDefines(shaderDefines);
+	}
 	if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemActive() &&
 												   (ImGui::IsKeyPressed(ImGuiKey_Enter) ||
 													   ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))) {
@@ -166,7 +168,7 @@ void AdvancedSettingsRenderer::RenderShaderDebugSection()
 		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.advanced.clear_shader_cache_tooltip", "Clear all compiled shaders from memory. Shaders reload from the shared disk cache when available."));
+		ImGui::Text("%s", T("menu.advanced.clear_shader_cache_tooltip", "Clear all compiled shaders from memory. Forces recompilation of all shaders on next use."));
 	}
 
 	ImGui::Spacing();

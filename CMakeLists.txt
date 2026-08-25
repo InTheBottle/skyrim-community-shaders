@@ -423,15 +423,6 @@ unset(_valid_feature_paths)
 unset(_feat_files)
 string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 
-include(PackageNotices)
-cs_get_package_notice_sources(CS_PACKAGE_NOTICE_SOURCES "${CMAKE_SOURCE_DIR}")
-set(CS_PACKAGE_NOTICE_NORMALIZER "${CMAKE_SOURCE_DIR}/cmake/NormalizePackageNotices.cmake")
-configure_file(
-    "${CMAKE_SOURCE_DIR}/cmake/InstallPackageNotices.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/InstallPackageNotices.cmake"
-    @ONLY
-)
-
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
@@ -474,10 +465,6 @@ install(
     PATTERN "Tests" EXCLUDE
 )
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
-install(
-    SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallPackageNotices.cmake"
-    COMPONENT Shaders
-)
 
 # #######################################################################################################################
 # # Automatic AIO preparation (incremental copy system)
@@ -574,7 +561,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     )
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
-    list(REMOVE_ITEM _AIO_PACKAGE_SOURCE_FILES ${CS_PACKAGE_NOTICE_SOURCES})
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
 
     # Copy feature folders (only files, preserve existing files in AIO).
@@ -588,23 +574,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 "${_fpath}/*"
             )
             list(FILTER _feature_files EXCLUDE REGEX "/Shaders/")
-            list(REMOVE_ITEM _feature_files ${CS_PACKAGE_NOTICE_SOURCES})
             append_copy_if_different(_prepare_aio_cmds _feature_files "${_fpath}" "${AIO_DIR}")
         endif()
     endforeach()
-
-    # Keep legal notices beside their sources in the repository, but never
-    # stage generic LICENSE/README names into shared Data paths.
-    list(
-        APPEND _prepare_aio_cmds
-        COMMAND
-        ${CMAKE_COMMAND}
-        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-        "-DSTAGE_DIR=${AIO_DIR}"
-        -DINCLUDE_ALL=ON
-        -P
-        ${CS_PACKAGE_NOTICE_NORMALIZER}
-    )
 
     # Remove CORE from AIO if it exists (keep rest intact)
     list(
@@ -630,14 +602,11 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
             ${_prepare_aio_cmds}
         DEPENDS
             ${_AIO_PACKAGE_FILES}
-            ${CS_PACKAGE_NOTICE_SOURCES}
             ${PROJECT_NAME}
             ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
-            ${CMAKE_SOURCE_DIR}/cmake/PackageNotices.cmake
-            ${CS_PACKAGE_NOTICE_NORMALIZER}
     )
 
-    # If AIO was manually (or programmatically) deleted, the stamp is stale;
+    # If AIO was manually (or programmatically) deleted, the stamp is stale â€”
     # clear it so cmake --build re-runs PREPARE_AIO to recreate the directory.
     if(NOT EXISTS "${AIO_DIR}")
         file(
@@ -680,7 +649,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     )
     # Exclude test files from production packages
     list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
-    list(REMOVE_ITEM _package_shaders ${CS_PACKAGE_NOTICE_SOURCES})
     set(_shader_copy_cmds)
 
     set(_feature_shader_paths_file "${CMAKE_CURRENT_BINARY_DIR}/feature_shader_paths.txt")
@@ -714,7 +682,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 "${_fpath}/Shaders/*"
             )
             list(FILTER _feat_shaders EXCLUDE REGEX "/Tests/")
-            list(REMOVE_ITEM _feat_shaders ${CS_PACKAGE_NOTICE_SOURCES})
             append_copy_if_different(_shader_copy_cmds _feat_shaders "${_fpath}/Shaders" "${AIO_DIR}/Shaders")
         endif()
     endforeach()
@@ -989,13 +956,6 @@ if(ZIP_TO_DIST)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E remove "${ZIP_DIR}/CORE"
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${ZIP_DIR}/Shaders/Tests"
-        COMMAND
-            ${CMAKE_COMMAND}
-            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-            "-DSTAGE_DIR=${ZIP_DIR}"
-            -DINCLUDE_ALL=OFF
-            -P
-            ${CS_PACKAGE_NOTICE_NORMALIZER}
     )
 
     set(TARGET_ZIP "${PROJECT_NAME}-${UTC_NOW}.zip")
@@ -1014,29 +974,17 @@ if(ZIP_TO_DIST)
             continue()
         endif()
         get_filename_component(FEATURE ${FEATURE_PATH} NAME)
-        set(FEATURE_ZIP_STAGE "${ZIP_DIR}-features/${FEATURE}")
         message(
             "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.zip"
         )
         add_custom_command(
             TARGET ${PROJECT_NAME}
             POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_ZIP_STAGE}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${FEATURE_ZIP_STAGE}"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}" "${FEATURE_ZIP_STAGE}"
             COMMAND
-                ${CMAKE_COMMAND}
-                "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                "-DSTAGE_DIR=${FEATURE_ZIP_STAGE}"
-                -DINCLUDE_ALL=OFF
-                -P
-                ${CS_PACKAGE_NOTICE_NORMALIZER}
-            COMMAND ${CMAKE_COMMAND} -E remove "${FEATURE_ZIP_STAGE}/CORE"
-            COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_ZIP_STAGE}/Shaders/Tests"
-            COMMAND
-                ${CMAKE_COMMAND} -E chdir "${FEATURE_ZIP_STAGE}"
                 ${CMAKE_COMMAND} -E tar cf
-                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.zip --format=zip -- .
+                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.zip --format=zip
+                -- .
+            WORKING_DIRECTORY ${FEATURE_PATH}
         )
     endforeach()
 endif()
@@ -1132,33 +1080,19 @@ endforeach()
 
 # Core package
 set(FEATURE_PATH "${CMAKE_BINARY_DIR}/Core")
+file(MAKE_DIRECTORY ${FEATURE_PATH})
 add_custom_command(
     OUTPUT ${CORE_PACKAGE}
-    DEPENDS
-        ${PROJECT_NAME}
-        ${CORE_SOURCES}
-        ${CS_PACKAGE_NOTICE_SOURCES}
-        ${CMAKE_SOURCE_DIR}/cmake/PackageNotices.cmake
-        ${CS_PACKAGE_NOTICE_NORMALIZER}
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${FEATURE_PATH}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${FEATURE_PATH}
+    DEPENDS ${PROJECT_NAME} ${CORE_SOURCES}
     COMMAND
         ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix ${FEATURE_PATH}
         --component SKSE
     COMMAND
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
-    COMMAND
-        ${CMAKE_COMMAND}
-        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-        "-DSTAGE_DIR=${FEATURE_PATH}"
-        -DINCLUDE_ALL=OFF
-        -P
-        ${CS_PACKAGE_NOTICE_NORMALIZER}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PATH}/Shaders/Tests"
-    COMMAND
-        ${CMAKE_COMMAND} -E chdir ${FEATURE_PATH}
-        ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=zip -- .
+    COMMAND ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=zip -- .
+    WORKING_DIRECTORY ${FEATURE_PATH}
     COMMENT "Creating Core zip package"
 )
 add_custom_target("Package-Core" DEPENDS ${CORE_PACKAGE})
@@ -1175,30 +1109,13 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
     set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.zip")
-    set(FEATURE_PACKAGE_STAGE "${CMAKE_BINARY_DIR}/FeaturePackages/${FEATURE}")
 
     add_custom_command(
         OUTPUT ${FEATURE_PACKAGE}
-        COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PACKAGE_STAGE}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${FEATURE_PACKAGE_STAGE}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}" "${FEATURE_PACKAGE_STAGE}"
         COMMAND
-            ${CMAKE_COMMAND}
-            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-            "-DSTAGE_DIR=${FEATURE_PACKAGE_STAGE}"
-            -DINCLUDE_ALL=OFF
-            -P
-            ${CS_PACKAGE_NOTICE_NORMALIZER}
-        COMMAND ${CMAKE_COMMAND} -E remove "${FEATURE_PACKAGE_STAGE}/CORE"
-        COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PACKAGE_STAGE}/Shaders/Tests"
-        COMMAND
-            ${CMAKE_COMMAND} -E chdir "${FEATURE_PACKAGE_STAGE}"
             ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE} --format=zip -- .
-        DEPENDS
-            ${FEATURE_SOURCES}
-            ${CS_PACKAGE_NOTICE_SOURCES}
-            ${CMAKE_SOURCE_DIR}/cmake/PackageNotices.cmake
-            ${CS_PACKAGE_NOTICE_NORMALIZER}
+        WORKING_DIRECTORY "${FEATURE_PATH}"
+        DEPENDS ${FEATURE_SOURCES}
         COMMENT "Creating ${FEATURE} zip package"
     )
 
