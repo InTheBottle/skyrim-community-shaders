@@ -544,8 +544,11 @@ namespace SIE
 			CacheHit,  // Already compiled; use the returned blob
 			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
 		};
-		std::pair<ClaimResult, winrt::com_ptr<ID3DBlob>> ClaimCompilation(
-			const std::string& key, std::uint64_t sourceGeneration, std::uint64_t& claimToken);
+		ClaimResult ClaimCompilation(
+			const std::string& key,
+			std::uint64_t sourceGeneration,
+			std::uint64_t& claimToken,
+			winrt::com_ptr<ID3DBlob>& cachedBlob);
 		void AbandonCompilation(
 			const std::string& key, std::uint64_t sourceGeneration, std::uint64_t claimToken);
 		/** @brief Invalidates in-flight source snapshots after any HLSL/HLSLI filesystem event. */

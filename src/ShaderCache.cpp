@@ -1627,7 +1627,8 @@ namespace SIE
 			//  - wait if another thread is compiling (Pending),
 			//  - claim the slot with Pending if nobody started yet.
 			std::uint64_t claimToken = 0;
-			auto [claimResult, cachedBlob] = cache.ClaimCompilation(key, sourceGeneration, claimToken);
+			winrt::com_ptr<ID3DBlob> cachedBlob;
+			const auto claimResult = cache.ClaimCompilation(key, sourceGeneration, claimToken, cachedBlob);
 			struct PendingClaimGuard
 			{
 				ShaderCache& cache;
@@ -2680,9 +2681,13 @@ namespace SIE
 		return true;
 	}
 
-	std::pair<ShaderCache::ClaimResult, winrt::com_ptr<ID3DBlob>> ShaderCache::ClaimCompilation(
-		const std::string& key, std::uint64_t sourceGeneration, std::uint64_t& claimToken)
+	ShaderCache::ClaimResult ShaderCache::ClaimCompilation(
+		const std::string& key,
+		std::uint64_t sourceGeneration,
+		std::uint64_t& claimToken,
+		winrt::com_ptr<ID3DBlob>& cachedBlob)
 	{
+		cachedBlob = {};
 		std::unique_lock lockM{ mapMutex };
 
 		for (;;) {
@@ -2693,7 +2698,8 @@ namespace SIE
 					if (entry.blob) {
 						logger::debug("Shader already compiled; using cache: {}", key);
 						claimToken = 0;
-						return { ClaimResult::CacheHit, entry.blob };
+						cachedBlob = entry.blob;
+						return ClaimResult::CacheHit;
 					}
 					break;  // Completed with nullptr blob — re-compile
 				}
@@ -2715,7 +2721,7 @@ namespace SIE
 		}
 		shaderMap.insert_or_assign(
 			key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now(), false, sourceGeneration, claimToken });
-		return { ClaimResult::Claimed, {} };
+		return ClaimResult::Claimed;
 	}
 
 	void ShaderCache::AbandonCompilation(
