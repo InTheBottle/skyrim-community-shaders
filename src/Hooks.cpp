@@ -3,7 +3,6 @@
 #include "ShaderTools/BSShaderHooks.h"
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
 #include "ShaderTools/LegacyShaderCompatibility.h"
-#include "ShaderTools/RuntimeShaderStorage.h"
 #include "Utils/ExternalEmittance.h"
 #include "Utils/VersionedRelocation.h"
 
@@ -24,9 +23,6 @@
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 
-#include <nlohmann/json.hpp>
-
-#include <fstream>
 #include <unordered_map>
 
 namespace
@@ -36,8 +32,6 @@ namespace
 	std::unordered_map<void*, std::shared_ptr<const ShaderBytecode>> ShaderBytecodeMap;
 	std::mutex ShaderBytecodeMutex;
 	std::mutex ShaderDumpMutex;
-	std::unordered_map<std::string, std::string> ManifestedDumpLoaders;
-	bool ManifestWritesDisabled = false;
 
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
@@ -47,16 +41,6 @@ namespace
 		}
 		a_vertexDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
 		a_pixelDescriptor = LegacyShaderCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
-	}
-
-	[[nodiscard]] bool DisableManifestWrites(const std::filesystem::path& a_dumpRoot, std::string_view a_reason)
-	{
-		ManifestWritesDisabled = true;
-		std::ofstream invalidMarker(a_dumpRoot / "manifest.invalid", std::ios::trunc);
-		invalidMarker << a_reason << '\n';
-		invalidMarker.flush();
-		invalidMarker.close();
-		return !invalidMarker.fail();
 	}
 }
 
@@ -91,129 +75,23 @@ void DumpShader(const RE::BSShader* thisClass, const ShaderType* shader, std::sp
 	constexpr auto shaderExtStr = std::is_same_v<ShaderType, RE::BSGraphics::VertexShader> ? "vs" : "ps";
 	constexpr auto shaderTypeStr = std::is_same_v<ShaderType, RE::BSGraphics::VertexShader> ? "vertex" : "pixel";
 	const std::string_view loaderType = thisClass->fxpFilename ? thisClass->fxpFilename : "Unknown";
-	const auto bytecodeHash = ShaderStorage::SHA256(bytecode);
-	if (!bytecodeHash) {
-		logger::error("Failed to hash {} shader {} with descriptor {:X}; dump skipped", shaderTypeStr, loaderType, shader->id);
-		return;
-	}
-
-	const auto& runtimeIdentity = ShaderStorage::GetRuntimeIdentity();
-	const auto& dumpRoot = ShaderStorage::GetRuntimeDumpRoot();
-	const auto dumpPath = ShaderStorage::BuildDumpPath(
-		dumpRoot,
-		loaderType,
-		shader->id,
-		shaderExtStr,
-		*bytecodeHash);
-	if (!dumpPath) {
-		logger::error("Failed to identify {} shader loader {}; dump skipped", shaderTypeStr, loaderType);
-		return;
-	}
-	const auto manifestPath = dumpRoot / "manifest.jsonl";
+	const auto dumpPath = std::format("Data\\ShaderDump\\{}\\{:X}.{}.bin", loaderType, shader->id, shaderExtStr);
+	const auto directoryPath = std::format("Data\\ShaderDump\\{}", loaderType);
+	logger::debug("Dumping {} shader {} with id {:x} at {}", shaderTypeStr, loaderType, shader->id, dumpPath);
 
 	std::scoped_lock lock(ShaderDumpMutex);
-	try {
-		std::filesystem::create_directories(dumpPath->parent_path());
-
-		const bool writeDump = !std::filesystem::exists(*dumpPath);
-		if (!writeDump) {
-			const auto existingHash = ShaderStorage::SHA256File(*dumpPath);
-			if (!existingHash || *existingHash != *bytecodeHash) {
-				const auto reason = std::format(
-					"Shader bytecode hash prefix collision at {}; expected full SHA-256 {}, existing SHA-256 {}",
-					dumpPath->string(),
-					*bytecodeHash,
-					existingHash.value_or("unavailable"));
-				const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
-				logger::critical(
-					"{}. The existing dump will not be overwritten and this session is invalid{}",
-					reason,
-					markerWritten ? "" : "; invalid marker creation also failed");
-				return;
-			}
-		}
-
-		if (writeDump) {
-			std::ofstream stream(*dumpPath, std::ios::binary | std::ios::trunc);
-			stream.write(reinterpret_cast<const char*>(bytecode.data()), static_cast<std::streamsize>(bytecode.size()));
-			stream.close();
-			if (!stream || ShaderStorage::SHA256File(*dumpPath) != bytecodeHash) {
-				logger::error("Failed to write a verified shader dump to {}", dumpPath->string());
-				return;
-			}
-		}
-
-		const auto relativePath = std::filesystem::relative(*dumpPath, dumpRoot).generic_string();
-		if (ManifestWritesDisabled) {
-			logger::error("Shader dump {} is unmanifested because this session manifest is invalid", dumpPath->string());
+	if (!std::filesystem::is_directory(directoryPath)) {
+		try {
+			std::filesystem::create_directories(directoryPath);
+		} catch (const std::filesystem::filesystem_error& ex) {
+			logger::error("Failed to create folder: {}", ex.what());
 			return;
 		}
-		if (const auto manifested = ManifestedDumpLoaders.find(relativePath); manifested != ManifestedDumpLoaders.end()) {
-			if (manifested->second != loaderType) {
-				const auto reason = std::format(
-					"Shader loader hash prefix collision at {}; loaders {} and {} resolve to the same path",
-					relativePath,
-					manifested->second,
-					loaderType);
-				const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
-				logger::critical(
-					"{}. This session is invalid{}",
-					reason,
-					markerWritten ? "" : "; invalid marker creation also failed");
-				return;
-			}
-		} else {
-			nlohmann::json record{
-				{ "schema_version", ShaderStorage::DUMP_SCHEMA_VERSION },
-				{ "runtime_version", runtimeIdentity.runtimeVersion },
-				{ "executable_sha256", runtimeIdentity.executableSHA256 },
-				{ "dump_session", ShaderStorage::GetDumpSessionID() },
-				{ "source", "BSShader::LoadShaders" },
-				{ "loader", std::string(loaderType) },
-				{ "descriptor", shader->id },
-				{ "descriptor_hex", std::format("{:X}", shader->id) },
-				{ "stage", shaderExtStr },
-				{ "bytecode_sha256", *bytecodeHash },
-				{ "bytecode_size", bytecode.size() },
-				{ "path", relativePath }
-			};
+	}
 
-			const auto originalManifestSize = std::filesystem::exists(manifestPath) ? std::filesystem::file_size(manifestPath) : 0;
-			const auto serializedRecord = record.dump() + '\n';
-			std::ofstream manifest(manifestPath, std::ios::app | std::ios::binary);
-			manifest.write(serializedRecord.data(), static_cast<std::streamsize>(serializedRecord.size()));
-			manifest.flush();
-			manifest.close();
-			if (manifest.fail()) {
-				std::error_code rollbackError;
-				std::filesystem::resize_file(manifestPath, originalManifestSize, rollbackError);
-				if (rollbackError) {
-					const auto reason = std::format(
-						"Manifest append and rollback failed: {}",
-						rollbackError.message());
-					const auto markerWritten = DisableManifestWrites(dumpRoot, reason);
-					logger::critical(
-						"Failed to append {} and rollback failed ({}); further manifest writes are disabled for this session{}",
-						manifestPath.string(),
-						rollbackError.message(),
-						markerWritten ? "" : "; invalid marker creation also failed");
-				} else {
-					logger::error("Failed to append shader dump manifest {}; append was rolled back", manifestPath.string());
-				}
-				return;
-			}
-			ManifestedDumpLoaders.emplace(relativePath, loaderType);
-		}
-
-		logger::debug(
-			"Dumped {} shader {} descriptor {:X}, SHA-256 {} to {}",
-			shaderTypeStr,
-			loaderType,
-			shader->id,
-			*bytecodeHash,
-			dumpPath->string());
-	} catch (const std::filesystem::filesystem_error& ex) {
-		logger::error("Failed to dump shader: {}", ex.what());
+	if (FILE* file; fopen_s(&file, dumpPath.c_str(), "wb") == 0) {
+		fwrite(bytecode.data(), 1, bytecode.size(), file);
+		fclose(file);
 	}
 }
 
