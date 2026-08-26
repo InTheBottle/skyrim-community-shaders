@@ -10,7 +10,6 @@
 #include "Upscaling.h"
 #include "VariableCache.h"
 
-
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
