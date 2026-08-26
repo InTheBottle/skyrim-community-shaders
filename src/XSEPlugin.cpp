@@ -9,7 +9,6 @@
 #include "TruePBR.h"
 #include "Upscaling.h"
 
-
 #include "Editor/EditorWindow.h"
 
 #define DLLEXPORT __declspec(dllexport)
