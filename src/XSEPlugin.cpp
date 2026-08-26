@@ -10,7 +10,6 @@
 #include "TruePBR.h"
 #include "Upscaling.h"
 
-
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
