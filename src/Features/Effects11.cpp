@@ -184,8 +184,8 @@ void Effects11::LoadRaindropTexture()
 
 void Effects11::SetupResources()
 {
+	// Initialize() -> Apply() already loads the raindrop texture; do not load it again here.
 	EffectManager::GetSingleton().Initialize();
-	LoadRaindropTexture();
 }
 
 void Effects11::ClearShaderCache()
@@ -457,7 +457,7 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 	}
 
 	{
-		static auto& volumetricLighting = (*(RE::BSVolumetricLightingRenderData*)(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, red)));
+		static auto& volumetricLighting = (*(RE::BSVolumetricLightingRenderData*)(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, color)));
 		volumetricLighting.intensity *= settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
 		volumetricLighting.samplingRepartition.rangeFactor *= settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 	}

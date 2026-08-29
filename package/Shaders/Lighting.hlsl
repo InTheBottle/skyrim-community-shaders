@@ -303,6 +303,7 @@ struct PS_OUTPUT
 {
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
+	float4 NormalGlossiness: SV_Target2;
 };
 #endif
 
@@ -1217,7 +1218,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		weights[0] = weights[1] = weights[2] = weights[3] = weights[4] = weights[5] = 0.0;
 
 		const bool doTerrainPom = ExtendedMaterials::TerrainHasAnyDisplacement() &&
-			ExtendedMaterials::TerrainMaxWeightedHeightScale(input, displacementParams) > 0.01;
+		                          ExtendedMaterials::TerrainMaxWeightedHeightScale(input, displacementParams) > 0.01;
 		[branch] if (doTerrainPom)
 		{
 			uv = ExtendedMaterials::GetParallaxCoords(input, viewPosition.z, uv, mipLevels, terrainMaxTexDim, viewDirection, tbnTr, screenNoise, displacementParams, sharedOffset, pixelOffset, weights);
@@ -1485,8 +1486,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float2 blendColorUV = input.TexCoord0.zw;
 	[branch] if (SharedData::terrainVariationSettings.enableLODTerrainTilingFix)
 		lodLandColor = StochasticSampleLOD(screenNoise, TexLandLodBlend1Sampler, SampLandLodBlend1Sampler, blendColorUV);
-	else
-		lodLandColor = TexLandLodBlend1Sampler.SampleBias(SampLandLodBlend1Sampler, blendColorUV, SharedData::MipBias);
+	else lodLandColor = TexLandLodBlend1Sampler.SampleBias(SampLandLodBlend1Sampler, blendColorUV, SharedData::MipBias);
 #		else
 	lodLandColor = TexLandLodBlend1Sampler.Sample(SampLandLodBlend1Sampler, input.TexCoord0.zw);
 #		endif
@@ -1931,7 +1931,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 					material.Roughness = envColorBase.a;
 				} else {
 					material.F0 = 1.0;
-					material.Roughness = 1.0 / 7.0;
+					material.Roughness = 1.0 / 8.0;
 				}
 
 #			if defined(CREATOR)
@@ -1968,15 +1968,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(DEFERRED)
 	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, worldNormal
 #			if defined(SKYLIGHTING_SHADOW_VIS)
-		, skylightingShadowVisibility
+		,
+		skylightingShadowVisibility
 #			endif
 	);
 #		else
 	sh2 skylightingSH = inWorld ? Skylighting::Sample(positionMSSkylight, worldNormal
 #			if defined(SKYLIGHTING_SHADOW_VIS)
-		, skylightingShadowVisibility
+									  ,
+									  skylightingShadowVisibility
 #			endif
-	) : Skylighting::UNIT_SH;
+									  ) :
+	                              Skylighting::UNIT_SH;
 #		endif
 #	endif
 
@@ -2130,7 +2133,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if !defined(SKYLIGHTING_SHADOW_VIS)
 		dirSoftShadow =
 #		endif
-		ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, dirVSMDetailedShadow);
+			ShadowSampling::GetLightingShadow(input.WorldPosition.xyz, dirVSMDetailedShadow);
 #	endif
 
 	float dirDetailedShadow = 1.0;
@@ -2726,6 +2729,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		fogFactor = exponentialHeightFog.w;
 	}
 #		endif
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::AdditiveLighting) != 0) {
+#		if defined(EXP_HEIGHT_FOG)
+		vanillaFogColor = 0.0;
+#		endif
+		fogColor = 0.0;
+	}
 	if ((FrameBuffer::FrameParams.y && FrameBuffer::FrameParams.z) || inReflection) {
 #		if defined(EXP_HEIGHT_FOG)
 		if (SharedData::exponentialHeightFogSettings.enabled) {
@@ -2879,10 +2888,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Diffuse.xyz = color.xyz;
 #	endif  // defined(LIGHT_LIMIT_FIX)
 
+#	if defined(DEFERRED)
 	psout.MotionVectors.xy = screenMotionVector.xy;
 	psout.MotionVectors.zw = float2(0, psout.Diffuse.w);
-
-#	if defined(DEFERRED)
 
 #		if defined(TERRAIN_BLENDING)
 	[flatten] if (SharedData::terrainBlendingSettings.Enabled)
@@ -2937,6 +2945,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if ((!inWorld && !inReflection) && SharedData::linearLightingSettings.enableLinearLighting && !(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow)) {
 		psout.Diffuse.xyz = Color::LinearToSrgb(psout.Diffuse.xyz);
 	}
+#	endif
+
+#	if !defined(DEFERRED)
+	float3 ssrNormal = screenSpaceNormal;
+	ssrNormal.z = max(0.001, sqrt(8.0 - 8.0 * ssrNormal.z));
+	ssrNormal.xy /= ssrNormal.zz;
+
+	float4 normalAndSSR;
+	normalAndSSR.xy = ssrNormal.xy + 0.5.xx;
+	normalAndSSR.z = 0.0;
+	normalAndSSR.w = SSRParams.w * smoothstep(SSRParams.x - 1e-5, SSRParams.y, normal.w);
+
+	const bool outputColorToAuxiliaryTarget = SSRParams.z > 1e-5;
+	psout.NormalGlossiness = outputColorToAuxiliaryTarget ? psout.Diffuse : normalAndSSR;
+	psout.MotionVectors = outputColorToAuxiliaryTarget ? float4(1, 0, 0, 1) : float4(screenMotionVector, 0, 1);
 #	endif
 
 #	if defined(EMAT)
