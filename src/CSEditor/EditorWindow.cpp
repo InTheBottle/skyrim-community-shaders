@@ -7,7 +7,6 @@
 #include "Globals.h"
 #include "InteriorOnlyPanel.h"
 #include "Menu.h"
-#include "Menu/BackgroundBlur.h"
 #include "PaletteWindow.h"
 #include "State.h"
 #include "Utils/Game.h"
@@ -1081,7 +1080,6 @@ void EditorWindow::RenderUI()
 			if (hdrActive)
 				ImGui::BeginDisabled();
 			if (ImGui::Checkbox(T(TKEY("viewport"), "Viewport"), &settings.showViewport)) {
-				BackgroundBlur::SetCSEditorActive(settings.showViewport);
 				Save();
 			}
 			if (hdrActive) {
@@ -1487,13 +1485,11 @@ void EditorWindow::UpdateOpenState()
 	if (open && !wasOpen) {
 		DisableVanityCamera();
 		HideGameMenus();
-		BackgroundBlur::SetCSEditorActive(IsViewportActive());
 
 	} else if (!open && wasOpen) {
 		lightEditor.ResetOverrides();
 		RestoreVanityCamera();
 		ShowGameMenus();
-		BackgroundBlur::SetCSEditorActive(false);
 	}
 
 	wasOpen = open;
@@ -1509,7 +1505,6 @@ void EditorWindow::Draw()
 		static bool prevViewportActive = false;
 		const bool viewportActive = IsViewportActive();
 		if (viewportActive != prevViewportActive) {
-			BackgroundBlur::SetCSEditorActive(viewportActive);
 			prevViewportActive = viewportActive;
 		}
 	}

@@ -1795,8 +1795,7 @@
     "menu.save_settings": "保存设置",
     "menu.settings.auto_hide_feature_list": "自动隐藏功能列表",
     "menu.settings.auto_hide_feature_list_tooltip": "自动隐藏左侧功能列表面板。将光标移到左边缘即可显示。",
-    "menu.settings.background_blur": "背景模糊",
-    "menu.settings.background_blur_tooltip": "对菜单窗口后面的背景应用模糊效果。",
+
     "menu.settings.base_font_size": "基础字体大小",
     "menu.settings.borders_and_separators": "边框和分隔符",
     "menu.settings.button_text_align": "按钮文本对齐",

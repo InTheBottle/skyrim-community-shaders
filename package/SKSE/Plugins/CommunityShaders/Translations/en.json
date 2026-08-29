@@ -1934,8 +1934,7 @@
     "menu.save_settings": "Save Settings",
     "menu.settings.auto_hide_feature_list": "Auto-hide Feature List",
     "menu.settings.auto_hide_feature_list_tooltip": "Automatically hides the left feature list panel. Move cursor to the left edge to show it.",
-    "menu.settings.background_blur": "Background Blur",
-    "menu.settings.background_blur_tooltip": "Applies a blur effect to the background behind the menu window.",
+
     "menu.settings.base_font_size": "Base Font Size",
     "menu.settings.borders_and_separators": "Borders & Separators",
     "menu.settings.button_text_align": "Button Text Align",
