@@ -213,6 +213,11 @@ private:
 
 	using GetPresenterSurfaceStateFn = uint64_t (*)(uint32_t*, uint32_t*, uint32_t*);
 
+	/// dxvkEnqueueInteropCommandBuffer @120: hands a recorded command buffer to DXVK's own
+	/// submission thread and registers the signal semaphore in the present-wait FIFO in one
+	/// call. Returns the generation, or 0 on rejection.
+	using EnqueueInteropCommandBufferFn = uint64_t (*)(VkCommandBuffer, VkSemaphore, VkFence);
+
 	static VkColorSpaceKHR RequestedPresenterColorSpace(bool a_hdr);
 	static PresenterEncoding ClassifyPresenterEncoding(const PresenterSurfaceState& a_state);
 	static bool PresenterStateMatches(
@@ -252,7 +257,7 @@ private:
 	uint32_t pushedPresentWaitSlot = UINT32_MAX;
 	uint64_t pushedPresentWaitGeneration = 0;
 	std::vector<PresentWaitSubmission> outstandingPresentWaitSubmissions;
-	uint64_t (*pushPresentWaitSemaphore)(VkSemaphore) = nullptr;
+	EnqueueInteropCommandBufferFn enqueueInteropCommandBuffer = nullptr;
 	uint32_t (*getPresentWaitSemaphoreState)(uint64_t) = nullptr;
 	uint32_t (*clearPresentWaitSemaphore)(uint64_t) = nullptr;
 	uint32_t (*cancelPresentWaitSemaphore)(VkSemaphore) = nullptr;

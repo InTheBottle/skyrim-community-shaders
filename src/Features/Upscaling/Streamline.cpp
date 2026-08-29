@@ -161,14 +161,29 @@ namespace
 		return dlssgReconciled && fsrfgReconciled;
 	}
 
-	bool DxvkFrameGenerationOwnsSwapchain(VkSwapchainKHR a_swapchain)
+	// DXVK's ownership predicate is 3-valued, not boolean:
+	//   0 = DXVK owns the present loop
+	//   1 = an FFX/FSR replacement swapchain owns it
+	//   2 = a DLSS-G proxy owns it
+	// Reporting 1 for DLSS-G leaves Presenter::m_dlssgOwned false, which strips the
+	// present ID that sl.dlss_g's pacer needs, never attaches the present-wait
+	// semaphores, and skips the frame-latency bypass — i.e. DLSS-G silently does not
+	// work. The signature must stay uint32_t; a bool return only defines AL.
+	enum : uint32_t
+	{
+		kFrameGenOwnerNone = 0,
+		kFrameGenOwnerFSR = 1,
+		kFrameGenOwnerDLSSG = 2,
+	};
+
+	uint32_t DxvkFrameGenerationOwnsSwapchain(VkSwapchainKHR a_swapchain)
 	{
 		if (g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))
-			return true;
+			return kFrameGenOwnerDLSSG;
 		if (g_sl.dispatchFaulted.load(std::memory_order_acquire))
-			return g_fsrfgOwnsPresent.load(std::memory_order_acquire);
+			return g_fsrfgOwnsPresent.load(std::memory_order_acquire) ? kFrameGenOwnerFSR : kFrameGenOwnerNone;
 		if (!g_fsrfgOwnsPresent.load(std::memory_order_acquire) || !g_sl.slFSRFrameGenerationOwnsSwapchain)
-			return false;
+			return kFrameGenOwnerNone;
 
 		bool ownsSwapchain = false;
 		__try {
@@ -176,7 +191,7 @@ namespace
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			g_sl.dispatchFaulted = true;
 		}
-		return ownsSwapchain;
+		return ownsSwapchain ? kFrameGenOwnerFSR : kFrameGenOwnerNone;
 	}
 
 	// Suppress exact known-benign diagnostics; pass all other messages through.
@@ -480,8 +495,10 @@ void Streamline::SetVulkanDevice()
 		GetProcAddress(dxvkModule, "dxvkGetPresenterSurfaceState") &&
 		GetProcAddress(dxvkModule, "dxvkSetSwapchainTornDownCallback") &&
 		GetProcAddress(dxvkModule, "dxvkSetFrameGenOwnershipQuery");
-	const bool dlssgInteropReady = frameGenerationInteropReady &&
-		GetProcAddress(dxvkModule, "dxvkSetSkipFrameLatencySync");
+	// DXVK skips its frame-latency throttle by itself whenever a DLSS-G proxy owns the
+	// swapchain (Presenter::isDlssgOwned), driven by the ownership predicate we already
+	// register. There is no separate export to probe for any more.
+	const bool dlssgInteropReady = frameGenerationInteropReady;
 	featureDLSSG = featureDLSSG && dlssgHardware && dlssgInteropReady && dxvk->PresentWaitInteropReady();
 	featureFSRFG = featureFSRFG && frameGenerationInteropReady &&
 	               dxvk->FrameGenerationQueueInteropReady();
@@ -1012,7 +1029,7 @@ static bool cs_SubmitPresentTags(DXVKInterop* a_dxvk, sl::FrameToken& a_token,
 	const sl::ViewportHandle& a_viewport, const sl::ResourceTag* a_tags, uint32_t a_tagCount,
 	const VkImageView* a_views, uint32_t a_viewCount,
 	ID3D11Resource* const* a_resources, uint32_t a_resourceCount, sl::Result& a_tagResult,
-	bool& a_lifetimesRetained)
+	bool& a_lifetimesRetained, bool a_signalForPresent)
 {
 	a_lifetimesRetained = false;
 	auto transaction = a_dxvk->BeginFrameCommandBuffer();
@@ -1023,7 +1040,11 @@ static bool cs_SubmitPresentTags(DXVKInterop* a_dxvk, sl::FrameToken& a_token,
 		a_token, a_viewport, a_tags, a_tagCount, transaction.GetCommandBuffer());
 	if (a_tagResult != sl::Result::eOk)
 		return false;
-	if (!a_dxvk->SubmitFrameCommandBuffer(transaction, true)) {
+	// Always request the present-wait signal: these tags are only ever submitted on the
+	// DLSS-G path, and the presenter attaches the semaphore whenever the ownership query
+	// reports a DLSS-G-owned swapchain. Gating this on "already loaded" deadlocks the
+	// first present of a transition, because loading cannot complete until presents do.
+	if (!a_dxvk->SubmitFrameCommandBuffer(transaction, a_signalForPresent)) {
 		if (transaction.SubmissionMayBeInFlight()) {
 			a_dxvk->QueueViewsForDeferredDelete(transaction, a_views, a_viewCount);
 			a_dxvk->QueueResourcesForDeferredRelease(transaction, a_resources, a_resourceCount);
@@ -1587,17 +1608,6 @@ bool Streamline::SetDLSSGMode(bool a_enable, uint32_t a_displayWidth, uint32_t a
 		g_sl.dlssgCachedDisplayW == a_displayWidth && g_sl.dlssgCachedDisplayH == a_displayHeight);
 	const bool wasModeOn = g_sl.dlssgModeOn;
 
-	static void (*s_setSkipFrameLatencySync)(uint32_t) = nullptr;
-	static bool s_skipFrameLatencySyncResolved = false;
-	if (!s_skipFrameLatencySyncResolved) {
-		s_skipFrameLatencySyncResolved = true;
-		if (HMODULE module = GetModuleHandleW(L"dxvk_d3d11.dll"))
-			s_setSkipFrameLatencySync = reinterpret_cast<void (*)(uint32_t)>(
-				GetProcAddress(module, "dxvkSetSkipFrameLatencySync"));
-		if (!s_setSkipFrameLatencySync)
-			logger::warn("[Streamline] dxvkSetSkipFrameLatencySync not found - DLSS-G blocking mode may deadlock");
-	}
-
 	bool succeeded = false;
 	__try {
 		sl::DLSSGOptions options{};
@@ -1622,8 +1632,6 @@ bool Streamline::SetDLSSGMode(bool a_enable, uint32_t a_displayWidth, uint32_t a
 				logger::warn("[Streamline] slDLSSGSetOptions failed (result {})", static_cast<int>(res));
 		} else {
 			succeeded = true;
-			if (s_setSkipFrameLatencySync)
-				s_setSkipFrameLatencySync(a_enable ? 1u : 0u);
 			g_sl.dlssgModeCached = true;
 			g_sl.dlssgModeOn = a_enable;
 			g_sl.dlssgCachedNumFrames = numFrames;
@@ -1889,7 +1897,7 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 		bool lifetimesRetained = false;
 		if (cs_SubmitPresentTags(dxvk, *token, g_sl.viewport, tags, tagCount,
 				views, viewCount, resources, static_cast<uint32_t>(std::size(resources)), tagResult,
-				lifetimesRetained)) {
+				lifetimesRetained, true)) {
 			g_sl.dlssgTaggedThisFrame = true;
 		} else {
 			if (!lifetimesRetained)
@@ -1926,7 +1934,7 @@ void Streamline::ClearDLSSGTags()
 		bool lifetimesRetained = false;
 		if (cs_SubmitPresentTags(dxvk, *token, g_sl.viewport, tags,
 				static_cast<uint32_t>(std::size(tags)), nullptr, 0, nullptr, 0, tagResult,
-				lifetimesRetained)) {
+				lifetimesRetained, true)) {
 			g_sl.dlssgTaggedThisFrame = true;
 		} else {
 			logger::error("[Streamline] DLSS-G passthrough tag submission failed (result {})",
@@ -1956,7 +1964,7 @@ void Streamline::RegisterDxvkOwnershipPredicate()
 		logger::warn("[Streamline] DXVK module not loaded — cannot register ownership predicate");
 		return;
 	}
-	using SetQueryFn = void (*)(bool (*)(VkSwapchainKHR));
+	using SetQueryFn = void (*)(uint32_t (*)(VkSwapchainKHR));
 	auto setQuery = reinterpret_cast<SetQueryFn>(GetProcAddress(dxvkModule, "dxvkSetFrameGenOwnershipQuery"));
 	if (!setQuery) {
 		logger::warn("[Streamline] dxvkSetFrameGenOwnershipQuery not found in DXVK module");
