@@ -750,7 +750,9 @@ void Upscaling::CreateHudlessTexture()
 	const VkFormat presenterFormat = dxvk->GetPresenterFormatForFrame();
 	const bool nativeHDR = hdrActive && encoding == DXVKInterop::PresenterEncoding::kHDR10;
 	if (hdrActive) {
-		if (!nativeHDR || !hdr.outputTexture || !hdr.outputTexture->resource)
+		// Size from the composed HDR output; the blit in CaptureHudlessColor converts the
+		// format, so this no longer requires the presenter to be exactly HDR10.
+		if (!hdr.outputTexture || !hdr.outputTexture->resource)
 			return;
 		hdr.outputTexture->resource->GetDesc(&texDesc);
 		if (nativeHDR && texDesc.Format != DXGI_FORMAT_R10G10B10A2_UNORM) {
@@ -772,7 +774,9 @@ void Upscaling::CreateHudlessTexture()
 	}
 
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-	if (nativeHDR && presenterFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+	// HDR always lands in 10-bit: it is what the HDR10 backbuffer FFX subtracts against
+	// uses, and the blit converts into it regardless of the composed source format.
+	if (hdrActive) {
 		format = DXGI_FORMAT_R10G10B10A2_UNORM;
 	} else if (!hdrActive && encoding == DXVKInterop::PresenterEncoding::kSDR) {
 		if (presenterFormat == VK_FORMAT_B8G8R8A8_UNORM)
@@ -800,9 +804,11 @@ void Upscaling::CreateHudlessTexture()
 		return;
 
 	texDesc.Format = format;
-	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	if (!hdrActive)
-		texDesc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+	// Always give the hudless target a render-target view. FFX derives the UI as
+	// (backbuffer - hudless), so the two must agree in format; blitting through an RTV
+	// converts, whereas CopyResource requires an exact match and silently drops hudless
+	// when it does not hold -- which leaves the UI to be interpolated, i.e. flashing.
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 
 	hudlessTexture = new Texture2D(texDesc);
 	Util::SetResourceName(hudlessTexture->resource.get(), "Upscaling::HudlessTexture");
@@ -814,12 +820,10 @@ void Upscaling::CreateHudlessTexture()
 	srvDesc.Texture2D.MipLevels = 1;
 	hudlessTexture->CreateSRV(srvDesc);
 
-	if (!hdrActive) {
-		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
-		rtvDesc.Format = texDesc.Format;
-		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-		hudlessTexture->CreateRTV(rtvDesc);
-	}
+	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+	rtvDesc.Format = texDesc.Format;
+	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+	hudlessTexture->CreateRTV(rtvDesc);
 
 	logger::info("[Upscaling] Created hudless texture ({}x{}, format={})",
 		texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
@@ -890,28 +894,19 @@ ID3D11Resource* Upscaling::CaptureHudlessColor()
 
 	auto& hdr = globals::features::hdrDisplay;
 	if (hdr.loaded && hdr.IsHDREnabledForFrame() && hdr.hdrTexture && hdr.hdrTexture->srv) {
-		ID3D11Texture2D* composed = hdr.ComposeCleanCapture(hdr.hdrTexture->srv.get(), false);
-		if (!composed)
+		// Compose the scene with no UI, then BLIT it into the 10-bit hudless target.
+		//
+		// This used to CopyResource, which requires the source and destination formats to
+		// match exactly and returned nullptr on any mismatch -- and nullptr means no
+		// HUDLessColor reaches FFX at all, so FFX interpolates the UI along with the scene
+		// and it flashes on generated frames. Blitting converts instead of refusing, so the
+		// hudless buffer always lands in the same 10-bit format as the presented backbuffer
+		// that FFX subtracts it from. Both frame-generation methods take this path.
+		if (!hdr.ComposeCleanCapture(hdr.hdrTexture->srv.get(), false))
 			return nullptr;
-
-		const auto encoding = DXVKInterop::GetSingleton()->GetPresenterEncodingForFrame();
-		if (encoding == DXVKInterop::PresenterEncoding::kHDR10) {
-			D3D11_TEXTURE2D_DESC sourceDesc{};
-			composed->GetDesc(&sourceDesc);
-			const auto& destinationDesc = hudlessTexture->desc;
-			if (sourceDesc.Width != destinationDesc.Width ||
-				sourceDesc.Height != destinationDesc.Height ||
-				sourceDesc.MipLevels != destinationDesc.MipLevels ||
-				sourceDesc.ArraySize != destinationDesc.ArraySize ||
-				sourceDesc.Format != destinationDesc.Format ||
-				sourceDesc.SampleDesc.Count != destinationDesc.SampleDesc.Count ||
-				sourceDesc.SampleDesc.Quality != destinationDesc.SampleDesc.Quality)
-				return nullptr;
-			globals::d3d::context->CopyResource(hudlessTexture->resource.get(), composed);
-			return hudlessTexture->resource.get();
-		}
-
-		return nullptr;
+		if (!hdr.outputTexture || !hdr.outputTexture->srv)
+			return nullptr;
+		return CopyHudlessColor(hdr.outputTexture->srv.get()) ? hudlessTexture->resource.get() : nullptr;
 	}
 
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];

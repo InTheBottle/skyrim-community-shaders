@@ -648,10 +648,17 @@ void Streamline::UpdateReflex(bool a_enable, bool a_boost, uint32_t a_frameLimit
 			sl::ReflexOptions options{};
 			options.mode = mode;
 			options.frameLimitUs = a_frameLimitUs;
-			if (g_sl.slReflexSetOptions(options) == sl::Result::eOk) {
+			const sl::Result reflexRes = g_sl.slReflexSetOptions(options);
+			if (reflexRes == sl::Result::eOk) {
 				g_sl.reflexCachedMode = mode;
 				g_sl.reflexCachedFrameLimitUs = a_frameLimitUs;
 				g_sl.reflexCacheValid = true;
+				logger::info("[Streamline] Reflex mode={} frameLimitUs={}",
+					mode == sl::ReflexMode::eOff ? "off" :
+					mode == sl::ReflexMode::eLowLatencyWithBoost ? "low-latency+boost" : "low-latency",
+					a_frameLimitUs);
+			} else {
+				logger::warn("[Streamline] slReflexSetOptions failed (result {})", static_cast<int>(reflexRes));
 			}
 		}
 		if (mode != sl::ReflexMode::eOff) {
