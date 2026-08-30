@@ -263,7 +263,7 @@ Streamline* Streamline::GetSingleton()
 void Streamline::PreloadInterposer()
 {
 	// Preload before DXVK creates VkInstance so its Vulkan loader aliases the interposer.
-	if (disabledByConfig || g_sl.interposer)
+	if (g_sl.interposer)
 		return;
 	const auto slDir = GetStreamlineDir();
 	if (slDir.empty())
@@ -340,8 +340,6 @@ static bool ProbeDLSSGHardware()
 
 bool Streamline::Initialize()
 {
-	if (disabledByConfig)
-		return false;
 	if (triedInit)
 		return initialized;
 	triedInit = true;
@@ -349,6 +347,7 @@ bool Streamline::Initialize()
 	const auto slDir = GetStreamlineDir();
 	if (slDir.empty()) {
 		logger::warn("[Streamline] could not resolve plugin directory");
+		MarkUnavailable();
 		return false;
 	}
 
@@ -357,6 +356,7 @@ bool Streamline::Initialize()
 		g_sl.interposer = LoadLibraryExW(interposerPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 	if (!g_sl.interposer) {
 		logger::info("[Streamline] sl.interposer.dll not present in '{}' — Streamline features disabled", slDir.string());
+		MarkUnavailable();
 		return false;
 	}
 
@@ -373,6 +373,7 @@ bool Streamline::Initialize()
 	if (!resolved) {
 		FreeLibrary(g_sl.interposer);
 		g_sl.interposer = nullptr;
+		MarkUnavailable();
 		return false;
 	}
 
@@ -412,6 +413,7 @@ bool Streamline::Initialize()
 		logger::warn("[Streamline] slInit failed (result {}) — Streamline features disabled", static_cast<int>(res));
 		FreeLibrary(g_sl.interposer);
 		g_sl.interposer = nullptr;
+		MarkUnavailable();
 		return false;
 	}
 

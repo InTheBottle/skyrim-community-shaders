@@ -20,13 +20,13 @@ public:
 	void SetVulkanDevice();
 
 	/** @brief Returns whether feature support is final for this session. */
-	[[nodiscard]] bool IsFeatureSupportResolved() const { return vulkanDeviceSet || disabledByConfig; }
+	[[nodiscard]] bool IsFeatureSupportResolved() const { return vulkanDeviceSet || unavailable; }
 	/** @brief Whether a guarded Streamline call faulted and frame generation must be torn down. */
 	[[nodiscard]] bool HasDispatchFaulted() const;
 
 	/** @brief Disables interposition when no Streamline feature is configured. */
-	void SetDisabledByConfig() { disabledByConfig = true; }
-	[[nodiscard]] bool IsDisabledByConfig() const { return disabledByConfig; }
+	void MarkUnavailable() { unavailable = true; }
+	[[nodiscard]] bool IsUnavailable() const { return unavailable; }
 	[[nodiscard]] bool IsDLSSSupported() const { return featureDLSS; }
 	[[nodiscard]] bool IsReflexSupported() const { return featureReflex; }
 	[[nodiscard]] bool IsDLSSGSupported() const { return featureDLSSG; }
@@ -147,7 +147,10 @@ private:
 	bool triedInit = false;
 	bool initialized = false;
 	bool vulkanDeviceSet = false;
-	bool disabledByConfig = false;
+	// Set when Streamline genuinely cannot be brought up (no plugin dir, missing sl.interposer.dll,
+	// unresolvable exports, slInit failure). Never a configuration choice: the interposer is always
+	// preloaded so every upscaler and frame generation can be switched on in-game without a restart.
+	bool unavailable = false;
 
 	bool featureDLSS = false;
 	bool featureReflex = false;

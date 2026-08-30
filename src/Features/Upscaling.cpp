@@ -203,8 +203,8 @@ void Upscaling::DrawSettings()
 		if (DrawStepper(T(TKEY("upscaling_technique"), "Upscaling Technique"), &techIdx, techLabels))
 			selectUpscaler(techMethods[std::clamp(techIdx, 0, static_cast<int>(techMethods.size()) - 1)]);
 
-		if (streamline->IsDisabledByConfig())
-			ImGui::TextDisabled("%s", T(TKEY("sl_restart_note"), "Upscalers and frame generation activate after a restart"));
+		if (streamline->IsUnavailable())
+			ImGui::TextDisabled("%s", T(TKEY("sl_unavailable_note"), "Streamline could not be loaded - upscalers and frame generation are unavailable"));
 
 		const UpscaleMethod cur = (UpscaleMethod)settings.upscaleMethod;
 		const bool hasPreset = (cur == UpscaleMethod::kFSR || cur == UpscaleMethod::kXeSS || cur == UpscaleMethod::kDLSS);
@@ -249,9 +249,6 @@ void Upscaling::DrawSettings()
 			settings.frameGeneration = (fgSel != 0);
 			if (fgSel != 0)
 				settings.frameGenMethod = (uint)fgMethods[std::clamp(fgSel, 0, static_cast<int>(fgMethods.size()) - 1)];
-		}
-		if (streamline->IsDisabledByConfig() && fgLabels.size() == 1) {
-			DrawToggleStepper(T(TKEY("fg_enable_restart"), "Frame Generation (after restart)"), &settings.frameGeneration);
 		}
 
 		if (settings.frameGeneration && GetFrameGenMethod() == FrameGenMethod::kDLSSG && dlssgAvailable) {
@@ -362,21 +359,13 @@ void Upscaling::Load()
 		Streamline::PushDxvkSyncPresent(settings.frameGeneration);
 
 	if (DxvkLoader::IsLoaded()) {
-		// Interposition must be selected from saved settings before DXVK creates VkInstance.
-		const auto savedMethod = static_cast<UpscaleMethod>(settings.upscaleMethod);
-		char forceSL[2] = {};
-		const bool needsSL = settings.frameGeneration ||
-		                     (savedMethod != UpscaleMethod::kNONE && savedMethod != UpscaleMethod::kTAA) ||
-		                     settings.reflexEnabled ||
-		                     (GetEnvironmentVariableA("CS_FORCE_SL_LOAD", forceSL, sizeof(forceSL)) && forceSL[0] == '1');
-		if (needsSL) {
-			Streamline::GetSingleton()->PreloadInterposer();
-		} else {
-			Streamline::GetSingleton()->SetDisabledByConfig();
-			logger::info("[Upscaling] Streamline disabled by config (upscaleMethod={}, frameGeneration=off) - "
-			             "DXVK runs on the real Vulkan driver; enabling an SL upscaler or frame generation requires a restart",
-				settings.upscaleMethod);
-		}
+		// Always preload, before DXVK creates VkInstance so its Vulkan loader aliases the interposer.
+		// This deliberately does not consult saved settings. Interposition can only be established
+		// here, so gating it on whichever upscaler/frame-generation values happened to be saved is
+		// what forced a restart to turn either on. With the interposer always installed, every
+		// upscaler and frame generation can be switched in-game. Nothing is spent until a feature is
+		// actually evaluated -- DXVK still runs on the real driver in the meantime.
+		Streamline::GetSingleton()->PreloadInterposer();
 	}
 
 	const auto iatOriginal = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainUpscaling, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
