@@ -627,6 +627,26 @@ void Streamline::CaptureDLSSGPresentState()
 	__try {
 		sl::DLSSGState state{};
 		if (g_sl.slDLSSGGetState(g_sl.viewport, state, nullptr) == sl::Result::eOk) {
+			// state.status says why DLSS-G is not generating. Report each distinct value once:
+			// without it a non-functional DLSS-G is silent and simply halves the frame rate.
+			static uint32_t s_lastStatus = UINT32_MAX;
+			const uint32_t status = static_cast<uint32_t>(state.status);
+			if (status != s_lastStatus) {
+				s_lastStatus = status;
+				if (status == 0u) {
+					logger::info("[Streamline] DLSS-G status OK (presenting {} frames, max {})",
+						state.numFramesActuallyPresented, state.numFramesToGenerateMax);
+				} else {
+					logger::warn("[Streamline] DLSS-G NOT generating - status 0x{:X}{}{}{}{}{} (presenting {})",
+						status,
+						(status & 0x1) ? " resolutionTooLow" : "",
+						(status & 0x2) ? " reflexNotDetectedAtRuntime" : "",
+						(status & 0x4) ? " hdrFormatNotSupported" : "",
+						(status & 0x8) ? " commonConstantsInvalid" : "",
+						(status & 0x10) ? " getCurrentBackBufferIndexNotCalled" : "",
+						state.numFramesActuallyPresented);
+				}
+			}
 			g_sl.frameGenerationMultiplier.store(
 				std::max(state.numFramesActuallyPresented, 1u), std::memory_order_release);
 			g_sl.dlssgCloneTagsPrimed.store(true, std::memory_order_release);
