@@ -2223,3 +2223,31 @@ void Streamline::PushDxvkPresentQueueDepth(uint32_t a_depth)
 		}
 	}
 }
+
+void Streamline::PushDxvkTearingPreference(uint32_t a_preference)
+{
+	// 0 = tear-free (MAILBOX), 1 = tearing (IMMEDIATE), anything else = defer to dxvk.conf.
+	// Read in Presenter::pickPresentMode, so it must be set before the swapchain recreate that
+	// installs a frame-generation proxy.
+	//
+	// DLSS-G needs tear-free flips: NVIDIA's flip metering cannot space the generated frame when
+	// presents tear, and with IMMEDIATE the real and generated frames land back to back -- measured
+	// 49.6% of present intervals at 0.0 ms with the rest near 48.5 ms instead of an even 24.2 ms,
+	// costing 5.1% of presents to drops. Nothing else wants it: MAILBOX caps at the refresh rate, so
+	// a target equal to the refresh has no headroom and loses ~3%.
+	static auto setTearing = []() -> void (*)(uint32_t) {
+		HMODULE dxvkModule = GetModuleHandleW(L"dxvk_d3d11.dll");
+		if (!dxvkModule)
+			return nullptr;
+		return reinterpret_cast<void (*)(uint32_t)>(GetProcAddress(dxvkModule, "dxvkSetTearingPreference"));
+	}();
+	if (setTearing) {
+		setTearing(a_preference);
+	} else {
+		static bool s_warned = false;
+		if (!s_warned) {
+			s_warned = true;
+			logger::warn("[Streamline] dxvkSetTearingPreference not found - present-mode control inactive");
+		}
+	}
+}

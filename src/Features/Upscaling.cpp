@@ -359,6 +359,23 @@ void Upscaling::Load()
 		Streamline::PushDxvkSyncPresent(settings.frameGeneration);
 
 	if (DxvkLoader::IsLoaded()) {
+		// Tear-free (MAILBOX) for the whole session, set before DXVK creates the swapchain.
+		//
+		// DLSS-G's flip metering cannot space its generated frame across tearing presents: with
+		// IMMEDIATE the real and generated frames land back to back -- 49.6% of present intervals at
+		// 0.0 ms and the rest near 48.5 ms instead of an even 24.2 ms -- which cost 5.1% of presents
+		// to drops and left frame-time deviation at 16.5 ms. MAILBOX brings that to 2.3 ms and puts
+		// output back on target.
+		//
+		// Applied unconditionally rather than only for DLSS-G. MAILBOX caps at the refresh rate, so
+		// a target equal to the refresh gives up ~3%, but switching modes per frame-generation
+		// method is worse: MAILBOX is outside IMMEDIATE's compatible-mode group on NVIDIA, so every
+		// switch forces a full swapchain recreate, and doing that on each method change crashed the
+		// game. One mode for the session avoids the recreate entirely.
+		Streamline::PushDxvkTearingPreference(0u);
+	}
+
+	if (DxvkLoader::IsLoaded()) {
 		// Always preload, before DXVK creates VkInstance so its Vulkan loader aliases the interposer.
 		// This deliberately does not consult saved settings. Interposition can only be established
 		// here, so gating it on whichever upscaler/frame-generation values happened to be saved is

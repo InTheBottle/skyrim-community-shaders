@@ -144,6 +144,8 @@ public:
 	static void PushDxvkSyncPresent(bool a_sync);
 	/** @brief Sets a bounded present overlap for a settled frame-generation proxy. */
 	static void PushDxvkPresentQueueDepth(uint32_t a_depth);
+	/** @brief 0 = tear-free (MAILBOX), 1 = tearing (IMMEDIATE); set before a swapchain recreate. */
+	static void PushDxvkTearingPreference(uint32_t a_preference);
 
 private:
 	Streamline() = default;
