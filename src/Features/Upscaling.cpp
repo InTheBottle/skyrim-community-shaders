@@ -545,16 +545,8 @@ void Upscaling::BeginRenderFrame()
 
 bool Upscaling::GetEffectiveReflex() const
 {
-	if (IsFrameGenerationActive()) {
-		switch (GetFrameGenMethod()) {
-		case FrameGenMethod::kDLSSG:
-			return true;
-		case FrameGenMethod::kFSR:
-			return false;
-		default:
-			break;
-		}
-	}
+	if (IsFrameGenerationActive() && GetFrameGenMethod() == FrameGenMethod::kDLSSG)
+		return true;  // DLSS-G requires Reflex; sl.dlss_g fails eFailReflexNotDetectedAtRuntime without it.
 	return settings.reflexEnabled;
 }
 
