@@ -92,6 +92,10 @@ namespace
 		std::atomic<uint32_t> dlssgMaxFramesToGenerate = 0;
 		std::atomic<bool> dlssgDynamicSupported = false;
 		std::atomic<uint32_t> frameGenerationMultiplier = 1;
+		// Running total of frames the FSR-FG swapchain has presented (real + generated). Differenced
+		// over time this is the true post-FG frame rate; the per-present multiplier above reads 1 on
+		// any present that had no prepared frame, so sampling it reports an un-doubled value.
+		std::atomic<uint64_t> fsrTotalPresentedFrames = 0;
 
 		// Present requires either a valid or passthrough tag every frame.
 		bool dlssgTaggedThisFrame = false;
@@ -1809,10 +1813,16 @@ void Streamline::CaptureFSRFrameGenState()
 		if (g_sl.slFSRGetFrameGenState(g_sl.viewport, state) == sl::Result::eOk) {
 			g_sl.frameGenerationMultiplier.store(
 				std::max(state.numFramesActuallyPresented, 1u), std::memory_order_release);
+			g_sl.fsrTotalPresentedFrames.store(state.totalPresentedFrames, std::memory_order_release);
 		}
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		g_sl.dispatchFaulted = true;
 	}
+}
+
+uint64_t Streamline::GetTotalPresentedFrames() const
+{
+	return g_sl.fsrTotalPresentedFrames.load(std::memory_order_acquire);
 }
 
 void Streamline::QueryDLSSGCapabilities()

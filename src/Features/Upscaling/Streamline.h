@@ -112,6 +112,8 @@ public:
 
 	/** @brief Returns the latest number of frames presented per rendered frame. */
 	[[nodiscard]] uint32_t GetFrameGenerationMultiplier() const;
+	/** @brief Running total of frames the FSR-FG swapchain has presented; difference for the true rate. */
+	[[nodiscard]] uint64_t GetTotalPresentedFrames() const;
 	[[nodiscard]] bool IsDLSSGDynamicSupported() const;
 
 	/** @brief Sets the desired DLSS-G runtime load state. */

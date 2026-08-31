@@ -233,6 +233,9 @@ struct PerformanceOverlay : OverlayFeature
 		// Smoothed metrics
 		float smoothFps = 0.0f;
 		float smoothFrameTimeMs = 0.0f;
+		uint64_t lastPresentedFrames = 0;
+		float presentedAccum = 0.0f;
+		float presentedElapsed = 0.0f;
 		float postFGSmoothFps = 0.0f;
 		float postFGSmoothFrameTimeMs = 0.0f;
 

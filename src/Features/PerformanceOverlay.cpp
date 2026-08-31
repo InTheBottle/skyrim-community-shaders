@@ -1983,14 +1983,35 @@ void PerformanceOverlay::UpdateGraphValues()
 	state.smoothedMaxFrameTime = state.smoothedMaxFrameTime + Settings::kSmoothingFactor * (graphMax - state.smoothedMaxFrameTime);
 
 	if (state.isFrameGenerationActive) {
-		const float multiplier = static_cast<float>(
-			Streamline::GetSingleton()->GetFrameGenerationMultiplier());
-		state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
-		state.postFGFps = state.fps * multiplier;
+		// Prefer the frame-generation swapchain's own presented-frame counter: differencing it over
+		// time gives the true post-FG rate. The per-present multiplier is a flag that reads 1 on any
+		// present with no prepared frame -- with FSR-FG roughly a third of presents are un-prepared,
+		// so sampling it instantaneously made Post-FG FPS flicker to the un-doubled value.
+		const uint64_t presented = Streamline::GetSingleton()->GetTotalPresentedFrames();
+		if (presented > state.lastPresentedFrames && state.lastPresentedFrames != 0 && deltaTime > 0.0f) {
+			state.presentedAccum += static_cast<float>(presented - state.lastPresentedFrames);
+			state.presentedElapsed += deltaTime;
+			if (state.presentedElapsed >= 0.25f) {
+				state.postFGFps = state.presentedAccum / state.presentedElapsed;
+				state.postFGFrameTimeMs = state.postFGFps > 0.0f ? 1000.0f / state.postFGFps : 0.0f;
+				state.presentedAccum = 0.0f;
+				state.presentedElapsed = 0.0f;
+			}
+		} else if (presented == 0) {
+			// No counter (DLSS-G, which does not publish one): fall back to the reported multiplier.
+			const float multiplier = static_cast<float>(
+				Streamline::GetSingleton()->GetFrameGenerationMultiplier());
+			state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
+			state.postFGFps = state.fps * multiplier;
+		}
+		state.lastPresentedFrames = presented;
 		state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
 	} else {
 		state.postFGFrameTimeMs = 0.0f;
 		state.postFGFps = 0.0f;
+		state.lastPresentedFrames = 0;
+		state.presentedAccum = 0.0f;
+		state.presentedElapsed = 0.0f;
 	}
 
 	// Update smooth values with user-specified interval
