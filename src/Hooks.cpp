@@ -570,13 +570,9 @@ struct BSInputDeviceManager_PollInputDevices
 			const uint32_t reflexLimitUs = (wantReflex && renderedFpsLimit > 0.0) ?
 				static_cast<uint32_t>(std::lround(1000000.0 / renderedFpsLimit)) : 0u;
 			Streamline::GetSingleton()->UpdateReflex(wantReflex, wantReflex && upscaling.settings.reflexBoost, reflexLimitUs);
-			// Reflex enforces its frame-rate cap through the present it owns. With FSR-FG the FidelityFX
-			// swapchain owns present, so Reflex is handed the limit but cannot apply it: measured at a
-			// 41 fps target the game rendered 37 against a 20.5 rendered limit, and FidelityFX could
-			// only pair 21 of them, so the rest presented ungenerated and output overshot to 50.
-			// Keep DXVK's limiter on that path.
-			const bool reflexCanLimit = wantReflex && !Streamline::GetSingleton()->IsFSRFGPresentOwner();
-			upscaling.ApplyDxvkFrameRateLimit(reflexCanLimit ? 0.0 : renderedFpsLimit);
+			// Reflex owns the cap whenever it is active; GetEffectiveReflex already returns false for
+			// FSR-FG, where Reflex cannot apply it, so DXVK's limiter takes that case.
+			upscaling.ApplyDxvkFrameRateLimit(!wantReflex ? renderedFpsLimit : 0.0);
 			Streamline::GetSingleton()->SetPCLMarker(Streamline::PclMarker::SimulationStart);
 		}
 

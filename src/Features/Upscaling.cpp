@@ -562,12 +562,25 @@ void Upscaling::BeginRenderFrame()
 
 bool Upscaling::GetEffectiveReflex() const
 {
-	// Frame generation requires Reflex, so force it on for either method whenever Streamline can
-	// provide it: sl.dlss_g reports eFailReflexNotDetectedAtRuntime and generates nothing without
-	// it, and FSR-FG measured no pacing cost from it (stddev and spike rate unchanged within
-	// run-to-run noise, rendered/presented cadence unaffected).
-	if (IsFrameGenerationActive() && Streamline::GetSingleton()->IsReflexSupported())
-		return true;
+	if (IsFrameGenerationActive()) {
+		switch (GetFrameGenMethod()) {
+		case FrameGenMethod::kDLSSG:
+			// Required: sl.dlss_g reports eFailReflexNotDetectedAtRuntime and generates nothing
+			// without it, and Reflex's frame limiter works on this path (measured holding 41.25 fps
+			// presented with DXVK's limiter disabled).
+			return true;
+		case FrameGenMethod::kFSR:
+			// Off. FidelityFX's replacement swapchain owns present, and Reflex paces through the
+			// present it owns, so the limit it is handed cannot be applied -- measured 37 fps
+			// rendered against a 20.5 fps limit. Nor is there a latency benefit to weigh against
+			// that: with Reflex off, on, and on+boost the frame rate and render-to-present latency
+			// were identical (3.13 / 3.13 / 3.15 ms), because DXVK's SyncFrameLatency already holds
+			// the queue at about one frame. Leaving it off also lets DXVK's limiter take the cap.
+			return false;
+		default:
+			break;
+		}
+	}
 	return settings.reflexEnabled;
 }
 
