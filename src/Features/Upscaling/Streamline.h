@@ -140,6 +140,8 @@ public:
 
 	/** @brief Enables synchronous present while a frame-generation proxy is active. */
 	static void PushDxvkSyncPresent(bool a_sync);
+	/** @brief Sets a bounded present overlap for a settled frame-generation proxy. */
+	static void PushDxvkPresentQueueDepth(uint32_t a_depth);
 
 private:
 	Streamline() = default;

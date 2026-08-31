@@ -150,6 +150,13 @@ namespace FrameGen
 
 		phase = Phase::kIdle;
 		logger::info("[FrameGen] FG method switch settled - present owner: {}", Name(owner));
+
+		// The proxy is installed and steady now, so relax the fully-synchronous present used across
+		// the switch itself into a bounded overlap. Depth zero blocks the render thread in
+		// waitForSubmission on every present; measured with FSR-FG that left the GPU idle 33% of the
+		// frame while the CPU was the limiter.
+		if (owner == Method::kFSR)
+			Streamline::PushDxvkPresentQueueDepth(2u);
 	}
 
 	bool Controller::StepModeTeardown(Method a_target)

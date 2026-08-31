@@ -672,6 +672,17 @@ HRESULT Upscaling::PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT 
 		return a_present(a_swapChain, a_syncInterval, a_flags);
 	}
 
+	// Relax the fully-synchronous present once a proxy actually owns the swapchain. The switch
+	// itself needs depth zero, and the proxy install re-asserts it, so this has to be (re)applied
+	// from the steady-state present rather than once at settle. Depth zero makes
+	// D3D11SwapChain::PresentImage drain its own status every frame, blocking the render thread in
+	// waitForSubmission until the proxy's intercepted vkQueuePresentKHR returns.
+	// FSR-FG only. DLSS-G paces by blocking inside its own present (eBlockPresentingClientQueue);
+	// adding a second waiting gate on top deadlocks the pipeline -- measured as a main-thread hang
+	// that only a process restart clears.
+	if (streamline->IsFSRFGPresentOwner())
+		Streamline::PushDxvkPresentQueueDepth(2u);
+
 	auto fgMethod = GetFrameGenMethod();
 	if (fgMethod != FrameGenMethod::kDLSSG) {
 		if (dxvk->HasPendingPresentWaitSemaphore() && !dxvk->PushPendingPresentWaitSemaphore())

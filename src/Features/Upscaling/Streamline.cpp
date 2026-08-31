@@ -2179,3 +2179,29 @@ void Streamline::PushDxvkSyncPresent(bool a_sync)
 		}
 	}
 }
+
+void Streamline::PushDxvkPresentQueueDepth(uint32_t a_depth)
+{
+	// Bounded overlap for a steady-state frame-generation proxy. dxvkSetSyncPresent(true) pins the
+	// depth to zero, which makes D3D11SwapChain::PresentImage drain its own present status every
+	// frame -- the render thread blocks in waitForSubmission until the proxy's intercepted
+	// vkQueuePresentKHR returns. Sampling the render thread with FSR-FG active showed 23% of it
+	// parked in SleepConditionVariableSRW for exactly that reason, with the GPU idle 33% of the
+	// frame. A small depth lets the next frame be recorded while the proxy finishes presenting the
+	// previous one, without unbounding the overlap.
+	static auto setDepth = []() -> void (*)(uint32_t) {
+		HMODULE dxvkModule = GetModuleHandleW(L"dxvk_d3d11.dll");
+		if (!dxvkModule)
+			return nullptr;
+		return reinterpret_cast<void (*)(uint32_t)>(GetProcAddress(dxvkModule, "dxvkSetPresentQueueDepth"));
+	}();
+	if (setDepth) {
+		setDepth(a_depth);
+	} else {
+		static bool s_warned = false;
+		if (!s_warned) {
+			s_warned = true;
+			logger::warn("[Streamline] dxvkSetPresentQueueDepth not found - bounded present overlap inactive");
+		}
+	}
+}
