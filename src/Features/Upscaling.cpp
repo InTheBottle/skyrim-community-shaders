@@ -545,8 +545,12 @@ void Upscaling::BeginRenderFrame()
 
 bool Upscaling::GetEffectiveReflex() const
 {
-	if (IsFrameGenerationActive() && GetFrameGenMethod() == FrameGenMethod::kDLSSG)
-		return true;  // DLSS-G requires Reflex; sl.dlss_g fails eFailReflexNotDetectedAtRuntime without it.
+	// Frame generation requires Reflex, so force it on for either method whenever Streamline can
+	// provide it: sl.dlss_g reports eFailReflexNotDetectedAtRuntime and generates nothing without
+	// it, and FSR-FG measured no pacing cost from it (stddev and spike rate unchanged within
+	// run-to-run noise, rendered/presented cadence unaffected).
+	if (IsFrameGenerationActive() && Streamline::GetSingleton()->IsReflexSupported())
+		return true;
 	return settings.reflexEnabled;
 }
 
