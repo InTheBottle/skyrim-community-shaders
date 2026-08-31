@@ -69,6 +69,11 @@ namespace
 		// Frame index SimulationStart used, latched so tags, constants and the render-thread PCL
 		// markers all agree with it. See Streamline::BeginRenderFrame.
 		std::atomic<uint32_t> simMarkerFrameId = { 0u };
+		// PCL markers only feed Reflex and DLSS-G latency. With neither active, emitting them is pure
+		// per-frame cross-DLL overhead -- 7 slGetNewFrameToken+slPCLSetMarker pairs per frame on a path
+		// the D3D11 branch does not have at all. Streamline is now always initialised for in-game
+		// switching, so this has to be gated on use rather than on initialisation.
+		std::atomic<bool> latencyMarkersNeeded = { false };
 
 		// Disable dispatch after an SEH fault to prevent repeated crashes.
 		std::atomic<bool> dispatchFaulted{ false };
@@ -703,6 +708,9 @@ void Streamline::CaptureDLSSGPresentState()
 
 void Streamline::UpdateReflex(bool a_enable, bool a_boost, uint32_t a_frameLimitUs)
 {
+	g_sl.latencyMarkersNeeded.store(a_enable || g_dlssgCurrentlyLoaded.load(std::memory_order_acquire) ||
+			g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire),
+		std::memory_order_release);
 	if (!initialized || !featureReflex || g_sl.dispatchFaulted)
 		return;
 
@@ -747,6 +755,8 @@ void Streamline::UpdateReflex(bool a_enable, bool a_boost, uint32_t a_frameLimit
 void Streamline::SetPCLMarker(PclMarker a_marker)
 {
 	if (!initialized || !g_sl.slPCLSetMarker || g_sl.dispatchFaulted)
+		return;
+	if (!g_sl.latencyMarkersNeeded.load(std::memory_order_acquire))
 		return;
 
 	// Emit SimulationStart once per simulated frame, not once per input poll.
