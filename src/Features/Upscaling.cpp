@@ -598,10 +598,14 @@ double Upscaling::GetRenderedFrameRateLimit() const
 	case FrameGenMethod::kFSR:
 		return static_cast<double>(targetFps) / 2.0;
 	case FrameGenMethod::kDLSSG:
-		// Dynamic MFG owns the final-output target. Fixed MFG needs the rendered
-		// cadence reduced so real + generated frames add up to that target.
-		return settings.dlssgDynamic ? static_cast<double>(targetFps) :
-		                               static_cast<double>(targetFps) / GetFixedDLSSGMultiplier();
+		// Unlike FFX -- whose replacement swapchain owns the present loop, so the limiter only
+		// ever sees rendered frames -- sl.dlss_g emits its generated frame from inside the same
+		// present that Reflex's frame-limit interval (and DXVK's limiter behind Streamline)
+		// throttles. The limit therefore lands on the PRESENTED cadence, and pre-dividing by the
+		// multiplier here divides a second time: measured 41 rendered / 82.6 presented against a
+		// 165 Hz target, i.e. target / multiplier^2. Hand the limiter the output target and let
+		// DLSS-G's own pacing derive the rendered cadence from it.
+		return static_cast<double>(targetFps);
 	default:
 		return static_cast<double>(targetFps);
 	}

@@ -629,6 +629,11 @@ void Streamline::CaptureDLSSGPresentState()
 		if (g_sl.slDLSSGGetState(g_sl.viewport, state, nullptr) == sl::Result::eOk) {
 			// state.status says why DLSS-G is not generating. Report each distinct value once:
 			// without it a non-functional DLSS-G is silent and simply halves the frame rate.
+			static uint32_t s_sampleTick = 0u;
+			if ((++s_sampleTick % 600u) == 0u) {
+				logger::info("[Streamline] DLSS-G presented {} frame(s) since last query (status 0x{:X}, max {})",
+					state.numFramesActuallyPresented, static_cast<uint32_t>(state.status), state.numFramesToGenerateMax);
+			}
 			static uint32_t s_lastStatus = UINT32_MAX;
 			const uint32_t status = static_cast<uint32_t>(state.status);
 			if (status != s_lastStatus) {
