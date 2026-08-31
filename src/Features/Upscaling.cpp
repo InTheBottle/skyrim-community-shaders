@@ -565,14 +565,20 @@ int Upscaling::GetMonitorRefreshRate() const
 	return 60;
 }
 
-int Upscaling::GetTargetFrameRate() const
+double Upscaling::GetTargetFrameRate() const
 {
 	if (!loaded)
-		return 0;
+		return 0.0;
 	const int divisor = settings.frameRateLimitDivisor;
 	if (divisor <= 0)
-		return 0;
-	return std::max(1, static_cast<int>(std::lround(static_cast<double>(GetMonitorRefreshRate()) / divisor)));
+		return 0.0;
+	// Deliberately NOT rounded to a whole frame rate. The target is a submultiple of the display
+	// refresh, and rounding it breaks that relationship: at 165 Hz a divisor of 4 becomes 41 fps
+	// (24.390 ms) instead of 41.25 (24.242 ms, exactly four refresh intervals). That 0.61% error
+	// drifts a full refresh interval roughly once a second, so a frame slips and the display shows
+	// one long interval followed by a short one -- measured as ~1.4% of frames beyond twice the
+	// median, with the exact-dividing divisors 1 and 3 pacing visibly tighter.
+	return std::max(1.0, static_cast<double>(GetMonitorRefreshRate()) / divisor);
 }
 
 uint32_t Upscaling::GetFixedDLSSGMultiplier() const
@@ -586,7 +592,7 @@ uint32_t Upscaling::GetFixedDLSSGMultiplier() const
 
 double Upscaling::GetRenderedFrameRateLimit() const
 {
-	const int targetFps = GetTargetFrameRate();
+	const double targetFps = GetTargetFrameRate();
 	if (targetFps <= 0 || !IsFrameGenerationActive())
 		return static_cast<double>(targetFps);
 

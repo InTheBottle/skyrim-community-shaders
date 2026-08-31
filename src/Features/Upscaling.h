@@ -152,7 +152,7 @@ public:
 	/** @brief Returns the monitor refresh rate in hertz. */
 	[[nodiscard]] int GetMonitorRefreshRate() const;
 	/** @brief Returns the configured frame-rate cap, or zero when uncapped. */
-	[[nodiscard]] int GetTargetFrameRate() const;
+	[[nodiscard]] double GetTargetFrameRate() const;
 	/** @brief Returns the rendered-frame cap after accounting for fixed frame generation. */
 	[[nodiscard]] double GetRenderedFrameRateLimit() const;
 	/** @brief Returns the fixed DLSS-G multiplier clamped to the reported hardware limit. */
