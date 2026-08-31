@@ -11,6 +11,9 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <mutex>
+#include <string_view>
+#include <unordered_set>
 
 #define NV_WINDOWS
 #pragma warning(push)
@@ -193,17 +196,23 @@ namespace
 		}
 		return ownsSwapchain ? kFrameGenOwnerFSR : kFrameGenOwnerNone;
 	}
-
-	// Suppress exact known-benign diagnostics; pass all other messages through.
+	// Suppress only diagnostics that are both expected in this integration and repeated often
+	// enough to drown the log. Anything reporting a feature degrading or failing outright stays
+	// visible: those are exactly the lines that explain a silently non-working feature.
+	//
+	// Deliberately NOT suppressed, having each cost real debugging time:
+	//   "is NOT supported, plugin will not function properly" — a hook Streamline could not
+	//       install. Three of these fire on the DLSS-G path (CmdBindPipeline,
+	//       CmdBindDescriptorSets, BeginCommandBuffer).
+	//   "Invalid backbuffer resource extent"                  — a resource tagged with a 0x0
+	//       extent, which sl.dlss_g sanitises and carries on from.
 	bool IsBenignSLWarning(const char* a_msg)
 	{
 		if (!a_msg)
 			return false;
 		static constexpr const char* kBenign[] = {
 			"setAsyncFrameMarker is not implemented",
-			"is NOT supported, plugin will not function properly",
 			"RSync will not run because it was not initialized",
-			"Invalid backbuffer resource extent",
 			"some DX/VK APIs were invoked before slInit",
 			"reseting frame timer",
 		};
@@ -212,6 +221,17 @@ namespace
 				return true;
 		}
 		return false;
+	}
+
+	// Streamline repeats most warnings every frame. Emit each distinct message once so a real
+	// diagnostic is visible without the log turning into a per-frame stream.
+	bool ShouldLogSLWarningOnce(const char* a_msg)
+	{
+		static std::mutex s_mutex;
+		static std::unordered_set<size_t> s_seen;
+		const size_t key = std::hash<std::string_view>{}(a_msg);
+		std::lock_guard<std::mutex> lock(s_mutex);
+		return s_seen.insert(key).second;
 	}
 
 	void LogCallback(sl::LogType a_type, const char* a_msg)
@@ -231,7 +251,10 @@ namespace
 			logger::warn("[Streamline/SL] {}", a_msg);
 			break;
 		case sl::LogType::eWarn:
-			logger::debug("[Streamline/SL] {}", a_msg);
+			// Previously logged at debug, which the default sink drops — so every surviving
+			// Streamline warning was invisible anyway, and un-suppressing one changed nothing.
+			if (ShouldLogSLWarningOnce(a_msg))
+				logger::warn("[Streamline/SL] {}", a_msg);
 			break;
 		default:
 			logger::trace("[Streamline/SL] {}", a_msg);
@@ -1903,8 +1926,8 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 
 		sl::ResourceTag tags[3];
 		uint32_t tagCount = 0;
-		tags[tagCount++] = { &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eOnlyValidNow, &extent };
-		tags[tagCount++] = { &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eOnlyValidNow, &extent };
+		tags[tagCount++] = { &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &extent };
+		tags[tagCount++] = { &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &extent };
 
 		// HUD-less color uses display dimensions rather than the render subrect.
 		sl::Extent displayExtent{};
@@ -1914,7 +1937,7 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 		const uint32_t viewsBeforeHudless = viewCount;
 		if (a_hudlessColor) {
 			if (makeResource(a_hudlessColor, hudlessRes, hudlessRange)) {
-				tags[tagCount++] = { &hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eOnlyValidNow, &displayExtent };
+				tags[tagCount++] = { &hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &displayExtent };
 			} else if (g_sl.dispatchFaulted.load(std::memory_order_acquire) ||
 				viewCount != viewsBeforeHudless) {
 				abandonViewsAfterCreationFailure();
