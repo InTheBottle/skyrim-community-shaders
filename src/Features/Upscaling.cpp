@@ -679,7 +679,16 @@ HRESULT Upscaling::PresentWithFrameGeneration(IDXGISwapChain* a_swapChain, UINT 
 		return a_present(a_swapChain, a_syncInterval, a_flags);
 	}
 
-	// DLSS-G requires a valid or passthrough tag for every present.
+	// DLSS-G requires a valid or passthrough tag for every present -- but only once it actually owns
+	// the present. Between selecting it and sl.dlss_g being loaded (a swapchain recreate apart), the
+	// tag path legitimately has nothing to do, and treating that as a fault tore frame generation
+	// down on every enable.
+	if (!streamline->IsDLSSGLoaded()) {
+		if (dxvk->HasPendingPresentWaitSemaphore() && !dxvk->PushPendingPresentWaitSemaphore())
+			return requestFaultTeardown("DLSS-G present synchronization failed");
+		return a_present(a_swapChain, a_syncInterval, a_flags);
+	}
+
 	if ((dxvk->HasPendingPresentWaitSemaphore() || streamline->EnsureDLSSGPresentTag()) &&
 		dxvk->PushPendingPresentWaitSemaphore())
 		return a_present(a_swapChain, a_syncInterval, a_flags);

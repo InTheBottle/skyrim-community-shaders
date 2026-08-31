@@ -1997,7 +1997,7 @@ void Streamline::TagDLSSGResources(ID3D11Resource* a_depth, ID3D11Resource* a_mo
 		bool lifetimesRetained = false;
 		if (cs_SubmitPresentTags(dxvk, *token, g_sl.viewport, tags, tagCount,
 				views, viewCount, resources, static_cast<uint32_t>(std::size(resources)), tagResult,
-				lifetimesRetained, true)) {
+				lifetimesRetained, g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))) {
 			g_sl.dlssgTaggedThisFrame = true;
 		} else {
 			if (!lifetimesRetained)
@@ -2034,7 +2034,7 @@ void Streamline::ClearDLSSGTags()
 		bool lifetimesRetained = false;
 		if (cs_SubmitPresentTags(dxvk, *token, g_sl.viewport, tags,
 				static_cast<uint32_t>(std::size(tags)), nullptr, 0, nullptr, 0, tagResult,
-				lifetimesRetained, true)) {
+				lifetimesRetained, g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))) {
 			g_sl.dlssgTaggedThisFrame = true;
 		} else {
 			logger::error("[Streamline] DLSS-G passthrough tag submission failed (result {})",
@@ -2049,7 +2049,14 @@ void Streamline::ClearDLSSGTags()
 bool Streamline::EnsureDLSSGPresentTag()
 {
 	// Supply passthrough tags when the render pass did not provide interpolation inputs.
-	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted)
+	//
+	// featureDLSSG only says DLSS-G is SUPPORTED. Tagging here while it is not the present owner
+	// registers a present-wait semaphore that no present will ever consume, so DXVK reports it
+	// still pending and the ring is quarantined and rebuilt -- behind a vkDeviceWaitIdle -- once
+	// per frame. That is what made the game stutter and flicker after frame generation was turned
+	// off, and across a method switch.
+	if (!initialized || !featureDLSSG || g_sl.dispatchFaulted ||
+		!g_dlssgCurrentlyLoaded.load(std::memory_order_acquire))
 		return false;
 	if (!g_sl.dlssgTaggedThisFrame)
 		ClearDLSSGTags();
