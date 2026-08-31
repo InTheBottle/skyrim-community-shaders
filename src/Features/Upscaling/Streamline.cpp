@@ -635,11 +635,19 @@ void Streamline::BeginRenderFrame()
 	// and interpolates without depth or motion vectors, which shows up as an occasional generated
 	// frame collapsing towards a corner. Latch the index SimulationStart actually used rather than
 	// re-deriving it, falling back to the counter when the latch is not plausibly this frame.
+	// The index must also be strictly increasing. Input polling and the render loop do not advance
+	// in lockstep, so the latch can legitimately hold the same value across two consecutive render
+	// frames -- and a repeated index is not merely cosmetic. Streamline keys tags and constants by
+	// it, and CS's own once-per-frame guards (s_evalFrameByVp / s_constFrameByVp) treat a repeat as
+	// "already evaluated", which silently dropped every second FSR-FG evaluation: measured 11-12
+	// evaluations per second against 20-21 rendered frames, so frame generation ran at roughly half
+	// rate and output sat ~24% under target at every limiter setting.
 	const uint32_t frameCounter = globals::state->frameCount;
 	const uint32_t latchedSimFrame = g_sl.simMarkerFrameId.load(std::memory_order_acquire);
-	g_sl.renderFrameId = (latchedSimFrame == frameCounter || latchedSimFrame == frameCounter + 1u) ?
-	                         latchedSimFrame :
-	                         frameCounter;
+	const uint32_t candidate = (latchedSimFrame == frameCounter || latchedSimFrame == frameCounter + 1u) ?
+	                               latchedSimFrame :
+	                               frameCounter;
+	g_sl.renderFrameId = candidate > g_sl.renderFrameId ? candidate : g_sl.renderFrameId + 1u;
 	g_sl.dlssgTaggedThisFrame = false;
 }
 
