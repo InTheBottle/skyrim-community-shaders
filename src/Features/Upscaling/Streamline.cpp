@@ -66,6 +66,9 @@ namespace
 		sl::ViewportHandle viewport{ 0 };
 
 		uint32_t renderFrameId = 0;
+		// Frame index SimulationStart used, latched so tags, constants and the render-thread PCL
+		// markers all agree with it. See Streamline::BeginRenderFrame.
+		std::atomic<uint32_t> simMarkerFrameId = { 0u };
 
 		// Disable dispatch after an SEH fault to prevent repeated crashes.
 		std::atomic<bool> dispatchFaulted{ false };
@@ -613,7 +616,21 @@ void Streamline::BeginRenderFrame()
 	if (g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire) &&
 		!g_sl.dispatchFaulted.load(std::memory_order_acquire))
 		(void)DiscardFSRFrameGenerationPreparedFrame();
-	g_sl.renderFrameId = globals::state->frameCount;
+	// Tags, constants and the render-thread PCL markers must all use the same frame index that
+	// SimulationStart used. SimFrameId() is frameCount+1, because input is polled before the render
+	// frame advances, so it only coincides with frameCount here when the counter happens to tick in
+	// between -- one input poll per rendered frame, in the right order. When that slips, sl.dlss_g
+	// queries a frame Streamline has no record of at present time:
+	//   commonInterface.h:622[get] Unable to find 'common' constants for frame
+	//   commonInterface.h:256[getTaggedResource] Failed to find global tag 'kBufferTypeDepth'
+	// and interpolates without depth or motion vectors, which shows up as an occasional generated
+	// frame collapsing towards a corner. Latch the index SimulationStart actually used rather than
+	// re-deriving it, falling back to the counter when the latch is not plausibly this frame.
+	const uint32_t frameCounter = globals::state->frameCount;
+	const uint32_t latchedSimFrame = g_sl.simMarkerFrameId.load(std::memory_order_acquire);
+	g_sl.renderFrameId = (latchedSimFrame == frameCounter || latchedSimFrame == frameCounter + 1u) ?
+	                         latchedSimFrame :
+	                         frameCounter;
 	g_sl.dlssgTaggedThisFrame = false;
 }
 
@@ -740,6 +757,7 @@ void Streamline::SetPCLMarker(PclMarker a_marker)
 		if (s_lastSimFrame == simFrame)
 			return;
 		s_lastSimFrame = simFrame;
+		g_sl.simMarkerFrameId.store(simFrame, std::memory_order_release);
 	}
 
 	__try {
@@ -803,8 +821,31 @@ static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, u
 	const auto& posAdj = globals::game::frameBufferCached.GetCameraPosAdjust();
 	const auto& prevPosAdj = globals::game::frameBufferCached.GetCameraPreviousPosAdjust();
 	Matrix camDelta = Matrix::CreateTranslation(posAdj.x - prevPosAdj.x, posAdj.y - prevPosAdj.y, posAdj.z - prevPosAdj.z);
+	a_consts.reset = sl::Boolean::eFalse;
 	Matrix clipToPrevClip = curVP.Invert() * camDelta * prevVP;
 	Matrix prevClipToClip = clipToPrevClip.Invert();
+
+	// Matrix::Invert() yields NaN/inf when the source is singular, which the cached view-projection
+	// is on transient frames -- a camera cut, a menu, the frame after a load. Previously any such
+	// frame failed the finite check below and skipped the whole evaluate, which starves frame
+	// generation of camera constants for that frame and makes it reproject from stale data. That is
+	// visible as an interpolated frame collapsing towards a corner.
+	//
+	// Substitute identity, which says "no camera motion this frame", and flag a temporal reset so
+	// Streamline discards history rather than reprojecting through it. Feeding valid constants every
+	// frame matters more than describing the motion of a frame whose matrices do not exist yet.
+	const bool reprojectionFinite = cs_IsFiniteMatrix(clipToPrevClip) && cs_IsFiniteMatrix(prevClipToClip);
+	if (!reprojectionFinite) {
+		clipToPrevClip = Matrix::Identity;
+		prevClipToClip = Matrix::Identity;
+		a_consts.reset = sl::Boolean::eTrue;
+		static bool s_loggedSingular = false;
+		if (!s_loggedSingular) {
+			s_loggedSingular = true;
+			logger::warn("[Streamline] singular camera reprojection matrices - substituting identity "
+			             "and resetting temporal history for affected frames");
+		}
+	}
 	a_consts.clipToPrevClip = *reinterpret_cast<const sl::float4x4*>(&clipToPrevClip);
 	a_consts.prevClipToClip = *reinterpret_cast<const sl::float4x4*>(&prevClipToClip);
 
@@ -821,7 +862,9 @@ static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, u
 				s_resetFrame = g_sl.renderFrameId;
 			s_wasLoading = loading;
 		}
-		a_consts.reset = s_resetFrame == g_sl.renderFrameId ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+		// Preserve a reset already requested above (singular reprojection matrices).
+		if (s_resetFrame == g_sl.renderFrameId)
+			a_consts.reset = sl::Boolean::eTrue;
 	}
 	a_consts.mvecScale = { 1.0f, 1.0f };
 	a_consts.motionVectors3D = sl::Boolean::eFalse;
