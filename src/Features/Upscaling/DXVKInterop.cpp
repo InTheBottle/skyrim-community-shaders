@@ -899,8 +899,7 @@ void DXVKInterop::DestroyCommandResources()
 		logger::error("[DXVKInterop] Vulkan resource cleanup is terminally quarantined after a destruction fault");
 		return;
 	}
-	if (presentWaitInteropTerminalFault &&
-		(pendingPresentWaitSlot != UINT32_MAX || pushedPresentWaitSlot != UINT32_MAX)) {
+	if (presentWaitInteropTerminalFault && pushedPresentWaitSlot != UINT32_MAX) {
 		logger::error("[DXVKInterop] present-wait handle remains quarantined after a terminal bridge fault");
 		return;
 	}
@@ -987,7 +986,6 @@ void DXVKInterop::DestroyCommandResources()
 	}
 	presentWaitSemaphores.clear();
 	presentWaitInUse.clear();
-	pendingPresentWaitSlot = UINT32_MAX;
 	pushedPresentWaitSlot = UINT32_MAX;
 	pushedPresentWaitGeneration = 0;
 	for (VkFence& f : commandFences) {
@@ -1392,7 +1390,7 @@ bool DXVKInterop::SubmitFrameCommandBuffer(CommandTransaction& a_transaction,
 	const uint32_t slot = a_transaction.slot;
 	const VkCommandBuffer commandBuffer = a_transaction.commandBuffer;
 	if (a_signalForNextPresent &&
-		(!PresentWaitInteropReady() || pendingPresentWaitSlot != UINT32_MAX ||
+		(!PresentWaitInteropReady() ||
 		 pushedPresentWaitSlot != UINT32_MAX || slot >= presentWaitSemaphores.size() ||
 		 presentWaitSemaphores[slot] == VK_NULL_HANDLE || presentWaitInUse[slot])) {
 		logger::error("[DXVKInterop] no safe semaphore slot is available for the next present");
@@ -1445,7 +1443,6 @@ bool DXVKInterop::SubmitFrameCommandBuffer(CommandTransaction& a_transaction,
 		// no separate push step and no window where the submit is live but unregistered.
 		pushedPresentWaitSlot = slot;
 		pushedPresentWaitGeneration = attempt.generation;
-		pendingPresentWaitSlot = UINT32_MAX;
 	}
 
 	return true;
@@ -1473,7 +1470,7 @@ bool DXVKInterop::HasPendingPresentWaitSemaphore() const
 	// dxvkEnqueueInteropCommandBuffer registers the semaphore as part of the submit, so a
 	// registered-but-not-yet-presented generation IS the pending state. Reporting it here is
 	// what lets the fault-teardown path discard it instead of leaving it unpresented.
-	return pendingPresentWaitSlot != UINT32_MAX || pushedPresentWaitSlot != UINT32_MAX ||
+	return pushedPresentWaitSlot != UINT32_MAX ||
 	       (presentWaitInteropTerminalFault && !outstandingPresentWaitSubmissions.empty());
 }
 
@@ -1482,10 +1479,10 @@ bool DXVKInterop::DiscardPendingPresentWaitSemaphore()
 	std::lock_guard lock(commandRingMutex);
 	if (presentWaitInteropTerminalFault)
 		return false;
-	if (pendingPresentWaitSlot == UINT32_MAX && pushedPresentWaitSlot == UINT32_MAX)
+	if (pushedPresentWaitSlot == UINT32_MAX)
 		return true;
 
-	if (pushedPresentWaitSlot != UINT32_MAX) {
+	{
 		const uint32_t slot = pushedPresentWaitSlot;
 		// Cancellation is keyed on the exact handle and only succeeds while DXVK still has it
 		// pending and unattached, so it cannot race a present that already consumed it.
@@ -1494,36 +1491,34 @@ bool DXVKInterop::DiscardPendingPresentWaitSemaphore()
 			const PresentWaitStateAttempt cancelAttempt =
 				CancelPresentWaitSemaphoreSEH(cancelPresentWaitSemaphore, presentWaitSemaphores[slot]);
 			if (!cancelAttempt.exceptionCode && cancelAttempt.state) {
-				// DXVK dropped it before any present attached it: nothing was signalled into a
-				// present, so the slot is clean and the ring stays healthy.
-				presentWaitInUse[slot] = false;
+				// DXVK dropped it before any present attached it, but the submit
+				// thread may have already signalled the semaphore.  Quarantine the
+				// slot and rebuild the ring to avoid reusing a signalled semaphore.
 				pushedPresentWaitSlot = UINT32_MAX;
 				pushedPresentWaitGeneration = 0;
-				pendingPresentWaitSlot = UINT32_MAX;
+	
+				commandRingFaulted = true;
+				logger::warn("[DXVKInterop] quarantined a cancelled present-wait semaphore for command-ring recovery");
 				return true;
 			}
 		}
 		// A present may already have attached it; only a real device idle proves completion.
 		if (!WaitDeviceIdle())
 			return false;
+		if (clearPresentWaitSemaphore && pushedPresentWaitGeneration) {
+			const PresentWaitStateAttempt clearAttempt =
+				ClearPresentWaitSemaphoreSEH(clearPresentWaitSemaphore, pushedPresentWaitGeneration);
+			if (clearAttempt.exceptionCode || !clearAttempt.state)
+				logger::warn("[DXVKInterop] idle-released present-wait generation could not be cleared after device idle");
+		}
 		pushedPresentWaitSlot = UINT32_MAX;
 		pushedPresentWaitGeneration = 0;
-		pendingPresentWaitSlot = UINT32_MAX;
 		commandRingFaulted = true;
 		logger::warn("[DXVKInterop] quarantined an attached present-wait semaphore for command-ring recovery after device idle");
 		return true;
 	}
 
-	if (pendingPresentWaitSlot >= presentWaitSemaphores.size() ||
-		presentWaitSemaphores[pendingPresentWaitSlot] == VK_NULL_HANDLE)
-		return false;
-	if (!WaitDeviceIdle())
-		return false;
-
-	pendingPresentWaitSlot = UINT32_MAX;
-	commandRingFaulted = true;
-	logger::warn("[DXVKInterop] quarantined an unpushed present-wait semaphore for command-ring recovery after device idle");
-	return true;
+	return false;
 }
 
 void DXVKInterop::NotifyPresentWaitQueued()
@@ -1539,11 +1534,14 @@ void DXVKInterop::NotifyPresentWaitQueued()
 		commandRingFaulted = true;
 		presentWaitInteropTerminalFault = true;
 		enqueueInteropCommandBuffer = nullptr;
+		pushedPresentWaitSlot = UINT32_MAX;
+		pushedPresentWaitGeneration = 0;
+		outstandingPresentWaitSubmissions.clear();
 		if (a_exceptionCode) {
-			logger::critical("[DXVKInterop] {} faulted (SEH {:#x}); present is blocked",
+			logger::critical("[DXVKInterop] {} faulted (SEH {:#x}); present-wait interop disabled",
 				a_operation, a_exceptionCode);
 		} else {
-			logger::critical("[DXVKInterop] {}; present is blocked", a_operation);
+			logger::critical("[DXVKInterop] {}; present-wait interop disabled", a_operation);
 		}
 	};
 

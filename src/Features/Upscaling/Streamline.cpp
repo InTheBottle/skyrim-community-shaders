@@ -145,8 +145,16 @@ namespace
 	// Runs between DXVK swapchain destruction and creation.
 	bool DxvkSwapchainTornDownCallback()
 	{
-		if (g_sl.dispatchFaulted.load(std::memory_order_acquire))
-			return false;
+		if (g_sl.dispatchFaulted.load(std::memory_order_acquire)) {
+			g_sl.dlssgModeCached = false;
+			g_sl.dlssgModeOn = false;
+			g_sl.dlssgCloneTagsPrimed.store(false, std::memory_order_release);
+			if (g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire))
+				DXVKInterop::GetSingleton()->ReleaseRetainedPresentResourcesAfterFSRSwapchainTeardown();
+			g_dlssgCurrentlyLoaded.store(false, std::memory_order_release);
+			g_fsrfgCurrentlyLoaded.store(false, std::memory_order_release);
+			return true;
+		}
 
 		// Per-swapchain options and semaphores are invalid after teardown.
 		g_sl.dlssgModeCached = false;
@@ -155,17 +163,19 @@ namespace
 		g_sl.dlssgCloneTagsPrimed.store(false, std::memory_order_release);
 
 		if (g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire)) {
-			if (!g_sl.slFSRFrameGenerationCompleteSwapchainTeardown)
-				return false;
-			bool teardownComplete = false;
-			const bool releaseFeatureContext = !g_fsrfgDesiredLoaded.load(std::memory_order_acquire);
-			__try {
-				teardownComplete = g_sl.slFSRFrameGenerationCompleteSwapchainTeardown(releaseFeatureContext);
-			} __except (EXCEPTION_EXECUTE_HANDLER) {
-				g_sl.dispatchFaulted = true;
+			if (g_sl.slFSRFrameGenerationCompleteSwapchainTeardown) {
+				bool teardownComplete = false;
+				const bool releaseFeatureContext = !g_fsrfgDesiredLoaded.load(std::memory_order_acquire);
+				__try {
+					teardownComplete = g_sl.slFSRFrameGenerationCompleteSwapchainTeardown(releaseFeatureContext);
+				} __except (EXCEPTION_EXECUTE_HANDLER) {
+					g_sl.dispatchFaulted = true;
+				}
+				if (!teardownComplete)
+					return false;
+			} else {
+				g_fsrfgCurrentlyLoaded.store(false, std::memory_order_release);
 			}
-			if (!teardownComplete)
-				return false;
 			DXVKInterop::GetSingleton()->ReleaseRetainedPresentResourcesAfterFSRSwapchainTeardown();
 		}
 
@@ -419,13 +429,8 @@ bool Streamline::Initialize()
 
 	std::vector<sl::Feature> featuresToLoad = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL,
 		sl::kFeatureFSR, sl::kFeatureFSR_G, sl::kFeatureXeSS };
-	if (dlssgHardware) {
+	if (dlssgHardware)
 		featuresToLoad.push_back(sl::kFeatureDLSS_G);
-		g_dlssgDesiredLoaded.store(true, std::memory_order_release);
-		g_dlssgCurrentlyLoaded.store(true, std::memory_order_release);
-	}
-	g_fsrfgDesiredLoaded.store(true, std::memory_order_release);
-	g_fsrfgCurrentlyLoaded.store(true, std::memory_order_release);
 
 	sl::Preferences pref{};
 	pref.renderAPI = sl::RenderAPI::eVulkan;
@@ -539,6 +544,15 @@ void Streamline::SetVulkanDevice()
 	featureDLSSG = featureDLSSG && dlssgHardware && dlssgInteropReady && dxvk->PresentWaitInteropReady();
 	featureFSRFG = featureFSRFG && frameGenerationInteropReady &&
 	               dxvk->FrameGenerationQueueInteropReady();
+
+	if (featureDLSSG) {
+		g_dlssgDesiredLoaded.store(true, std::memory_order_release);
+		g_dlssgCurrentlyLoaded.store(true, std::memory_order_release);
+	}
+	if (featureFSRFG) {
+		g_fsrfgDesiredLoaded.store(true, std::memory_order_release);
+		g_fsrfgCurrentlyLoaded.store(true, std::memory_order_release);
+	}
 
 	logger::info("[Streamline] feature support: DLSS={} Reflex={} DLSS-G={} FSR={} FSR-G={} XeSS={} (FSR-FG fns {})",
 		featureDLSS, featureReflex, featureDLSSG, featureFSR, featureFSRFG, featureXeSS,
@@ -1406,6 +1420,9 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 		cs_DestroyViews(dxvk, vkDevice, vkDestroyImageView, views,
 			static_cast<uint32_t>(nv), resources,
 			static_cast<uint32_t>(std::size(resources)));
+		if (a_skipped)
+			*a_skipped = true;
+		evalRes = sl::Result::eOk;
 	}
 	return evalRes;
 }

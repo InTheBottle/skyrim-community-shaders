@@ -388,12 +388,14 @@ struct IDXGISwapChain_Present
 		// DLSS-G on Vulkan requires SyncInterval 0.
 		{
 			auto& up = globals::features::upscaling;
-			const bool dlssgActive = up.IsFrameGenerationActive() &&
-			                         up.GetFrameGenMethod() == Upscaling::FrameGenMethod::kDLSSG;
-			SyncInterval = dlssgActive ? 0u : (up.settings.vsync ? 1u : 0u);
-			if (dlssgActive) {
-				auto* sl = Streamline::GetSingleton();
-				sl->QueryDLSSGCapabilities();
+			if (up.loaded) {
+				const bool dlssgActive = up.IsFrameGenerationActive() &&
+				                         up.GetFrameGenMethod() == Upscaling::FrameGenMethod::kDLSSG;
+				SyncInterval = dlssgActive ? 0u : (up.settings.vsync ? 1u : 0u);
+				if (dlssgActive) {
+					auto* sl = Streamline::GetSingleton();
+					sl->QueryDLSSGCapabilities();
+				}
 			}
 		}
 

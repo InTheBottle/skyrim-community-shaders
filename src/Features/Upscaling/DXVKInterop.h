@@ -154,11 +154,11 @@ public:
 	bool SubmitFrameCommandBuffer(CommandTransaction& a_transaction,
 		bool a_signalForNextPresent = false);
 
-	/** @brief Gives DXVK the semaphore signaled by the latest present-tag submission. */
+	/** @brief Whether the latest present-tag submission still has a registered semaphore. */
 	bool PushPendingPresentWaitSemaphore();
-	/** @brief Whether a submitted present-tag semaphore still needs to be pushed. */
+	/** @brief Whether a registered present-wait semaphore is still tracked. */
 	bool HasPendingPresentWaitSemaphore() const;
-	/** @brief Replaces an unpushed semaphore after proving its signal submission complete. */
+	/** @brief Discards a registered semaphore after proving its signal submission complete. */
 	[[nodiscard]] bool DiscardPendingPresentWaitSemaphore();
 	/** @brief Reconciles the one-shot semaphore after DXVK acknowledges the outer present. */
 	void NotifyPresentWaitQueued();
@@ -253,7 +253,6 @@ private:
 	std::vector<VkFence> commandFences;
 	std::vector<VkSemaphore> presentWaitSemaphores;
 	std::vector<bool> presentWaitInUse;
-	uint32_t pendingPresentWaitSlot = UINT32_MAX;
 	uint32_t pushedPresentWaitSlot = UINT32_MAX;
 	uint64_t pushedPresentWaitGeneration = 0;
 	std::vector<PresentWaitSubmission> outstandingPresentWaitSubmissions;

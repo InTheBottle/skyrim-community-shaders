@@ -328,6 +328,8 @@ void Upscaling::LoadSettings(json& o_json)
 	if (settings.reflexLowLatencyMode && !settings.reflexEnabled) {
 		settings.reflexEnabled = true;
 		settings.reflexBoost = settings.reflexLowLatencyBoost;
+		settings.reflexLowLatencyMode = false;
+		settings.reflexLowLatencyBoost = false;
 	}
 
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
@@ -547,7 +549,6 @@ void Upscaling::BeginRenderFrame()
 {
 	auto* dxvk = DXVKInterop::GetSingleton();
 	if (dxvk->HasCommandRingFault() &&
-		!Streamline::GetSingleton()->IsFSRFGLoaded() &&
 		!dxvk->RecoverCommandRing()) {
 		settings.frameGeneration = false;
 		logger::error("[Upscaling] Vulkan command-ring recovery failed; falling back to TAA");
@@ -824,10 +825,11 @@ void Upscaling::CreateHudlessTexture()
 	if (hdrActive) {
 		format = DXGI_FORMAT_R10G10B10A2_UNORM;
 	} else if (!hdrActive && encoding == DXVKInterop::PresenterEncoding::kSDR) {
-		if (presenterFormat == VK_FORMAT_B8G8R8A8_UNORM)
-			format = DXGI_FORMAT_B8G8R8A8_UNORM;
-		else if (presenterFormat == VK_FORMAT_R8G8B8A8_UNORM)
+		if (presenterFormat == VK_FORMAT_R8G8B8A8_UNORM)
 			format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		else if (presenterFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
+				 presenterFormat == VK_FORMAT_A2R10G10B10_UNORM_PACK32)
+			format = DXGI_FORMAT_R10G10B10A2_UNORM;
 	}
 	if (format == DXGI_FORMAT_UNKNOWN) {
 		logger::error("[Upscaling] Unsupported HUD-less presenter format {} for encoding {}",

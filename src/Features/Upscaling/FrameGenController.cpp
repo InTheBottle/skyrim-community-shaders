@@ -168,6 +168,13 @@ namespace FrameGen
 				owner = Method::kNone;
 			logger::warn("[FrameGen] DLSS-G was unloaded before mode teardown - reconciled local state");
 		}
+		if (!sl->IsFSRFGLoaded() && (fsrDelivered == 1 || owner == Method::kFSR)) {
+			fsrDelivered = 0;
+			fsrVsyncRebakePending = false;
+			if (owner == Method::kFSR)
+				owner = Method::kNone;
+			logger::warn("[FrameGen] FSR-FG was unloaded before mode teardown - reconciled local state");
+		}
 
 		// Streamline requires DLSS-G to be disabled and drained before teardown.
 		if (dlssgModeOn && a_target != Method::kDLSSG) {
