@@ -1987,25 +1987,38 @@ void PerformanceOverlay::UpdateGraphValues()
 		// time gives the true post-FG rate. The per-present multiplier is a flag that reads 1 on any
 		// present with no prepared frame -- with FSR-FG roughly a third of presents are un-prepared,
 		// so sampling it instantaneously made Post-FG FPS flicker to the un-doubled value.
-		const uint64_t presented = Streamline::GetSingleton()->GetTotalPresentedFrames();
-		if (presented > state.lastPresentedFrames && state.lastPresentedFrames != 0 && deltaTime > 0.0f) {
-			state.presentedAccum += static_cast<float>(presented - state.lastPresentedFrames);
-			state.presentedElapsed += deltaTime;
-			if (state.presentedElapsed >= 0.25f) {
-				state.postFGFps = state.presentedAccum / state.presentedElapsed;
-				state.postFGFrameTimeMs = state.postFGFps > 0.0f ? 1000.0f / state.postFGFps : 0.0f;
-				state.presentedAccum = 0.0f;
-				state.presentedElapsed = 0.0f;
+		// Pick the source by who owns present, not by whether the counter happens to read zero. The
+		// counter belongs to FSR-FG's swapchain and is a running total that is never reset, so after
+		// switching to DLSS-G it holds a stale non-zero value: it no longer advances, so the counter
+		// branch cannot fire, and it is not zero, so the fallback cannot either. That left both
+		// branches unreachable and pinned Post-FG FPS at 0 for the rest of the session.
+		auto* streamline = Streamline::GetSingleton();
+		const bool fsrOwnsPresent = streamline->IsFSRFGPresentOwner();
+		const uint64_t presented = fsrOwnsPresent ? streamline->GetTotalPresentedFrames() : 0u;
+		if (fsrOwnsPresent) {
+			if (presented > state.lastPresentedFrames && state.lastPresentedFrames != 0 && deltaTime > 0.0f) {
+				state.presentedAccum += static_cast<float>(presented - state.lastPresentedFrames);
+				state.presentedElapsed += deltaTime;
+				if (state.presentedElapsed >= 0.25f) {
+					state.postFGFps = state.presentedAccum / state.presentedElapsed;
+					state.postFGFrameTimeMs = state.postFGFps > 0.0f ? 1000.0f / state.postFGFps : 0.0f;
+					state.presentedAccum = 0.0f;
+					state.presentedElapsed = 0.0f;
+				}
 			}
-		} else if (presented == 0) {
-			// No counter (DLSS-G, which does not publish one): fall back to the reported multiplier.
-			const float multiplier = static_cast<float>(
-				Streamline::GetSingleton()->GetFrameGenerationMultiplier());
+		} else {
+			// DLSS-G publishes no such counter: fall back to the reported multiplier.
+			const uint32_t rawMultiplier = streamline->GetFrameGenerationMultiplier();
+			const float multiplier = static_cast<float>(std::max(rawMultiplier, 2u));
 			state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
 			state.postFGFps = state.fps * multiplier;
+			// Drop any partial window left by FSR-FG so a switch back starts clean.
+			state.presentedAccum = 0.0f;
+			state.presentedElapsed = 0.0f;
 		}
 		state.lastPresentedFrames = presented;
-		state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
+		if (state.postFGFrameTimeMs > 0.0f)
+			state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
 	} else {
 		state.postFGFrameTimeMs = 0.0f;
 		state.postFGFps = 0.0f;
