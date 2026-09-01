@@ -65,7 +65,7 @@ namespace
 
 		sl::ViewportHandle viewport{ 0 };
 
-		uint32_t renderFrameId = 0;
+		std::atomic<uint32_t> renderFrameId = { 0 };
 		// Frame index SimulationStart used, latched so tags, constants and the render-thread PCL
 		// markers all agree with it. See Streamline::BeginRenderFrame.
 		std::atomic<uint32_t> simMarkerFrameId = { 0u };
@@ -153,6 +153,7 @@ namespace
 				DXVKInterop::GetSingleton()->ReleaseRetainedPresentResourcesAfterFSRSwapchainTeardown();
 			g_dlssgCurrentlyLoaded.store(false, std::memory_order_release);
 			g_fsrfgCurrentlyLoaded.store(false, std::memory_order_release);
+			g_fsrfgOwnsPresent.store(false, std::memory_order_release);
 			return true;
 		}
 
@@ -585,7 +586,7 @@ static sl::FrameToken* TokenForFrame(uint32_t a_frameId)
 
 static sl::FrameToken* RenderFrameToken()
 {
-	return TokenForFrame(g_sl.renderFrameId);
+	return TokenForFrame(g_sl.renderFrameId.load(std::memory_order_acquire));
 }
 
 static sl::Result cs_SetTagForFrame(sl::FrameToken& a_token, const sl::ViewportHandle& a_viewport,
@@ -629,9 +630,21 @@ static sl::Result cs_DiscardFSRFrameGenerationPreparedFrame(const sl::ViewportHa
 	return result;
 }
 
+// The frame index the next rendered frame will use. slReflexSleep, SimulationStart, the render-thread
+// PCL markers, tags and constants must all agree on one index per frame, or Reflex never sees a frame
+// close and its frame limiter falls back to open-loop sleeping.
+//
+// This deliberately reads Streamline's own counter rather than the game's. frameCount advances at
+// Present, so during input polling and rendering it still holds the previous frame's value, and
+// deriving the two sides from separate counters let them drift: when a render frame ran without an
+// intervening input poll the latch went stale, BeginRenderFrame took its strictly-increasing +1
+// branch, and nothing pulled the simulation side back again -- measured as a permanent off-by-one on
+// 92-98% of frames. Reading the render counter here means the two cannot diverge: whatever this
+// returns is what the next BeginRenderFrame adopts, and a skipped poll resynchronises on the frame
+// after it.
 static uint32_t SimFrameId()
 {
-	return globals::state->frameCountAtomic.load(std::memory_order_relaxed) + 1;
+	return g_sl.renderFrameId.load(std::memory_order_acquire) + 1u;
 }
 
 void Streamline::BeginRenderFrame()
@@ -639,29 +652,20 @@ void Streamline::BeginRenderFrame()
 	if (g_fsrfgCurrentlyLoaded.load(std::memory_order_acquire) &&
 		!g_sl.dispatchFaulted.load(std::memory_order_acquire))
 		(void)DiscardFSRFrameGenerationPreparedFrame();
-	// Tags, constants and the render-thread PCL markers must all use the same frame index that
-	// SimulationStart used. SimFrameId() is frameCount+1, because input is polled before the render
-	// frame advances, so it only coincides with frameCount here when the counter happens to tick in
-	// between -- one input poll per rendered frame, in the right order. When that slips, sl.dlss_g
-	// queries a frame Streamline has no record of at present time:
+	// Adopt the index SimulationStart already used. It is SimFrameId(), i.e. renderFrameId + 1, so
+	// this is strictly increasing by construction -- which the tag and constant keying and CS's own
+	// once-per-frame guards (s_evalFrameByVp / s_constFrameByVp) require: a repeated index reads as
+	// "already evaluated" and silently dropped every second FSR-FG evaluation, measured 11-12
+	// evaluations per second against 20-21 rendered frames with output ~24% under target. Advancing
+	// it here rather than re-deriving it from the game counter also keeps sl.dlss_g from querying a
+	// frame Streamline has no record of at present time:
 	//   commonInterface.h:622[get] Unable to find 'common' constants for frame
 	//   commonInterface.h:256[getTaggedResource] Failed to find global tag 'kBufferTypeDepth'
-	// and interpolates without depth or motion vectors, which shows up as an occasional generated
-	// frame collapsing towards a corner. Latch the index SimulationStart actually used rather than
-	// re-deriving it, falling back to the counter when the latch is not plausibly this frame.
-	// The index must also be strictly increasing. Input polling and the render loop do not advance
-	// in lockstep, so the latch can legitimately hold the same value across two consecutive render
-	// frames -- and a repeated index is not merely cosmetic. Streamline keys tags and constants by
-	// it, and CS's own once-per-frame guards (s_evalFrameByVp / s_constFrameByVp) treat a repeat as
-	// "already evaluated", which silently dropped every second FSR-FG evaluation: measured 11-12
-	// evaluations per second against 20-21 rendered frames, so frame generation ran at roughly half
-	// rate and output sat ~24% under target at every limiter setting.
-	const uint32_t frameCounter = globals::state->frameCount;
-	const uint32_t latchedSimFrame = g_sl.simMarkerFrameId.load(std::memory_order_acquire);
-	const uint32_t candidate = (latchedSimFrame == frameCounter || latchedSimFrame == frameCounter + 1u) ?
-	                               latchedSimFrame :
-	                               frameCounter;
-	g_sl.renderFrameId = candidate > g_sl.renderFrameId ? candidate : g_sl.renderFrameId + 1u;
+	// which interpolates without depth or motion vectors and shows up as an occasional generated
+	// frame collapsing towards a corner.
+	const uint32_t latched = g_sl.simMarkerFrameId.load(std::memory_order_acquire);
+	const uint32_t next = g_sl.renderFrameId.load(std::memory_order_acquire) + 1u;
+	g_sl.renderFrameId.store(latched == next ? latched : next, std::memory_order_release);
 	g_sl.dlssgTaggedThisFrame = false;
 }
 
@@ -892,14 +896,14 @@ static bool cs_BuildConstants(sl::Constants& a_consts, uint32_t a_outputWidth, u
 		static uint32_t s_observedFrame = UINT32_MAX;
 		static uint32_t s_resetFrame = UINT32_MAX;
 		const bool loading = globals::state->isLoadingMenuOpen;
-		if (s_observedFrame != g_sl.renderFrameId) {
-			s_observedFrame = g_sl.renderFrameId;
+		if (s_observedFrame != g_sl.renderFrameId.load(std::memory_order_acquire)) {
+			s_observedFrame = g_sl.renderFrameId.load(std::memory_order_acquire);
 			if (!loading && s_wasLoading)
-				s_resetFrame = g_sl.renderFrameId;
+				s_resetFrame = g_sl.renderFrameId.load(std::memory_order_acquire);
 			s_wasLoading = loading;
 		}
 		// Preserve a reset already requested above (singular reprojection matrices).
-		if (s_resetFrame == g_sl.renderFrameId)
+		if (s_resetFrame == g_sl.renderFrameId.load(std::memory_order_acquire))
 			a_consts.reset = sl::Boolean::eTrue;
 	}
 	a_consts.mvecScale = { 1.0f, 1.0f };
@@ -1241,12 +1245,12 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 	static uint32_t s_constFrameByVp[2] = { UINT32_MAX, UINT32_MAX };
 	const uint32_t vpId = a_viewport;
 	if (vpId < 2) {
-		if (s_evalFrameByVp[vpId] == g_sl.renderFrameId) {
+		if (s_evalFrameByVp[vpId] == g_sl.renderFrameId.load(std::memory_order_acquire)) {
 			if (a_skipped)
 				*a_skipped = true;
 			return sl::Result::eOk;
 		}
-		if (s_constFrameByVp[vpId] != g_sl.renderFrameId) {
+		if (s_constFrameByVp[vpId] != g_sl.renderFrameId.load(std::memory_order_acquire)) {
 			sl::Constants consts;
 			if (!cs_BuildConstants(consts, a_outputWidth, a_outputHeight, a_jitterX, a_jitterY)) {
 				if (a_skipped)
@@ -1259,7 +1263,7 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 					vpId, static_cast<int>(constantsRes));
 				return constantsRes;
 			}
-			s_constFrameByVp[vpId] = g_sl.renderFrameId;
+			s_constFrameByVp[vpId] = g_sl.renderFrameId.load(std::memory_order_acquire);
 		}
 	} else {
 		sl::Constants consts;
@@ -1396,7 +1400,7 @@ static sl::Result cs_EvaluateFeatureCore(sl::Feature a_feature, const sl::Viewpo
 			if (a_outputReady)
 				*a_outputReady = true;
 			if (vpId < 2)
-				s_evalFrameByVp[vpId] = g_sl.renderFrameId;
+				s_evalFrameByVp[vpId] = g_sl.renderFrameId.load(std::memory_order_acquire);
 		} else {
 			if (a_feature == sl::kFeatureFSR_G) {
 				const bool canRelease = cs_CanReleaseFailedFSRFrame(dxvk, transaction, a_viewport,
@@ -1813,7 +1817,6 @@ bool Streamline::SetFSRFrameGen(bool a_enable, bool a_hdr,
 		options.onlyPresentGenerated = a_onlyPresentGenerated ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 		const sl::Result res = g_sl.slFSRFrameGenerationSetOptions(g_sl.viewport, options);
 		if (res != sl::Result::eOk) {
-			g_sl.dispatchFaulted = true;
 			logger::error("[Streamline] slFSRFrameGenerationSetOptions failed (result {})", static_cast<int>(res));
 		} else {
 			ok = true;

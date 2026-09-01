@@ -245,6 +245,7 @@ private:
 	PresenterSurfaceState committedPresenterState;
 	bool presenterTransitionPending = false;
 	uint64_t presenterTransitionBaselineSerial = 0;
+	uint32_t presenterTransitionFrameCount = 0;
 	VkColorSpaceKHR presenterTransitionRequestedColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
 	mutable std::recursive_mutex commandRingMutex;

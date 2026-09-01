@@ -61,5 +61,6 @@ namespace FrameGen
 		bool fsrWrapVsync = false;
 		bool fsrVsyncRebakePending = false;
 		bool faultRecoveryRequested = false;
+	uint32_t phaseCompletionRetries = 0;
 	};
 }

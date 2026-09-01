@@ -430,9 +430,17 @@ void DXVKInterop::CommitPresenterSurfaceStateForRenderFrame()
 
 	if (presenterTransitionPending) {
 		if (observedPresenterState.serial <= presenterTransitionBaselineSerial ||
-			observedPresenterState.requestedColorSpace != presenterTransitionRequestedColorSpace)
+			observedPresenterState.requestedColorSpace != presenterTransitionRequestedColorSpace) {
+			if (++presenterTransitionFrameCount > 120) {
+				logger::warn("[DXVKInterop] presenter color-space transition timed out after {} frames; cancelling",
+					presenterTransitionFrameCount);
+				presenterTransitionPending = false;
+				presenterTransitionFrameCount = 0;
+			}
 			return;
+		}
 		presenterTransitionPending = false;
+		presenterTransitionFrameCount = 0;
 	}
 
 	committedPresenterState = observedPresenterState;
@@ -459,6 +467,7 @@ void DXVKInterop::BeginPresenterColorSpaceTransition(bool a_hdr, bool a_requireN
 		return;
 
 	presenterTransitionPending = true;
+	presenterTransitionFrameCount = 0;
 	presenterTransitionRequestedColorSpace = requestedColorSpace;
 	presenterTransitionBaselineSerial = observedPresenterState.serial > committedPresenterState.serial
 	                                    ? observedPresenterState.serial
@@ -675,6 +684,9 @@ bool DXVKInterop::ClearReleasedPresentWaitsAfterIdle()
 		commandRingFaulted = true;
 		presentWaitInteropTerminalFault = true;
 		enqueueInteropCommandBuffer = nullptr;
+		pushedPresentWaitSlot = UINT32_MAX;
+		pushedPresentWaitGeneration = 0;
+		outstandingPresentWaitSubmissions.clear();
 		if (a_exceptionCode) {
 			logger::critical("[DXVKInterop] {} faulted (SEH {:#x}); present interop is quarantined",
 				a_operation, a_exceptionCode);
@@ -1482,43 +1494,33 @@ bool DXVKInterop::DiscardPendingPresentWaitSemaphore()
 	if (pushedPresentWaitSlot == UINT32_MAX)
 		return true;
 
-	{
-		const uint32_t slot = pushedPresentWaitSlot;
-		// Cancellation is keyed on the exact handle and only succeeds while DXVK still has it
-		// pending and unattached, so it cannot race a present that already consumed it.
-		if (slot < presentWaitSemaphores.size() &&
-			presentWaitSemaphores[slot] != VK_NULL_HANDLE && cancelPresentWaitSemaphore) {
-			const PresentWaitStateAttempt cancelAttempt =
-				CancelPresentWaitSemaphoreSEH(cancelPresentWaitSemaphore, presentWaitSemaphores[slot]);
-			if (!cancelAttempt.exceptionCode && cancelAttempt.state) {
-				// DXVK dropped it before any present attached it, but the submit
-				// thread may have already signalled the semaphore.  Quarantine the
-				// slot and rebuild the ring to avoid reusing a signalled semaphore.
-				pushedPresentWaitSlot = UINT32_MAX;
-				pushedPresentWaitGeneration = 0;
-	
-				commandRingFaulted = true;
-				logger::warn("[DXVKInterop] quarantined a cancelled present-wait semaphore for command-ring recovery");
-				return true;
-			}
-		}
-		// A present may already have attached it; only a real device idle proves completion.
-		if (!WaitDeviceIdle())
-			return false;
-		if (clearPresentWaitSemaphore && pushedPresentWaitGeneration) {
-			const PresentWaitStateAttempt clearAttempt =
-				ClearPresentWaitSemaphoreSEH(clearPresentWaitSemaphore, pushedPresentWaitGeneration);
-			if (clearAttempt.exceptionCode || !clearAttempt.state)
-				logger::warn("[DXVKInterop] idle-released present-wait generation could not be cleared after device idle");
-		}
-		pushedPresentWaitSlot = UINT32_MAX;
-		pushedPresentWaitGeneration = 0;
-		commandRingFaulted = true;
-		logger::warn("[DXVKInterop] quarantined an attached present-wait semaphore for command-ring recovery after device idle");
-		return true;
-	}
+	const uint32_t slot = pushedPresentWaitSlot;
+	if (slot < presentWaitSemaphores.size() &&
+		presentWaitSemaphores[slot] != VK_NULL_HANDLE && cancelPresentWaitSemaphore) {
+		const PresentWaitStateAttempt cancelAttempt =
+			CancelPresentWaitSemaphoreSEH(cancelPresentWaitSemaphore, presentWaitSemaphores[slot]);
+		if (!cancelAttempt.exceptionCode && cancelAttempt.state) {
+			pushedPresentWaitSlot = UINT32_MAX;
+			pushedPresentWaitGeneration = 0;
 
-	return false;
+			commandRingFaulted = true;
+			logger::warn("[DXVKInterop] quarantined a cancelled present-wait semaphore for command-ring recovery");
+			return true;
+		}
+	}
+	if (!WaitDeviceIdle())
+		return false;
+	if (clearPresentWaitSemaphore && pushedPresentWaitGeneration) {
+		const PresentWaitStateAttempt clearAttempt =
+			ClearPresentWaitSemaphoreSEH(clearPresentWaitSemaphore, pushedPresentWaitGeneration);
+		if (clearAttempt.exceptionCode || !clearAttempt.state)
+			logger::warn("[DXVKInterop] idle-released present-wait generation could not be cleared after device idle");
+	}
+	pushedPresentWaitSlot = UINT32_MAX;
+	pushedPresentWaitGeneration = 0;
+	commandRingFaulted = true;
+	logger::warn("[DXVKInterop] quarantined an attached present-wait semaphore for command-ring recovery after device idle");
+	return true;
 }
 
 void DXVKInterop::NotifyPresentWaitQueued()
@@ -1617,6 +1619,8 @@ void DXVKInterop::NotifyPresentWaitQueued()
 				cancelAttempt.exceptionCode);
 			return;
 		}
+		pushedPresentWaitSlot = UINT32_MAX;
+		pushedPresentWaitGeneration = 0;
 		if (!WaitDeviceIdle()) {
 			commandRingFaulted = true;
 			logger::error("[DXVKInterop] cancelled present-wait semaphore remains quarantined because device idle could not be proven");
@@ -1710,9 +1714,32 @@ void DXVKInterop::QuarantineResourcesAfterVulkanDestructionFault(
 void DXVKInterop::ReleaseRetainedFSRResourcesIfSafe()
 {
 	if (vulkanResourceDestructionTerminalFault || !fsrSwapchainTeardownConfirmed ||
-		!pendingFSRPresentViewGroups.empty() ||
-		!quarantinedFSRPresentViewGroups.empty())
+		!pendingFSRPresentViewGroups.empty())
 		return;
+
+	if (!quarantinedFSRPresentViewGroups.empty() && commandRingSubmissionsIdleProven && vkDestroyImageView) {
+		for (auto& group : quarantinedFSRPresentViewGroups) {
+			for (VkImageView& view : group.views) {
+				if (view == VK_NULL_HANDLE)
+					continue;
+				const VulkanVoidAttempt destroyAttempt = DestroyImageViewSEH(vkDestroyImageView, device, view);
+				if (!destroyAttempt.completed) {
+					vulkanResourceDestructionTerminalFault = true;
+					commandRingFaulted = true;
+					view = VK_NULL_HANDLE;
+					logger::error("[DXVKInterop] quarantined FSR view destruction faulted (SEH {:#x})",
+						destroyAttempt.exceptionCode);
+					return;
+				}
+				view = VK_NULL_HANDLE;
+			}
+		}
+		quarantinedFSRPresentViewGroups.clear();
+	}
+
+	if (!quarantinedFSRPresentViewGroups.empty())
+		return;
+
 	const bool viewsPending = std::any_of(pendingViewDeletes.begin(), pendingViewDeletes.end(),
 		[](const auto& a_slot) { return !a_slot.empty(); });
 	if (!viewsPending && !retainedPresentResources.empty()) {

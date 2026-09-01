@@ -138,8 +138,12 @@ namespace FrameGen
 
 		if (sl->IsDLSSGLoaded()) {
 			const auto dims = CurrentDims(false);
-			if (!sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight))
-				return;
+			if (!sl->SetDLSSGMode(false, dims.displayWidth, dims.displayHeight)) {
+				if (++phaseCompletionRetries <= 120)
+					return;
+				logger::error("[FrameGen] SetDLSSGMode(false) failed {} times; forcing phase completion",
+					phaseCompletionRetries);
+			}
 			owner = Method::kDLSSG;
 		} else if (sl->IsFSRFGLoaded()) {
 			owner = Method::kFSR;
@@ -148,6 +152,7 @@ namespace FrameGen
 			Streamline::PushDxvkSyncPresent(false);
 		}
 
+		phaseCompletionRetries = 0;
 		phase = Phase::kIdle;
 		logger::info("[FrameGen] FG method switch settled - present owner: {}", Name(owner));
 
@@ -337,6 +342,8 @@ namespace FrameGen
 	void Controller::NotifyFaultTeardownRequested()
 	{
 		dlssgModeOn = false;
+		fsrDelivered = 0;
+		fsrVsyncRebakePending = false;
 		faultRecoveryRequested = true;
 		phase = Phase::kTransitioning;
 	}

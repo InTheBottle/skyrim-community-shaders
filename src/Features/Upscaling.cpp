@@ -827,6 +827,8 @@ void Upscaling::CreateHudlessTexture()
 	} else if (!hdrActive && encoding == DXVKInterop::PresenterEncoding::kSDR) {
 		if (presenterFormat == VK_FORMAT_R8G8B8A8_UNORM)
 			format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		else if (presenterFormat == VK_FORMAT_B8G8R8A8_UNORM)
+			format = DXGI_FORMAT_B8G8R8A8_UNORM;
 		else if (presenterFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
 				 presenterFormat == VK_FORMAT_A2R10G10B10_UNORM_PACK32)
 			format = DXGI_FORMAT_R10G10B10A2_UNORM;
