@@ -2,6 +2,7 @@
 
 #include "Effects/ENBAdaptation.h"
 #include "Effects/ENBBloom.h"
+#include "Effects/ENBDepthOfField.h"
 #include "Effects/ENBEffect.h"
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
@@ -57,6 +58,7 @@ public:
 	void UpdateCommonVariablesForEffect(Effect& effect);
 
 public:
+	ENBDepthOfField enbDepthOfField;
 	ENBBloom enbBloom;
 	ENBLens enbLens;
 	ENBAdaptation enbAdaptation;
@@ -108,6 +110,7 @@ public:
 		uint32_t useBloom = 0xFFFFFFFF;
 		uint32_t useLens = 0xFFFFFFFF;
 		uint32_t useAdaptation = 0xFFFFFFFF;
+		uint32_t useDepthOfField = 0xFFFFFFFF;
 		uint32_t usePostPass = 0xFFFFFFFF;
 
 		uint32_t enableMultipleWeathers = 0xFFFFFFFF;
