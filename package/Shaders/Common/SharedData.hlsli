@@ -337,6 +337,16 @@ namespace SharedData
 		uint3 pad;
 	};
 
+	struct FoliageLightingSettings
+	{
+		uint EnableFoliageScattering;
+		uint EnableFoliageAmbientBoost;
+		uint EnableFoliageAmbientFlip;
+		float FoliageAmbientAmount;
+		uint EnableGrassScattering;
+		uint3 pad;
+	};
+
 	struct SkinData
 	{
 		float4 skinParams;
@@ -442,6 +452,7 @@ namespace SharedData
 		TerrainBlendingSettings terrainBlendingSettings;
 		ExponentialHeightFogSettings exponentialHeightFogSettings;
 		TruePBRSettings truePBRSettings;
+		FoliageLightingSettings foliageLightingSettings;
 		SkinData skinData;
 		VanillaFresnelSettings vanillaFresnelSettings;
 		SnowCoverSettings snowCoverSettings;

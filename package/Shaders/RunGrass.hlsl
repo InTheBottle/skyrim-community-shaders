@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
@@ -371,6 +372,14 @@ cbuffer AlphaTestRefCB : register(b11)
 #	ifdef GRASS_LIGHTING
 #		include "GrassLighting/GrassLighting.hlsli"
 
+// Replaces the vanilla backlit-only lobe rather than adding to it, so the two models never double-count.
+float GetGrassTransmissionFactor(float NdotL, float VdotL, float amount)
+{
+	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
+		return amount * GetFoliageTransmission(NdotL, VdotL);
+	return GrassLighting::GetTransmissionFactor(NdotL, VdotL, amount);
+}
+
 #		if defined(SNOW_COVER)
 #			undef SNOW
 #			undef PROJECTED_UV
@@ -581,7 +590,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
 	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
-	                              GrassLighting::GetTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
+	                              GetGrassTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
 	                              Color::VanillaNormalization();
 
 #			ifdef GRASS_OPTIMIZATIONS
@@ -640,7 +649,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 				float VdotL = dot(viewDirection, normalizedLightDirection);
 				transmissionRadiance += lightColor *
-				                        GrassLighting::GetTransmissionFactor(NdotL, VdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
+				                        GetGrassTransmissionFactor(NdotL, VdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
 				                        Color::VanillaNormalization();
 
 				lightsDiffuseColor += lightDiffuseColor * Color::VanillaNormalization();

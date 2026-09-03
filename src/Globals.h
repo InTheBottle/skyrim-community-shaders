@@ -8,6 +8,7 @@ struct VolumetricShadows;
 struct ExtendedMaterials;
 struct GrassCollision;
 struct GrassLighting;
+struct FoliageLighting;
 struct GrassOptimizations;
 struct HairSpecular;
 struct HorizonFix;
@@ -101,6 +102,7 @@ namespace globals
 		extern ExtendedMaterials extendedMaterials;
 		extern GrassCollision grassCollision;
 		extern GrassLighting grassLighting;
+		extern FoliageLighting foliageLighting;
 		extern GrassOptimizations grassOptimizations;
 		extern HairSpecular hairSpecular;
 		extern HorizonFix horizonFix;
