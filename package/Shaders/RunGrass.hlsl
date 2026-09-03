@@ -337,6 +337,14 @@ cbuffer AlphaTestRefCB : register(b11)
 #	ifdef GRASS_LIGHTING
 #		include "GrassLighting/GrassLighting.hlsli"
 
+#		if defined(SNOW_COVER)
+#			undef SNOW
+#			undef PROJECTED_UV
+#			undef SPARKLE
+#			define BASIC_SNOW_COVER
+#			include "SnowCover/SnowCover.hlsli"
+#		endif
+
 float GetSoftLightMultiplier(float angle, float rolloff)
 {
 	float softLight = saturate((rolloff + angle) / (1 + rolloff));
@@ -470,6 +478,32 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
 #				endif  // SKYLIGHTING
+
+#			if defined(SNOW_COVER)
+	if (SharedData::snowCoverSettings.EnableSnowCover) {
+#				if defined(SKYLIGHTING)
+		float snowOcclusion = smoothstep(0, 0.75, skylightingDiffuse) * 0.55;
+#				else
+		float snowOcclusion = 0.55;
+#				endif
+		if (SharedData::snowCoverSettings.EnableExpensiveFoliage) {
+			float rx;
+			float ry;
+			TexBaseSampler.GetDimensions(rx, ry);
+#				if !defined(TRUE_PBR)
+			if (complex) {
+				snowOcclusion = max(snowOcclusion, 1 - TexBaseSampler.SampleBias(SampBaseSampler, float2(input.TexCoord.x, input.TexCoord.y * 0.5 - 0.5 / ry), SharedData::MipBias).a);
+			} else
+#				endif  // !TRUE_PBR
+			{
+				snowOcclusion = max(snowOcclusion, 1 - TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy - float2(0, 1. / ry), SharedData::MipBias).a);
+			}
+		}
+		snowOcclusion *= saturate(input.WorldPosition.z - SharedData::GetWaterData(input.WorldPosition.xyz).w);
+		// Grass blades are vertical, so remap the normal instead of feeding its raw z to the angle mask.
+		SnowCover::ApplySnowFoliage(baseColor.xyz, float3(input.TexCoord.xy, normal.z * 0.5 + 0.5), input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust.xyz, snowOcclusion, length(viewPosition.xyz), 1.0);
+	}
+#			endif
 
 	float3 albedo = baseColor.xyz * vertexColor;
 

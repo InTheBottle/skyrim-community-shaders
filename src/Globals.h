@@ -39,6 +39,7 @@ struct ExponentialHeightFog;
 struct HDRDisplay;
 struct ScreenshotFeature;
 struct Skin;
+struct SnowCover;
 
 class State;
 class Deferred;
@@ -130,6 +131,7 @@ namespace globals
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern Skin skin;
+		extern SnowCover snowCover;
 
 	}
 

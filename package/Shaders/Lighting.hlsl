@@ -29,6 +29,16 @@
 #	define LOD
 #endif
 
+#if defined(SKINNED) || defined(SKIN) || defined(EYE) || defined(HAIR)
+#	undef SNOW_COVER
+#endif
+
+#if defined(SNOW_COVER)
+#	if defined(TRUE_PBR)
+#		define GLINT
+#	endif
+#endif
+
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
@@ -859,6 +869,11 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 
+#	if defined(SNOW_COVER)
+#		undef SNOW
+#		include "SnowCover/SnowCover.hlsli"
+#	endif
+
 #	if defined(HAIR) && defined(CS_HAIR)
 #		include "Hair/Hair.hlsli"
 #	endif
@@ -1395,7 +1410,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float lodLandNoiseParameter = GetLodLandBlendParameter(baseColor.xyz);
 	float noise = TexLandLodNoiseSampler.Sample(SampLandLodNoiseSampler, uv * 3.0.xx).x;
 	float lodLandNoiseMultiplier = GetLodLandBlendMultiplier(lodLandNoiseParameter, noise);
-	baseColor.xyz *= lodLandNoiseMultiplier;
+#			if defined(SNOW_COVER)
+	if (!SharedData::snowCoverSettings.EnableSnowCover)
+#			endif
+		baseColor.xyz *= lodLandNoiseMultiplier;
 	normal.xyz *= 2;
 	normal.w = 1;
 	glossiness = 0;
@@ -1743,11 +1761,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	material.GlintMicrofacetRoughness = clamp(glintParameters.z, PBR::Constants::MinGlintRoughness, PBR::Constants::MaxGlintRoughness);
 	material.GlintDensityRandomization = clamp(glintParameters.w, PBR::Constants::MinGlintDensityRandomization, PBR::Constants::MaxGlintDensityRandomization);
 
-#		if defined(GLINT)
-	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(input.Position.xy)) / 4294967296.0).x);
-	Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
-#		endif
-
 	baseColor.xyz *= 1 - material.Metallic;
 
 	material.BaseColor = baseColor.xyz;
@@ -1985,6 +1998,90 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float4 waterData = SharedData::GetWaterData(input.WorldPosition.xyz);
 	float waterHeight = waterData.w;
+
+#	if defined(SNOW_COVER)
+#		if defined(SKYLIGHTING)
+	float snowOcclusion = inWorld ? smoothstep(0, 0.75, SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1))) : 0;
+#		else
+	float snowOcclusion = inWorld;
+#		endif
+
+#		if defined(DO_ALPHA_TEST) && defined(LOD_BLENDING) && defined(SOFT_LIGHTING)  // should only match object lod trees (ultra trees), they have no special define
+	float rx;
+	float ry;
+	TexColorSampler.GetDimensions(rx, ry);
+	float hasAlpha = 1 - TexColorSampler.SampleLevel(SampColorSampler, uv, 6).a;
+	if (hasAlpha > 0.001) {
+		snowOcclusion = 1 - TexColorSampler.Sample(SampColorSampler, uv - float2(0, 2. / ry)).a;
+	}
+#		endif
+
+	float3 adjustedWorldPos = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust.xyz;
+
+	float snowFactor = 0;
+	// Exclusion is via NoSnow (C++ hook, animation-aware); don't also test Skinned, as static props can carry it without real skinning.
+	if (SharedData::snowCoverSettings.EnableSnowCover
+#		if !defined(TREE_ANIM)
+		&& !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoSnow)
+#		endif
+	) {
+#		if defined(TRUE_PBR)
+		if (glintParameters.y < 0.01)
+			material.GlintLogMicrofacetDensity = 1;  // disables glint where there shouldn't be any
+#			if defined(LANDSCAPE)
+		float disp = sh0;  // GetTerrainHeight is already (raw - 0.5) * HeightScale
+#			elif defined(EMAT)
+		float disp = (sh0 - 0.5) * displacementParams.HeightScale;
+#			else
+		float disp = (sh0 - 0.5);
+#			endif
+#		elif defined(LANDSCAPE) && defined(EMAT)
+		float disp = sh0;  // GetTerrainHeight is already (raw - 0.5) * HeightScale
+#		elif defined(EMAT)
+		float disp = (sh0 - 0.5);
+#		else
+		float disp = 0;
+#		endif
+		float3 snowNormal = worldNormal;
+#		if defined(TREE_ANIM)
+		snowNormal = normalize(snowNormal + float3(0, 0, 0.5));
+		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
+			SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
+#		endif
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+		snowNormal = normalize(lerp(snowNormal, float3(0, 0, 1), 0.5));
+#		endif
+#		if defined(TRUE_PBR)
+		snowFactor = SnowCover::ApplySnowPBR(material, snowNormal, snowFactor, disp, adjustedWorldPos, snowOcclusion, input.WorldPosition.z - waterHeight, length(viewPosition.xyz), uv - uvOriginal);
+#		else
+		snowFactor = SnowCover::ApplySnow(material, snowNormal, disp, adjustedWorldPos, snowOcclusion, input.WorldPosition.z - waterHeight, length(viewPosition.xyz), uv - uvOriginal);
+#		endif
+		if (snowFactor > 0) {
+			// The sd gradient term only stays on terrain; on foliage/statics ddx_fine(snowFactor) is noise and sparkles.
+#		if defined(MODELSPACENORMALS) && !defined(SKINNED)
+			float3 sd = FrameBuffer::ViewToWorld(-float3(ddx_fine(snowFactor), ddy_fine(snowFactor), 0), false);
+			worldNormal = normalize(lerp(worldNormal, snowNormal, snowFactor * 0.75) + sd);
+#		else
+			worldNormal = normalize(lerp(worldNormal, normalize(mul(tbn, snowNormal)), snowFactor * 0.75));
+#		endif
+		}
+#		if defined(LODLANDNOISE)
+		material.BaseColor *= snowFactor + (1 - snowFactor) * lodLandNoiseMultiplier;
+#		endif
+#		if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
+		lodLandFadeFactor = snowFactor + (1 - snowFactor) * lodLandFadeFactor;
+		lodLandColor.rgb = lerp(lodLandColor, material.BaseColor * Color::PBRLightingScale, snowFactor);
+#		endif
+	}
+#	endif  // SNOW_COVER
+
+	// Deferred glint precompute (after Snow Cover so it can override glint params); skip when disabled (density<=1.1), matching the BRDF gate in Common/PBR.hlsli.
+#	if defined(GLINT)
+	if (material.GlintLogMicrofacetDensity > 1.1) {
+		float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(input.Position.xy)) / 4294967296.0).x);
+		Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
+	}
+#	endif
 
 	float waterRoughnessSpecular = 1;
 
@@ -2552,6 +2649,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float vertexAO = Color::ColorToLinear(max(max(vertexColor.r, vertexColor.g), vertexColor.b).xxx).x;
 #		endif
 #	endif  // defined (HAIR)
+
+#	if defined(SNOW_COVER) && !defined(MODELSPACENORMALS)
+	vertexColor.rgb = snowFactor + (1 - snowFactor) * vertexColor.rgb;
+#	endif
 
 #	if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {

@@ -246,7 +246,9 @@ public:
 		GrassSphereNormal = 1 << 3,
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
-		AdditiveLighting = 1 << 6
+		AdditiveLighting = 1 << 6,
+		NoSnow = 1 << 7,
+		NoFoliageTint = 1 << 8
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */
