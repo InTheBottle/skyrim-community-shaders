@@ -20,6 +20,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainVariation.h"
+#include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
 #include "TruePBR.h"
 
@@ -64,5 +65,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::exponentialHeightFog.GetCommonBufferData(),
 		globals::features::truePBR.settings,
 		globals::features::skin.GetCommonBufferData(),
+		globals::features::vanillaFresnel.settings,
 		globals::features::snowCover.GetCommonBufferData());
 }
