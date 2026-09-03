@@ -150,15 +150,6 @@ const static float DepthOffsets[16] = {
 
 #	include "Common/ShadowSampling.hlsli"
 
-#	if defined(SNOW_COVER)
-#		undef SNOW
-#		undef PROJECTED_UV
-#		undef SPARKLE
-#		define BASIC_SNOW_COVER
-#		define SampColorSampler SampDiffuse
-#		include "SnowCover/SnowCover.hlsli"
-#	endif
-
 #	if defined(EXP_HEIGHT_FOG)
 void ApplyReflectionExponentialHeightFog(inout float3 color, float3 positionWS, float4 screenPosition)
 {
@@ -230,23 +221,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = -normalize(cross(ddx, ddy));
 
-#			if defined(SNOW_COVER)
-	if (SharedData::snowCoverSettings.EnableSnowCover) {
-		float skylight = 0.15;
-		if (SharedData::snowCoverSettings.EnableExpensiveFoliage) {
-			float rx;
-			float ry;
-			TexDiffuse.GetDimensions(rx, ry);
-			skylight = 1 - TexDiffuse.Sample(SampDiffuse, input.TexCoord.xy - float2(0, 2. / ry)).a;
-		}
-		skylight *= saturate(input.WorldPosition.z - SharedData::GetWaterData(input.WorldPosition.xyz).w);
-		// A LOD billboard is a vertical quad, so the raw geometric normal has z == 0 and the angle mask rejects it outright.
-		float3 snowNormal = normalize(normal + float3(0, 0, 0.5));
-		float snowViewDist = length(viewPosition);
-		SnowCover::ApplySnowFoliage(baseColor.xyz, snowNormal, input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust.xyz, skylight, snowViewDist, SnowCover::GetObjectFade(snowViewDist));
-	}
-#			endif
-
 	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
 #			if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
@@ -286,23 +260,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = normalize(cross(ddx, ddy));
-
-#			if defined(SNOW_COVER)
-	if (SharedData::snowCoverSettings.EnableSnowCover) {
-		float skylight = 0.15;
-		if (SharedData::snowCoverSettings.EnableExpensiveFoliage) {
-			float rx;
-			float ry;
-			TexDiffuse.GetDimensions(rx, ry);
-			skylight = 1 - TexDiffuse.Sample(SampDiffuse, input.TexCoord.xy - float2(0, 2. / ry)).a;
-		}
-		skylight *= saturate(input.WorldPosition.z - SharedData::GetWaterData(input.WorldPosition.xyz).w);
-		// A LOD billboard is a vertical quad, so the raw geometric normal has z == 0 and the angle mask rejects it outright.
-		float3 snowNormal = normalize(normal + float3(0, 0, 0.5));
-		float snowViewDist = length(mul(FrameBuffer::CameraView, float4(input.WorldPosition.xyz, 1)).xyz);
-		SnowCover::ApplySnowFoliage(baseColor.xyz, snowNormal, input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust.xyz, skylight, snowViewDist, SnowCover::GetObjectFade(snowViewDist));
-	}
-#			endif
 
 	float3 directionalAmbientColor = Color::Ambient(SharedData::GetAmbient(normal));
 #			if defined(IBL)
