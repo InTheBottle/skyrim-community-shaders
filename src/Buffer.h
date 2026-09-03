@@ -389,6 +389,16 @@ public:
 		}
 	}
 
+	explicit Texture3D(ID3D11Texture3D* a_resource, const char* name = nullptr)
+	{
+		a_resource->GetDesc(&desc);
+		resource.attach(a_resource);
+		if (name) {
+			name_ = name;
+			detail::SetD3DName(resource.get(), name_);
+		}
+	}
+
 	/** @brief Creates a shader resource view from the given descriptor. */
 	void CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC const& a_desc)
 	{

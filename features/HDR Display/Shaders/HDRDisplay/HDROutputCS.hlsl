@@ -36,11 +36,15 @@ cbuffer PerFrame : register(b0)
 
 	bool hdrEnabled = enableHDR > 0.5;
 	bool skipUI = skipUIComposite > 0.5;
+	bool isMainLoading = isMainOrLoadingMenu > 0.5;
+	// Post Processing hands over a linear scene already graded into the output color space
+	// (BT.2020 when HDR is on), so the scene must not be gamma-decoded or converted again.
+	bool postProcessOutput = SharedData::postProcessingSettings.DisableVanillaTonemapping != 0 && !isMainLoading;
 
 	float3 finalColor;
 
 	if (hdrEnabled) {
-		bool sceneIsLinear = isSceneLinear > 0.5;
+		bool sceneIsLinear = isSceneLinear > 0.5 || postProcessOutput;
 
 		if (applyAutoHDR > 0.5) {
 			float3 outputColor = sceneIsLinear ? scene.xyz : Color::GammaToLinearSafe(scene.xyz);
@@ -60,7 +64,12 @@ cbuffer PerFrame : register(b0)
 					// scale UI brightness (multiplier based on paperWhite)
 					uiLinear *= uiBrightness;
 				}
-				compositedColorLinear = uiLinear + sceneLinear * (1.0 - ui.a);
+				if (postProcessOutput) {
+					// The scene is already BT.2020; lift the BT.709 UI into the same gamut.
+					compositedColorLinear = Color::BT709ToBT2020(uiLinear) + sceneLinear * (1.0 - ui.a);
+				} else {
+					compositedColorLinear = uiLinear + sceneLinear * (1.0 - ui.a);
+				}
 			}
 		} else {
 			float3 sceneGamma = scene.rgb;
@@ -94,7 +103,8 @@ cbuffer PerFrame : register(b0)
 			// Crop preview lives in the SDR menu buffer: emit sRGB instead of PQ.
 			finalColor = saturate(Color::LinearToSrgb(max(0.0, compositedColorLinear)));
 		} else {
-			compositedColorLinear = Color::BT709ToBT2020(compositedColorLinear);
+			if (!postProcessOutput)
+				compositedColorLinear = Color::BT709ToBT2020(compositedColorLinear);
 			finalColor = Color::pq::Encode(max(0.0, compositedColorLinear), paperWhite);
 
 			finalColor = saturate(finalColor);
