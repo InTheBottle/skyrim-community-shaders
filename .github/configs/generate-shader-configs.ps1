@@ -1,10 +1,10 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Generates shader validation configuration files for Community Shaders.
+    Generates shader validation configuration files for Bottled Shaders.
 
 .DESCRIPTION
-    This script generates shader-validation.yaml by analyzing Community Shaders log files from
+    This script generates shader-validation.yaml by analyzing Bottled Shaders log files from
     Skyrim Special Edition installations. It requires hlslkit to be installed and Skyrim Special
     Edition to have been run with specific settings.
 
@@ -35,13 +35,13 @@
     1. Install hlslkit: pip install hlslkit
     2. For automatic detection (default mode):
        a. For each Skyrim version you want to generate configs for:
-          - Clear the disk cache (Community Shaders menu -> Advanced -> Clear Disk Cache)
-          - Set log level to Debug or Trace (Community Shaders menu -> Advanced -> Log Level)
+          - Clear the disk cache (Bottled Shaders menu -> Advanced -> Clear Disk Cache)
+          - Set log level to Debug or Trace (Bottled Shaders menu -> Advanced -> Log Level)
           - Enable disk cache if not already enabled
           - Run the game and wait for shader compilation to complete.
        b. The log files should be recent (generated after clearing cache)
     3. For direct log file processing:
-       - Use -LogFile parameter to specify the path to a Community Shaders log file
+       - Use -LogFile parameter to specify the path to a Bottled Shaders log file
        - Use -OutputName to specify the name of the generated config file
 #>
 
@@ -138,7 +138,7 @@ function Test-LogFile {
 }
 
 # Main script
-Write-Host "Community Shaders Configuration Generator" -ForegroundColor Cyan
+Write-Host "Bottled Shaders Configuration Generator" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 # Ensure output directory exists
@@ -233,8 +233,8 @@ if ($generated -gt 0) {
 } else {
     Write-Host "No configuration files were generated" -ForegroundColor Red
     Write-Host "To generate shader validation configs:" -ForegroundColor Yellow
-    Write-Host "1. Clear the disk cache in Community Shaders menu" -ForegroundColor Gray
-    Write-Host "2. Set log level to Debug in Community Shaders menu" -ForegroundColor Gray
+    Write-Host "1. Clear the disk cache in Bottled Shaders menu" -ForegroundColor Gray
+    Write-Host "2. Set log level to Debug in Bottled Shaders menu" -ForegroundColor Gray
     Write-Host "3. Run the game and load a save to trigger shader compilation" -ForegroundColor Gray
     Write-Host "4. Run this script again" -ForegroundColor Gray
 }

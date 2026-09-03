@@ -56,12 +56,6 @@ namespace Util
 		std::filesystem::path GetFontsPath();
 
 		/**
-		 * Gets the CommunityShaders Icons directory path
-		 * @return Interface / "Icons"
-		 */
-		std::filesystem::path GetIconsPath();
-
-		/**
 		 * Gets the CommunityShaders Cursors directory path
 		 * @return Interface / "Cursors"
 		 */
@@ -209,7 +203,7 @@ namespace Util
 		std::filesystem::path GetRealPathFromDataRelative(const std::filesystem::path& dataRelativePath);
 
 		/**
-		 * Returns the path to the Community Shaders log file in the default SKSE logging folder.
+		 * Returns the path to the plugin log file in the default SKSE logging folder.
 		 * @return Documents / "My Games" / "Skyrim..." / "SKSE" / "CommunityShaders.log"
 		 */
 		std::filesystem::path GetLogPath();

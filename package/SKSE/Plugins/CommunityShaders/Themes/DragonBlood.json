@@ -2,7 +2,7 @@
     "DisplayName": "Dragon Blood",
     "Description": "Dark red theme inspired by dragon lore and ancient power",
     "Version": "1.0.0",
-    "Author": "Community Shaders Team",
+    "Author": "Bottled Shaders Team",
     "Theme": {
         "FontSize": 0.0,
         "FontName": "Jost/Jost-Regular.ttf",
@@ -40,9 +40,6 @@
             }
         ],
         "UseSimplePalette": false,
-        "ShowActionIcons": true,
-        "UseMonochromeIcons": true,
-        "CenterHeader": true,
         "TooltipHoverDelay": 0.5,
         "BackgroundBlurEnabled": true,
         "Palette": {

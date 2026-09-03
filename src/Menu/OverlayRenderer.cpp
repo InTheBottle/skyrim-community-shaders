@@ -1,6 +1,7 @@
 #include "OverlayRenderer.h"
 #include "BackgroundBlur.h"
-#include "HomePageRenderer.h"
+#include "Plugin.h"
+#include "SetupRenderer.h"
 #include "ThemeManager.h"
 
 #include <dxgi.h>
@@ -30,9 +31,8 @@ namespace
 	std::unordered_map<ImGuiID, float> s_windowOverlapAlpha;
 
 	constexpr ImGuiWindowFlags SKIP_WINDOW_FLAGS = ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove;
-	constexpr const char* MAIN_WINDOW_PREFIX = "Community Shaders";
-
-	bool IsMainWindow(ImGuiWindow* win) { return win->Name && strncmp(win->Name, MAIN_WINDOW_PREFIX, strlen(MAIN_WINDOW_PREFIX)) == 0; }
+	// The main window's title starts with the product name; its stable ImGui ID suffix is separate.
+	bool IsMainWindow(ImGuiWindow* win) { return win->Name && strncmp(win->Name, Plugin::DISPLAY_NAME.data(), Plugin::DISPLAY_NAME.size()) == 0; }
 
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
@@ -180,7 +180,7 @@ void OverlayRenderer::RenderOverlay(
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
-	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup()) {
+	} else if (menu.IsEnabled || SetupRenderer::ShouldShowFirstTimeSetup()) {
 		ImGui::GetIO().MouseDrawCursor = true;
 		if (menu.IsEnabled) {
 			drawSettings();
@@ -405,8 +405,8 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 void OverlayRenderer::RenderFirstTimeSetupOverlay()
 {
-	if (HomePageRenderer::ShouldShowFirstTimeSetup()) {
-		HomePageRenderer::RenderFirstTimeSetupDialog();
+	if (SetupRenderer::ShouldShowFirstTimeSetup()) {
+		SetupRenderer::RenderFirstTimeSetupDialog();
 	}
 }
 

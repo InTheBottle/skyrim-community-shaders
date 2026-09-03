@@ -311,7 +311,6 @@ void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSav
 {
 	auto editorWindow = EditorWindow::GetSingleton();
 	auto menu = globals::menu;
-	bool useIcons = !editorWindow->settings.useTextButtons && menu && menu->GetSettings().Theme.ShowActionIcons;
 	const float scale = Util::GetUIScale();
 	if (navigatedFromSearch) {
 		ClearSearchState(true);
@@ -366,100 +365,46 @@ void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSav
 		Util::AddTooltip(T(TKEY("unsaved_changes_tooltip"), "Unsaved changes - click save to keep"));
 	};
 
-	if (useIcons) {
-		const float iconSize = ImGui::GetFrameHeight() * WidgetUI::kIconButtonSizeRatio;
-		const ImVec2 buttonSize(iconSize, iconSize);
-
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(WidgetUI::kIconButtonSpacing * scale, ImGui::GetStyle().ItemSpacing.y));
-
+	if (!menu) {
+		drawSearchBar();
+		drawForceWeatherButton();
+	} else {
 		drawSearchBar();
 		drawForceWeatherButton();
 
-		// Transparent icon button style
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button, WidgetUI::kIconButtonTransparent);
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, WidgetUI::kIconButtonHover);
-
-		auto iconButton = [&](const char* suffix, void* texture, const char* tooltip, auto callback) {
-			if (!texture)
-				return;
+		auto textButton = [&](const char* label, const char* tooltip, auto callback) {
 			ImGui::SameLine();
-			if (ImGui::ImageButton((std::string(searchId) + suffix).c_str(), texture, buttonSize))
+			if (Util::ButtonWithFlash(label))
 				callback();
 			Util::AddTooltip(tooltip);
 		};
 
 		// Apply button
 		if (showApply && (!editorWindow->settings.autoApplyChanges || RequiresManualApply())) {
-			if (menu->uiIcons.applyToGame.texture) {
-				iconButton("_Apply", menu->uiIcons.applyToGame.texture, T(TKEY("apply_changes"), "Apply changes to the game"), [&]() { ApplyChanges(); });
-			} else {
-				ImGui::SameLine();
-				if (ImGui::Button(T(TKEY("apply"), "Apply")))
-					ApplyChanges();
-				Util::AddTooltip(T(TKEY("apply_changes"), "Apply changes to the game"));
-			}
+			ImGui::SameLine();
+			if (Util::SuccessButton(T(TKEY("apply"), "Apply")))
+				ApplyChanges();
+			Util::AddTooltip(T(TKEY("apply_changes"), "Apply changes to the game"));
 		}
 
 		// Save/Load/Revert/Delete group
 		if (showSaveLoadRevert) {
-			iconButton("_Save", menu->uiIcons.saveSettings.texture, T(TKEY("save_to_file"), "Save to file"), [&]() { Save(); });
-			iconButton("_Load", menu->uiIcons.loadSettings.texture, T(TKEY("load_saved_file"), "Load saved file (or reset to vanilla if no file)"), [&]() { Load(); });
-			iconButton("_Revert", menu->uiIcons.featureSettingRevert.texture, T(TKEY("revert_to_original"), "Revert to original game values"), [&]() { RevertChanges(); });
+			textButton(T(TKEY("save"), "Save"), T(TKEY("save_to_file"), "Save to file"), [&]() { Save(); });
+			textButton(T(TKEY("load"), "Load"), T(TKEY("load_saved_file"), "Load saved file (or reset to vanilla if no file)"), [&]() { Load(); });
+			ImGui::SameLine();
+			if (Util::WarningButton(T(TKEY("revert"), "Revert")))
+				RevertChanges();
+			Util::AddTooltip(T(TKEY("revert_to_original"), "Revert to original game values"));
 
-			if (HasSavedFile() && menu->uiIcons.deleteSettings.texture) {
+			if (HasSavedFile()) {
 				ImGui::SameLine();
-				if (Util::ErrorImageButton((std::string(searchId) + "_Delete").c_str(), menu->uiIcons.deleteSettings.texture, buttonSize))
+				if (Util::ErrorTextButton(T(TKEY("delete"), "Delete")))
 					ImGui::OpenPopup("DeleteConfirmation");
 				Util::AddTooltip(T(TKEY("delete_saved_file_tooltip"), "Delete saved file"));
 			}
 		}
 
 		drawUnsavedIndicator();
-		ImGui::PopStyleColor(2);
-		ImGui::PopStyleVar(2);
-	} else {
-		if (!menu) {
-			drawSearchBar();
-			drawForceWeatherButton();
-		} else {
-			drawSearchBar();
-			drawForceWeatherButton();
-
-			auto textButton = [&](const char* label, const char* tooltip, auto callback) {
-				ImGui::SameLine();
-				if (Util::ButtonWithFlash(label))
-					callback();
-				Util::AddTooltip(tooltip);
-			};
-
-			// Apply button
-			if (showApply && (!editorWindow->settings.autoApplyChanges || RequiresManualApply())) {
-				ImGui::SameLine();
-				if (Util::SuccessButton(T(TKEY("apply"), "Apply")))
-					ApplyChanges();
-				Util::AddTooltip(T(TKEY("apply_changes"), "Apply changes to the game"));
-			}
-
-			// Save/Load/Revert/Delete group
-			if (showSaveLoadRevert) {
-				textButton(T(TKEY("save"), "Save"), T(TKEY("save_to_file"), "Save to file"), [&]() { Save(); });
-				textButton(T(TKEY("load"), "Load"), T(TKEY("load_saved_file"), "Load saved file (or reset to vanilla if no file)"), [&]() { Load(); });
-				ImGui::SameLine();
-				if (Util::WarningButton(T(TKEY("revert"), "Revert")))
-					RevertChanges();
-				Util::AddTooltip(T(TKEY("revert_to_original"), "Revert to original game values"));
-
-				if (HasSavedFile()) {
-					ImGui::SameLine();
-					if (Util::ErrorTextButton(T(TKEY("delete"), "Delete")))
-						ImGui::OpenPopup("DeleteConfirmation");
-					Util::AddTooltip(T(TKEY("delete_saved_file_tooltip"), "Delete saved file"));
-				}
-			}
-
-			drawUnsavedIndicator();
-		}
 	}
 
 	DrawDeleteConfirmationModal();

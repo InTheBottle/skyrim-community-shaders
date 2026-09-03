@@ -49,6 +49,9 @@ public:
 		SettingsState& state);
 
 private:
+	/** @brief Draws the active setting-constraint table; renders nothing when no constraints are active. */
+	static void RenderActiveConstraintsSection();
+
 	static void RenderShadersTab();
 	static void RenderKeybindingsTab(
 		SettingsState& state);

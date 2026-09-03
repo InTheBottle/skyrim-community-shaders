@@ -29,9 +29,8 @@
 #include "Menu/BackgroundBlur.h"
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/Fonts.h"
-#include "Menu/HomePageRenderer.h"
+#include "Menu/SetupRenderer.h"
 #include "Menu/CursorLoader.h"
-#include "Menu/IconLoader.h"
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/OverlayRenderer.h"
 #include "Menu/SettingsTabRenderer.h"
@@ -157,11 +156,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GlobalScale,
 	FontRoles,
 	UseSimplePalette,
-	ShowActionIcons,
-	UseMonochromeIcons,
-	UseMonochromeLogo,
-	ShowFooter,
-	CenterHeader,
 	TooltipHoverDelay,
 	BackgroundBlurEnabled,
 	UseCustomCursor,
@@ -361,31 +355,7 @@ const Menu::ThemeSettings::FontRoleSettings& Menu::GetDefaultFontRole(FontRole r
 }
 
 Menu::~Menu()
-{  // Release icon textures if loaded
-	uiIcons.saveSettings.Release();
-	uiIcons.loadSettings.Release();
-	uiIcons.deleteSettings.Release();
-	uiIcons.clearCache.Release();
-	uiIcons.logo.Release();
-	uiIcons.featureSettingRevert.Release();
-	uiIcons.applyToGame.Release();
-	uiIcons.pauseTime.Release();
-	uiIcons.undo.Release();
-	uiIcons.discord.Release();
-	uiIcons.characters.Release();
-	uiIcons.display.Release();
-	uiIcons.grass.Release();
-	uiIcons.lighting.Release();
-	uiIcons.sky.Release();
-	uiIcons.landscape.Release();
-	uiIcons.water.Release();
-	uiIcons.debug.Release();
-	uiIcons.materials.Release();
-	uiIcons.postProcessing.Release();
-	uiIcons.freeCamera.Release();
-	uiIcons.playMode.Release();
-	uiIcons.search.Release();
-
+{
 	Util::CursorLoader::Shutdown();
 
 	// Clean up blur resources
@@ -616,8 +586,6 @@ bool Menu::LoadThemePreset(const std::string& themeName)
 				pendingFontReload = true;
 			}
 
-			// Schedule deferred icon reload to apply theme-specific icon overrides
-			pendingIconReload = true;
 			pendingCursorReload = true;
 
 			// Apply background blur enabled state from theme
@@ -726,11 +694,6 @@ void Menu::Init()
 			}
 		}
 	}
-	// Load UI icons
-	if (!Util::InitializeMenuIcons(this)) {
-		logger::warn("Menu::Init() - Failed to load UI icons. Will fallback to text buttons");
-	}
-
 	Util::CursorLoader::Reload(this);
 
 	// Initialize background blur system
@@ -744,7 +707,7 @@ void Menu::Init()
 }
 
 /**
- * @brief Main UI rendering coordinator for the Community Shaders menu
+ * @brief Main UI rendering coordinator for the Bottled Shaders menu
  *
  * This method serves as the primary entry point for rendering the entire menu interface.
  * It handles window setup, docking configuration, and delegates rendering to specialized
@@ -774,7 +737,7 @@ void Menu::DrawSettings()
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? I18n::GetSingleton()->Format("menu.window_title", { { "version", versionStr } }, "Community Shaders {version}") : I18n::GetSingleton()->Format("menu.window_title_dev", { { "version", versionStr }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "Community Shaders {version} [{build}]");
+	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? I18n::GetSingleton()->Format("menu.window_title", { { "name", std::string(Plugin::DISPLAY_NAME) }, { "version", versionStr } }, "{name} {version}") : I18n::GetSingleton()->Format("menu.window_title_dev", { { "name", std::string(Plugin::DISPLAY_NAME) }, { "version", versionStr }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "{name} {version} [{build}]");
 	// Use ### to keep a stable window ID regardless of build suffix, preserving docking state
 	auto title = std::format("{}###CommunityShaders", displayTitle);
 
@@ -795,30 +758,7 @@ void Menu::DrawSettings()
 		bool isDocked = ImGui::IsWindowDocked();
 		wasDocked = isDocked;
 
-		float globalScale = settings.Theme.GlobalScale;
-
-		// Use default global scale (0.0) for built-in themes when GlobalScale equals the default
-		if (std::abs(globalScale - ThemeManager::Constants::DEFAULT_GLOBAL_SCALE) < 0.001f) {
-			globalScale = ThemeManager::Constants::DEFAULT_GLOBAL_SCALE;  // Ensure built-in themes stay at 0.0
-		}
-
-		const float uiScale = exp2(globalScale);  // User's manual GlobalScale for header icons
-		// Check if we can show icons - require setting enabled and at least some icons loaded (for undocked)
-		// For docked mode, always show icons if textures are available
-		bool canShowIcons = settings.Theme.ShowActionIcons &&
-		                    (uiIcons.saveSettings.texture ||
-								uiIcons.loadSettings.texture ||
-								uiIcons.clearCache.texture);  // Always show logo if available, regardless of action icons setting
-		bool showLogo = uiIcons.logo.texture != nullptr;
-
-		// Render header using extracted component
-		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons);
-
-		// Main content starts here - no additional separator needed as it's already handled in the conditions above
-
-		float footer_height = settings.Theme.ShowFooter ?
-		                          (ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 3) :
-		                          0.0f;
+		MenuHeaderRenderer::RenderHeader(isDocked);
 
 		// Static storage for menu state - must persist across frames
 		static size_t selectedMenu = 0;
@@ -826,20 +766,12 @@ void Menu::DrawSettings()
 
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
-			footer_height,
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
 			categoryExpansionStates,
 			[&]() { DrawGeneralSettings(); },
 			[&]() { DrawAdvancedSettings(); });
-
-		if (settings.Theme.ShowFooter) {
-			ImGui::Spacing();
-			ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS);
-			ImGui::Spacing();
-			DrawFooter();
-		}
 
 		// Draw global popups (needs to be called once per frame)
 		Util::DrawClearShaderCacheConfirmation();
@@ -922,25 +854,6 @@ void Menu::DrawDisableAtBootSettings()
 	}
 }
 
-void Menu::DrawFooter()
-{
-	ImGui::BulletText("%s", I18n::GetSingleton()->Format("menu.footer.game_version",
-													{ { "runtime", std::string(magic_enum::enum_name(REL::Module::GetRuntime())) },
-														{ "version", Util::GetFormattedVersion(REL::Module::get().version()) } },
-													"Game Version: {runtime} {version}")
-								.c_str());
-	ImGui::SameLine();
-	ImGui::BulletText("%s", I18n::GetSingleton()->Format("menu.footer.d3d12_swap_chain",
-													{ { "status", globals::features::upscaling.d3d12SwapChainActive ? std::string(T("common.active", "Active")) : std::string(T("common.inactive", "Inactive")) } },
-													"D3D12 Swap Chain: {status}")
-								.c_str());
-	ImGui::SameLine();
-	ImGui::BulletText("%s", I18n::GetSingleton()->Format("menu.footer.gpu",
-													{ { "name", globals::state->adapterDescription } },
-													"GPU: {name}")
-								.c_str());
-}
-
 /**
  * @brief Main overlay rendering coordinator
  *
@@ -967,15 +880,6 @@ void Menu::DrawOverlay()
 		} else {
 			// Reload failed - keep flag true to retry next frame
 			logger::warn("Menu::DrawOverlay() - Font reload failed, will retry next frame");
-		}
-	}
-
-	// Process deferred icon reload BEFORE rendering
-	if (pendingIconReload && canReload) {
-		if (Util::IconLoader::InitializeMenuIcons(this)) {
-			pendingIconReload = false;
-		} else {
-			logger::warn("Menu::DrawOverlay() - Icon reload failed, will retry next frame");
 		}
 	}
 
@@ -1067,7 +971,7 @@ void Menu::ProcessInputEventQueue()
 				key = MapVirtualKeyEx(event.keyCode, MAPVK_VSC_TO_VK_EX, GetKeyboardLayout(0));
 
 			const bool wasCapturingHotkey = IsCapturingHotkeyInput();
-			const bool allowSetupCloseKey = wasCapturingHotkey && HomePageRenderer::ShouldShowFirstTimeSetup() &&
+			const bool allowSetupCloseKey = wasCapturingHotkey && SetupRenderer::ShouldShowFirstTimeSetup() &&
 			                                (key == VK_RETURN || key == VK_ESCAPE);
 
 			// Dispatch bound hotkey actions for `key`. Combo bindings (modifier + key)
@@ -1081,7 +985,7 @@ void Menu::ProcessInputEventQueue()
 				auto shaderCache = globals::shaderCache;
 				KeyAction keyActions[] = {
 					{ settings.ToggleKey, [this]() {
-						 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
+						 if (!SetupRenderer::ShouldShowFirstTimeSetup()) {
 							 IsEnabled = !IsEnabled;
 							 if (IsEnabled)
 								 ImGui::GetIO().ClearInputKeys();  // Prevent toggle key from remaining "held" in ImGui after open.
@@ -1130,7 +1034,7 @@ void Menu::ProcessInputEventQueue()
 
 			// Hardcoded Shift+Enter toggle for the CS menu (always available)
 			if (event.IsDown() && key == VK_RETURN && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
-				if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
+				if (!SetupRenderer::ShouldShowFirstTimeSetup()) {
 					IsEnabled = !IsEnabled;
 					if (IsEnabled)
 						ImGui::GetIO().ClearInputKeys();
@@ -1140,7 +1044,7 @@ void Menu::ProcessInputEventQueue()
 
 			if (!event.IsPressed()) {
 				// Skip key release if it was used to close the first-time setup dialog
-				if (HomePageRenderer::ShouldSkipKeyRelease(key)) {
+				if (SetupRenderer::ShouldSkipKeyRelease(key)) {
 					io.AddKeyEvent(Util::Input::VirtualKeyToImGuiKey(key), event.IsPressed());
 					continue;
 				}
@@ -1172,9 +1076,9 @@ void Menu::ProcessInputEventQueue()
 					if (*(h.settingFlag)) {
 						// During first-time setup, don't capture Enter or Escape as hotkeys
 						// These keys are reserved for closing the dialog, unless we are recording a modifier
-						if (HomePageRenderer::ShouldShowFirstTimeSetup() && (key == VK_RETURN || key == VK_ESCAPE)) {
+						if (SetupRenderer::ShouldShowFirstTimeSetup() && (key == VK_RETURN || key == VK_ESCAPE)) {
 							// Do not stop capture here, just let it pass through to the UI
-							// The UI code in HomePageRenderer checks for Enter/Escape and completes setup
+							// The UI code in SetupRenderer checks for Enter/Escape and completes setup
 							*(h.settingFlag) = false;  // Cancel hotkey capture mode
 							handled = true;
 							break;
@@ -1333,7 +1237,7 @@ void Menu::ProcessInputEvents(RE::InputEvent* const* a_events)
 bool Menu::ShouldSwallowInput()
 {
 	auto editorWindow = EditorWindow::GetSingleton();
-	return IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() || (editorWindow && editorWindow->open);
+	return IsEnabled || SetupRenderer::ShouldShowFirstTimeSetup() || (editorWindow && editorWindow->open);
 }
 
 bool Menu::IsPreviewFlying()

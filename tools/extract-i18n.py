@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract-i18n.py — Extract translatable strings from Community Shaders source code.
+extract-i18n.py — Extract translatable strings from Bottled Shaders source code.
 
 Scans all .cpp and .h files under src/ for T("key", "default") calls and
 generates/updates en.json (the English source translation file).
@@ -333,7 +333,7 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(
-        description="Extract i18n strings from Community Shaders source code."
+        description="Extract i18n strings from Bottled Shaders source code."
     )
     parser.add_argument("--write", action="store_true",
                         help="Write/update en.json (default: dry-run preview)")

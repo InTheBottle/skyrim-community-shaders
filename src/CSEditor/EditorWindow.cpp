@@ -26,7 +26,7 @@
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings::PaletteColorEntry, r, g, b, useCount, lastUsedTime, isFavorite)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings::PaletteValueEntry, name, value, useCount, lastUsedTime, isFavorite)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings::PaletteFavoriteColor, hasValue, r, g, b)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings, recordMarkers, markedRecords, autoApplyChanges, useTextButtons, enableInheritFromParent, editorUIScale, favoriteWidgets, recentWidgets, maxRecentWidgets, showViewport, selectedCategory, widgetTypeSizes, paletteColors, paletteValues, paletteFavorites)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings, recordMarkers, markedRecords, autoApplyChanges, enableInheritFromParent, editorUIScale, favoriteWidgets, recentWidgets, maxRecentWidgets, showViewport, selectedCategory, widgetTypeSizes, paletteColors, paletteValues, paletteFavorites)
 
 void DrawIconStar(ImVec2 center, float radius, ImU32 color, bool filled)
 {
@@ -655,18 +655,14 @@ void EditorWindow::ShowObjectsWindow()
 				auto drawJsonDeleteButton = [&](Widget* widget) {
 					ImGui::TableNextColumn();
 					if (HasCachedJsonAttachment(widget)) {
-						auto* menu = globals::menu;
-						if (menu && menu->uiIcons.deleteSettings.texture) {
-							const float iconSize = ImGui::GetFrameHeight() * 0.85f;
-							ImGui::SetNextItemAllowOverlap();
-							char idBuf[32];
-							snprintf(idBuf, sizeof(idBuf), "##jsondel_%s", widget->GetFormID().c_str());
-							if (Util::ErrorImageButton(idBuf, menu->uiIcons.deleteSettings.texture, { iconSize, iconSize })) {
-								pendingDeleteWidget = widget;
-								pendingDeletePopupRequested = true;
-							}
-							Util::AddTooltip(T(TKEY("delete_json_file"), "Delete JSON file"));
+						ImGui::SetNextItemAllowOverlap();
+						char idBuf[64];
+						snprintf(idBuf, sizeof(idBuf), "%s##jsondel_%s", T(TKEY("delete"), "Delete"), widget->GetFormID().c_str());
+						if (Util::ErrorTextButton(idBuf)) {
+							pendingDeleteWidget = widget;
+							pendingDeletePopupRequested = true;
 						}
+						Util::AddTooltip(T(TKEY("delete_json_file"), "Delete JSON file"));
 					}
 				};
 
@@ -1149,27 +1145,21 @@ void EditorWindow::RenderUI()
 		}
 
 		auto menu = globals::menu;
-		constexpr float kIconButtonPadding = 1.0f;  // minimal padding so icons render larger and smoother
-		const float iconButtonDim = ImGui::GetFrameHeight() - kIconButtonPadding * 2;
-		const ImVec2 iconButtonSize(iconButtonDim, iconButtonDim);
-		const auto iconTint = Util::GetIconTint();
+		const char* undoLabel = T(TKEY("undo"), "Undo");
 
 		// Undo button (stays on left side)
-		if (menu && menu->uiIcons.undo.texture) {
+		if (menu) {
 			bool canUndo = CanUndo();
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kIconButtonPadding, kIconButtonPadding));
 			{
 				auto _style = Util::TransparentIconButtonStyle();
 				auto textColor = canUndo ? menu->GetTheme().Palette.Text : menu->GetTheme().StatusPalette.Disable;
 				if (!canUndo)
 					textColor.w = 0.5f;
 				ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-				if (ImGui::ImageButton("##GlobalUndo", menu->uiIcons.undo.texture, iconButtonSize, ImVec2(0, 0), ImVec2(1, 1), WidgetUI::kIconButtonTransparent, iconTint) && canUndo)
+				if (ImGui::Button(undoLabel) && canUndo)
 					PerformUndo();
 				ImGui::PopStyleColor();
 			}
-			ImGui::PopStyleVar(2);
 			Util::AddTooltip(canUndo ? std::format("Undo (Ctrl+Z) - {} states", (int)undoStack.size()).c_str() : T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"));
 		}
 
@@ -1200,27 +1190,30 @@ void EditorWindow::RenderUI()
 		rightCursor -= itemSpacing + periodWidth;
 		const float periodX = rightCursor;
 
+		// Toggle buttons are text labels; measure each so the right-to-left layout stays exact.
+		const float buttonFramePadX = ImGui::GetStyle().FramePadding.x * 2.0f;
+		auto textButtonWidth = [buttonFramePadX](const char* label) {
+			return ImGui::CalcTextSize(label).x + buttonFramePadX;
+		};
+
+		const bool isTimePaused = IsTimePaused();
+		const char* pauseLabel = isTimePaused ? T(TKEY("resume"), "Resume") : T(TKEY("pause"), "Pause");
+		const char* freeCameraLabel = T(TKEY("free_camera"), "Free Cam");
+		const char* playModeLabel = T(TKEY("play_mode"), "Play Mode");
+
 		// Pause Time button
-		float pauseButtonX = 0;
-		bool hasPauseButton = menu && menu->uiIcons.pauseTime.texture;
-		if (hasPauseButton) {
-			rightCursor -= itemSpacing + iconButtonDim + kIconButtonPadding * 2;
-			pauseButtonX = rightCursor;
-		}
+		const float pauseButtonWidth = textButtonWidth(pauseLabel);
+		rightCursor -= itemSpacing + pauseButtonWidth;
+		const float pauseButtonX = rightCursor;
 
 		// Preview mode buttons (free camera / play mode)
-		const float previewButtonWidth = iconButtonDim + kIconButtonPadding * 2;
-		float freeCameraX = 0, playModeX = 0;
-		bool hasFreeCam = menu && menu->uiIcons.freeCamera.texture;
-		bool hasPlayMode = menu && menu->uiIcons.playMode.texture;
-		if (hasPlayMode) {
-			rightCursor -= itemSpacing + previewButtonWidth;
-			playModeX = rightCursor;
-		}
-		if (hasFreeCam) {
-			rightCursor -= itemSpacing + previewButtonWidth;
-			freeCameraX = rightCursor;
-		}
+		const float playModeWidth = textButtonWidth(playModeLabel);
+		rightCursor -= itemSpacing + playModeWidth;
+		const float playModeX = rightCursor;
+
+		const float freeCameraWidth = textButtonWidth(freeCameraLabel);
+		rightCursor -= itemSpacing + freeCameraWidth;
+		const float freeCameraX = rightCursor;
 
 		// Preview mode status text (mirrors TIME PAUSED pattern, with hotkey + pulsating color)
 		float previewStatusX = 0;
@@ -1281,11 +1274,9 @@ void EditorWindow::RenderUI()
 			ImGui::TextColored(Util::GetPulsingColor(statusPalette.CurrentHotkey), "%s", previewStatusBuf);
 		}
 
-		// Toggle-style icon button helper (active: SuccessColor bg, inactive: transparent)
-		auto DrawToggleIconButton = [&](const char* id, ImTextureRef texture, bool isActive, float posX) -> bool {
+		// Toggle-style text button helper (active: SuccessColor bg, inactive: transparent)
+		auto DrawToggleTextButton = [&](const char* label, bool isActive, float posX, float width) -> bool {
 			ImGui::SetCursorScreenPos(ImVec2(posX, cursorY));
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kIconButtonPadding, kIconButtonPadding));
 			if (isActive) {
 				auto color = statusPalette.SuccessColor;
 				color.w = kToggleActiveAlpha;
@@ -1299,31 +1290,28 @@ void EditorWindow::RenderUI()
 				ImGui::PushStyleColor(ImGuiCol_Button, WidgetUI::kIconButtonTransparent);
 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
 			}
-			bool clicked = ImGui::ImageButton(id, texture, iconButtonSize, ImVec2(0, 0), ImVec2(1, 1), WidgetUI::kIconButtonTransparent, iconTint);
+			bool clicked = ImGui::Button(label, ImVec2(width, 0));
 			ImGui::PopStyleColor(2);
-			ImGui::PopStyleVar(2);
 			return clicked;
 		};
 
 		// Preview mode buttons
-		if (hasFreeCam) {
+		{
 			bool isActive = previewMode == PreviewMode::FreeCamera || previewMode == PreviewMode::FreeCameraLocked;
-			if (DrawToggleIconButton("##FreeCamera", menu->uiIcons.freeCamera.texture, isActive, freeCameraX))
+			if (DrawToggleTextButton(freeCameraLabel, isActive, freeCameraX, freeCameraWidth))
 				EnterPreviewMode(PreviewMode::FreeCamera);
 			Util::AddTooltip(isActive ? T(TKEY("exit_free_camera"), "Exit Free Camera") : T(TKEY("free_camera_scroll"), "Free Camera (scroll to adjust speed)"));
 		}
-		if (hasPlayMode) {
+		{
 			bool isActive = previewMode == PreviewMode::PlayMode;
-			if (DrawToggleIconButton("##PlayMode", menu->uiIcons.playMode.texture, isActive, playModeX))
+			if (DrawToggleTextButton(playModeLabel, isActive, playModeX, playModeWidth))
 				EnterPreviewMode(PreviewMode::PlayMode);
 			Util::AddTooltip(isActive ? T(TKEY("exit_play_mode"), "Exit Play Mode") : T(TKEY("play_mode_walk"), "Play Mode - Walk around normally"));
 		}
-
-		if (hasPauseButton) {
-			bool isPaused = IsTimePaused();
-			if (DrawToggleIconButton("##GlobalPauseTime", menu->uiIcons.pauseTime.texture, isPaused, pauseButtonX))
+		{
+			if (DrawToggleTextButton(pauseLabel, isTimePaused, pauseButtonX, pauseButtonWidth))
 				TogglePause();
-			Util::AddTooltip(isPaused ? T(TKEY("resume_time"), "Resume Time") : T(TKEY("pause_time"), "Pause Time"));
+			Util::AddTooltip(isTimePaused ? T(TKEY("resume_time"), "Resume Time") : T(TKEY("pause_time"), "Pause Time"));
 		}
 
 		// Period text and time slider
@@ -1627,9 +1615,6 @@ void EditorWindow::ShowSettingsWindow()
 		if (settingsSelectedCategory == "General") {
 			ImGui::Checkbox(T(TKEY("auto_apply_changes"), "Auto-Apply Changes"), &settings.autoApplyChanges);
 			Util::AddTooltip(T(TKEY("auto_apply_changes_tooltip"), "Automatically apply weather changes to the game as you edit"));
-
-			ImGui::Checkbox(T(TKEY("use_text_buttons"), "Use text buttons instead of icons"), &settings.useTextButtons);
-			Util::AddTooltip(T(TKEY("text_buttons_tooltip"), "Display action buttons as text labels instead of icons"));
 
 			ImGui::Checkbox(T(TKEY("enable_inherit_feature"), "Enable 'Inherit From Parent' feature"), &settings.enableInheritFromParent);
 			Util::AddTooltip(T(TKEY("enable_inherit_feature_tooltip"), "Show checkboxes to copy settings from parent weather (editor-only feature)"));

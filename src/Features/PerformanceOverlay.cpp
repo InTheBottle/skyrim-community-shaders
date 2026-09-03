@@ -1,6 +1,6 @@
 /**
  * @file PerformanceOverlay.cpp
- * @brief Real-time performance monitoring system for Skyrim Community Shaders
+ * @brief Real-time performance monitoring system for Bottled Shaders
  *
  * This module provides comprehensive performance monitoring capabilities including:
  * - Real-time FPS and frame time tracking with configurable update intervals
@@ -1590,7 +1590,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	DrawCallRow csPassesRow = {
 		"CS Passes:", magic_enum::enum_integer(SpecialShaderType::CSPasses), kDrawCallsNotApplicable, csPassesTime, csPercent,
 		0.0f,
-		std::string("GPU time spent in Community Shaders compute passes (profiled)."),
+		std::string("GPU time spent in Bottled Shaders compute passes (profiled)."),
 		true, std::nullopt, std::nullopt
 	};
 	DrawCallRow otherRow = {

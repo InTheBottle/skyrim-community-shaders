@@ -12,7 +12,7 @@
 using json = nlohmann::json;
 
 /**
- * @brief Manages hot-swappable theme system for Community Shaders menu
+ * @brief Manages hot-swappable theme system for Bottled Shaders menu
  *
  * THEME JSON SCHEMA:
  * ==================
@@ -37,7 +37,6 @@ using json = nlohmann::json;
  *     ],
  *
  *     "TooltipHoverDelay": 0.5,            // Seconds before tooltip appears
- *     "ShowActionIcons": true,             // Show icons on action buttons
  *     "UseCustomCursor": false,
  *     "Cursor": {
  *       "Scale": 1.0,
@@ -49,12 +48,12 @@ using json = nlohmann::json;
  *
  *     // Simple color palette (6 key colors)
  *     "Palette": {
- *       "Background": [0.03, 0.03, 0.03, 0.39],  // Window background RGBA
- *       "Text": [1.0, 1.0, 1.0, 1.0],            // Primary text color
- *       "WindowBorder": [0.5, 0.5, 0.5, 0.8],    // Outer window borders
- *       "FrameBorder": [0.4, 0.4, 0.4, 0.7],     // Button/input borders
- *       "Separator": [0.5, 0.5, 0.5, 0.6],       // Divider lines
- *       "ResizeGrip": [0.6, 0.6, 0.6, 0.8]       // Window resize handle
+ *       "Background": [0.04, 0.04, 0.05, 0.88],  // Window background RGBA
+ *       "Text": [0.92, 0.92, 0.94, 1.0],         // Primary text color
+ *       "WindowBorder": [0.0, 0.0, 0.0, 1.0],    // Outer window borders
+ *       "FrameBorder": [0.13, 0.13, 0.15, 0.9],  // Button/input borders
+ *       "Separator": [0.0, 0.0, 0.0, 0.9],       // Divider lines
+ *       "ResizeGrip": [0.35, 0.35, 0.38, 0.8]    // Window resize handle
  *     },
  *
  *     // Status indicator colors

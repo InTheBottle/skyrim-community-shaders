@@ -179,7 +179,7 @@ jobs:
               id: create_release
               uses: ncipollo/release-action@v1
               with:
-                  name: "Community Shaders ${{ steps.combined_notes.outputs.release_tag }}"
+                  name: "Bottled Shaders ${{ steps.combined_notes.outputs.release_tag }}"
                   draft: true
                   omitDraftDuringUpdate: true
                   tag: ${{ steps.combined_notes.outputs.release_tag }}

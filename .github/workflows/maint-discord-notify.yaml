@@ -53,7 +53,7 @@ jobs:
                   send_embed() {
                       local desc="$1" title="$2" payload
                       payload=$(jq -n --arg desc "$desc" --arg title "$title" --arg url "$URL" --argjson color "$COLOR" \
-                          '{username: "Community Shaders", embeds: [ ({description: $desc, color: $color}
+                          '{username: "Bottled Shaders", embeds: [ ({description: $desc, color: $color}
                               + (if $title != "" then {title: $title} else {} end)
                               + (if $title != "" and $url != "" then {url: $url} else {} end)) ]}')
                       curl -sf -X POST -H "Content-Type: application/json" -d "$payload" "$WEBHOOK" >/dev/null

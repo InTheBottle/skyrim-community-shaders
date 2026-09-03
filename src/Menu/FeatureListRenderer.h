@@ -41,7 +41,6 @@ public:
 	 * pending feature selection requests, then draws the left-column navigation
 	 * and right-column settings content.
 	 *
-	 * @param footerHeight Height reserved for the footer area below the list.
 	 * @param selectedMenu Index of the currently selected menu item (updated on selection change).
 	 * @param featureSearch Current search filter string (updated by the search input).
 	 * @param pendingFeatureSelection Name of a feature to auto-select (cleared after processing).
@@ -50,7 +49,6 @@ public:
 	 * @param drawAdvancedSettings Callback that renders the Advanced settings page content.
 	 */
 	static void RenderFeatureList(
-		float footerHeight,
 		size_t& selectedMenu,
 		std::string& featureSearch,
 		std::string& pendingFeatureSelection,
@@ -87,7 +85,6 @@ private:
 		// Helper methods for Feature rendering
 		void RenderFeatureHeader(Feature* feat, bool isDisabled, bool isLoaded, bool sceneControlled);
 		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled);
-		static void RenderRestoreDefaultsButton(Feature* feat, bool isDisabled, bool isLoaded);
 		void RenderReactiveConstraintWarningDialog();
 	};
 

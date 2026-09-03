@@ -49,7 +49,7 @@ namespace FeatureIssues
 										  .displayName = "Complex Parallax Materials",
 										  .rejectionReason = "Integrated into ExtendedMaterials feature",
 										  .replacementFeature = "ExtendedMaterials",
-										  .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+										  .userMessage = "This functionality is now built into Bottled Shaders. Remove the old feature as it's no longer needed.",
 										  .removedInVersion = { 1, 0, 0 },
 										  .modifiedShaderDirectory = false,
 										  .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
@@ -57,7 +57,7 @@ namespace FeatureIssues
 								 .displayName = "Tree LOD Lighting",
 								 .rejectionReason = "Functionality integrated into base CS lighting system",
 								 .replacementFeature = "",
-								 .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+								 .userMessage = "This functionality is now built into Bottled Shaders. Remove the old feature as it's no longer needed.",
 								 .removedInVersion = { 1, 0, 0 },
 								 .modifiedShaderDirectory = true,
 								 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
@@ -89,7 +89,7 @@ namespace FeatureIssues
 									 .displayName = "Distant Tree Lighting",
 									 .rejectionReason = "Replaced by TreeLODLighting, which was later integrated into CS core",
 									 .replacementFeature = "",
-									 .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+									 .userMessage = "This functionality is now built into Bottled Shaders. Remove the old feature as it's no longer needed.",
 									 .removedInVersion = { 0, 8, 0 },
 									 .modifiedShaderDirectory = true,
 									 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } }
@@ -617,7 +617,7 @@ namespace FeatureIssues
 			ImGui::Text("%s", T("menu.issues.core_feature_installed", "Core feature already installed"));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextWrapped("%s", T("menu.issues.core_feature_installed_tooltip",
-											 "This feature is already included as part of the core Community Shaders installation. Uninstall this feature with your mod manager."));
+											 "This feature is already included as part of the core Bottled Shaders installation. Uninstall this feature with your mod manager."));
 			}
 		} else if (issue.IsVersionMismatch()) {
 			ImGui::SameLine();
@@ -736,7 +736,7 @@ namespace FeatureIssues
 					ImGui::TextColored(theme.StatusPalette.Warning, "%s", T("menu.issues.compilation_persist_warning", "If compilation issues persist after deletion:"));
 					ImGui::BulletText("%s", T("menu.issues.uninstall_via_mod_manager", "Completely uninstall the feature via your mod manager"));
 					ImGui::BulletText("%s", T("menu.issues.check_modified_files", "Check for modified files in Data/Shaders/ (not in feature subfolders)"));
-					ImGui::BulletText("%s", T("menu.issues.reinstall_cs", "Consider reinstalling Community Shaders if issues persist"));
+					ImGui::BulletText("%s", T("menu.issues.reinstall_cs", "Consider reinstalling Bottled Shaders if issues persist"));
 					ImGui::Spacing();
 					ImGui::Separator();
 					ImGui::Spacing();

@@ -291,7 +291,6 @@ public:
 		};
 		std::map<std::string, std::string> markedRecords;
 		bool autoApplyChanges = true;
-		bool useTextButtons = false;
 		bool enableInheritFromParent = false;
 		float editorUIScale = 1.0f;
 		std::vector<std::string> favoriteWidgets;

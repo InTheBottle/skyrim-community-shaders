@@ -15,7 +15,6 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "Menu/HomePageRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "SceneSettingsManager.h"
@@ -23,30 +22,16 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/UI.h"
+#include "Utils/VectorIcons.h"
 #include "WeatherVariableRegistry.h"
 
 namespace
 {
 	// Core built-in menu names that always appear first in the menu list
 	// These are canonical identifiers used for logic — NOT translated
-	constexpr std::array<const char*, 5> CORE_MENU_NAMES = {
-		"Home", "General", "Advanced", "Profiling", "Display"
+	constexpr std::array<const char*, 2> CORE_MENU_NAMES = {
+		"General", "Advanced"
 	};
-
-	const char* GetCoreMenuDisplayName(const char* canonicalName)
-	{
-		if (std::strcmp(canonicalName, "Home") == 0)
-			return T("menu.features.home", "Home");
-		if (std::strcmp(canonicalName, "General") == 0)
-			return T("menu.features.general", "General");
-		if (std::strcmp(canonicalName, "Advanced") == 0)
-			return T("menu.features.advanced", "Advanced");
-		if (std::strcmp(canonicalName, "Profiling") == 0)
-			return T("menu.features.profiling", "Profiling");
-		if (std::strcmp(canonicalName, "Display") == 0)
-			return T("menu.features.display", "Display");
-		return canonicalName;
-	}
 
 	bool IsCoreMenu(const std::string& menuName)
 	{
@@ -301,7 +286,6 @@ namespace
 }
 
 void FeatureListRenderer::RenderFeatureList(
-	float footerHeight,
 	size_t& selectedMenu,
 	std::string& featureSearch,
 	std::string& pendingFeatureSelection,
@@ -309,7 +293,7 @@ void FeatureListRenderer::RenderFeatureList(
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
 {
-	ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight));
+	ImGui::BeginChild("Menus Table", ImVec2(0, 0));
 
 	auto menuList = BuildMenuList(featureSearch, categoryExpansionStates, drawGeneralSettings, drawAdvancedSettings);
 
@@ -359,10 +343,8 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 
 	auto menuList = std::vector<MenuFuncInfo>{
-		BuiltInMenu{ T("menu.features.home", "Home"), []() { HomePageRenderer::RenderHomePage(); } },
 		BuiltInMenu{ T("menu.features.general", "General"), drawGeneralSettings },
-		BuiltInMenu{ T("menu.features.advanced", "Advanced"), drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.profiling", "Profiling"), []() { ProfilingRenderer::RenderStatistics(); } }
+		BuiltInMenu{ T("menu.features.advanced", "Advanced"), drawAdvancedSettings }
 	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
 	// persist correctly. This is acceptable since the list is small and built
 	// infrequently, but could be optimized if performance becomes an issue.
@@ -469,18 +451,7 @@ void FeatureListRenderer::RenderLeftColumn(
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4());
 	if (ImGui::BeginListBox("##MenusList", { -FLT_MIN, -FLT_MIN })) {
-		// Find where core built-in menus end (Home, General, Advanced, Display)
-		size_t coreMenuCount = 0;
-		for (size_t i = 0; i < menuList.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.name)) {
-					coreMenuCount++;
-				}
-			}
-		}
-
-		// First render the core built-in menus (Home, General, Advanced, Display)
+		// First render the core built-in menus (General, Advanced)
 		size_t renderedCoreMenus = 0;
 		for (size_t i = 0; i < menuList.size() && renderedCoreMenus < CORE_MENU_NAMES.size(); i++) {
 			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
@@ -492,8 +463,7 @@ void FeatureListRenderer::RenderLeftColumn(
 			}
 		}
 
-		// Add Features header and search bar after built-in settings
-		Util::DrawSectionHeader(T("menu.features.features", "Features"), true);
+		// The search box placeholder already labels the list below it.
 		Util::DrawFeatureSearchBar(featureSearch);
 
 		// Then render the rest (features and categories, but skip already rendered core menus)
@@ -626,10 +596,6 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
-		// Add spacing only for Home menu
-		if (menu.name == T("menu.features.home", "Home")) {
-			ImGui::Dummy(ImVec2(0, ThemeManager::Constants::BUTTON_SPACING));
-		}
 		menu.func();
 	}
 	ImGui::EndChild();
@@ -665,8 +631,6 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 		// Render feature settings content
 		RenderFeatureSettings(feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled);
 
-		// Render restore defaults button (floating in bottom-right)
-		RenderRestoreDefaultsButton(feat, isDisabled, isLoaded);
 	}
 	ImGui::EndChild();
 	// Render reactive constraint warning outside the child window so it can appear as a top-level popup
@@ -683,14 +647,20 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 	float buttonSpacing = ThemeManager::Constants::BUTTON_SPACING;
 
 	const char* overrideButtonText = T("menu.features.apply_override", "Apply Override");
+	const char* restoreButtonText = T("menu.features.restore_defaults", "Restore Defaults");
 	float bootToggleWidth = ImGui::GetFrameHeight() * 1.6f;
 	float overrideButtonWidth = ImGui::CalcTextSize(overrideButtonText).x + buttonPadding;
+	float restoreButtonWidth = ImGui::CalcTextSize(restoreButtonText).x + ImGui::GetFontSize() + ImGui::GetStyle().ItemInnerSpacing.x + buttonPadding;
 
 	// Check if override is available for this feature
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
 	bool hasOverrides = overrideManager && overrideManager->HasFeatureOverrides(featureName);
+	bool canRestoreDefaults = !isDisabled && isLoaded;
 
 	float totalButtonWidth = bootToggleWidth;
+	if (canRestoreDefaults) {
+		totalButtonWidth += restoreButtonWidth + buttonSpacing;
+	}
 	if (!isDisabled && isLoaded && hasOverrides) {
 		totalButtonWidth += overrideButtonWidth + buttonSpacing;
 	}
@@ -779,6 +749,17 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 						"This will discard your customizations and revert to\n"
 						"the mod author's recommended settings."));
 			}
+		}
+	}
+
+	// Restore defaults
+	if (canRestoreDefaults) {
+		ImGui::SameLine();
+		if (Util::Icons::Button(restoreButtonText, Util::Icons::Kind::Reload, { restoreButtonWidth, 0 })) {
+			feat->RestoreDefaultSettings();
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
 		}
 	}
 
@@ -924,46 +905,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		ImGui::Spacing();
 		SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
 		ImGui::TextColored(themeSettings.StatusPalette.Error, feat->failedLoadedMessage.c_str());
-	}
-}
-
-void FeatureListRenderer::DrawMenuVisitor::RenderRestoreDefaultsButton(Feature* feat, bool isDisabled, bool isLoaded)
-{
-	if (isDisabled || !isLoaded) {
-		return;
-	}
-
-	// Position button in bottom-right corner, accounting for full button frame size
-	const auto& style = ImGui::GetStyle();
-	ImVec2 windowPos = ImGui::GetWindowPos();
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	float scrollbarWidth = ImGui::GetScrollMaxY() > 0 ? style.ScrollbarSize : 0.0f;
-	float iconDimension = ImGui::GetFrameHeight() * 1.2f;
-	ImVec2 iconSize(iconDimension, iconDimension);
-	ImVec2 frameSize(iconSize.x + style.FramePadding.x * 2, iconSize.y + style.FramePadding.y * 2);
-	ImGui::SetCursorScreenPos(ImVec2(
-		windowPos.x + windowSize.x - frameSize.x - style.WindowPadding.x - scrollbarWidth,
-		windowPos.y + windowSize.y - frameSize.y - style.WindowPadding.y));
-
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.3f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.5f));
-
-	auto& menu = *globals::menu;
-	if (menu.uiIcons.featureSettingRevert.texture) {
-		if (ImGui::ImageButton("##RestoreDefaults", menu.uiIcons.featureSettingRevert.texture, iconSize)) {
-			feat->RestoreDefaultSettings();
-		}
-	} else {
-		if (ImGui::Button("R##RestoreDefaults", iconSize)) {
-			feat->RestoreDefaultSettings();
-		}
-	}
-
-	ImGui::PopStyleColor(3);
-
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
 	}
 }
 

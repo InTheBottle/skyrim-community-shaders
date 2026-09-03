@@ -6,7 +6,6 @@
 #include "FileSystem.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
-#include "Menu/IconLoader.h"
 #include "Menu/ThemeManager.h"
 #include "PerfUtils.h"
 #include "ShaderCache.h"
@@ -403,11 +402,6 @@ namespace Util
 		return { Size.x * scale, Size.y * scale };
 	}
 
-	bool InitializeMenuIcons(Menu* menu)
-	{
-		return IconLoader::InitializeMenuIcons(menu);
-	}
-
 	// Text rendering helpers
 	ImVec2 DrawSharpText(const char* text, bool alignToPixelGrid, float scale)
 	{
@@ -436,51 +430,6 @@ namespace Util
 			ImGui::SetWindowFontScale(1.0f);
 
 		// Calculate and return the rendered size
-		ImVec2 endPos = ImGui::GetCursorPos();
-		return ImVec2(endPos.x - startPos.x, endPos.y - startPos.y);
-	}
-
-	ImVec2 DrawAlignedTextWithLogo(ID3D11ShaderResourceView* logoTexture, const ImVec2& logoSize, const char* text, float textScale, ImU32 logoTint)
-	{
-		// Save current cursor position
-		ImVec2 startPos = ImGui::GetCursorPos();
-
-		// Calculate scaled text height
-		float fontHeight = ImGui::GetFontSize() * textScale;
-		float logoHeight = logoSize.y;
-
-		// Calculate vertical offset to center align logo with text
-		float verticalOffset = (fontHeight - logoHeight) * 0.5f;
-
-		// Position cursor for logo with vertical alignment
-		ImGui::SetCursorPos(ImVec2(startPos.x, startPos.y + verticalOffset));
-
-		// Render logo using draw list with tint color support
-		ImVec2 logoPos = ImGui::GetCursorScreenPos();
-		ImVec2 logoMin = logoPos;
-		ImVec2 logoMax = ImVec2(logoPos.x + logoSize.x, logoPos.y + logoSize.y);
-		ImGui::GetWindowDrawList()->AddImage(logoTexture, logoMin, logoMax, ImVec2(0, 0), ImVec2(1, 1), logoTint);
-
-		// Advance cursor past logo
-		ImGui::Dummy(logoSize);
-		ImGui::SameLine();
-
-		// Add consistent spacing between logo and text
-		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0f);
-
-		// Reset cursor for text with proper vertical alignment
-		ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX(), startPos.y));
-		// Use windowed font scale for sharper text
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-		ImGui::SetWindowFontScale(textScale);
-
-		// Render text aligned to pixel grid for sharpness
-		ImGui::Text("%s", text);
-		// Restore style
-		ImGui::SetWindowFontScale(1.0f);
-		ImGui::PopStyleVar();
-
-		// Calculate and return the total rendered size
 		ImVec2 endPos = ImGui::GetCursorPos();
 		return ImVec2(endPos.x - startPos.x, endPos.y - startPos.y);
 	}
@@ -610,12 +559,6 @@ namespace Util
 		auto hoverColor = Menu::GetSingleton()->GetTheme().Palette.Text;
 		hoverColor.w = kHoverAlpha;
 		return StyledButtonWrapper(ImVec4(0, 0, 0, 0), hoverColor, hoverColor);
-	}
-
-	ImVec4 GetIconTint()
-	{
-		const auto& theme = Menu::GetSingleton()->GetTheme();
-		return theme.UseMonochromeIcons ? theme.Palette.Text : ImVec4(1, 1, 1, 1);
 	}
 
 	static float GetPillRounding(const ImVec2& min, const ImVec2& max)
@@ -831,122 +774,66 @@ namespace Util
 
 	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount)
 	{
-		// Get the appropriate icon for this category
-		ID3D11ShaderResourceView* categoryIcon = nullptr;
-		auto& menu = Menu::GetSingleton()->uiIcons;
+		// Keep state keyed on the stable category key and render the translated label separately.
+		const std::string headerText = std::format("{} ({})", displayName, categoryCount);
 
-		if (strcmp(categoryKey, "Characters") == 0) {
-			categoryIcon = menu.characters.texture;
-		} else if (strcmp(categoryKey, "Display") == 0) {
-			categoryIcon = menu.display.texture;
-		} else if (strcmp(categoryKey, "Grass") == 0) {
-			categoryIcon = menu.grass.texture;
-		} else if (strcmp(categoryKey, "Lighting") == 0) {
-			categoryIcon = menu.lighting.texture;
-		} else if (strcmp(categoryKey, "Sky") == 0) {
-			categoryIcon = menu.sky.texture;
-		} else if (strcmp(categoryKey, "Landscape & Textures") == 0) {
-			categoryIcon = menu.landscape.texture;
-		} else if (strcmp(categoryKey, "Water") == 0) {
-			categoryIcon = menu.water.texture;
-		} else if (strcmp(categoryKey, "Utility") == 0) {
-			categoryIcon = menu.debug.texture;
-		} else if (strcmp(categoryKey, "Materials") == 0) {
-			categoryIcon = menu.materials.texture;
-		} else if (strcmp(categoryKey, "Post-Processing") == 0) {
-			categoryIcon = menu.postProcessing.texture;
-		}
-
-		// Keep icon lookup on the stable category key and render the translated label separately.
-		std::string headerText = std::format("{} ({})", displayName, categoryCount);
-
-		// Draw category header with custom styling
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		float availableWidth = ImGui::GetContentRegionAvail().x;
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		const float availableWidth = ImGui::GetContentRegionAvail().x;
+		const float fontSize = ImGui::GetFontSize();
+		const ImVec2 textSize = ImGui::CalcTextSize(headerText.c_str());
 
-		// Calculate icon size based on current font size to match text scaling
-		// This ensures icons scale consistently with text when the font scale changes
-		const float currentFontSize = ImGui::GetFontSize();
-		const float iconSize = currentFontSize * 1.2f;     // 20% larger than font height
-		const float iconSpacing = currentFontSize * 0.3f;  // 30% of font height for spacing
-		ImVec2 textSize = ImGui::CalcTextSize(headerText.c_str());
+		// Gutter reserved for the disclosure triangle, left of the label.
+		const float arrowSlot = fontSize * 0.85f;
 
-		// Calculate total content width (icon + spacing + text)
-		float contentWidth = textSize.x;
-		if (categoryIcon) {
-			contentWidth += iconSize + iconSpacing;
-		}
-
-		// Calculate line positions
-		float lineY = pos.y + textSize.y * 0.5f;
-		float lineLength = (availableWidth - contentWidth - 20.0f) * 0.5f;  // 20px for padding
-
-		// Create selectable area for the entire header
 		ImGui::PushID(categoryKey);
-		bool hovered = false;
-		bool clicked = false;
-
-		// Invisible button for hover detection and clicking
 		ImGui::SetCursorScreenPos(pos);
-		if (ImGui::InvisibleButton("##CategoryHeader", ImVec2(availableWidth, textSize.y + 4.0f))) {
-			clicked = true;
-		}
-		hovered = ImGui::IsItemHovered();
+		const bool clicked = ImGui::InvisibleButton("##CategoryHeader", ImVec2(availableWidth, textSize.y + 4.0f));
+		const bool hovered = ImGui::IsItemHovered();
 
-		// Draw the lines and text using Menu theme colors
-		auto& themeSettings = globals::menu->GetSettings().Theme;
-		auto& palette = themeSettings.Palette;
+		ImVec4 color = globals::menu->GetSettings().Theme.Palette.Text;
+		if (!isExpanded)
+			color.w *= 0.7f;  // dim when collapsed
+		if (hovered)
+			color.w *= 0.8f;
+		const ImU32 headerColor = ImGui::GetColorU32(color);
 
-		// Use theme text color
-		ImVec4 color = palette.Text;
-
-		// If minimized, apply reduced alpha
-		if (!isExpanded) {
-			color.w *= 0.7f;  // 70% alpha when minimized
-		}
-		// If hovered, slightly dim the color
-		if (hovered) {
-			color.w *= 0.8f;  // 80% alpha when hovered
-		}
-		ImU32 headerColor = ImGui::GetColorU32(color);  // Left line
-		if (lineLength > 0) {
-			drawList->AddLine(ImVec2(pos.x, lineY), ImVec2(pos.x + lineLength, lineY), headerColor, 1.0f);
-		}
-
-		// Right line
-		float rightLineStart = pos.x + lineLength + 10.0f + contentWidth + 10.0f;
-		if (rightLineStart < pos.x + availableWidth) {
-			drawList->AddLine(ImVec2(rightLineStart, lineY), ImVec2(pos.x + availableWidth, lineY), headerColor, 1.0f);
-		}
-
-		// Draw icon and text
-		float currentX = pos.x + lineLength + 10.0f;
-
-		// Draw icon if available
-		if (categoryIcon) {
-			ImVec2 iconPos = ImVec2(currentX, pos.y + (textSize.y - iconSize) * 0.5f + 2.0f);
-			ImVec2 iconMax = ImVec2(iconPos.x + iconSize, iconPos.y + iconSize);
-
-			// Apply the same color tint as the text
-			ImU32 iconTint = headerColor;
-			drawList->AddImage(categoryIcon, iconPos, iconMax, ImVec2(0, 0), ImVec2(1, 1), iconTint);
-
-			currentX += iconSize + iconSpacing;
+		// Disclosure triangle: down when expanded, pointing into the label when collapsed.
+		// lineY sits 2px above the text's optical centre because the text is drawn at pos.y + 2.
+		const float lineY = pos.y + textSize.y * 0.5f;
+		const ImVec2 arrowCenter(pos.x + arrowSlot * 0.5f, lineY + 2.0f);
+		if (isExpanded) {
+			const float hx = fontSize * 0.30f;
+			const float hy = fontSize * 0.24f;
+			drawList->AddTriangleFilled(
+				ImVec2(arrowCenter.x - hx, arrowCenter.y - hy * 0.6f),
+				ImVec2(arrowCenter.x + hx, arrowCenter.y - hy * 0.6f),
+				ImVec2(arrowCenter.x, arrowCenter.y + hy),
+				headerColor);
+		} else {
+			const float hx = fontSize * 0.24f;
+			const float hy = fontSize * 0.30f;
+			drawList->AddTriangleFilled(
+				ImVec2(arrowCenter.x - hx * 0.6f, arrowCenter.y - hy),
+				ImVec2(arrowCenter.x - hx * 0.6f, arrowCenter.y + hy),
+				ImVec2(arrowCenter.x + hx, arrowCenter.y),
+				headerColor);
 		}
 
-		// Center text
-		ImVec2 textPos = ImVec2(currentX, pos.y + 2.0f);
-		drawList->AddText(textPos, headerColor, headerText.c_str());
+		// Left-aligned label followed by a rule filling the remaining width.
+		const float textX = pos.x + arrowSlot;
+		drawList->AddText(ImVec2(textX, pos.y + 2.0f), headerColor, headerText.c_str());
 
-		// Handle click to toggle expansion
-		if (clicked) {
+		const float ruleStart = textX + textSize.x + 8.0f;
+		if (ruleStart < pos.x + availableWidth) {
+			drawList->AddLine(ImVec2(ruleStart, lineY), ImVec2(pos.x + availableWidth, lineY), headerColor, 1.0f);
+		}
+
+		if (clicked)
 			isExpanded = !isExpanded;
-		}
 
 		ImGui::PopID();
 
-		// Move cursor to next line
 		ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + textSize.y + 8.0f));
 		ImGui::Dummy(ImVec2(availableWidth, 0.0f));
 		return clicked;
@@ -1891,62 +1778,129 @@ namespace Util
 		}
 	}  // namespace Input
 
+	namespace
+	{
+		std::unordered_map<std::string, std::chrono::steady_clock::time_point> g_buttonFlashTimers;
+		std::mutex g_buttonFlashMutex;
+	}
+
+	bool IsButtonFlashing(const char* label, int flashDurationMs)
+	{
+		const auto now = std::chrono::steady_clock::now();
+		std::lock_guard<std::mutex> lock(g_buttonFlashMutex);
+		auto it = g_buttonFlashTimers.find(label);
+		if (it == g_buttonFlashTimers.end())
+			return false;
+
+		const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
+		if (elapsed.count() < flashDurationMs)
+			return true;
+
+		g_buttonFlashTimers.erase(it);
+		return false;
+	}
+
+	void NotifyButtonFlash(const char* label)
+	{
+		std::lock_guard<std::mutex> lock(g_buttonFlashMutex);
+		g_buttonFlashTimers[label] = std::chrono::steady_clock::now();
+	}
+
+	ButtonFlashGuard::ButtonFlashGuard(const char* label, int flashDurationMs) :
+		m_styleChanged(false)
+	{
+		if (!IsButtonFlashing(label, flashDurationMs))
+			return;
+
+		// Subtle brightening of the normal button chrome for the flash duration.
+		const ImVec4 normalButton = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+		const ImVec4 flashColor(normalButton.x + 0.2f, normalButton.y + 0.2f, normalButton.z + 0.2f, normalButton.w);
+		const ImVec4 flashHovered(flashColor.x * 1.1f, flashColor.y * 1.1f, flashColor.z * 1.1f, flashColor.w);
+		const ImVec4 flashActive(flashColor.x * 0.9f, flashColor.y * 0.9f, flashColor.z * 0.9f, flashColor.w);
+
+		ImGui::PushStyleColor(ImGuiCol_Button, flashColor);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, flashHovered);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, flashActive);
+		m_styleChanged = true;
+	}
+
+	ButtonFlashGuard::~ButtonFlashGuard()
+	{
+		if (m_styleChanged)
+			ImGui::PopStyleColor(3);
+	}
+
 	bool ButtonWithFlash(const char* label, const ImVec2& size, int flashDurationMs)
 	{
-		static std::unordered_map<std::string, std::chrono::steady_clock::time_point> flashTimers;
-		static std::mutex flashTimersMutex;
-
-		std::string buttonId = std::string(label);
-		auto now = std::chrono::steady_clock::now();
-
-		// Check if this button has active flash (thread-safe)
-		bool hasActiveFlash = false;
-		{
-			std::lock_guard<std::mutex> lock(flashTimersMutex);
-			auto it = flashTimers.find(buttonId);
-			if (it != flashTimers.end()) {
-				auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
-				if (elapsed.count() < flashDurationMs) {
-					hasActiveFlash = true;
-				} else {
-					// Flash expired, remove it
-					flashTimers.erase(it);
-				}
-			}
-		}
-
-		// Style the button with flash effect if active.
-		bool styleChanged = false;
-		if (hasActiveFlash) {
-			// Use subtle white overlay similar to action icon hover effect
-			ImVec4 normalButton = ImGui::GetStyleColorVec4(ImGuiCol_Button);
-			ImVec4 flashColor = ImVec4(
-				normalButton.x + 0.2f,  // Brighten slightly
-				normalButton.y + 0.2f,
-				normalButton.z + 0.2f,
-				normalButton.w);
-			ImVec4 flashHovered = ImVec4(flashColor.x * 1.1f, flashColor.y * 1.1f, flashColor.z * 1.1f, flashColor.w);
-			ImVec4 flashActive = ImVec4(flashColor.x * 0.9f, flashColor.y * 0.9f, flashColor.z * 0.9f, flashColor.w);
-
-			ImGui::PushStyleColor(ImGuiCol_Button, flashColor);
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, flashHovered);
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive, flashActive);
-			styleChanged = true;
-		}
-
-		bool clicked = ImGui::Button(label, size);
-
-		if (styleChanged) {
-			ImGui::PopStyleColor(3);
-		}
-
-		// If clicked, start the flash timer (thread-safe)
-		if (clicked) {
-			std::lock_guard<std::mutex> lock(flashTimersMutex);
-			flashTimers[buttonId] = now;
-		}
-
+		ButtonFlashGuard flashGuard(label, flashDurationMs);
+		const bool clicked = ImGui::Button(label, size);
+		if (clicked)
+			NotifyButtonFlash(label);
 		return clicked;
+	}
+
+	bool LoadTextureFromFile(ID3D11Device* device, const char* filename, ID3D11ShaderResourceView** out_srv, ImVec2& out_size)
+	{
+		int image_width = 0;
+		int image_height = 0;
+		unsigned char* image_data = stbi_load(filename, &image_width, &image_height, nullptr, 4);
+		if (image_data == nullptr) {
+			return false;
+		}
+
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = image_width;
+		desc.Height = image_height;
+		desc.MipLevels = 0;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+
+		ID3D11Texture2D* pTexture = nullptr;
+		device->CreateTexture2D(&desc, nullptr, &pTexture);
+		if (!pTexture) {
+			stbi_image_free(image_data);
+			return false;
+		}
+		Util::SetResourceName(pTexture, "Util::LoadTextureFromFile %s", filename);
+
+		ID3D11DeviceContext* context = nullptr;
+		device->GetImmediateContext(&context);
+		if (context) {
+			context->UpdateSubresource(pTexture, 0, nullptr, image_data, desc.Width * 4, 0);
+		}
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(-1);
+		srvDesc.Texture2D.MostDetailedMip = 0;
+
+		HRESULT hr = device->CreateShaderResourceView(pTexture, &srvDesc, out_srv);
+		if (FAILED(hr)) {
+			pTexture->Release();
+			stbi_image_free(image_data);
+			if (context)
+				context->Release();
+			return false;
+		}
+		Util::SetResourceName(*out_srv, "Util::LoadTextureFromFile %s SRV", filename);
+
+		if (context) {
+			context->GenerateMips(*out_srv);
+			context->Release();
+		}
+
+		pTexture->Release();
+		stbi_image_free(image_data);
+
+		out_size = ImVec2(static_cast<float>(image_width), static_cast<float>(image_height));
+		return true;
 	}
 
 	bool LoadDDSTextureFromFile(ID3D11Device* device,

@@ -159,7 +159,7 @@ void RenderDoc::DrawSettings()
 	}
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Community Shaders team."));
+		ImGui::Text("%s", T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Bottled Shaders team."));
 		ImGui::Text("%s", T(TKEY("enable_capture_tooltip2"), "Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled."));
 	}
 
@@ -888,7 +888,7 @@ std::string RenderDoc::BuildAutomaticCaptureComments(const std::string& userComm
 
 	// Plugin version
 	auto pluginVersion = Util::GetFormattedVersion(Plugin::VERSION);
-	comments += std::format("Community Shaders {}\n", pluginVersion);
+	comments += std::format("{} {}\n", Plugin::DISPLAY_NAME, pluginVersion);
 
 	// Enabled features
 	const auto& features = Feature::GetFeatureList();

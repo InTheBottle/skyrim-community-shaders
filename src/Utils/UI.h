@@ -295,25 +295,6 @@ namespace Util
 	/** Draws a destructive theme error-colored button for delete, clear, remove, or irreversible actions. */
 	bool ErrorButton(const char* label, const ImVec2& size = ImVec2(0, 0));
 
-	/**
-	 * Draws a destructive icon/image button using the theme error color for button chrome.
-	 * Use for destructive image-only controls such as delete icons.
-	 * id must be unique per ImGui element to prevent ID collisions.
-	 */
-	template <class TextureID>
-	bool ErrorImageButton(
-		const char* id,
-		TextureID textureId,
-		const ImVec2& imageSize,
-		const ImVec2& uv0 = ImVec2(0, 0),
-		const ImVec2& uv1 = ImVec2(1, 1),
-		const ImVec4& bgCol = ImVec4(0, 0, 0, 0),
-		const ImVec4& tintCol = ImVec4(1, 1, 1, 1))
-	{
-		auto _style = DestructiveButtonStyle();
-		return ImGui::ImageButton(id, textureId, imageSize, uv0, uv1, bgCol, tintCol);
-	}
-
 	/** Draws a destructive button with ButtonWithFlash click feedback. */
 	bool ErrorButtonWithFlash(const char* label, const ImVec2& size = ImVec2(0, 0), int flashDurationMs = 200);
 
@@ -321,9 +302,6 @@ namespace Util
 	 * Creates a transparent button with theme text color hover. Caller must push/pop FrameBorderSize=0 separately.
 	 */
 	StyledButtonWrapper TransparentIconButtonStyle();
-
-	/** Returns theme text color if monochrome icons enabled, otherwise white. */
-	ImVec4 GetIconTint();
 
 	/** @brief Draws a theme-rounded hover/active fill over a button rect. */
 	bool DrawRoundedButtonHighlight(const ImRect& rect, bool hovered, bool active, ImDrawList* drawList = nullptr);
@@ -345,6 +323,30 @@ namespace Util
 	 * @return True if the button was clicked
 	 */
 	bool ButtonWithFlash(const char* label, const ImVec2& size = ImVec2(0, 0), int flashDurationMs = 200);
+
+	/** @brief Returns true while the named button is still inside its post-click flash window. */
+	bool IsButtonFlashing(const char* label, int flashDurationMs = 200);
+
+	/** @brief Starts (or restarts) the post-click flash window for the named button. */
+	void NotifyButtonFlash(const char* label);
+
+	/**
+	 * @brief RAII guard that applies the post-click flash chrome for the named button.
+	 *
+	 * Lets custom-drawn buttons reuse the same feedback as ButtonWithFlash.
+	 */
+	class ButtonFlashGuard
+	{
+	public:
+		explicit ButtonFlashGuard(const char* label, int flashDurationMs = 200);
+		~ButtonFlashGuard();
+
+		ButtonFlashGuard(const ButtonFlashGuard&) = delete;
+		ButtonFlashGuard& operator=(const ButtonFlashGuard&) = delete;
+
+	private:
+		bool m_styleChanged;
+	};
 
 	/**
 	 * Clean, minimalist toggle switch for feature enable/disable state
@@ -408,12 +410,9 @@ namespace Util
 		ID3D11ShaderResourceView** out_srv,
 		ImVec2& out_size);
 
-	bool InitializeMenuIcons(Menu* menu);
-
 	// Text rendering helpers for clearer title text
 	// These functions modify ImGui rendering state and should be called within ImGui context
 	ImVec2 DrawSharpText(const char* text, bool alignToPixelGrid = true, float scale = 1.0f);
-	ImVec2 DrawAlignedTextWithLogo(ID3D11ShaderResourceView* logoTexture, const ImVec2& logoSize, const char* text, float textScale = DefaultHeaderTextScale, ImU32 logoTint = IM_COL32_WHITE);
 
 	/**
 	 * Calculates the horizontal offset needed to center content within the full window width

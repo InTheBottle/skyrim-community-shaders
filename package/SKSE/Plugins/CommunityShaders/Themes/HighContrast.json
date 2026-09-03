@@ -2,7 +2,7 @@
     "DisplayName": "High Contrast",
     "Description": "A high contrast theme for improved readability.",
     "Version": "1.0.0",
-    "Author": "Community Shaders Team",
+    "Author": "Bottled Shaders Team",
     "Theme": {
         "FontSize": 0.0,
         "FontName": "Jost/Jost-Regular.ttf",
@@ -40,9 +40,6 @@
             }
         ],
         "UseSimplePalette": false,
-        "ShowActionIcons": true,
-        "UseMonochromeIcons": false,
-        "CenterHeader": true,
         "TooltipHoverDelay": 0.5,
         "BackgroundBlurEnabled": true,
         "Palette": {

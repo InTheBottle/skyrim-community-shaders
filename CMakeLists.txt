@@ -1204,7 +1204,7 @@ endif()
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
 
 message("*************************************************************")
-message("Community Shaders configuration complete")
+message("Bottled Shaders configuration complete")
 message("To prepare a package of AIO (.7z when 7-Zip is found), Core, or Features")
 message("  Build cmake targets:")
 message("    - Package-Core: Core package")

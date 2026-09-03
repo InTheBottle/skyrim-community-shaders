@@ -6,13 +6,13 @@
 #include <windows.h>
 
 #include "BackgroundBlur.h"
+#include "FeatureConstraints.h"
 #include "Features/ScreenshotFeature.h"
 #include "FontSelector.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "CursorLoader.h"
-#include "IconLoader.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -205,8 +205,118 @@ namespace
 	}
 }
 
+void SettingsTabRenderer::RenderActiveConstraintsSection()
+{
+	auto constraints = FeatureConstraints::GetAllActiveConstraints();
+	if (constraints.empty()) {
+		return;  // Don't show section if there are no active constraints
+	}
+
+	ImGui::Spacing();
+
+	// Use warning color for the header to draw attention
+	ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
+	bool headerOpen = ImGui::CollapsingHeader(T("menu.settings.active_constraints", "Active Setting Constraints"), ImGuiTreeNodeFlags_None);
+	ImGui::PopStyleColor();
+
+	if (headerOpen) {
+		ImGui::TextWrapped("%s", T("menu.settings.constraints_desc", "Some settings are constrained by other features. Hover over rows for details."));
+
+		ImGui::Spacing();
+
+		// Prepare data for table
+		struct ConstraintRow
+		{
+			std::string setting;
+			std::string forcedTo;
+			std::string constrainedBy;
+			std::string firstSourceShortName;  // For "navigate to feature" on click
+			std::string tooltip;
+		};
+
+		std::vector<ConstraintRow> rows;
+		for (const auto& [settingId, result] : constraints) {
+			ConstraintRow row;
+			row.setting = std::format("{}.{}", settingId.featureShortName, settingId.settingPath);
+			row.forcedTo = FeatureConstraints::FormatConstraintValue(result.forcedValue);
+			for (size_t i = 0; i < result.sources.size(); ++i) {
+				if (i > 0)
+					row.constrainedBy += ", ";
+				row.constrainedBy += result.sources[i].featureName;
+			}
+			if (!result.sources.empty()) {
+				row.firstSourceShortName = result.sources[0].featureShortName;
+			}
+			// Build tooltip
+			for (const auto& src : result.sources) {
+				if (!row.tooltip.empty())
+					row.tooltip += "\n";
+				row.tooltip += std::format("{}: {}", src.featureName, src.reason);
+				if (src.recommendDisableAtBoot) {
+					row.tooltip += std::string("\n") + T("menu.settings.consider_disabling_at_boot", "Consider disabling at boot.");
+				}
+			}
+			rows.push_back(row);
+		}
+
+		// Define headers
+		std::vector<std::string> headers = { T("menu.settings.constraint_header_setting", "Setting"), T("menu.settings.constraint_header_forced_to", "Forced To"), T("menu.settings.constraint_header_constrained_by", "Constrained By") };
+
+		// Custom sorts (string comparators for each column)
+		std::vector<std::function<bool(const ConstraintRow&, const ConstraintRow&, bool)>> customSorts = {
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.setting, b.setting, asc); },
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.forcedTo, b.forcedTo, asc); },
+			[](const ConstraintRow& a, const ConstraintRow& b, bool asc) { return Util::StringSortComparator(a.constrainedBy, b.constrainedBy, asc); }
+		};
+
+		// Cell render -- column 2 ("Constrained By") is clickable to navigate
+		// to the first source feature's settings page.
+		auto cellRender = [](int rowIdx, int colIdx, const ConstraintRow& row) {
+			if (colIdx == 0) {
+				Util::RenderTableCell(row.setting, "", "", nullptr, ImVec4(1, 1, 1, 1), true, Util::Colors::GetWarning());
+			} else if (colIdx == 1) {
+				Util::RenderTableCell(row.forcedTo, "", "", nullptr, ImVec4(1, 1, 1, 1), true);
+			} else if (colIdx == 2) {
+				if (!row.firstSourceShortName.empty()) {
+					if (ImGui::Selectable(std::format("{}##nav{}", row.constrainedBy, rowIdx).c_str())) {
+						if (auto* menu = Menu::GetSingleton()) {
+							menu->SelectFeatureMenu(row.firstSourceShortName);
+						}
+					}
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", I18n::GetSingleton()->Format("menu.settings.click_to_navigate",
+																  { { "feature", row.constrainedBy } },
+																  "Click to navigate to {feature}")
+											  .c_str());
+						if (!row.tooltip.empty()) {
+							ImGui::Separator();
+							ImGui::Text("%s", row.tooltip.c_str());
+						}
+					}
+				} else {
+					Util::RenderTableCell(row.constrainedBy, "", row.tooltip, nullptr, ImVec4(1, 1, 1, 1), true);
+				}
+			}
+		};
+
+		// Render table
+		Util::ShowSortedStringTableCustom<ConstraintRow>(
+			"ConstraintsTable",
+			headers,
+			rows,
+			0,     // sortColumn
+			true,  // ascending
+			customSorts,
+			cellRender);
+	}
+
+	ImGui::Spacing();
+}
+
 void SettingsTabRenderer::RenderGeneralSettings(SettingsState& state)
 {
+	RenderActiveConstraintsSection();
+
 	MenuFonts::TabBarPaddingGuard tabPaddingGuard(Menu::FontRole::Heading);
 	if (ImGui::BeginTabBar("##GeneralTabBar", ImGuiTabBarFlags_None)) {
 		RenderShadersTab();
@@ -464,46 +574,11 @@ void SettingsTabRenderer::RenderBehaviorTab()
 				ImGui::EndCombo();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.language_tooltip", "Select the display language for the Community Shaders interface."));
+				ImGui::Text("%s", T("menu.settings.language_tooltip", "Select the display language for the Bottled Shaders interface."));
 			}
 		}
 
 		SeparatorTextWithFont(T("menu.settings.ui_behavior", "UI Behavior"), Menu::FontRole::Subheading);
-
-		ImGui::Checkbox(T("menu.settings.show_icon_buttons_in_header", "Show Icon Buttons in Header"), &themeSettings.ShowActionIcons);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.show_icon_buttons_in_header_tooltip",
-								  "When enabled: Shows action buttons (Save, Load, Clear Cache) as icons in the header\n"
-								  "When disabled: Shows as text buttons below the header"));
-		}
-
-		if (themeSettings.ShowActionIcons) {
-			ImGui::Indent();
-			if (ImGui::Checkbox(T("menu.settings.use_monochrome_icons", "Use Monochrome Icons"), &themeSettings.UseMonochromeIcons)) {
-				globals::menu->pendingIconReload = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.use_monochrome_icons_tooltip", "Uses white monochrome icons that adapt to your theme's text color"));
-			}
-			ImGui::SameLine();
-			if (ImGui::Checkbox(T("menu.settings.use_monochrome_cs_logo", "Use Monochrome CS Logo"), &themeSettings.UseMonochromeLogo)) {
-				globals::menu->pendingIconReload = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.use_monochrome_cs_logo_tooltip", "Uses monochrome version of the Community Shaders logo"));
-			}
-			ImGui::Unindent();
-		}
-
-		ImGui::Checkbox(T("menu.settings.show_footer", "Show Footer"), &themeSettings.ShowFooter);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.show_footer_tooltip", "Shows the footer with game version, swap chain, and GPU information at the bottom of the window"));
-		}
-
-		ImGui::Checkbox(T("menu.settings.center_header_title", "Center Header Title"), &themeSettings.CenterHeader);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.center_header_title_tooltip", "Centers the Community Shaders title and logo in the header title bar"));
-		}
 
 		ImGui::Checkbox(T("menu.settings.auto_hide_feature_list", "Auto-hide Feature List"), &globals::menu->GetSettings().AutoHideFeatureList);
 		if (auto _tt = Util::HoverTooltipWrapper()) {

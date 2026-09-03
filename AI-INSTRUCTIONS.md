@@ -1,6 +1,6 @@
 # AI Development Instructions
 
-This file provides guidance for AI assistants working with the Skyrim Community Shaders codebase.
+This file provides guidance for AI assistants working with the Bottled Shaders codebase.
 
 ## Primary Documentation
 

@@ -2,7 +2,7 @@
     "DisplayName": "Default Light",
     "Description": "Sleek monochrome theme with modern minimalist aesthetic",
     "Version": "1.0.0",
-    "Author": "Community Shaders Team",
+    "Author": "Bottled Shaders Team",
     "Theme": {
         "FontSize": 0.0,
         "FontName": "Jost/Jost-Regular.ttf",
@@ -40,10 +40,6 @@
             }
         ],
         "UseSimplePalette": false,
-        "ShowActionIcons": true,
-        "UseMonochromeIcons": true,
-        "ShowFooter": false,
-        "CenterHeader": true,
         "TooltipHoverDelay": 0.5,
         "BackgroundBlurEnabled": true,
         "Palette": {

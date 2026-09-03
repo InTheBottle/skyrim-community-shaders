@@ -11,7 +11,7 @@
 #include <vector>
 
 /**
- * Internationalization (i18n) engine for Community Shaders.
+ * Internationalization (i18n) engine for Bottled Shaders.
  *
  * Loads flat-JSON translation files from the Translations/ directory.
  * Supports runtime language switching, named placeholder formatting ({name}),
@@ -21,7 +21,7 @@
  *
  * Use the two-argument T() form everywhere in source code:
  *
- *     ImGui::Text("%s", T("menu.home.welcome", "Welcome to Community Shaders"));
+ *     ImGui::Text("%s", T("menu.home.welcome", "Welcome to Bottled Shaders"));
  *
  * The second argument is the English default. It serves as:
  *   1. The fallback text when no translation file is loaded
@@ -166,7 +166,7 @@ private:
  * Get a translated string. Two usage patterns:
  *
  *   // Preferred: inline default — developer only touches this one file
- *   T("menu.home.welcome", "Welcome to Community Shaders")
+ *   T("menu.home.welcome", "Welcome to Bottled Shaders")
  *
  *   // Key-only: falls back to en.json, then the key itself
  *   T("menu.home.welcome")

@@ -334,7 +334,7 @@ namespace SIE
 			return instance;
 		}
 
-		/** @brief Returns true if the shader type is one Community Shaders can replace. */
+		/** @brief Returns true if the shader type is one Bottled Shaders can replace. */
 		inline static bool IsSupportedShader(const RE::BSShader::Type type)
 		{
 			return type == RE::BSShader::Type::Lighting ||
@@ -349,7 +349,7 @@ namespace SIE
 			       type == RE::BSShader::Type::ImageSpace;
 		}
 
-		/** @brief Returns true if the shader type is one Community Shaders can replace. */
+		/** @brief Returns true if the shader type is one Bottled Shaders can replace. */
 		inline static bool IsSupportedShader(const RE::BSShader& shader)
 		{
 			return IsSupportedShader(shader.shaderType.get());
@@ -570,10 +570,10 @@ namespace SIE
 			Skinned = 1 << 1,
 			ModelSpaceNormals = 1 << 2,
 			// flags 3 to 8 are unused by vanilla
-			// Community Shaders start
+			// Bottled Shaders start
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
-			// Community Shaders end
+			// Bottled Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
 			RimLighting = 1 << 11,

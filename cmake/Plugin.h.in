@@ -15,7 +15,12 @@ namespace Plugin
 		// clang-format on
 	};
 
+	/// Runtime identity: DLL name, log file, and the on-disk settings/asset folders.
+	/// Deliberately distinct from DISPLAY_NAME so the fork stays a drop-in replacement.
 	inline constexpr auto NAME = "@PROJECT_NAME@"sv;
+
+	/// Product name shown to users. Branding only; never use it to build a path.
+	inline constexpr auto DISPLAY_NAME = "Bottled Shaders"sv;
 
 	/// Full git describe string, e.g. "v1.4.11", "v1.4.11-3-gabcdef1", "v1.4.11-3-gabcdef1-dirty".
 	/// Matches "v{VERSION}" exactly on a clean tagged release build.

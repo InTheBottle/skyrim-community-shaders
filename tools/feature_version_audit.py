@@ -1019,7 +1019,7 @@ def _build_compat_bullets(feature_metadata, base_ref):
 def build_nexus_upload_matrix(feature_metadata, core_mod_id, core_filename, core_artifact_pattern, base_ref=None, release_version=None):
     """Build the Nexus upload matrix.
 
-    `release_version` is the Community Shaders version being released
+    `release_version` is the Bottled Shaders version being released
     (e.g. "1.5.2"). When provided, each row gets a `file_description`
     that anchors the upload to this CS release — replacing the upstream
     "See mod description for details." default. Empty when omitted so
@@ -1028,7 +1028,7 @@ def build_nexus_upload_matrix(feature_metadata, core_mod_id, core_filename, core
     compat_bullets = _build_compat_bullets(feature_metadata, base_ref) if release_version else []
     if release_version and compat_bullets:
         core_description = (
-            f'Community Shaders {release_version} — feature versions in this release:\n'
+            f'Bottled Shaders {release_version} — feature versions in this release:\n'
             + '\n'.join(compat_bullets)
         )
     else:
@@ -1086,7 +1086,7 @@ def build_nexus_upload_matrix(feature_metadata, core_mod_id, core_filename, core
         # are skipped via check_existing once a version is on file.
         file_description = ''
         if release_version and mod_version:
-            file_description = f'{mod_filename} {mod_version} — released for Community Shaders {release_version}.'
+            file_description = f'{mod_filename} {mod_version} — released for Bottled Shaders {release_version}.'
 
         row = {
             'name': name,
@@ -1232,7 +1232,7 @@ def generate_audit_report(
     return output
 
 def main():
-    parser = argparse.ArgumentParser(description="Feature version audit for Skyrim Community Shaders.")
+    parser = argparse.ArgumentParser(description="Feature version audit for Bottled Shaders.")
     parser.add_argument('--output', type=str, help='Output markdown filename')
     parser.add_argument('--ci', action='store_true', help='Exit 1 if actionable items found (alias for --fail-on-actionable)')
     parser.add_argument('--base', type=str, default=None, help='Base tag/branch/commit to compare against')
@@ -1245,9 +1245,9 @@ def main():
     parser.add_argument('--nexus-metadata-file', type=str, help='Optional Nexus metadata JSON file exported from nexus_mods_api')
     parser.add_argument('--all-features', action='store_true', help='Include all Nexus-capable features in export, not just version-changed ones')
     parser.add_argument('--core-mod-id', type=str, default='86492', help='Core Nexus mod ID for the generated upload matrix')
-    parser.add_argument('--core-filename', type=str, default='Community Shaders', help='Core Nexus filename for the generated upload matrix')
+    parser.add_argument('--core-filename', type=str, default='Bottled Shaders', help='Core Nexus filename for the generated upload matrix')
     parser.add_argument('--core-artifact-pattern', type=str, default='CommunityShaders-*.zip', help='Core artifact pattern for the generated upload matrix')
-    parser.add_argument('--release-version', type=str, default=None, help='Community Shaders release version (e.g. "1.5.2") used to anchor file_description on each upload row. When omitted, file_description is empty and the upstream Nexus action default ("See mod description for details.") is preserved.')
+    parser.add_argument('--release-version', type=str, default=None, help='Bottled Shaders release version (e.g. "1.5.2") used to anchor file_description on each upload row. When omitted, file_description is empty and the upstream Nexus action default ("See mod description for details.") is preserved.')
     args = parser.parse_args()
 
     global HEAD_REF

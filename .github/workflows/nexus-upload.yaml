@@ -121,7 +121,7 @@ jobs:
                   fi
                   # --core-mod-id/--core-filename/--core-artifact-pattern are left
                   # unset here — feature_version_audit.py's own defaults (86492,
-                  # "Community Shaders", "CommunityShaders-*.zip") are the only
+                  # "Bottled Shaders", "CommunityShaders-*.zip") are the only
                   # values ever used in practice.
                   # Strip the leading 'v' so we get e.g. "1.5.2" — the value
                   # is rendered into Nexus file descriptions, where the

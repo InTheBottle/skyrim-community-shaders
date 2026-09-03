@@ -52,11 +52,6 @@ namespace Util
 			return GetInterfacePath() / "Fonts";
 		}
 
-		std::filesystem::path GetIconsPath()
-		{
-			return GetInterfacePath() / "Icons";
-		}
-
 		std::filesystem::path GetCursorsPath()
 		{
 			return GetInterfacePath() / "Cursors";
