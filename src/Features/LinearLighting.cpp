@@ -7,6 +7,7 @@
 #include "Effects11/SettingManager.h"
 #include "Globals.h"
 #include "Utils/Game.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.linear_lighting."
 
@@ -44,6 +45,9 @@ void LinearLighting::DrawSettings()
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
+			ImGui::SeparatorText(T(TKEY("gamma_settings"), "Gamma Settings"));
+			ImGui::SliderFloat(T(TKEY("water_gamma"), "Water Gamma"), &settings.waterGamma, 0.1f, 3.0f, "%.2f");
+			Util::AddTooltip(T(TKEY("water_gamma_enb_tooltip"), "Still applied under ENB.\nENB darkens surface albedo but not water colours, so without this water reads too bright, most visibly in interiors.\nLower the value to brighten water, raise it to darken."));
 			return;
 		}
 	}
@@ -162,6 +166,7 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 	if (!loaded) {
 		auto data = PerFrameData{};
 		data.enableLinearLighting = false;
+		data.waterGamma = 1.0f;
 		return data;
 	}
 	bool isMainLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
@@ -196,7 +201,6 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 			data.effectGamma = 1.0f;
 			data.effectAlphaGamma = 1.0f;
 			data.skyGamma = 1.0f;
-			data.waterGamma = 1.0f;
 			data.vlGamma = 1.0f;
 		}
 	}

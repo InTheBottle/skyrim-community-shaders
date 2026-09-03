@@ -337,7 +337,11 @@ namespace Color
 
 	float3 Water(float3 color)
 	{
-		return ENABLE_LL ? pow(abs(color), SharedData::linearLightingSettings.waterGamma) : color;
+		bool applyWaterGamma = ENABLE_LL;
+#	if defined(EFFECTS11)
+		applyWaterGamma = applyWaterGamma || SharedData::enbSettings.Enable;
+#	endif
+		return applyWaterGamma ? pow(abs(color), SharedData::linearLightingSettings.waterGamma) : color;
 	}
 
 	float3 VolumetricLighting(float3 color)

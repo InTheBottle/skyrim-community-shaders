@@ -1079,6 +1079,7 @@
     "feature.linear_lighting.vanilla_diffuse_color_multiplier": "Vanilla Diffuse Color Multiplier",
     "feature.linear_lighting.vl_gamma": "Volumetric Lighting Gamma",
     "feature.linear_lighting.water_gamma": "Water Gamma",
+    "feature.linear_lighting.water_gamma_enb_tooltip": "Still applied under ENB.\nENB darkens surface albedo but not water colours, so without this water reads too bright, most visibly in interiors.\nLower the value to brighten water, raise it to darken.",
     "feature.lod_blending.description": "Provides seamless visual transitions between Level of Detail (LOD) objects and full-detail objects, eliminating harsh transitions and creating smooth visual continuity.",
     "feature.lod_blending.disable_terrain_vertex_colors": "Disable Terrain Vertex Colors",
     "feature.lod_blending.disable_terrain_vertex_colors_tooltip": "Disables vertex coloring on nearby terrain. Best combined with terrain LOD generated in xLODGen with Vertex Color Intensity set to 0.",
