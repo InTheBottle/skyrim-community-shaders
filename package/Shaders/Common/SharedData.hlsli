@@ -362,6 +362,8 @@ namespace SharedData
 		float CubemapToF0Multiplier;
 		float ComplexMaterialF0Multiplier;
 		float pad;
+	};
+
 	struct SnowCoverSettings
 	{
 		float Month;

@@ -48,6 +48,8 @@ public:
 		kDLSS
 	};
 
+	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 1;
+
 	struct Settings
 	{
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
@@ -67,9 +69,25 @@ public:
 		bool reflexUseMarkersToOptimize = false;
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
+
+		// Opt in to AMD's runtime FSR4 upscaler DLL on eligible AMD hardware instead of the
+		// host-linked FSR3 SDK; falls back to FSR3 on any failure.
+		bool fsr4RuntimeEnable = false;
+
+		// Tracks whether fsr4RuntimeEnable has been auto-migrated for the detected adapter.
+		// Defaults to current so a fresh config needs no migration; LoadSettings resets it to
+		// 0 when absent from JSON so pre-existing configs run the migration once.
+		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
 	};
 
 	Settings settings;
+
+	// fsr4RuntimeEnable requires a restart: CreateUpscalingTextureResources (which allocates
+	// runtimeFsrDepthTexture) only runs on an upscale-method change, so a mid-session flip
+	// could otherwise select the runtime provider with no typed depth texture to feed it.
+	// Latched in SetupResources, after the D3D device hook has run the adapter probe and the
+	// one-shot migration -- LoadSettings is too early for both.
+	bool fsr4RuntimeEnableBoot = false;
 
 	struct JitterCB
 	{
@@ -127,7 +145,8 @@ public:
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 
-	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCS[4];  // One for each UpscaleMethod (kNONE, kTAA, kFSR, kDLSS)
+	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCS[4];          // One for each UpscaleMethod (kNONE, kTAA, kFSR, kDLSS)
+	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
 	ID3D11ComputeShader* GetEncodeTexturesCS();
 
 	winrt::com_ptr<ID3D11PixelShader> depthRefractionUpscalePS;
@@ -156,6 +175,7 @@ public:
 	Texture2D* transparencyCompositionMaskTexture = nullptr;
 	Texture2D* motionVectorCopyTexture = nullptr;
 	Texture2D* sharpenerTexture = nullptr;
+	Texture2D* runtimeFsrDepthTexture = nullptr;
 
 	virtual void ClearShaderCache() override;
 

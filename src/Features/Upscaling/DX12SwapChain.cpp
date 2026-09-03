@@ -7,6 +7,7 @@
 #include "../Upscaling.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
+#include "Utils/D3D.h"
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
@@ -124,11 +125,11 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 
 	// Build both replacements before releasing the active resources so a failed
 	// allocation cannot leave the proxy with only half of its interop textures.
-	auto newSwapChainBuffer = std::make_unique<WrappedResource>(texDesc11, d3d11Device.get(), d3d12Device.get());
+	auto newSwapChainBuffer = std::make_unique<WrappedResource>(texDesc11, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::SwapChainBuffer");
 
 	// UI buffer uses R8G8B8A8_UNORM - vanilla UI is SDR and 8-bit precision
 	texDesc11.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	auto newUiBuffer = std::make_unique<WrappedResource>(texDesc11, d3d11Device.get(), d3d12Device.get());
+	auto newUiBuffer = std::make_unique<WrappedResource>(texDesc11, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::UIBuffer");
 
 	delete swapChainBufferWrapped;
 	delete uiBufferWrapped;
@@ -328,21 +329,42 @@ float DX12SwapChain::GetFrameTime() const
 	return frameTime;
 }
 
-WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device)
+WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device, const std::string& a_name)
 {
 	// Create D3D11 shared texture directly instead of wrapping D3D12 resource
 	a_texDesc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-	DX::ThrowIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, &resource11));
+	auto throwIfFailed = [&](HRESULT a_result, const char* a_operation) {
+		if (FAILED(a_result)) {
+			logger::error(
+				"[DX12SwapChain] Wrapped resource '{}' {} failed: HRESULT 0x{:08X}, dimensions {}x{}, format {}, bind flags 0x{:X}, misc flags 0x{:X}",
+				a_name.empty() ? "<unnamed>" : a_name.c_str(),
+				a_operation,
+				static_cast<uint32_t>(a_result),
+				a_texDesc.Width,
+				a_texDesc.Height,
+				static_cast<uint32_t>(a_texDesc.Format),
+				a_texDesc.BindFlags,
+				a_texDesc.MiscFlags);
+		}
+		DX::ThrowIfFailed(a_result);
+	};
+
+	throwIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, &resource11), "CreateTexture2D");
+	if (!a_name.empty())
+		Util::SetResourceName(resource11, "%s", a_name.c_str());
 
 	// Get shared handle from D3D11 texture to enable D3D12 access
 	winrt::com_ptr<IDXGIResource1> dxgiResource;
-	DX::ThrowIfFailed(resource11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())));
+	throwIfFailed(resource11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())), "QueryInterface(IDXGIResource1)");
 	HANDLE sharedHandle = nullptr;
-	DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle));
+	throwIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle), "CreateSharedHandle");
 
-	// Open the shared D3D11 texture as D3D12 resource
-	DX::ThrowIfFailed(a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put())));
+	// Open the shared D3D11 texture as D3D12 resource. Close the NT handle
+	// unconditionally before checking the result -- a thrown failure must
+	// not leak it.
+	const HRESULT openResult = a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put()));
 	CloseHandle(sharedHandle);
+	throwIfFailed(openResult, "OpenSharedHandle");
 
 	if (a_texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -351,7 +373,9 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		srvDesc.Texture2D.MostDetailedMip = 0;
 		srvDesc.Texture2D.MipLevels = 1;
 
-		DX::ThrowIfFailed(a_d3d11Device->CreateShaderResourceView(resource11, &srvDesc, &srv));
+		throwIfFailed(a_d3d11Device->CreateShaderResourceView(resource11, &srvDesc, &srv), "CreateShaderResourceView");
+		if (!a_name.empty())
+			Util::SetResourceName(srv, "%s SRV", a_name.c_str());
 	}
 
 	if (a_texDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
@@ -362,15 +386,17 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 			uavDesc.Texture2DArray.FirstArraySlice = 0;
 			uavDesc.Texture2DArray.ArraySize = a_texDesc.ArraySize;
 
-			DX::ThrowIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav));
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
 		} else {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.Format = a_texDesc.Format;
 			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 			uavDesc.Texture2D.MipSlice = 0;
 
-			DX::ThrowIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav));
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
 		}
+		if (!a_name.empty())
+			Util::SetResourceName(uav, "%s UAV", a_name.c_str());
 	}
 
 	if (a_texDesc.BindFlags & D3D11_BIND_RENDER_TARGET) {
@@ -378,7 +404,9 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		rtvDesc.Format = a_texDesc.Format;
 		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvDesc.Texture2D.MipSlice = 0;
-		DX::ThrowIfFailed(a_d3d11Device->CreateRenderTargetView(resource11, &rtvDesc, &rtv));
+		throwIfFailed(a_d3d11Device->CreateRenderTargetView(resource11, &rtvDesc, &rtv), "CreateRenderTargetView");
+		if (!a_name.empty())
+			Util::SetResourceName(rtv, "%s RTV", a_name.c_str());
 	}
 }
 
@@ -543,10 +571,10 @@ void DX12SwapChain::CreateSharedResources()
 	D3D11_TEXTURE2D_DESC texDesc{};
 	main.texture->GetDesc(&texDesc);
 	texDesc.Format = DXGI_FORMAT_R32_FLOAT;
-	depthBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get());
+	depthBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::DepthBufferShared");
 
 	// Create motion vector buffer
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 	motionVector.texture->GetDesc(&texDesc);
-	motionVectorBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get());
+	motionVectorBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::MotionVectorBufferShared");
 }
