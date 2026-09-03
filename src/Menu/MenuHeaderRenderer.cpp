@@ -23,11 +23,7 @@ namespace
 	/** @brief Draws the bottle logo followed by the product title on one line. */
 	void RenderTitleRow()
 	{
-		auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-		auto expectedTag = std::format("v{}", versionStr);
-		auto title = Plugin::BUILD_DESCRIBE == expectedTag ?
-		                 std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) :
-		                 std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
+		auto title = std::format("{} {}", Plugin::DISPLAY_NAME, Util::GetFormattedVersion(Plugin::VERSION));
 
 		MenuFonts::FontRoleGuard titleFont(Menu::FontRole::Title);
 

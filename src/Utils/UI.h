@@ -529,13 +529,22 @@ namespace Util
 	}
 
 	/**
-	 * Draws a custom styled collapsible category header with lines extending from both sides
-	 * @param categoryName The name of the category to display
+	 * Draws a collapsible category header: a disclosure triangle, the category label and a
+	 * dimmed feature count, with hover/press feedback matching the selectable rows beneath it.
+	 * @param categoryKey Stable, untranslated key used for the ImGui ID
+	 * @param displayName The translated category name to display
 	 * @param isExpanded Reference to the expansion state
 	 * @param categoryCount Number of features in the category
 	 * @return true if the expansion state was toggled
 	 */
 	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount);
+
+	/**
+	 * Draws a non-interactive list heading using the same metrics and alignment as
+	 * DrawCategoryHeader, so static sections sit flush with the collapsible categories.
+	 * @param displayName The translated heading text to display
+	 */
+	void DrawCategoryLabel(const char* displayName);
 
 	/**
 	 * Draws a custom styled section header with lines extending from both sides

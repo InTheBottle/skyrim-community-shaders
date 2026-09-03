@@ -2010,7 +2010,6 @@
   "menu.toggle_error_message": "切换错误消息",
   "menu.toggle_error_message_tooltip": "隐藏或显示着色器失败消息。您的安装已损坏，游戏中可能会看到错误。请仔细检查是否已更新所有功能以及加载顺序是否正确。请参阅CommunityShaders.log了解详情，并查看Nexus Mods页面或Discord服务器。",
   "menu.window_title": "{name} {version}",
-  "menu.window_title_dev": "{name} {version} [{build}]",
   "overlay.modified_features": "检测到可能修改了着色器的功能。请检查菜单中的功能问题。",
   "overlay.shader_blocking_active": "着色器拦截已激活",
   "overlay.uncompiled_warning": "警告：未编译的着色器在加载时会有视觉错误或导致卡顿。",

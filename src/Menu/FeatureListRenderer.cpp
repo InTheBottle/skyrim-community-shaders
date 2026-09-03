@@ -15,6 +15,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Menu/AdvancedSettingsRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "SceneSettingsManager.h"
@@ -283,6 +284,34 @@ namespace
 
 	// "Don't show again" checkbox state inside the modal (reset each time popup opens).
 	bool g_dontShowAgainCheckbox = false;
+
+	// ---------------------------------------------------------------------------
+	// Selection is tracked by a stable key rather than by list index: the menu list
+	// is rebuilt every frame, so collapsing a category above the selection removes
+	// entries and shifts every later index, silently moving the right pane to a
+	// different feature. The index is re-derived from this key each frame.
+	// ---------------------------------------------------------------------------
+	std::string g_selectedEntryKey;
+
+	/** @brief Stable identity for a menu entry; empty for headers and labels, which are not selectable. */
+	std::string EntryKey(const FeatureListRenderer::MenuFuncInfo& entry)
+	{
+		if (std::holds_alternative<FeatureListRenderer::BuiltInMenu>(entry))
+			return "B:" + std::get<FeatureListRenderer::BuiltInMenu>(entry).name;
+		if (std::holds_alternative<Feature*>(entry))
+			return "F:" + std::get<Feature*>(entry)->GetShortName();
+		return {};
+	}
+
+	std::string FeatureEntryKey(const std::string& shortName)
+	{
+		return "F:" + shortName;
+	}
+
+	std::string BuiltInEntryKey(const std::string& menuName)
+	{
+		return "B:" + menuName;
+	}
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -296,6 +325,8 @@ void FeatureListRenderer::RenderFeatureList(
 	ImGui::BeginChild("Menus Table", ImVec2(0, 0));
 
 	auto menuList = BuildMenuList(featureSearch, categoryExpansionStates, drawGeneralSettings, drawAdvancedSettings);
+
+	ResolveSelectionFromKey(menuList, selectedMenu);
 
 	HandlePendingFeatureSelection(pendingFeatureSelection, menuList, selectedMenu);
 
@@ -349,10 +380,11 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	// persist correctly. This is acceptable since the list is small and built
 	// infrequently, but could be optimized if performance becomes an issue.
 
-	// Group features by category
+	// Group features by category. Utility features are deliberately absent: they are
+	// rendered as sub-tabs of the Advanced page instead of as their own list category.
 	std::map<std::string, std::vector<Feature*>> categorizedFeatures;
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded) {
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility) {
 			std::string category(feat->GetCategory());
 			categorizedFeatures[category].push_back(feat);
 		}
@@ -366,7 +398,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 
 	// Define category order
-	std::vector<std::string> categoryOrder = { "Display", "Utility", "Characters", "Grass", "Lighting", "Materials", "Post-Processing", "Sky", "Landscape & Textures", "Water", "Other" };
+	std::vector<std::string> categoryOrder = { "Display", "Characters", "Grass", "Lighting", "Materials", "Post-Processing", "Sky", "Landscape & Textures", "Water", "Other" };
 	// Add categorized features to menu with collapsible headers
 	for (const std::string& category : categoryOrder) {
 		if (categorizedFeatures.find(category) != categorizedFeatures.end() && !categorizedFeatures[category].empty()) {
@@ -404,7 +436,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {
-		return !feat->loaded && feat->IsInMenu() && !feat->IsHiddenUnreleased() && (!FeatureIssues::IsObsoleteFeature(feat->GetShortName()) || globals::state->IsDeveloperMode());
+		return !feat->loaded && feat->IsInMenu() && !feat->IsHiddenUnreleased() && feat->GetCategory() != FeatureCategories::kUtility && (!FeatureIssues::IsObsoleteFeature(feat->GetShortName()) || globals::state->IsDeveloperMode());
 	});
 	if (std::ranges::distance(unloadedFeatures) != 0) {
 		menuList.push_back(T("menu.features.unloaded_features", "Unloaded Features"));
@@ -420,23 +452,114 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	return menuList;
 }
 
+void FeatureListRenderer::ResolveSelectionFromKey(
+	const std::vector<MenuFuncInfo>& menuList,
+	size_t& selectedMenu)
+{
+	// Seed the key from whatever index the caller starts with (first frame, or a restored layout).
+	if (g_selectedEntryKey.empty()) {
+		if (selectedMenu < menuList.size())
+			g_selectedEntryKey = EntryKey(menuList[selectedMenu]);
+		return;
+	}
+
+	for (size_t i = 0; i < menuList.size(); ++i) {
+		if (EntryKey(menuList[i]) == g_selectedEntryKey) {
+			selectedMenu = i;
+			return;
+		}
+	}
+
+	// The selected entry is gone: its category was collapsed, or the search filtered it out.
+	// Falling back to General is deterministic; keeping the stale index would render whichever
+	// unrelated entry has shifted into that slot.
+	const std::string generalKey = BuiltInEntryKey(T("menu.features.general", "General"));
+	for (size_t i = 0; i < menuList.size(); ++i) {
+		if (EntryKey(menuList[i]) == generalKey) {
+			selectedMenu = i;
+			return;
+		}
+	}
+
+	if (selectedMenu >= menuList.size())
+		selectedMenu = menuList.empty() ? 0 : menuList.size() - 1;
+}
+
 void FeatureListRenderer::HandlePendingFeatureSelection(
 	std::string& pendingFeatureSelection,
 	const std::vector<MenuFuncInfo>& menuList,
 	size_t& selectedMenu)
 {
-	if (!pendingFeatureSelection.empty()) {
-		for (size_t i = 0; i < menuList.size(); ++i) {
-			if (std::holds_alternative<Feature*>(menuList[i])) {
-				Feature* feature = std::get<Feature*>(menuList[i]);
-				if (feature->GetShortName() == pendingFeatureSelection) {
-					selectedMenu = i;
-					logger::info("Navigated to {} feature menu", pendingFeatureSelection);
-					break;
-				}
+	if (pendingFeatureSelection.empty())
+		return;
+
+	for (size_t i = 0; i < menuList.size(); ++i) {
+		if (std::holds_alternative<Feature*>(menuList[i])) {
+			Feature* feature = std::get<Feature*>(menuList[i]);
+			if (feature->GetShortName() == pendingFeatureSelection) {
+				selectedMenu = i;
+				g_selectedEntryKey = FeatureEntryKey(pendingFeatureSelection);
+				logger::info("Navigated to {} feature menu", pendingFeatureSelection);
+				pendingFeatureSelection.clear();
+				return;
 			}
 		}
-		pendingFeatureSelection.clear();  // Clear after processing
+	}
+
+	// Utility features are not list entries; they live as sub-tabs of the Advanced page.
+	if (IsUtilityFeature(pendingFeatureSelection)) {
+		const std::string advancedName = T("menu.features.advanced", "Advanced");
+		for (size_t i = 0; i < menuList.size(); ++i) {
+			if (std::holds_alternative<BuiltInMenu>(menuList[i]) && std::get<BuiltInMenu>(menuList[i]).name == advancedName) {
+				selectedMenu = i;
+				g_selectedEntryKey = EntryKey(menuList[i]);
+				AdvancedSettingsRenderer::RequestUtilityTab(pendingFeatureSelection);
+				logger::info("Navigated to {} utility tab under Advanced", pendingFeatureSelection);
+				break;
+			}
+		}
+	}
+
+	pendingFeatureSelection.clear();  // Clear after processing
+}
+
+bool FeatureListRenderer::IsUtilityFeature(const std::string& shortName)
+{
+	const auto& featureList = Feature::GetFeatureList();
+	return std::ranges::any_of(featureList, [&shortName](Feature* feat) {
+		return feat->GetShortName() == shortName && feat->GetCategory() == FeatureCategories::kUtility;
+	});
+}
+
+std::vector<Feature*> FeatureListRenderer::GetUtilityFeatures()
+{
+	std::vector<Feature*> utilityFeatures;
+	for (Feature* feat : Feature::GetFeatureList()) {
+		if (!feat->IsInMenu() || feat->GetCategory() != FeatureCategories::kUtility)
+			continue;
+		if (feat->IsHiddenUnreleased())
+			continue;
+		if (!feat->loaded && FeatureIssues::IsObsoleteFeature(feat->GetShortName()) && !globals::state->IsDeveloperMode())
+			continue;
+		utilityFeatures.push_back(feat);
+	}
+
+	std::ranges::sort(utilityFeatures, [](Feature* a, Feature* b) {
+		return a->GetDisplayName() < b->GetDisplayName();
+	});
+	return utilityFeatures;
+}
+
+void FeatureListRenderer::RenderFeaturePage(Feature* feat)
+{
+	// The Advanced page owns no pending-selection state, so navigation requests raised from a
+	// utility page are routed back through the Menu, which re-enters HandlePendingFeatureSelection.
+	static std::string pendingSelection;
+	DrawMenuVisitor visitor{ pendingSelection };
+	visitor(feat);
+	if (!pendingSelection.empty()) {
+		globals::menu->SelectFeatureMenu(pendingSelection);
+		pendingSelection.clear();
 	}
 }
 
@@ -497,6 +620,12 @@ void FeatureListRenderer::RenderRightColumn(
 	}
 }
 
+void FeatureListRenderer::ListMenuVisitor::Select(const std::string& entryKey)
+{
+	selectedMenuRef = listId;
+	g_selectedEntryKey = entryKey;
+}
+
 void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
@@ -508,24 +637,20 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 		ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
 
 		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
+			Select(BuiltInEntryKey(menu.name));
 
 		ImGui::PopStyleColor();
 	} else {
 		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
+			Select(BuiltInEntryKey(menu.name));
 	}
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
 {
-	// Style "Unloaded Features" to match category headers
-	if (label == T("menu.features.unloaded_features", "Unloaded Features")) {
-		Util::DrawSectionHeader(label.c_str(), true);
-	} else {
-		// Use default separator text for other labels - should be themed via ImGuiCol_Separator
-		SeparatorTextWithFont(label, Menu::FontRole::Subheading);
-	}
+	// Static list headings share the category header's font, metrics and alignment.
+	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
+	Util::DrawCategoryLabel(label.c_str());
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& header)
@@ -574,7 +699,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	// Create selectable item with semantic color
 	ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 	if (ImGui::Selectable(fmt::format(" {} ", feat->GetDisplayName()).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns)) {
-		selectedMenuRef = listId;
+		Select(FeatureEntryKey(featureName));
 	}
 	ImGui::PopStyleColor();
 

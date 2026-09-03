@@ -736,9 +736,8 @@ void Menu::DrawSettings()
 	ImGui::SetNextWindowSize(Util::GetNativeViewportSizeScaled(0.8f), layoutCond);
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? I18n::GetSingleton()->Format("menu.window_title", { { "name", std::string(Plugin::DISPLAY_NAME) }, { "version", versionStr } }, "{name} {version}") : I18n::GetSingleton()->Format("menu.window_title_dev", { { "name", std::string(Plugin::DISPLAY_NAME) }, { "version", versionStr }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "{name} {version} [{build}]");
-	// Use ### to keep a stable window ID regardless of build suffix, preserving docking state
+	auto displayTitle = I18n::GetSingleton()->Format("menu.window_title", { { "name", std::string(Plugin::DISPLAY_NAME) }, { "version", versionStr } }, "{name} {version}");
+	// Use ### to keep a stable window ID regardless of the title text, preserving docking state
 	auto title = std::format("{}###CommunityShaders", displayTitle);
 
 	// Determine window flags based on docking state

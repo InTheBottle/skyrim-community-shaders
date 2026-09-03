@@ -772,36 +772,69 @@ namespace Util
 		return m_shouldDraw;
 	}
 
+	namespace
+	{
+		// Gutter reserved for the disclosure triangle, as a fraction of the font size.
+		constexpr float kCategoryArrowSlotRatio = 0.85f;
+		// Opacity applied to the feature count drawn beside a category label.
+		constexpr float kCategoryCountOpacity = 0.55f;
+
+		/** @brief Vertical padding above and below a category row, in pixels. */
+		float CategoryRowPadding()
+		{
+			return ImMax(ImGui::GetStyle().FramePadding.y, 3.0f);
+		}
+
+		/** @brief Draws a left-aligned label, vertically centred in the row, plus an optional dimmed suffix. */
+		void DrawCategoryRowText(const ImVec2& rowPos, float rowHeight, float textX, const char* label, const char* suffix)
+		{
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			ImVec4 color = globals::menu->GetSettings().Theme.Palette.Text;
+			const ImU32 labelColor = ImGui::GetColorU32(color);
+
+			const ImVec2 labelSize = ImGui::CalcTextSize(label);
+			const float textY = rowPos.y + (rowHeight - labelSize.y) * 0.5f;
+			drawList->AddText(ImVec2(textX, textY), labelColor, label);
+
+			if (suffix && *suffix) {
+				color.w *= kCategoryCountOpacity;
+				drawList->AddText(ImVec2(textX + labelSize.x + ImGui::GetStyle().ItemInnerSpacing.x, textY),
+					ImGui::GetColorU32(color), suffix);
+			}
+		}
+	}
+
 	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount)
 	{
 		// Keep state keyed on the stable category key and render the translated label separately.
-		const std::string headerText = std::format("{} ({})", displayName, categoryCount);
+		const std::string countText = std::format("({})", categoryCount);
 
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
 		const float availableWidth = ImGui::GetContentRegionAvail().x;
 		const float fontSize = ImGui::GetFontSize();
-		const ImVec2 textSize = ImGui::CalcTextSize(headerText.c_str());
-
-		// Gutter reserved for the disclosure triangle, left of the label.
-		const float arrowSlot = fontSize * 0.85f;
+		const float arrowSlot = fontSize * kCategoryArrowSlotRatio;
+		const float topMargin = ImGui::GetStyle().ItemSpacing.y;
+		const float rowHeight = ImGui::GetTextLineHeight() + CategoryRowPadding() * 2.0f;
+		const ImVec2 rowPos(origin.x, origin.y + topMargin);
 
 		ImGui::PushID(categoryKey);
-		ImGui::SetCursorScreenPos(pos);
-		const bool clicked = ImGui::InvisibleButton("##CategoryHeader", ImVec2(availableWidth, textSize.y + 4.0f));
+		ImGui::SetCursorScreenPos(rowPos);
+		const bool clicked = ImGui::InvisibleButton("##CategoryHeader", ImVec2(availableWidth, rowHeight));
 		const bool hovered = ImGui::IsItemHovered();
+		const bool held = ImGui::IsItemActive();
 
-		ImVec4 color = globals::menu->GetSettings().Theme.Palette.Text;
-		if (!isExpanded)
-			color.w *= 0.7f;  // dim when collapsed
-		if (hovered)
-			color.w *= 0.8f;
-		const ImU32 headerColor = ImGui::GetColorU32(color);
+		// Hover/press feedback matches the selectable rows below the header, so a collapsed
+		// category reads as the same kind of control as an expanded one.
+		if (hovered || held) {
+			drawList->AddRectFilled(rowPos,
+				ImVec2(rowPos.x + availableWidth, rowPos.y + rowHeight),
+				ImGui::GetColorU32(held ? ImGuiCol_HeaderActive : ImGuiCol_HeaderHovered),
+				ImGui::GetStyle().FrameRounding);
+		}
 
-		// Disclosure triangle: down when expanded, pointing into the label when collapsed.
-		// lineY sits 2px above the text's optical centre because the text is drawn at pos.y + 2.
-		const float lineY = pos.y + textSize.y * 0.5f;
-		const ImVec2 arrowCenter(pos.x + arrowSlot * 0.5f, lineY + 2.0f);
+		const ImU32 arrowColor = ImGui::GetColorU32(globals::menu->GetSettings().Theme.Palette.Text);
+		const ImVec2 arrowCenter(rowPos.x + arrowSlot * 0.5f, rowPos.y + rowHeight * 0.5f);
 		if (isExpanded) {
 			const float hx = fontSize * 0.30f;
 			const float hy = fontSize * 0.24f;
@@ -809,7 +842,7 @@ namespace Util
 				ImVec2(arrowCenter.x - hx, arrowCenter.y - hy * 0.6f),
 				ImVec2(arrowCenter.x + hx, arrowCenter.y - hy * 0.6f),
 				ImVec2(arrowCenter.x, arrowCenter.y + hy),
-				headerColor);
+				arrowColor);
 		} else {
 			const float hx = fontSize * 0.24f;
 			const float hy = fontSize * 0.30f;
@@ -817,26 +850,34 @@ namespace Util
 				ImVec2(arrowCenter.x - hx * 0.6f, arrowCenter.y - hy),
 				ImVec2(arrowCenter.x - hx * 0.6f, arrowCenter.y + hy),
 				ImVec2(arrowCenter.x + hx, arrowCenter.y),
-				headerColor);
+				arrowColor);
 		}
 
-		// Left-aligned label followed by a rule filling the remaining width.
-		const float textX = pos.x + arrowSlot;
-		drawList->AddText(ImVec2(textX, pos.y + 2.0f), headerColor, headerText.c_str());
-
-		const float ruleStart = textX + textSize.x + 8.0f;
-		if (ruleStart < pos.x + availableWidth) {
-			drawList->AddLine(ImVec2(ruleStart, lineY), ImVec2(pos.x + availableWidth, lineY), headerColor, 1.0f);
-		}
+		DrawCategoryRowText(rowPos, rowHeight, rowPos.x + arrowSlot, displayName, countText.c_str());
 
 		if (clicked)
 			isExpanded = !isExpanded;
 
 		ImGui::PopID();
 
-		ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + textSize.y + 8.0f));
+		ImGui::SetCursorScreenPos(ImVec2(origin.x, rowPos.y + rowHeight));
 		ImGui::Dummy(ImVec2(availableWidth, 0.0f));
 		return clicked;
+	}
+
+	void DrawCategoryLabel(const char* displayName)
+	{
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		const float availableWidth = ImGui::GetContentRegionAvail().x;
+		const float topMargin = ImGui::GetStyle().ItemSpacing.y;
+		const float rowHeight = ImGui::GetTextLineHeight() + CategoryRowPadding() * 2.0f;
+		const ImVec2 rowPos(origin.x, origin.y + topMargin);
+
+		// Aligned with the category labels, which are inset by the disclosure-triangle gutter.
+		DrawCategoryRowText(rowPos, rowHeight, rowPos.x + ImGui::GetFontSize() * kCategoryArrowSlotRatio, displayName, nullptr);
+
+		ImGui::SetCursorScreenPos(ImVec2(origin.x, rowPos.y + rowHeight));
+		ImGui::Dummy(ImVec2(availableWidth, 0.0f));
 	}
 
 	bool DrawSectionHeader(const char* sectionName, bool useWhiteText, bool isCollapsible, bool* isExpanded)
