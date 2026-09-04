@@ -119,6 +119,7 @@ void LocalExposure::SetupResources()
 	}
 
 	auto createMipViews = [](Texture2D& texture,
+							  const char* resourceName,
 							  DXGI_FORMAT format,
 							  uint mipCount,
 							  std::array<winrt::com_ptr<ID3D11ShaderResourceView>, s_MaxMips>& srvs,
@@ -130,13 +131,17 @@ void LocalExposure::SetupResources()
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MostDetailedMip = i;
 			srvDesc.Texture2D.MipLevels = 1;
+			srvs[i] = nullptr;
 			DX::ThrowIfFailed(device->CreateShaderResourceView(texture.resource.get(), &srvDesc, srvs[i].put()));
+			Util::SetResourceName(srvs[i].get(), "%s SRV mip%u", resourceName, i);
 
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.Format = format;
 			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 			uavDesc.Texture2D.MipSlice = i;
+			uavs[i] = nullptr;
 			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texture.resource.get(), &uavDesc, uavs[i].put()));
+			Util::SetResourceName(uavs[i].get(), "%s UAV mip%u", resourceName, i);
 		}
 	};
 
@@ -152,7 +157,7 @@ void LocalExposure::SetupResources()
 		texDesc.Usage = D3D11_USAGE_DEFAULT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-		texLogLuminance = eastl::make_unique<Texture2D>(texDesc, "LocalExposure Log Luminance");
+		texLogLuminance = eastl::make_unique<Texture2D>(texDesc, "LocalExposure::LogLuminance");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC fullSrvDesc = {};
 		fullSrvDesc.Format = texDesc.Format;
@@ -161,7 +166,7 @@ void LocalExposure::SetupResources()
 		fullSrvDesc.Texture2D.MipLevels = numMips;
 		texLogLuminance->CreateSRV(fullSrvDesc);
 
-		createMipViews(*texLogLuminance, DXGI_FORMAT_R16_FLOAT, numMips, logLuminanceMipSRVs, logLuminanceMipUAVs);
+		createMipViews(*texLogLuminance, "LocalExposure::LogLuminance", DXGI_FORMAT_R16_FLOAT, numMips, logLuminanceMipSRVs, logLuminanceMipUAVs);
 	}
 
 	// Create the edge-aware luminance grid.
@@ -175,7 +180,7 @@ void LocalExposure::SetupResources()
 		texDesc.Usage = D3D11_USAGE_DEFAULT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-		texLuminanceGrid = eastl::make_unique<Texture3D>(texDesc, "LocalExposure Luminance Grid");
+		texLuminanceGrid = eastl::make_unique<Texture3D>(texDesc, "LocalExposure::LuminanceGrid");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
@@ -223,8 +228,8 @@ void LocalExposure::SetupResources()
 			texture->CreateUAV(uavDesc);
 		};
 
-		createBlurTexture(texBlurTemp, "LocalExposure Blur Temp");
-		createBlurTexture(texBlurredLuminance, "LocalExposure Blurred Luminance");
+		createBlurTexture(texBlurTemp, "LocalExposure::BlurTemp");
+		createBlurTexture(texBlurredLuminance, "LocalExposure::BlurredLuminance");
 	}
 
 	// Create output base-luminance texture (full resolution, R16F)
@@ -239,7 +244,7 @@ void LocalExposure::SetupResources()
 		texDesc.Usage = D3D11_USAGE_DEFAULT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-		texBaseLuminance = eastl::make_unique<Texture2D>(texDesc, "LocalExposure Base Luminance");
+		texBaseLuminance = eastl::make_unique<Texture2D>(texDesc, "LocalExposure::BaseLuminance");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = DXGI_FORMAT_R16_FLOAT;
@@ -265,15 +270,19 @@ void LocalExposure::SetupResources()
 		sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
 		auto device = globals::d3d::device;
+		linearSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&sampDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "LocalExposure::LinearSampler");
 
 		sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_MIRROR;
 		sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_MIRROR;
+		mirrorSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&sampDesc, mirrorSampler.put()));
+		Util::SetResourceName(mirrorSampler.get(), "LocalExposure::MirrorSampler");
 	}
 
 	// Create constant buffer
-	localExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LocalExposureCB>());
+	localExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LocalExposureCB>(), "LocalExposure::Constants");
 
 	CompileComputeShaders();
 }

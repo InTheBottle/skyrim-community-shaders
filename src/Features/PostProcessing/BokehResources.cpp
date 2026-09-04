@@ -45,7 +45,9 @@ void BokehResources::Setup()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		bokehSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, bokehSampler.put()));
+		Util::SetResourceName(bokehSampler.get(), "BokehResources::Sampler");
 	}
 }
 

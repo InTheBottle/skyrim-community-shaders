@@ -66,7 +66,7 @@ void CODBloom::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		bloomCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<BloomCB>());
+		bloomCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<BloomCB>(), "CODBloom::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -87,7 +87,7 @@ void CODBloom::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texBloom = std::make_unique<Texture2D>(texDesc);
+		texBloom = std::make_unique<Texture2D>(texDesc, "CODBloom::Bloom");
 		texBloom->CreateSRV(srvDesc);
 
 		// SRV for each mip
@@ -97,7 +97,9 @@ void CODBloom::SetupResources()
 				.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
 				.Texture2D = { .MostDetailedMip = i, .MipLevels = 1 }
 			};
+			texBloomMipSRVs[i] = nullptr;
 			DX::ThrowIfFailed(device->CreateShaderResourceView(texBloom->resource.get(), &mipSrvDesc, texBloomMipSRVs[i].put()));
+			Util::SetResourceName(texBloomMipSRVs[i].get(), "CODBloom::Bloom SRV mip%d", i);
 		}
 
 		// RTV for each mip
@@ -107,8 +109,17 @@ void CODBloom::SetupResources()
 				.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
 				.Texture2D = { .MipSlice = i }
 			};
+			texBloomMipRTVs[i] = nullptr;
 			DX::ThrowIfFailed(device->CreateRenderTargetView(texBloom->resource.get(), &mipRtvDesc, texBloomMipRTVs[i].put()));
+			Util::SetResourceName(texBloomMipRTVs[i].get(), "CODBloom::Bloom RTV mip%d", i);
 		}
+
+		// Composite samples mip 0 as soon as this pass is enabled, which can be before the
+		// bloom shaders finish compiling and produce anything.
+		auto context = globals::d3d::context;
+		const FLOAT clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
+		for (uint i = 0; i < s_BloomMips; i++)
+			context->ClearRenderTargetView(texBloomMipRTVs[i].get(), clearColor);
 	}
 
 	logger::debug("Creating samplers...");
@@ -123,7 +134,9 @@ void CODBloom::SetupResources()
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
 
+		colorSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, colorSampler.put()));
+		Util::SetResourceName(colorSampler.get(), "CODBloom::ColorSampler");
 	}
 
 	logger::debug("Creating blend states...");
@@ -141,7 +154,9 @@ void CODBloom::SetupResources()
 		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
+		upsampleBlendState = nullptr;
 		DX::ThrowIfFailed(device->CreateBlendState(&blendDesc, upsampleBlendState.put()));
+		Util::SetResourceName(upsampleBlendState.get(), "CODBloom::UpsampleBlendState");
 	}
 
 	CompileRasterShaders();

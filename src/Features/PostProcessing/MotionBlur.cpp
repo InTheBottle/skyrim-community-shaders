@@ -27,10 +27,14 @@ void MotionBlur::SetupResources()
 		.MaxLOD = D3D11_FLOAT32_MAX
 	};
 
-	device->CreateSamplerState(&samplerDesc, linearSampler.put());
+	linearSampler = nullptr;
+	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+	Util::SetResourceName(linearSampler.get(), "MotionBlur::LinearSampler");
 
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-	device->CreateSamplerState(&samplerDesc, pointSampler.put());
+	pointSampler = nullptr;
+	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, pointSampler.put()));
+	Util::SetResourceName(pointSampler.get(), "MotionBlur::PointSampler");
 
 	// Compile shaders
 	CompileComputeShaders();
@@ -48,8 +52,8 @@ void MotionBlur::SetupResources()
 	// Create the actual D3D constant buffers
 	try {
 		// Create constant buffers using the ConstantBuffer helper class
-		blurConstantBufferObj = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<MotionBlurConstantBuffer>());
-		reductionPassConstantBufferObj = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<ReductionPassConstantBuffer>());
+		blurConstantBufferObj = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<MotionBlurConstantBuffer>(), "MotionBlur::BlurConstants");
+		reductionPassConstantBufferObj = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<ReductionPassConstantBuffer>(), "MotionBlur::ReductionConstants");
 
 		// Initial update
 		blurConstantBufferObj->Update(motionBlurCB);
@@ -80,26 +84,25 @@ void MotionBlur::CompileComputeShaders()
 void MotionBlur::ClearShaderCache()
 {
 	BumpShaderGeneration();
+	const auto shaderPtrs = std::array{
+		&horizontalPassShader,
+		&verticalPassShader,
+		&neighborMaxPassShader,
+		&blurPassShader
+	};
+
 	{
 		std::lock_guard lock(shaderMutex);
-		// Release resources
-		horizontalPassShader = nullptr;
-		verticalPassShader = nullptr;
-		neighborMaxPassShader = nullptr;
-		blurPassShader = nullptr;
+		for (auto shader : shaderPtrs)
+			if ((*shader)) {
+				(*shader)->Release();
+				shader->detach();
+			}
 	}
 
-	horizontalPassTexture = nullptr;
-	verticalPassTexture = nullptr;
-	neighborMaxTexture = nullptr;
-	blurOutputTexture = nullptr;
-
-	// Release constant buffer objects
-	blurConstantBufferObj = nullptr;
-	reductionPassConstantBufferObj = nullptr;
-
-	lastWidth = lastHeight = 0;
-
+	// Textures and constant buffers are deliberately left alone: the constant buffers are
+	// only ever created by SetupResources(), so releasing them here would make
+	// UpdateConstantBuffers() bail every frame and permanently disable the pass.
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/MotionBlur");
 	CompileComputeShaders();
 }
@@ -300,15 +303,15 @@ bool MotionBlur::CheckAndResizeResources(const TextureInfo& inout_tex)
 				.Texture2D = { .MipSlice = 0 }
 			};
 
-			horizontalPassTexture = eastl::make_unique<Texture2D>(horizontalDesc);
+			horizontalPassTexture = eastl::make_unique<Texture2D>(horizontalDesc, "MotionBlur::HorizontalPass");
 			horizontalPassTexture->CreateSRV(gridSrvDesc);
 			horizontalPassTexture->CreateUAV(gridUavDesc);
 
-			verticalPassTexture = eastl::make_unique<Texture2D>(gridDesc);
+			verticalPassTexture = eastl::make_unique<Texture2D>(gridDesc, "MotionBlur::VerticalPass");
 			verticalPassTexture->CreateSRV(gridSrvDesc);
 			verticalPassTexture->CreateUAV(gridUavDesc);
 
-			neighborMaxTexture = eastl::make_unique<Texture2D>(gridDesc);
+			neighborMaxTexture = eastl::make_unique<Texture2D>(gridDesc, "MotionBlur::NeighborMax");
 			neighborMaxTexture->CreateSRV(gridSrvDesc);
 			neighborMaxTexture->CreateUAV(gridUavDesc);
 
@@ -329,7 +332,7 @@ bool MotionBlur::CheckAndResizeResources(const TextureInfo& inout_tex)
 				.Texture2D = { .MipSlice = 0 }
 			};
 
-			blurOutputTexture = eastl::make_unique<Texture2D>(blurDesc);
+			blurOutputTexture = eastl::make_unique<Texture2D>(blurDesc, "MotionBlur::BlurOutput");
 			blurOutputTexture->CreateSRV(blurSrvDesc);
 			blurOutputTexture->CreateUAV(blurUavDesc);
 		} catch (const std::exception& e) {

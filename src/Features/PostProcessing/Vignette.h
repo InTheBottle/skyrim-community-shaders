@@ -8,6 +8,7 @@ struct Vignette : public PostProcessFeature
 	virtual inline std::string GetType() const override { return "Vignette"; }
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.vignette.name", "Vignette"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.vignette.description", "Simulates natural vignetting caused by angled rays hitting the film or sensor array."); }
+	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
 
 	struct Settings
 	{

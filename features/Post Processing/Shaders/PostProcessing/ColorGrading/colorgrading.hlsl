@@ -1,3 +1,7 @@
+// NOTE: the standalone shader disk cache (ShaderCache::EnqueueStandaloneShaderCompile)
+// compares only this file's mtime against the cached blob, never its includes. After
+// editing anything under ColorGrading/Include/, touch this file too or the stale blob
+// keeps being served.
 #include "Common/Color.hlsli"
 #include "Common/ColorSpaces.hlsli"
 #include "Common/Math.hlsli"

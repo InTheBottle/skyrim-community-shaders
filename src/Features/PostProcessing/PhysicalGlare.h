@@ -37,6 +37,7 @@ struct PhysicalGlare : public PostProcessFeature
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.physical_glare.name", "Physical Glare"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.physical_glare.description", "Physically based glare from aperture diffraction and ocular scattering. FFT convolution with a wavelength-dependent PSF, dual eye/lens modes, wavefront aberrations, and wide-gamut chromatic dispersion."); }
 	virtual bool WritesToMainTexture() const override { return false; }
+	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
 
 	TextureInfo GetGlareOutput() const { return { texOutput->resource.get(), texOutput->srv.get() }; }
 

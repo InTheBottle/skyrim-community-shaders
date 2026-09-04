@@ -73,7 +73,7 @@ void Camera::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		cameraCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<CameraCB>());
+		cameraCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<CameraCB>(), "Camera::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -99,7 +99,7 @@ void Camera::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "Camera::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateRTV(rtvDesc);
 	}
@@ -117,7 +117,9 @@ void Camera::SetupResources()
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
 
+		colorSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, colorSampler.put()));
+		Util::SetResourceName(colorSampler.get(), "Camera::ColorSampler");
 	}
 
 	logger::debug("Compiling shaders...");

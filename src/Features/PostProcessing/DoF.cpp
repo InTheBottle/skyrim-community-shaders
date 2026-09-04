@@ -365,7 +365,9 @@ void DoF::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		linearSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "DoF::LinearSampler");
 		Util::SetResourceName(linearSampler.get(), "DoF::LinearSampler");
 	}
 

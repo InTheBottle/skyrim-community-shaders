@@ -16,6 +16,36 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PostProcessing::Settings,
 	DisableVanillaTonemapping)
 
+namespace
+{
+	/// Built-in enablement fallback, used only when default.json cannot be read or applied.
+	/// Mirrors the shipped default preset; the switch is exhaustive so a new pipeline entry
+	/// has to declare its default rather than silently inheriting "off".
+	constexpr bool IsPipelineFeatureEnabledByDefault(PostProcessing::FeaturePipelineIndex a_index)
+	{
+		using Index = PostProcessing::FeaturePipelineIndex;
+		switch (a_index) {
+		case Index::Vignette:
+		case Index::AutoExposure:
+		case Index::CODBloom:
+		case Index::Composite:
+		case Index::ColorGrading:
+		case Index::DoF:
+		case Index::LensFlare:
+		case Index::LocalExposure:
+			return true;
+		case Index::MotionBlur:
+		case Index::PhysicalGlare:
+		case Index::LUT:
+		case Index::Camera:
+		case Index::Border:
+		case Index::COUNT:
+			return false;
+		}
+		return false;
+	}
+}
+
 void PostProcessing::DrawSettings()
 {
 	static int pipelinePageNum = 0;
@@ -78,9 +108,9 @@ void PostProcessing::DrawSettings()
 	if (tonemapTakenByEffects11) {
 		ImGui::PushStyleColor(ImGuiCol_Text, Menu::GetSingleton()->GetTheme().StatusPalette.Warning);
 		ImGui::TextWrapped("%s", T("feature.post_processing.tonemap_owned_by_effects11",
-									 "Tonemapping is currently handled by Effects 11. Post Processing effects that run "
-									 "before tonemapping still apply. To use Post Processing tonemapping instead, either "
-									 "disable Effects 11 or enable its \"UseOriginalPostProcessing\" setting."));
+									 "Tonemapping is currently handled by Effects 11, so the Post Processing pipeline is "
+									 "paused. To use Post Processing instead, disable Effects 11 or enable its "
+									 "\"UseOriginalPostProcessing\" setting."));
 		ImGui::PopStyleColor();
 	}
 
@@ -287,7 +317,7 @@ std::vector<std::string> PostProcessing::LoadPresets()
 	return o_presets;
 }
 
-void PostProcessing::LoadPresetFrom(std::string a_name)
+bool PostProcessing::LoadPresetFrom(std::string a_name)
 {
 	json a_presets = {};
 
@@ -301,10 +331,17 @@ void PostProcessing::LoadPresetFrom(std::string a_name)
 		i >> a_presets;
 	} catch (const std::exception& e) {
 		logger::warn("Failed to load preset: {}. Error: {}", a_name, e.what());
-		return;
+		return false;
 	}
 
-	ProcessSettings(a_presets);
+	try {
+		ProcessSettings(a_presets);
+	} catch (const std::exception& e) {
+		logger::warn("Failed to apply preset: {}. Error: {}", a_name, e.what());
+		return false;
+	}
+
+	return true;
 }
 
 void PostProcessing::SavePresetTo(std::string a_name)
@@ -361,27 +398,22 @@ void PostProcessing::RestoreDefaultSettings()
 		return;
 	}
 
-	try {
-		LoadPresetFrom("default");
-	} catch (const std::exception& e) {
-		logger::warn("Failed to load default preset. Error: {}", e.what());
-		settings = {};
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)].get()->enabled = false;
+	// LoadPresetFrom reports failure rather than throwing, so the fallback below has to be
+	// driven by its return value; a missing or malformed default.json used to leave the
+	// pipeline on whatever it happened to be set to.
+	if (LoadPresetFrom("default"))
+		return;
 
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)].get()->enabled = false;
+	logger::warn("Falling back to built-in Post Processing defaults");
+	settings = {};
 
-		for (auto& pipe : pipeline) {
-			if (pipe) {
-				pipe->RestoreDefaultSettings();
-			}
-		}
+	for (size_t i = 0; i < pipeline.size(); ++i) {
+		auto& pipe = pipeline[i];
+		if (!pipe)
+			continue;
+		if (!pipe->IsAutoEnabled())
+			pipe->enabled = IsPipelineFeatureEnabledByDefault(static_cast<FeaturePipelineIndex>(i));
+		pipe->RestoreDefaultSettings();
 	}
 }
 
@@ -417,7 +449,7 @@ void PostProcessing::SetupResources()
 			.Texture2D = { .MipSlice = 0 }
 		};
 
-		texCopyMain = eastl::make_unique<Texture2D>(texDesc);
+		texCopyMain = eastl::make_unique<Texture2D>(texDesc, "PostProcessing::MainCopy");
 		texCopyMain->CreateRTV(rtvDesc);
 
 		if (texMainCopyDesc.Format != texMainDesc.Format) {
@@ -427,7 +459,7 @@ void PostProcessing::SetupResources()
 			texDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
 			texDesc.MiscFlags = 0;
 
-			texCopyMainCopy = eastl::make_unique<Texture2D>(texDesc);
+			texCopyMainCopy = eastl::make_unique<Texture2D>(texDesc, "PostProcessing::MainCopyConversion");
 			texCopyMainCopy->CreateRTV(rtvDesc);
 		} else {
 			texCopyMainCopy = nullptr;
@@ -655,7 +687,14 @@ void PostProcessing::ClearBorderMotionVectorsForFrameGen()
 
 bool PostProcessing::WantsTonemapOwnership() const
 {
-	return !bypass && settings.DisableVanillaTonemapping != 0;
+	if (bypass || settings.DisableVanillaTonemapping == 0)
+		return false;
+
+	// Every pipeline pass overrides DisableInMainLoadingMenu(), so nothing runs over the
+	// main menu or a loading screen -- Color Grading included. Claiming the tonemap there
+	// would send ISHDR down its POSTPROCESS passthrough branch with no replacement
+	// tonemapper behind it, writing the raw linear scene straight to the screen.
+	return !globals::state->IsMainOrLoadingMenuOpen();
 }
 
 bool PostProcessing::IsTonemapOwnedByEffects11() const
@@ -684,14 +723,19 @@ void PostProcessing::Prepass()
 		pendingSettings = {};
 	}
 
-	// Update gameISData
-	const auto ImageSpace = RE::ImageSpaceManager::GetSingleton();
-	const auto& iSRuntimeData = ImageSpace->GetRuntimeData();
+	// globals::game::imageSpaceManager is not cached until OnDataLoaded(), and both
+	// base-data pointers are null until the game applies its first imagespace, so keep
+	// the previous frame's gameISData rather than dereferencing them.
+	auto* imageSpace = globals::game::imageSpaceManager;
+	if (!imageSpace)
+		return;
+
+	const auto& iSRuntimeData = imageSpace->GetRuntimeData();
 	imageSpaceManager->gameISData = iSRuntimeData.data;
 	if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
 		imageSpaceManager->gameISData.baseData = *overrideBaseData;
-	} else {
-		imageSpaceManager->gameISData.baseData = *iSRuntimeData.currentBaseData;
+	} else if (const auto& currentBaseData = iSRuntimeData.currentBaseData) {
+		imageSpaceManager->gameISData.baseData = *currentBaseData;
 	}
 }
 

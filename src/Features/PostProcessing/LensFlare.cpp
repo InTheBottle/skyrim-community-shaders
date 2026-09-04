@@ -204,7 +204,7 @@ void LensFlare::SetupResources()
 
 	logger::debug("LensFlare: Creating buffers...");
 	{
-		lensFlareCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<LensFlareCB>());
+		lensFlareCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<LensFlareCB>(), "LensFlare::Constants");
 	}
 
 	logger::debug("LensFlare: Creating 2D textures...");
@@ -226,7 +226,7 @@ void LensFlare::SetupResources()
 			.Texture2D = { .MipSlice = 0 }
 		};
 
-		auto createTex = [&](eastl::unique_ptr<Texture2D>& tex, uint width, uint height) {
+		auto createTex = [&](eastl::unique_ptr<Texture2D>& tex, const char* resourceName, uint width, uint height) {
 			D3D11_TEXTURE2D_DESC texDesc = baseDesc;
 			texDesc.Width = width;
 			texDesc.Height = height;
@@ -234,7 +234,7 @@ void LensFlare::SetupResources()
 			texDesc.MipLevels = 1;
 			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 			texDesc.MiscFlags = 0;
-			tex = eastl::make_unique<Texture2D>(texDesc);
+			tex = eastl::make_unique<Texture2D>(texDesc, resourceName);
 			tex->CreateSRV(srvDesc);
 			tex->CreateUAV(uavDesc);
 		};
@@ -246,10 +246,15 @@ void LensFlare::SetupResources()
 		uint quarterW = std::max(fullW / 4, 1u);
 		uint quarterH = std::max(fullH / 4, 1u);
 
-		createTex(texFlare, fullW, fullH);           // full resolution (final output)
-		createTex(texThreshold, halfW, halfH);       // half resolution
-		createTex(texGhostHalo, halfW, halfH);       // half resolution
-		createTex(texBlurTemp, quarterW, quarterH);  // quarter resolution
+		createTex(texFlare, "LensFlare::Flare", fullW, fullH);              // full resolution (final output)
+		createTex(texThreshold, "LensFlare::Threshold", halfW, halfH);      // half resolution
+		createTex(texGhostHalo, "LensFlare::GhostHalo", halfW, halfH);      // half resolution
+		createTex(texBlurTemp, "LensFlare::BlurTemp", quarterW, quarterH);  // quarter resolution
+
+		// Composite samples texFlare as soon as the pass is enabled, which can be before the
+		// flare shaders finish compiling and produce anything.
+		const FLOAT clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texFlare->uav.get(), clearColor);
 
 		logger::debug("LensFlare: textures created - full {}x{}, half {}x{}, quarter {}x{}", fullW, fullH, halfW, halfH, quarterW, quarterH);
 	}
@@ -265,7 +270,9 @@ void LensFlare::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		colorSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, colorSampler.put()));
+		Util::SetResourceName(colorSampler.get(), "LensFlare::ColorSampler");
 
 		D3D11_SAMPLER_DESC borderDesc = {
 			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -276,7 +283,9 @@ void LensFlare::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		borderSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&borderDesc, borderSampler.put()));
+		Util::SetResourceName(borderSampler.get(), "LensFlare::BorderSampler");
 	}
 
 	CompileComputeShaders();
@@ -315,18 +324,18 @@ void LensFlare::CreateFFTTextures(uint resolution)
 
 	// FFT ping-pong textures (RG32F)
 	for (int pp = 0; pp < 2; pp++) {
-		texFFT[pp] = eastl::make_unique<Texture2D>(texDesc);
+		texFFT[pp] = eastl::make_unique<Texture2D>(texDesc, std::format("LensFlare::FFT{}", pp).c_str());
 		texFFT[pp]->CreateSRV(srvDesc);
 		texFFT[pp]->CreateUAV(uavDesc);
 	}
 
 	// Bokeh kernel FFT cache (RG32F)
-	texBokehFFT = eastl::make_unique<Texture2D>(texDesc);
+	texBokehFFT = eastl::make_unique<Texture2D>(texDesc, "LensFlare::BokehFFT");
 	texBokehFFT->CreateSRV(srvDesc);
 	texBokehFFT->CreateUAV(uavDesc);
 
 	// Scene FFT cache (RG32F) — reused across kernel groups in Ultra mode
-	texSceneFFT = eastl::make_unique<Texture2D>(texDesc);
+	texSceneFFT = eastl::make_unique<Texture2D>(texDesc, "LensFlare::SceneFFT");
 	texSceneFFT->CreateSRV(srvDesc);
 	texSceneFFT->CreateUAV(uavDesc);
 
@@ -335,7 +344,7 @@ void LensFlare::CreateFFTTextures(uint resolution)
 	srvDesc.Format = texDesc.Format;
 	uavDesc.Format = texDesc.Format;
 
-	texFFTResult = eastl::make_unique<Texture2D>(texDesc);
+	texFFTResult = eastl::make_unique<Texture2D>(texDesc, "LensFlare::FFTResult");
 	texFFTResult->CreateSRV(srvDesc);
 	texFFTResult->CreateUAV(uavDesc);
 

@@ -48,7 +48,7 @@ void Border::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		borderCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<BorderCB>());
+		borderCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<BorderCB>(), "Border::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -74,7 +74,7 @@ void Border::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "Border::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateUAV(uavDesc);
 	}

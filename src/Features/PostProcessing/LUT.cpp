@@ -96,7 +96,7 @@ void LUT::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		lutCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<LUTCB>());
+		lutCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<LUTCB>(), "LUT::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -122,7 +122,7 @@ void LUT::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "LUT::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateRTV(rtvDesc);
 	}

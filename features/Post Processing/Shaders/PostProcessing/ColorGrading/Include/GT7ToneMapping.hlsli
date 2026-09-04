@@ -150,7 +150,11 @@ float inverseEotfSt2084(float v, float exponentScaleFactor = 1.0f)
 	float physical = frameBufferValueToPhysicalValue(v);
 	float y = physical / pqC;
 
-	float ym = pow(y, m1);
+	// rgbToICtCp and rgbToJzazbz feed unclamped LMS in here, and every LMS coefficient is
+	// positive, so y goes negative whenever an input channel does -- which the wide-gamut
+	// working-space conversion and the grading ops both produce for out-of-gamut colour.
+	// pow() would return NaN and poison the whole pixel; clamp to black instead.
+	float ym = pow(max(y, 0.0f), m1);
 	return exp2(m2 * (log2(c1 + c2 * ym) - log2(1.0f + c3 * ym)));
 }
 

@@ -54,7 +54,7 @@ void Composite::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "Composite::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateRTV(rtvDesc);
 	}

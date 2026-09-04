@@ -9,6 +9,7 @@ struct Camera : public PostProcessFeature
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.camera.name", "Camera"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.camera.description", "Camera effects including fisheye, chromatic aberration, and film grain."); }
 	virtual inline bool DrawAfterColorGrading() const override { return true; }
+	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
 
 	struct Settings
 	{

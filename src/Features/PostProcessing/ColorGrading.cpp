@@ -685,7 +685,7 @@ void ColorGrading::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		colorCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorCB>());
+		colorCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorCB>(), "ColorGrading::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -713,7 +713,7 @@ void ColorGrading::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texColor = std::make_unique<Texture2D>(texDesc);
+		texColor = std::make_unique<Texture2D>(texDesc, "ColorGrading::Output");
 		texColor->CreateSRV(srvDesc);
 		texColor->CreateRTV(rtvDesc);
 
@@ -741,7 +741,7 @@ void ColorGrading::SetupResources()
 			.Texture3D = { .MipSlice = 0, .FirstWSlice = 0, .WSize = lutTexDesc.Depth }
 		};
 
-		texLUT = std::make_unique<Texture3D>(lutTexDesc);
+		texLUT = std::make_unique<Texture3D>(lutTexDesc, "ColorGrading::LUT3D");
 		texLUT->CreateSRV(lutSrvDesc);
 		texLUT->CreateUAV(lutUavDesc);
 	}
@@ -757,7 +757,9 @@ void ColorGrading::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		linearSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "ColorGrading::LinearSampler");
 	}
 
 	// Curve preview textures: 256x1 ramp for GPU-based curve evaluation
@@ -785,10 +787,10 @@ void ColorGrading::SetupResources()
 			.Texture2D = { .MipSlice = 0 }
 		};
 
-		texCurveInput = eastl::make_unique<Texture2D>(curveTexDesc);
+		texCurveInput = eastl::make_unique<Texture2D>(curveTexDesc, "ColorGrading::CurveInput");
 		texCurveInput->CreateSRV(curveSrvDesc);
 
-		texCurveOutput = eastl::make_unique<Texture2D>(curveTexDesc);
+		texCurveOutput = eastl::make_unique<Texture2D>(curveTexDesc, "ColorGrading::CurveOutput");
 		texCurveOutput->CreateSRV(curveSrvDesc);
 		texCurveOutput->CreateRTV(curveRtvDesc);
 
@@ -810,7 +812,9 @@ void ColorGrading::SetupResources()
 		stagingDesc.Usage = D3D11_USAGE_STAGING;
 		stagingDesc.BindFlags = 0;
 		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-		device->CreateTexture2D(&stagingDesc, nullptr, curveStaging.put());
+		curveStaging = nullptr;
+		DX::ThrowIfFailed(device->CreateTexture2D(&stagingDesc, nullptr, curveStaging.put()));
+		Util::SetResourceName(curveStaging.get(), "ColorGrading::CurveStaging");
 	}
 
 	CompileShaders();

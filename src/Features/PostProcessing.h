@@ -91,7 +91,8 @@ struct PostProcessing : Feature
 	std::vector<std::string> presets = {};
 	std::vector<std::string> LoadPresets();
 	void SavePresetTo(std::string a_name);
-	void LoadPresetFrom(std::string a_name);
+	/** Loads a named preset. @return true when reading and applying both succeed. */
+	bool LoadPresetFrom(std::string a_name);
 
 	enum class FeaturePipelineIndex : size_t
 	{

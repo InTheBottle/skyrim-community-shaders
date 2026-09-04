@@ -10,6 +10,7 @@ struct LUT : PostProcessFeature
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.lut.name", "LUT"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.lut.description", "Look-up table application."); }
 	virtual inline bool DrawAfterColorGrading() const override { return true; }
+	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
 
 	int LutType = -1;  // -1 - null, 0 - 1d luma, 1 - 1d per channel, 2 - 3d in 2d, 3 - 3d
 

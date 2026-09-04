@@ -51,7 +51,7 @@ void Vignette::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
-		vignetteCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<VignetteCB>());
+		vignetteCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<VignetteCB>(), "Vignette::Constants");
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -77,7 +77,7 @@ void Vignette::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "Vignette::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateRTV(rtvDesc);
 	}

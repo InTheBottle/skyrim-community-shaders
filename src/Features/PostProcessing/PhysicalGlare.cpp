@@ -357,7 +357,7 @@ void PhysicalGlare::CreateFFTTextures(uint resolution)
 	// FFT ping-pong textures (RG32F) for 3 channels
 	for (int ch = 0; ch < 3; ch++) {
 		for (int pp = 0; pp < 2; pp++) {
-			texFFT[ch][pp] = eastl::make_unique<Texture2D>(texDesc);
+			texFFT[ch][pp] = eastl::make_unique<Texture2D>(texDesc, std::format("PhysicalGlare::FFT ch{} pp{}", ch, pp).c_str());
 			texFFT[ch][pp]->CreateSRV(srvDesc);
 			texFFT[ch][pp]->CreateUAV(uavDesc);
 		}
@@ -365,12 +365,12 @@ void PhysicalGlare::CreateFFTTextures(uint resolution)
 
 	// PSF FFT cache (RG32F) for 3 channels
 	for (int ch = 0; ch < 3; ch++) {
-		texPSF_FFT[ch] = eastl::make_unique<Texture2D>(texDesc);
+		texPSF_FFT[ch] = eastl::make_unique<Texture2D>(texDesc, std::format("PhysicalGlare::PSF FFT ch{}", ch).c_str());
 		texPSF_FFT[ch]->CreateSRV(srvDesc);
 		texPSF_FFT[ch]->CreateUAV(uavDesc);
 	}
 
-	texApertureBase = eastl::make_unique<Texture2D>(texDesc);
+	texApertureBase = eastl::make_unique<Texture2D>(texDesc, "PhysicalGlare::ApertureBase");
 	texApertureBase->CreateSRV(srvDesc);
 	texApertureBase->CreateUAV(uavDesc);
 
@@ -381,7 +381,7 @@ void PhysicalGlare::CreateFFTTextures(uint resolution)
 	srvDesc.Format = packedDesc.Format;
 	uavDesc.Format = packedDesc.Format;
 
-	texGlarePacked = eastl::make_unique<Texture2D>(packedDesc);
+	texGlarePacked = eastl::make_unique<Texture2D>(packedDesc, "PhysicalGlare::GlarePacked");
 	texGlarePacked->CreateSRV(srvDesc);
 	texGlarePacked->CreateUAV(uavDesc);
 }
@@ -393,7 +393,7 @@ void PhysicalGlare::SetupResources()
 
 	logger::debug("PhysicalGlare: Creating buffers...");
 	{
-		glareCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<GlareCB>());
+		glareCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<GlareCB>(), "PhysicalGlare::Constants");
 	}
 
 	logger::debug("PhysicalGlare: Creating FFT textures...");
@@ -425,9 +425,14 @@ void PhysicalGlare::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		texDesc.MiscFlags = 0;
 
-		texOutput = eastl::make_unique<Texture2D>(texDesc);
+		texOutput = eastl::make_unique<Texture2D>(texDesc, "PhysicalGlare::Output");
 		texOutput->CreateSRV(srvDesc);
 		texOutput->CreateUAV(uavDesc);
+
+		// Composite samples this as soon as the pass is enabled, which can be before the
+		// glare shaders finish compiling and produce anything.
+		const FLOAT clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texOutput->uav.get(), clearColor);
 	}
 
 	logger::debug("PhysicalGlare: Creating samplers...");
@@ -441,7 +446,9 @@ void PhysicalGlare::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		linearSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "PhysicalGlare::LinearSampler");
 
 		D3D11_SAMPLER_DESC wrapSamplerDesc = {
 			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -452,7 +459,9 @@ void PhysicalGlare::SetupResources()
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
 		};
+		wrapSampler = nullptr;
 		DX::ThrowIfFailed(device->CreateSamplerState(&wrapSamplerDesc, wrapSampler.put()));
+		Util::SetResourceName(wrapSampler.get(), "PhysicalGlare::WrapSampler");
 	}
 
 	CompileComputeShaders();

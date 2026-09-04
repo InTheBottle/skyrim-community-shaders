@@ -163,12 +163,12 @@ void HistogramAutoExposure::SetupResources()
 {
 	logger::debug("Creating buffers...");
 	{
-		autoExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<AutoExposureCB>());
+		autoExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<AutoExposureCB>(), "HistogramAutoExposure::Constants");
 
-		histogramSB = std::make_unique<StructuredBuffer>(StructuredBufferDesc<uint>(256u, false), 256);
+		histogramSB = std::make_unique<StructuredBuffer>(StructuredBufferDesc<uint>(256u, false), 256, "HistogramAutoExposure::Histogram");
 		histogramSB->CreateUAV();
 
-		adaptationSB = std::make_unique<StructuredBuffer>(StructuredBufferDesc<float>(1u, false), 1);
+		adaptationSB = std::make_unique<StructuredBuffer>(StructuredBufferDesc<float>(1u, false), 1, "HistogramAutoExposure::Adaptation");
 		adaptationSB->CreateSRV();
 		adaptationSB->CreateUAV();
 	}
@@ -183,7 +183,9 @@ void HistogramAutoExposure::SetupResources()
 		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 		stagingDesc.StructureByteStride = sizeof(uint32_t);
 		stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		device->CreateBuffer(&stagingDesc, nullptr, histogramStagingBuffer.put());
+		histogramStagingBuffer = nullptr;
+		DX::ThrowIfFailed(device->CreateBuffer(&stagingDesc, nullptr, histogramStagingBuffer.put()));
+		Util::SetResourceName(histogramStagingBuffer.get(), "HistogramAutoExposure::HistogramStaging");
 
 		D3D11_BUFFER_DESC adaptDesc{};
 		adaptDesc.ByteWidth = sizeof(float);
@@ -191,7 +193,9 @@ void HistogramAutoExposure::SetupResources()
 		adaptDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 		adaptDesc.StructureByteStride = sizeof(float);
 		adaptDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		device->CreateBuffer(&adaptDesc, nullptr, adaptationStagingBuffer.put());
+		adaptationStagingBuffer = nullptr;
+		DX::ThrowIfFailed(device->CreateBuffer(&adaptDesc, nullptr, adaptationStagingBuffer.put()));
+		Util::SetResourceName(adaptationStagingBuffer.get(), "HistogramAutoExposure::AdaptationStaging");
 	}
 
 	CompileComputeShaders();
