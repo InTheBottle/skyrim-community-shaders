@@ -178,7 +178,8 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 #		endif
 
 #		ifdef GRASS_COLLISION
-	[branch] if (collisionFlag > 0.5) {
+	[branch] if (collisionFlag > 0.5)
+	{
 		// Captured instances already include the cell origin; do not apply World a second time.
 		const float3 collisionPos = msPosition.xyz - FrameBuffer::CameraPosAdjust.xyz;
 		const float3 collisionCentre = input.InstanceData1.xyz + e0.xyz - FrameBuffer::CameraPosAdjust.xyz;
@@ -542,7 +543,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow *= shadowColor.x;
-	dirDetailedShadow += ShadowClampValue * (1.0 - dirDetailedShadow);
 	float dirTransmissionShadow = dirDetailedShadow;
 
 #			if defined(SCREEN_SPACE_SHADOWS)
@@ -812,7 +812,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	if (!SharedData::InInterior)
 		dirDetailedShadow = shadowColor.x;
-	dirDetailedShadow += ShadowClampValue * (1.0 - dirDetailedShadow);
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 #				ifdef GRASS_OPTIMIZATIONS
