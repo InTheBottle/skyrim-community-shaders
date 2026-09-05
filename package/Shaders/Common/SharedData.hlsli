@@ -47,6 +47,15 @@ namespace SharedData
 		// Only read by the GRASS_OPTIMIZATIONS permutation, for grass drawn with an LOD mesh.
 		float MidLODBrightness;
 		float FarLODBrightness;
+
+		float VertexAOStrength;
+		float SoftLighting;
+		float RootOcclusion;
+		float TipScattering;
+
+		float NormalStrength;
+		float SpecularAAStrength;
+		float2 pad0;
 	};
 
 	struct CPMSettings
@@ -97,6 +106,7 @@ namespace SharedData
 		float MaxRainWetness;
 		float MaxPuddleWetness;
 		float MaxShoreWetness;
+		float GrassWetnessRoughness;
 
 		uint ShoreRange;
 		float PuddleRadius;
@@ -126,7 +136,6 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
-		float pad0;
 	};
 
 	struct SkylightingSettings

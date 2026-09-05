@@ -14,7 +14,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BasicGrassBrightness,
 	ComplexGrassThreshold,
 	MidLODBrightness,
-	FarLODBrightness)
+	FarLODBrightness,
+	VertexAOStrength,
+	SoftLighting,
+	RootOcclusion,
+	TipScattering,
+	NormalStrength,
+	SpecularAAStrength)
 
 void GrassLighting::DrawSettings()
 {
@@ -28,6 +34,16 @@ void GrassLighting::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("specular_strength"), "Specular Strength"), &settings.SpecularStrength, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("specular_strength_tooltip"), "Specular highlight strength."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("normal_strength"), "Normal Strength"), &settings.NormalStrength, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("normal_strength_tooltip"), "Scales the tangent-space normal map. Below 1 flattens harsh normals, above 1 deepens them."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("specular_aa"), "Specular Anti-Aliasing"), &settings.SpecularAAStrength, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("specular_aa_tooltip"), "Widens roughness where the normal varies quickly across a pixel, removing shimmering highlights on distant grass."));
 		}
 
 		ImGui::Spacing();
@@ -53,6 +69,11 @@ void GrassLighting::DrawSettings()
 								  "Combined to model the transport of light through the surface."));
 		}
 
+		ImGui::SliderFloat(T(TKEY("tip_scattering"), "Tip Scattering"), &settings.TipScattering, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("tip_scattering_tooltip"), "Biases subsurface scattering toward the thin blade tips and away from the thicker base."));
+		}
+
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
@@ -68,6 +89,23 @@ void GrassLighting::DrawSettings()
 								  "This option will treat their grass settings like non-complex grass. "
 								  "This was the default in Bottled Shaders < 0.7.0"));
 		}
+
+		ImGui::Spacing();
+		ImGui::SliderFloat(T(TKEY("soft_lighting"), "Soft Lighting"), &settings.SoftLighting, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("soft_lighting_tooltip"), "Wraps direct light around the blade, strongest at the tips. Softens the hard terminator on flat grass cards."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("root_occlusion"), "Root Occlusion"), &settings.RootOcclusion, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("root_occlusion_tooltip"), "Darkens ambient light toward the base of each blade, grounding grass against the terrain."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("vertex_occlusion"), "Vertex Occlusion"), &settings.VertexAOStrength, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("vertex_occlusion_tooltip"), "How much of the mesh vertex colour darkening is applied as ambient occlusion."));
+		}
+
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", T(TKEY("basic_grass"), "Basic Grass"));

@@ -34,6 +34,16 @@ public:
 		// Only consumed by the GRASS_OPTIMIZATIONS permutation, for grass drawn with an LOD mesh.
 		float MidLODBrightness = 1.0f;
 		float FarLODBrightness = 1.0f;
+
+		float VertexAOStrength = 1.0f;
+		float SoftLighting = 0.4f;
+		float RootOcclusion = 0.5f;
+		float TipScattering = 0.5f;
+
+		float NormalStrength = 1.0f;
+		float SpecularAAStrength = 1.0f;
+		float pad0 = 0.0f;
+		float pad1 = 0.0f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 

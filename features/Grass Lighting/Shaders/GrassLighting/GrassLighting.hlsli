@@ -3,6 +3,27 @@
 
 namespace GrassLighting
 {
+	float GetRainWetness()
+	{
+#if defined(WETNESS_EFFECTS)
+		return saturate(SharedData::wetnessEffectsSettings.Wetness * SharedData::wetnessEffectsSettings.MaxRainWetness);
+#else
+		return 0.0;
+#endif
+	}
+
+	float3 GetWetnessAlbedo(float3 albedo, float wetAmount)
+	{
+		float wetnessDarkeningAmount = wetAmount * wetAmount;
+		return lerp(albedo, pow(abs(albedo), 1.0 + wetnessDarkeningAmount), 0.5);
+	}
+
+	float3 SafeNormalize(float3 v, float3 fallback)
+	{
+		float lengthSq = dot(v, v);
+		return lengthSq > 1e-12 ? v * rsqrt(lengthSq) : fallback;
+	}
+
 	float3 GetTransmissionTint(float3 albedo)
 	{
 		albedo = max(albedo, 0.0);
@@ -56,7 +77,7 @@ namespace GrassLighting
 #endif
 		float shininess = (1.0 - roughness) * 100.f;
 		float HdotN = saturate(dot(H, N));
-		float lightColorMultiplier = exp2(shininess * log2(HdotN));
+		float lightColorMultiplier = exp2(shininess * log2(HdotN)) * saturate(dot(N, L));
 		return lightColor * lightColorMultiplier.xxx;
 	}
 
@@ -81,7 +102,24 @@ namespace GrassLighting
 		float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
 
 		// construct a scale-invariant frame
-		float invmax = rsqrt(max(dot(T, T), dot(B, B)));
+		float maxLengthSq = max(dot(T, T), dot(B, B));
+		float invmax = maxLengthSq > 1e-12 ? rsqrt(maxLengthSq) : 0.0;
 		return float3x3(T * invmax, B * invmax, N);
+	}
+
+	float3 ApplyComplexNormal(float3 geometricNormal, float3 normalSample, float3x3 tbn, float strength)
+	{
+		float3 decoded = TransformNormal(normalSample);
+		float decodedLength = length(decoded);
+
+		float validity = saturate((0.5 - abs(decodedLength - 1.0)) * 4.0);
+		if (validity <= 0.0)
+			return geometricNormal;
+
+		decoded /= decodedLength;
+		decoded.xy *= strength;
+
+		float3 worldNormal = lerp(geometricNormal, mul(decoded, tbn), validity);
+		return SafeNormalize(worldNormal, geometricNormal);
 	}
 }
