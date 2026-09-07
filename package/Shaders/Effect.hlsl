@@ -502,8 +502,6 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 
 #		if defined(EFFECTS11)
 	if (SharedData::enbSettings.Enable) {
-		dirColor = ShadowSampling::GetDirectionalLighting();
-		ambientColor = ShadowSampling::GetAmbientLighting();
 		dirColor *= SharedData::enbSettings.ParticleLightingInfluence;
 		ambientColor *= SharedData::enbSettings.ParticleAmbientInfluence;
 	}
