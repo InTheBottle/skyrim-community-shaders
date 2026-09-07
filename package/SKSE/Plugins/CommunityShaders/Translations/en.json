@@ -696,6 +696,8 @@
     "feature.grass_lighting.detection_threshold": "Detection Threshold",
     "feature.grass_lighting.detection_threshold_tooltip": "Threshold for detecting complex grass textures. Lower values are more strict.",
     "feature.grass_lighting.effects": "Effects",
+    "feature.grass_lighting.enable_wrapped_lighting": "Legacy Wrapped Lighting",
+    "feature.grass_lighting.enable_wrapped_lighting_tooltip": "Restores the older, stronger wrapped lighting model, on both complex and non-complex grass. Light wraps a fixed amount past the terminator everywhere above the blade root, rather than ramping up to the tip. Useful for grass that reads as too dark at midday with the sun overhead. Takes the greater of this and Soft Lighting.",
     "feature.grass_lighting.far_lod_brightness_tooltip": "Raise or lower until the most distant LOD grass matches the middle LOD grass in front of it. Requires Grass Optimizations with Far LOD enabled.",
     "feature.grass_lighting.far_lod_grass": "Far LOD Grass",
     "feature.grass_lighting.glossiness": "Glossiness",

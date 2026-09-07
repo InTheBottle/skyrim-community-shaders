@@ -42,8 +42,8 @@ public:
 
 		float NormalStrength = 1.0f;
 		float SpecularAAStrength = 1.0f;
+		uint EnableWrappedLighting = false;
 		float pad0 = 0.0f;
-		float pad1 = 0.0f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 

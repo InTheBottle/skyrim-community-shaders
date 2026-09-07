@@ -516,7 +516,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	const float bladeHeight = saturate(input.VertexNormal.w);
-	const float wrapAmount = SharedData::grassLightingSettings.SoftLighting * bladeHeight;
+	float wrapAmount = SharedData::grassLightingSettings.SoftLighting * bladeHeight;
+	if (SharedData::grassLightingSettings.EnableWrappedLighting)
+		wrapAmount = max(wrapAmount, saturate(bladeHeight * 10.0) * 0.5);
 	const float wrapNormalization = rcp(1.0 + wrapAmount);
 	const float sssAmount = SharedData::grassLightingSettings.SubsurfaceScatteringAmount *
 	                        lerp(1.0, bladeHeight, SharedData::grassLightingSettings.TipScattering);

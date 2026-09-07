@@ -20,7 +20,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RootOcclusion,
 	TipScattering,
 	NormalStrength,
-	SpecularAAStrength)
+	SpecularAAStrength,
+	EnableWrappedLighting)
 
 void GrassLighting::DrawSettings()
 {
@@ -94,6 +95,14 @@ void GrassLighting::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("soft_lighting"), "Soft Lighting"), &settings.SoftLighting, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("soft_lighting_tooltip"), "Wraps direct light around the blade, strongest at the tips. Softens the hard terminator on flat grass cards."));
+		}
+
+		ImGui::Checkbox(T(TKEY("enable_wrapped_lighting"), "Legacy Wrapped Lighting"), (bool*)&settings.EnableWrappedLighting);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_wrapped_lighting_tooltip"),
+								  "Restores the older, stronger wrapped lighting model, on both complex and non-complex grass. "
+								  "Light wraps a fixed amount past the terminator everywhere above the blade root, rather than ramping up to the tip. "
+								  "Useful for grass that reads as too dark at midday with the sun overhead. Takes the greater of this and Soft Lighting."));
 		}
 
 		ImGui::SliderFloat(T(TKEY("root_occlusion"), "Root Occlusion"), &settings.RootOcclusion, 0.0f, 1.0f, "%.2f");
