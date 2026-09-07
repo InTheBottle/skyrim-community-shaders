@@ -24,7 +24,16 @@ namespace GrassLighting
 		return lengthSq > 1e-12 ? v * rsqrt(lengthSq) : fallback;
 	}
 
-	float3 GetTransmissionTint(float3 albedo)
+	float GetSoftLightMultiplier(float angle, float strength)
+	{
+		float softLightParam = saturate((strength + angle) / (1.0 + strength));
+		float wrapped = (softLightParam * softLightParam) * (3.0 - 2.0 * softLightParam);
+		float clampedAngle = saturate(angle);
+		float direct = (clampedAngle * clampedAngle) * (3.0 - 2.0 * clampedAngle);
+		return saturate(wrapped - direct);
+	}
+
+	float3 GetTransmissionTint(float3 albedo, float saturation)
 	{
 		albedo = max(albedo, 0.0);
 
@@ -42,8 +51,7 @@ namespace GrassLighting
 		transmissionYCoCg.y = hueCos * chroma.x + hueSin * chroma.y;
 		transmissionYCoCg.z = hueCos * chroma.y - hueSin * chroma.x;
 
-		// Default normalized transmission/reflection saturation ratio: 1.15.
-		transmissionYCoCg.yz *= 1.15;
+		transmissionYCoCg.yz *= saturation;
 		return max(Color::YCoCgToRGB(transmissionYCoCg), 0.0);
 	}
 

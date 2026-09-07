@@ -47,6 +47,7 @@ struct VS_OUTPUT
 	float3 PreviousWorldPosition: POSITION2;
 #	ifdef GRASS_LIGHTING
 	float4 VertexNormal: POSITION4;
+	float3 SphereNormal: POSITION5;
 #	else
 	float DirLightAngle: TEXCOORD1;
 #		ifndef GRASS_OPTIMIZATIONS
@@ -214,6 +215,7 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 #			ifdef GRASS_LIGHTING
 	vsout.VertexNormal.xyz = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
 	vsout.VertexNormal.w = input.Color.w;
+	vsout.SphereNormal = mul(world3x3, input.Position.xyz);
 #			endif
 #		endif
 
@@ -269,6 +271,7 @@ VS_OUTPUT main(VS_INPUT input)
 	// Vertex normal needs to be transformed to world-space for lighting calculations.
 	vsout.VertexNormal.xyz = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
 	vsout.VertexNormal.w = input.Color.w;
+	vsout.SphereNormal = mul(world3x3, input.Position.xyz);
 #			else
 	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
 	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
@@ -472,6 +475,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			vertexNormal = -vertexNormal;
 		}
 
+	const float bladeHeight = saturate(input.VertexNormal.w);
+
+	[branch] if (SharedData::grassLightingSettings.SphereNormalStrength > 0.0)
+	{
+		float3 sphereNormal = GrassLighting::SafeNormalize(input.SphereNormal, vertexNormal);
+		if (dot(sphereNormal, vertexNormal) < 0.0)
+			sphereNormal = -sphereNormal;
+		sphereNormal.z = max(sphereNormal.z, 0.0);
+		sphereNormal = GrassLighting::SafeNormalize(sphereNormal, vertexNormal);
+		const float sphereBlend = saturate(bladeHeight * 2.0) * SharedData::grassLightingSettings.SphereNormalStrength;
+		vertexNormal = GrassLighting::SafeNormalize(lerp(vertexNormal, sphereNormal, sphereBlend), vertexNormal);
+		normal = vertexNormal;
+	}
+
 	float3x3 tbn = 0;
 
 #			ifdef GRASS_OPTIMIZATIONS
@@ -515,13 +532,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		roughness = sqrt(saturate(roughness * roughness + kernelRoughness));
 	}
 
-	const float bladeHeight = saturate(input.VertexNormal.w);
 	float wrapAmount = SharedData::grassLightingSettings.SoftLighting * bladeHeight;
 	if (SharedData::grassLightingSettings.EnableWrappedLighting)
 		wrapAmount = max(wrapAmount, saturate(bladeHeight * 10.0) * 0.5);
 	const float wrapNormalization = rcp(1.0 + wrapAmount);
 	const float sssAmount = SharedData::grassLightingSettings.SubsurfaceScatteringAmount *
 	                        lerp(1.0, bladeHeight, SharedData::grassLightingSettings.TipScattering);
+	const float classicScattering = SharedData::grassLightingSettings.ClassicScattering;
 
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
@@ -614,11 +631,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 
 	float3 albedo = baseColor.xyz * vertexColor;
-	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
+	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo, SharedData::grassLightingSettings.TransmissionSaturation);
 
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
-	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
-	                              GetGrassTransmissionFactor(dirNdotL, dirVdotL, sssAmount) *
+	float dirScatterFactor = GetGrassTransmissionFactor(dirNdotL, dirVdotL, sssAmount) +
+	                         GrassLighting::GetSoftLightMultiplier(dirNdotL, sssAmount) * classicScattering;
+	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow * dirScatterFactor *
 	                              Color::VanillaNormalization();
 
 #			ifdef GRASS_OPTIMIZATIONS
@@ -676,8 +694,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				lightDiffuseColor = lightColor * saturate((NdotL + wrapAmount) * wrapNormalization);
 
 				float VdotL = dot(viewDirection, normalizedLightDirection);
-				transmissionRadiance += lightColor *
-				                        GetGrassTransmissionFactor(NdotL, VdotL, sssAmount) *
+				float scatterFactor = GetGrassTransmissionFactor(NdotL, VdotL, sssAmount) +
+				                      GrassLighting::GetSoftLightMultiplier(NdotL, sssAmount) * classicScattering;
+				transmissionRadiance += lightColor * scatterFactor *
 				                        Color::VanillaNormalization();
 
 				lightsDiffuseColor += lightDiffuseColor * Color::VanillaNormalization();
@@ -695,7 +714,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	diffuseColor += lightsDiffuseColor;
 
-	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
+	const float3 ambientNormal = GrassLighting::SafeNormalize(
+		float3(normal.xy, lerp(normal.z, max(normal.z, 0.0), SharedData::grassLightingSettings.AmbientSkyBias)),
+		float3(0, 0, 0));
+	const float3 ambientDC = max(0.0, SharedData::GetAmbient(0.0));
+	float3 directionalAmbientColor = Color::Ambient(max(SharedData::GetAmbient(ambientNormal), ambientDC * SharedData::grassLightingSettings.AmbientFloor));
 
 #			if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL)

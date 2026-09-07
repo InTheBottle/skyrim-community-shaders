@@ -21,7 +21,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TipScattering,
 	NormalStrength,
 	SpecularAAStrength,
-	EnableWrappedLighting)
+	EnableWrappedLighting,
+	SphereNormalStrength,
+	ClassicScattering,
+	TransmissionSaturation,
+	AmbientFloor,
+	AmbientSkyBias)
 
 void GrassLighting::DrawSettings()
 {
@@ -75,6 +80,22 @@ void GrassLighting::DrawSettings()
 			ImGui::Text("%s", T(TKEY("tip_scattering_tooltip"), "Biases subsurface scattering toward the thin blade tips and away from the thicker base."));
 		}
 
+		ImGui::SliderFloat(T(TKEY("classic_scattering"), "Classic Scattering"), &settings.ClassicScattering, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("classic_scattering_tooltip"),
+								  "Restores the wrapped scattering lobe used before deferred rendering. "
+								  "Fills the terminator with tinted, light-through-the-blade colour instead of letting grass fall to flat ambient, "
+								  "which is what gave older versions their lush look. "
+								  "Set to 0 for the purely view-dependent transmission model."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("transmission_saturation"), "Transmission Saturation"), &settings.TransmissionSaturation, 1.0f, 2.5f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("transmission_saturation_tooltip"),
+								  "How much more saturated light passing through a blade is than light reflected off it. "
+								  "Raise for more vivid backlit grass; 1.0 tints scattering with the plain surface colour."));
+		}
+
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
@@ -105,6 +126,14 @@ void GrassLighting::DrawSettings()
 								  "Useful for grass that reads as too dark at midday with the sun overhead. Takes the greater of this and Soft Lighting."));
 		}
 
+		ImGui::SliderFloat(T(TKEY("sphere_normal"), "Rounded Clump Normals"), &settings.SphereNormalStrength, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("sphere_normal_tooltip"),
+								  "Bends each blade's normal outward from the base of its clump, ramping in toward the tips. "
+								  "Makes a clump light as a rounded volume rather than a set of flat cards, and breaks up the uniform "
+								  "shading that makes grass read as a flat plate. Set to 0 to use the raw mesh normals."));
+		}
+
 		ImGui::SliderFloat(T(TKEY("root_occlusion"), "Root Occlusion"), &settings.RootOcclusion, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("root_occlusion_tooltip"), "Darkens ambient light toward the base of each blade, grounding grass against the terrain."));
@@ -113,6 +142,24 @@ void GrassLighting::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("vertex_occlusion"), "Vertex Occlusion"), &settings.VertexAOStrength, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("vertex_occlusion_tooltip"), "How much of the mesh vertex colour darkening is applied as ambient occlusion."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("sky_bias"), "Ambient Sky Bias"), &settings.AmbientSkyBias, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("sky_bias_tooltip"),
+								  "Treats grass as thin, sky-exposed foliage when gathering ambient light, so the back of a blade is not "
+								  "lit as though it faced the ground. Without this, the engine flips the normal on every back face and the "
+								  "ambient probe reconstructs to black there, which is the main cause of dark speckles at grazing angles "
+								  "and over distance. Matches what Skylighting already does. Lower only if grass looks too flat."));
+		}
+
+		ImGui::SliderFloat(T(TKEY("ambient_floor"), "Ambient Floor"), &settings.AmbientFloor, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("ambient_floor_tooltip"),
+								  "Least ambient light a blade can receive, as a fraction of the average ambient. "
+								  "The ambient probe is a low-order spherical harmonic whose reconstruction goes negative for normals "
+								  "facing away from the sky; clamping that to zero turns any such blade pure black, which reads as dark "
+								  "speckles at grazing angles and over distance. Raise if grass still speckles, lower for deeper contrast."));
 		}
 
 		ImGui::Spacing();

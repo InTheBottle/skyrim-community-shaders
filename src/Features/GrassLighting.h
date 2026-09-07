@@ -43,7 +43,12 @@ public:
 		float NormalStrength = 1.0f;
 		float SpecularAAStrength = 1.0f;
 		uint EnableWrappedLighting = false;
-		float pad0 = 0.0f;
+		float SphereNormalStrength = 1.0f;
+
+		float ClassicScattering = 0.25f;
+		float TransmissionSaturation = 1.4f;
+		float AmbientFloor = 0.3f;
+		float AmbientSkyBias = 1.0f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 

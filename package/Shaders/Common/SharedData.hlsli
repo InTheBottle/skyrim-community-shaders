@@ -56,7 +56,12 @@ namespace SharedData
 		float NormalStrength;
 		float SpecularAAStrength;
 		bool EnableWrappedLighting;
-		float pad0;
+		float SphereNormalStrength;
+
+		float ClassicScattering;
+		float TransmissionSaturation;
+		float AmbientFloor;
+		float AmbientSkyBias;
 	};
 
 	struct CPMSettings
