@@ -89,6 +89,7 @@ void SettingManager::RegisterSettingInternal(Setting& setting)
 		// Update existing setting info but keep the same ID
 		uint32_t existingID = it->second;
 		setting.id = existingID;
+		setting.currentValue = allSettings[existingID].currentValue;
 		setting.lastSavedValue = allSettings[existingID].lastSavedValue;
 		allSettings[existingID] = setting;
 	}

@@ -115,7 +115,7 @@ struct BSShader_LoadShaders
 					if (const auto bytecode = GetShaderBytecode(entry->shader)) {
 						DumpShader(shader, entry, std::span(*bytecode));
 					} else {
-						logger::warn("No captured bytecode for vertex shader {} descriptor {:X}", shader->fxpFilename, entry->id);
+						logger::warn("No captured bytecode for vertex shader {} descriptor {:X}", shader->fxpFilename ? shader->fxpFilename : "Unknown", entry->id);
 					}
 				}
 				auto vertexShaderDesriptor = entry->id;
@@ -129,7 +129,7 @@ struct BSShader_LoadShaders
 					if (const auto bytecode = GetShaderBytecode(entry->shader)) {
 						DumpShader(shader, entry, std::span(*bytecode));
 					} else {
-						logger::warn("No captured bytecode for pixel shader {} descriptor {:X}", shader->fxpFilename, entry->id);
+						logger::warn("No captured bytecode for pixel shader {} descriptor {:X}", shader->fxpFilename ? shader->fxpFilename : "Unknown", entry->id);
 					}
 				}
 				auto vertexShaderDesriptor = entry->id;
@@ -999,8 +999,8 @@ namespace Hooks
 			void* a6,
 			void* a7)
 		{
-			auto* enableIBLF = reinterpret_cast<bool*>(REL::RelocationID(513510, 391362).address());
-			*enableIBLF = false;
+			auto* enableIBLF = reinterpret_cast<float*>(REL::RelocationID(513510, 391362).address());
+			*enableIBLF = 0.0f;
 
 			func(a1, a2, a3, a4, a5, a6, a7);
 		}
