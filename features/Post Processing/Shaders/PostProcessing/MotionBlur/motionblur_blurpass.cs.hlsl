@@ -148,9 +148,9 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 
 	// Initialize for sampling
 	float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
-	uint sampleCount = uint(g_SampleCount);
+	uint sampleCount = (uint)(clamp(g_SampleCount, 2, 32) & ~1);
 	uint halfSampleCount = sampleCount / 2u;
-	float pixelToSampleUnitsScale = float(g_SampleCount) / blurLength;
+	float pixelToSampleUnitsScale = float(sampleCount) / blurLength;
 
 	// Sample in pairs (mirrored)
 	for (uint i = 0; i < halfSampleCount; i++) {

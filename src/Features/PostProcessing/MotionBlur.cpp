@@ -335,6 +335,11 @@ bool MotionBlur::CheckAndResizeResources(const TextureInfo& inout_tex)
 			blurOutputTexture = eastl::make_unique<Texture2D>(blurDesc, "MotionBlur::BlurOutput");
 			blurOutputTexture->CreateSRV(blurSrvDesc);
 			blurOutputTexture->CreateUAV(blurUavDesc);
+
+			if (auto context = globals::d3d::context; context && blurOutputTexture->uav) {
+				const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+				context->ClearUnorderedAccessViewFloat(blurOutputTexture->uav.get(), clearColor);
+			}
 		} catch (const std::exception& e) {
 			logger::error("Motion blur error creating textures: {}", e.what());
 			return false;
@@ -491,7 +496,7 @@ void MotionBlur::ExecuteHorizontalPass()
 
 	// Dispatch horizontal pass: output is [GRID_SIZE × height], so dispatch covers grid width and full height
 	uint32_t dispatchX = (FixedGridSize + 7) / 8;
-	uint32_t dispatchY = (dynamicHeight + 7) / 8;
+	uint32_t dispatchY = (horizontalPassTexture->desc.Height + 7) / 8;
 	context->Dispatch(dispatchX, dispatchY, 1);
 
 	ClearComputeResources(1);
@@ -550,6 +555,13 @@ void MotionBlur::ExecuteBlurPass(TextureInfo& inout_tex)
 	// Dispatch blur pass at dynamic resolution (full-screen blur)
 	uint32_t dispatchX = (dynamicWidth + 7) / 8;
 	uint32_t dispatchY = (dynamicHeight + 7) / 8;
+	if (dispatchX == 0 || dispatchY == 0) {
+		ClearComputeResources(4);
+		ID3D11SamplerState* nullSamplersEarly[2] = { nullptr, nullptr };
+		context->CSSetSamplers(0, 2, nullSamplersEarly);
+		context->CSSetShader(nullptr, nullptr, 0);
+		return;
+	}
 	context->Dispatch(dispatchX, dispatchY, 1);
 
 	// Cleanup
