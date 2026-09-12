@@ -68,6 +68,8 @@ public:
 		PortalStrict = (1 << 0),
 		Shadow = (1 << 1),
 		Simple = (1 << 2),
+		ShadowCaster = (1 << 3),
+		LocalShadow = (1 << 4),
 
 		Initialised = (1 << 8),
 		Disabled = (1 << 9),
@@ -93,10 +95,73 @@ public:
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMaskIndex = 0;
-		uint pad0;
+		uint32_t localShadowIndex = 0;
 		uint pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
+
+	static constexpr uint32_t SHADOW_MASK_CHANNEL_COUNT = 4;
+	static constexpr uint32_t ENGINE_SHADOW_SLOTS = 4;
+	static constexpr uint32_t ENGINE_SHADOW_MAP_SLICES = 8;
+	static constexpr uint32_t MIN_LOCAL_SHADOW_SLOTS = 4;
+	static constexpr uint32_t MAX_LOCAL_SHADOW_SLOTS = 32;
+	static constexpr uint32_t LOCAL_SHADOW_FADE_FRAMES = 8;
+	static constexpr uint32_t LOCAL_SHADOW_SWEEP_INTERVAL = 30;
+	static constexpr uint32_t LOCAL_SHADOW_EVICT_AGE = 120;
+	static constexpr uint32_t LOCAL_SHADOW_REJECT_MAX_FRAMES = 120;
+	static constexpr uint32_t LOCAL_SHADOW_CAMERA_HOLD_FRAMES = 60;
+	static constexpr uint32_t LOCAL_SHADOW_GEOM_REHASH_INTERVAL = 4;
+	static constexpr uint32_t LOCAL_SHADOW_CLEAN_REFRESH_FRAMES = 300;
+	static constexpr uint32_t LOCAL_SHADOW_TYPE_SPOT = 0;
+	static constexpr uint32_t LOCAL_SHADOW_TYPE_HEMISPHERE = 1;
+	static constexpr uint32_t LOCAL_SHADOW_TYPE_OMNI = 2;
+
+	struct alignas(16) LocalShadowData
+	{
+		float4x4 ShadowProj;
+		float4 Params;
+		float4 Params2;
+	};
+	STATIC_ASSERT_ALIGNAS_16(LocalShadowData);
+
+	struct alignas(16) LocalShadowCopyCB
+	{
+		uint SourceSlice;
+		uint TargetSlice;
+		uint Scale;
+		uint TargetSize;
+	};
+	STATIC_ASSERT_ALIGNAS_16(LocalShadowCopyCB);
+
+	/** @brief Per-light bookkeeping for the local shadow cache and the caster rotation. */
+	struct LocalShadowCaster
+	{
+		RE::BSShadowLight* light = nullptr;
+		int32_t slice = -1;
+		uint32_t lastSeenFrame = 0;
+		uint32_t lastEvaluatedFrame = 0;
+		uint32_t lastEligibleFrame = 0;
+		uint32_t lastRenderedFrame = 0;
+		uint32_t assignedFrame = 0;
+		uint32_t rejectUntilFrame = 0;
+		uint32_t rejectStreak = 0;
+		RE::NiPoint3 position{};
+		RE::NiPoint3 renderedPosition{};
+		float radius = 0.0f;
+		float radiusAnchor = -1.0f;
+		float score = -1.0f;
+		uint64_t contentHash = 0;
+		uint64_t renderedContentHash = 0;
+		uint64_t cachedGeomHash = 0;
+		uint32_t cachedGeomFrame = 0;
+		uint32_t cachedGeomCount = 0;
+		uint32_t skinnedCasters = 0;
+		bool hidden = false;
+		bool dynamic = false;
+		float4x4 shadowProj{};
+		float4 shadowParams{};
+		float4 shadowParams2{};
+	};
 
 	void AddParticleLightsToBuffer(eastl::vector<LightData>& a_lightsData);
 
@@ -137,6 +202,18 @@ public:
 		uint LightsVisualisationMode;
 		float pad0[2];
 		uint ClusterSize[4];
+		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowStrength;
+		uint EnableLocalShadows;
+		uint LocalShadowSamples;
+		float LocalShadowFilterRadius;
+		float LocalShadowTexelSize;
+		float pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -148,7 +225,8 @@ public:
 		uint NumStrictLights;
 		int RoomIndex;
 		uint ShadowBitMask;
-		uint pad0;
+		uint FirstPerson;
+		float4 WorldEyePosition;
 		LightData StrictLights[15];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StrictLightDataCB);
@@ -179,6 +257,7 @@ public:
 	RE::NiPoint3 eyePositionCached{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
+	bool wasFirstPerson = false;
 	int previousRoomIndex = -1;
 	uint previousShadowBitMask = 0;
 
@@ -225,6 +304,60 @@ public:
 	void UpdateStructure();
 	/** @brief Runs the light update and binds clustered light SRVs for the frame. */
 	virtual void Prepass() override;
+	/** @brief Copies the shadow maps the engine just rendered into the local shadow cache. */
+	virtual void EarlyPrepass() override;
+
+	eastl::vector<LocalShadowCaster> localShadowCasters;
+	ankerl::unordered_dense::map<RE::BSShadowLight*, uint32_t> localShadowCasterLookup;
+	eastl::vector<RE::BSShadowLight*> localShadowAllowed;
+	eastl::vector<RE::BSShadowLight*> localShadowSliceOwner;
+	eastl::vector<RE::NiPoint3> localShadowActorPositions;
+	eastl::vector<LocalShadowData> localShadowUpload;
+	bool localShadowSelecting = false;
+	bool localShadowSunActive = false;
+	uint32_t localShadowFrame = 0;
+	RE::NiPoint3 localShadowCameraPosition{};
+
+	eastl::unique_ptr<Texture2D> localShadowCache = nullptr;
+	eastl::unique_ptr<Buffer> localShadowBuffer = nullptr;
+	ConstantBuffer* localShadowCopyCB = nullptr;
+	ID3D11ComputeShader* localShadowCopyCS = nullptr;
+	uint32_t localShadowCacheSlots = 0;
+	uint32_t localShadowCacheResolution = 0;
+	uint32_t localShadowEngineResolution = 0;
+
+	uint32_t localShadowStatTracked = 0;
+	uint32_t localShadowStatCached = 0;
+	uint32_t localShadowStatRendered = 0;
+
+	/**
+	 * @brief Picks which shadow casters the engine may render this frame so the cache covers every caster over time.
+	 * Runs before the engine selects its (at most four) shadow-casting lights.
+	 */
+	void ScheduleLocalShadowCasters();
+	/**
+	 * @brief Records the engine's own range test for a caster and hides casters not scheduled this frame.
+	 * @param a_light The shadow light being evaluated by the engine.
+	 * @param a_result The engine's UpdateCamera result.
+	 * @return The result the engine should see.
+	 */
+	bool FilterLocalShadowCaster(RE::BSShadowLight* a_light, const RE::NiCamera* a_camera, bool a_result);
+	/** @brief Copies this frame's engine shadow map slices into the cache and uploads the projection data. */
+	void CopyLocalShadowMaps();
+	/** @brief Binds the local shadow cache and projection buffer for pixel shaders. */
+	void BindLocalShadowResources();
+	/** @brief Creates or recreates the cache texture and projection buffer to match the settings and the engine shadow map. */
+	void EnsureLocalShadowResources(ID3D11Texture2D* a_engineShadowMaps);
+	/** @brief Releases the cache resources and forgets every slice assignment. */
+	void ReleaseLocalShadowResources();
+	/** @brief Finds a free cache slice or evicts the least recently rendered caster. */
+	int32_t AcquireLocalShadowSlice(RE::BSShadowLight* a_light, uint32_t a_frame);
+	/** @brief Looks up the tracked caster entry for a light, or nullptr. */
+	LocalShadowCaster* FindLocalShadowCaster(RE::BSShadowLight* a_light);
+	/** @brief Flags a light as an engine shadow-mask light only when it owns one of the four mask channels. */
+	static void TryAssignShadowMask(LightData& a_light, RE::BSShadowLight* a_shadowLight);
+	/** @brief Returns the shadow mask channel of a light, or 255 when it has none. */
+	static uint32_t GetShadowMaskIndex(RE::BSShadowLight* a_shadowLight);
 
 	/** @brief Adjusts the saturation of an RGB color value. */
 	static inline float3 Saturation(float3 color, float saturation);
@@ -247,6 +380,19 @@ public:
 		bool EnableParticleLightsCulling = true;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
+		bool EnableContactShadows = true;
+		uint ContactShadowMaxSteps = 4;
+		float ContactShadowMaxDistance = 1024.0f;
+		float ContactShadowStride = 2.0f;
+		float ContactShadowThickness = 0.2f;
+		float ContactShadowDepthFade = 0.05f;
+		float ContactShadowStrength = 1.0f;
+		bool EnableLocalShadows = true;
+		uint LocalShadowSlots = 16;
+		uint LocalShadowResolution = 1024;
+		uint LocalShadowSamples = 4;
+		float LocalShadowFilterRadius = 1.5f;
+		float LocalShadowBiasScale = 1.0f;
 	};
 
 	uint clusterSize[3] = { 16 };
@@ -313,6 +459,24 @@ public:
 		struct BSGeometry_Destroy
 		{
 			static void thunk(RE::BSGeometry* This);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct CalculateActiveShadowCasterLights
+		{
+			static void thunk();
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct BSShadowParabolicLight_UpdateCamera
+		{
+			static bool thunk(RE::BSShadowLight* This, const RE::NiCamera* a_camera);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct BSShadowFrustumLight_UpdateCamera
+		{
+			static bool thunk(RE::BSShadowLight* This, const RE::NiCamera* a_camera);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
