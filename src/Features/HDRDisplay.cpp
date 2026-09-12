@@ -790,6 +790,7 @@ void HDRDisplay::RedirectFramebuffer()
 	fb.RTV = hdrTexture->rtv.get();
 
 	framebufferRedirected = true;
+	scenePresentFrame = globals::state->frameCount + 1;
 }
 
 void HDRDisplay::RestoreFramebuffer()
@@ -1281,6 +1282,11 @@ void HDRDisplay::SnapshotCleanScene()
 bool HDRDisplay::IsCleanSceneCaptureFresh() const
 {
 	return cleanSceneCapture && cleanSceneCapture->srv && cleanSceneCaptureFrame == globals::state->frameCount;
+}
+
+bool HDRDisplay::IsSceneFreshForPresent() const
+{
+	return scenePresentFrame == globals::state->frameCount;
 }
 
 ID3D11Texture2D* HDRDisplay::ComposeCleanCapture(ID3D11ShaderResourceView* sceneSRV, bool sdrPreview)

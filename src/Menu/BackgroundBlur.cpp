@@ -633,7 +633,7 @@ namespace BackgroundBlur
 
 			uiBuffer = GetHDRUIBufferViews(*hdr, upscaling);
 
-			bool persistentMenuOpen = IsPersistentVanillaMenuOpen();
+			bool persistentMenuOpen = IsPersistentVanillaMenuOpen() && !hdr->IsSceneFreshForPresent();
 			if (persistentMenuOpen && !wasPersistentMenuOpen) {
 				CaptureFrozenScene(device, context, currentTexture.get());
 			} else if (!persistentMenuOpen) {
