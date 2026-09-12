@@ -26,7 +26,8 @@ namespace LightLimitFix
 	{
 		column_major float4x4 ShadowProj;
 		float4 Params;   // x: 0 spot / 1 hemisphere / 2 omni, y: radius (<= 0 = no data), z: depth bias, w: fade-in
-		float4 Params2;  // x: spot cone falloff exponent
+		float4 Params2;  // x: spot cone falloff exponent, y: skinned receiver offset toward the light
+		float4 Origin;
 	};
 
 	StructuredBuffer<LocalShadowData> LocalShadows : register(t102);
@@ -90,8 +91,11 @@ namespace LightLimitFix
 
 	float SampleLocalShadowTap(SamplerState samp, uint slice, float2 uv, float receiverDepth)
 	{
-		float4 depths = LocalShadowMaps.GatherRed(samp, float3(uv, slice));
-		return dot(float4(depths > receiverDepth), 0.25);
+		const float texel = SharedData::lightLimitFixSettings.LocalShadowTexelSize;
+		float2 texelPosition = uv / texel - 0.5;
+		float2 weight = frac(texelPosition);
+		float4 lit = float4(LocalShadowMaps.GatherRed(samp, float3((floor(texelPosition) + 1.0) * texel, slice)) >= receiverDepth);
+		return lerp(lerp(lit.w, lit.z, weight.x), lerp(lit.x, lit.y, weight.x), weight.y);
 	}
 
 	float SampleLocalShadowPCF(SamplerState samp, uint slice, float2 uv, float receiverDepth, float2x2 rotationMatrix, float2 clampMin, float2 clampMax)
@@ -117,9 +121,8 @@ namespace LightLimitFix
 		return shadow;
 	}
 
-	// Samples the cached shadow map of a local light. worldPositionWS must be absolute world space
-	// (camera-relative position + CameraPosAdjust) because the engine light transforms are absolute.
-	float GetLocalShadow(SamplerState samp, uint slice, float3 worldPositionWS, float2x2 rotationMatrix)
+	// position is relative to eyePosition; each cached projection is relative to its own Origin.
+	float GetLocalShadow(SamplerState samp, uint slice, float3 position, float3 eyePosition, float3 towardLight, bool skinnedReceiver, float2x2 rotationMatrix)
 	{
 		LocalShadowData data = LocalShadows[slice];
 		float rawShadow = 1.0;
@@ -130,7 +133,8 @@ namespace LightLimitFix
 			fade = data.Params.w;
 			const float texel = SharedData::lightLimitFixSettings.LocalShadowTexelSize;
 			const uint shadowType = (uint)data.Params.x;
-			float4 positionLS = mul(data.ShadowProj, float4(worldPositionWS, 1.0));
+			float3 shadowPosition = position + (eyePosition - data.Origin.xyz) + towardLight * (skinnedReceiver ? data.Params2.y : 0.0);
+			float4 positionLS = mul(data.ShadowProj, float4(shadowPosition, 1.0));
 
 			[branch] if (shadowType == LOCAL_SHADOW_TYPE_SPOT)
 			{

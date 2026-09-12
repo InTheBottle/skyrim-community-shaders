@@ -2547,8 +2547,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}
 
-	const float3 worldPositionWS = input.WorldPosition.xyz +
-	                               (LightLimitFix::FirstPerson ? LightLimitFix::WorldEyePosition.xyz : FrameBuffer::CameraPosAdjust.xyz);
+	const float3 localShadowEye = LightLimitFix::FirstPerson ? LightLimitFix::WorldEyePosition.xyz : FrameBuffer::CameraPosAdjust.xyz;
+#			if defined(SKINNED)
+	const bool localShadowSkinned = true;
+#			else
+	const bool localShadowSkinned = false;
+#			endif
 	const float2x2 localShadowRotation = LightLimitFix::GetShadowRotationMatrix(screenNoise);
 #			if defined(DEFERRED)
 	const uint contactShadowSteps = LightLimitFix::GetContactShadowSteps(viewPosition.z);
@@ -2584,10 +2588,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade;
 		float lightShadow = 1.0;
+		float3 normalizedLightDirection = normalize(lightDirection);
 
 		float shadowComponent = 1.0;
 		[branch] if (light.lightFlags & LightLimitFix::LightFlags::LocalShadow) {
-			shadowComponent = LightLimitFix::GetLocalShadow(LinearSampler, light.localShadowIndex, worldPositionWS, localShadowRotation);
+			shadowComponent = LightLimitFix::GetLocalShadow(LinearSampler, light.localShadowIndex, input.WorldPosition.xyz, localShadowEye, normalizedLightDirection, localShadowSkinned, localShadowRotation);
 			lightShadow *= shadowComponent;
 		} else if (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) {
 			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
@@ -2596,7 +2601,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			}
 		}
 
-		float3 normalizedLightDirection = normalize(lightDirection);
 		float lightAngle = dot(worldNormal.xyz, normalizedLightDirection.xyz);
 
 #			if defined(DEFERRED)

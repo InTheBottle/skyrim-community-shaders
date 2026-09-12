@@ -112,15 +112,21 @@ public:
 	static constexpr uint32_t LOCAL_SHADOW_CAMERA_HOLD_FRAMES = 60;
 	static constexpr uint32_t LOCAL_SHADOW_GEOM_REHASH_INTERVAL = 4;
 	static constexpr uint32_t LOCAL_SHADOW_CLEAN_REFRESH_FRAMES = 300;
+	static constexpr uint32_t LOCAL_SHADOW_STATIC_STARVE_FRAMES = 120;
 	static constexpr uint32_t LOCAL_SHADOW_TYPE_SPOT = 0;
 	static constexpr uint32_t LOCAL_SHADOW_TYPE_HEMISPHERE = 1;
 	static constexpr uint32_t LOCAL_SHADOW_TYPE_OMNI = 2;
+	static constexpr float LOCAL_SHADOW_ACTOR_EXTENT = 96.0f;
+	static constexpr float LOCAL_SHADOW_ANIMATION_SPEED = 90.0f;
+	static constexpr float LOCAL_SHADOW_MAX_SLACK = 24.0f;
+	static constexpr float LOCAL_SHADOW_DEFAULT_POISSON_RADIUS = 4.0f;
 
 	struct alignas(16) LocalShadowData
 	{
 		float4x4 ShadowProj;
 		float4 Params;
 		float4 Params2;
+		float4 Origin;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LocalShadowData);
 
@@ -150,6 +156,9 @@ public:
 		float radius = 0.0f;
 		float radiusAnchor = -1.0f;
 		float score = -1.0f;
+		float actorImportance = 0.0f;
+		float actorSpeed = 0.0f;
+		float intervalEma = 1.0f;
 		uint64_t contentHash = 0;
 		uint64_t renderedContentHash = 0;
 		uint64_t cachedGeomHash = 0;
@@ -311,7 +320,15 @@ public:
 	ankerl::unordered_dense::map<RE::BSShadowLight*, uint32_t> localShadowCasterLookup;
 	eastl::vector<RE::BSShadowLight*> localShadowAllowed;
 	eastl::vector<RE::BSShadowLight*> localShadowSliceOwner;
-	eastl::vector<RE::NiPoint3> localShadowActorPositions;
+	struct LocalShadowActor
+	{
+		RE::NiPoint3 position;
+		float speed = 0.0f;
+	};
+
+	eastl::vector<LocalShadowActor> localShadowActors;
+	ankerl::unordered_dense::map<RE::FormID, RE::NiPoint3> localShadowActorHistory;
+	ankerl::unordered_dense::map<RE::FormID, RE::NiPoint3> localShadowActorHistoryNext;
 	eastl::vector<LocalShadowData> localShadowUpload;
 	bool localShadowSelecting = false;
 	bool localShadowSunActive = false;
@@ -325,6 +342,9 @@ public:
 	uint32_t localShadowCacheSlots = 0;
 	uint32_t localShadowCacheResolution = 0;
 	uint32_t localShadowEngineResolution = 0;
+	DXGI_FORMAT localShadowCacheFormat = DXGI_FORMAT_UNKNOWN;
+	RE::Setting* poissonRadiusScaleSetting = nullptr;
+	bool poissonRadiusScaleLookedUp = false;
 
 	uint32_t localShadowStatTracked = 0;
 	uint32_t localShadowStatCached = 0;
@@ -389,10 +409,10 @@ public:
 		float ContactShadowStrength = 1.0f;
 		bool EnableLocalShadows = true;
 		uint LocalShadowSlots = 16;
-		uint LocalShadowResolution = 1024;
-		uint LocalShadowSamples = 4;
-		float LocalShadowFilterRadius = 1.5f;
-		float LocalShadowBiasScale = 1.0f;
+		uint LocalShadowResolution = 0;
+		uint LocalShadowSamples = 8;
+		float LocalShadowFilterScale = 1.0f;
+		float LocalShadowBiasScale = 0.25f;
 	};
 
 	uint clusterSize[3] = { 16 };
