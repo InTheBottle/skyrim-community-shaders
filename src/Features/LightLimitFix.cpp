@@ -1616,7 +1616,8 @@ void LightLimitFix::CopyLocalShadowMaps()
 				spotFalloff = 2.0f;
 		}
 
-		caster->shadowParams = { static_cast<float>(type), caster->radius, info.biasScale * 0.00025f * std::clamp(settings.LocalShadowBiasScale, 0.0f, 4.0f), 1.0f };
+		const float biasTexelScale = static_cast<float>(scale);
+		caster->shadowParams = { static_cast<float>(type), caster->radius, info.biasScale * 0.00025f * biasTexelScale * std::clamp(settings.LocalShadowBiasScale, 0.0f, 4.0f), 1.0f };
 		caster->shadowParams2 = { spotFalloff, 0.0f, 0.0f, 0.0f };
 		caster->lastRenderedFrame = frame;
 		caster->renderedPosition = caster->position;
