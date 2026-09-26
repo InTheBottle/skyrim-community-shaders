@@ -17,7 +17,7 @@ public:
 	virtual inline std::string_view GetShaderDefineName() override { return "GRASS_OPTIMIZATIONS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kGrassAndFoliage; }
 
-	/** @brief Returns true only for the Grass shader type. */
+	/** @brief Returns true for the Grass shader type and for DistantTree, whose vertex shader reads the merged-block origins. */
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
 
 	/** @brief Returns a description and list of key features for the UI summary. */
@@ -51,6 +51,14 @@ public:
 		bool EnableFarLOD = true;
 		float FarLODPixelSize = 4.0f;
 		float MeshLODBandPixels = 3.0f;
+
+		// Billboard tree LOD: the same instanced draws, per-instance culling and Hi-Z occlusion
+		// applied to BSDistantTreeShader's LOD blocks (vanilla trees.lod and DynDOLOD .btt).
+		bool EnableTreeLOD = false;
+		float TreeLODMinPixelSize = 2.0f;
+		bool TreeLODOcclusionCulling = true;
+		float TreeLODOcclusionBias = 0.002f;
+		float TreeLODMaxDistance = 0.0f;
 	};
 
 	Settings settings;
@@ -72,6 +80,9 @@ public:
 
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
+
+	/** @brief Returns the tree LOD billboard culling compute shader, compiling it on first use. */
+	ID3D11ComputeShader* GetTreeCullCS();
 
 	struct alignas(16) CullParamsCB
 	{
@@ -149,14 +160,26 @@ public:
 	/** @brief Once-per-frame grass update called in BSGrassShader::SetupGeometry: applies staged captures/removals, uploads dirty buckets, builds the Hi-Z pyramid and issues the culling dispatches. */
 	void UpdateGrass();
 
+	/** @brief Once-per-frame tree LOD update called from the first in-world BSDistantTreeShader::SetupGeometry: same steps as UpdateGrass for the tree LOD buckets. */
+	void UpdateTreeLOD();
+
+	/** @brief True while the current passes render the world from the player camera, where this frame's tree LOD cull applies. Shadow maps, cubemaps, the skylighting occlusion render and the map draw vanilla. */
+	bool IsTreeLODPassOptimizable() const;
+
+	/** @brief Draws a tree LOD shape: its bucket's indirect draw once per pass, or the vanilla per-group draws when the bucket cannot stand in for it. */
+	void DrawTreeLODBucket(RE::BSRenderPass* pass, RE::BSMultiStreamInstanceTriShape* geometry);
+
+	/** @brief Culls one kind of bucket: coarse slice cull on the CPU, then the per-instance dispatches with the given compute shader. Caller holds bucketMutex and has uploaded cullParamsCB. */
+	void CullBuckets(BucketKind kind, const FrustumSoA& frustumSoA, __m128 camPosV, float a_maxDistSq, ID3D11ComputeShader* cs);
+
 	/** @brief Merges this bucket's slices into runs of contiguous buffer ranges that share a cell, for the per-bucket slice table. */
 	void MergeSlicesIntoRuns(GrassBucket& b);
 
 	/** @brief Appends this bucket's visible slice runs to sliceTableCPU and records the window in the bucket. */
-	void CullBucketSlices(GrassBucket& b, const FrustumSoA& frustumSoA, __m128 camPosV);
+	void CullBucketSlices(GrassBucket& b, const FrustumSoA& frustumSoA, __m128 camPosV, float a_maxDistSq);
 
-	/** @brief Fills the per-bucket cull constant buffer, uploads the slice table and issues the cull dispatches. */
-	void UploadCullState(ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t visibleBuckets);
+	/** @brief Fills the per-bucket cull constant buffer, uploads the slice table and issues the cull dispatches for buckets of one kind. */
+	void UploadCullState(ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t visibleBuckets, BucketKind kind, ID3D11ComputeShader* cs);
 
 	/** @brief Binds a bucket's resources and dispatches the instance culling compute shader. */
 	void CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx);
@@ -168,10 +191,16 @@ public:
 	HiZPyramid hiZ;
 
 	uint32_t lastFrame = UINT32_MAX;
+	// Frame the tree LOD cull last ran, and the frame it last produced valid indirect args.
+	uint32_t treeLastFrame = UINT32_MAX;
+	uint32_t treeCullFrame = UINT32_MAX;
+	uint32_t treeLoggedBuckets = UINT32_MAX;
+	uint32_t treeLoggedInstances = UINT32_MAX;
 
 	ID3D11DeviceContext1* ctx1 = nullptr;
 
 	ID3D11ComputeShader* cullCS = nullptr;
+	ID3D11ComputeShader* treeCullCS = nullptr;
 
 	std::unique_ptr<ConstantBuffer> cullParamsCB;
 	// Slotted per-bucket constants bound via CSSetConstantBuffers1: one 256-byte slot per visible
@@ -217,6 +246,26 @@ public:
 		struct BSGrassShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* This, RE::BSRenderPass* a2, std::uint32_t flags);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct BSDistantTreeShader_SetupGeometry
+		{
+			static void thunk(RE::BSShader* This, RE::BSRenderPass* a2, std::uint32_t flags);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// Tree LOD groups edited through these never reach DoneAddingInstances, so the shape's
+		// captured slice is dropped and it draws itself until the next full capture.
+		struct BSMultiStreamInstanceTriShape_AddGroup
+		{
+			static std::uint32_t thunk(RE::BSMultiStreamInstanceTriShape* This, std::uint32_t a_numInstances, std::uint16_t& a_instanceData, std::uint32_t a_arg3, float a_arg4);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct BSMultiStreamInstanceTriShape_RemoveGroup
+		{
+			static void thunk(RE::BSMultiStreamInstanceTriShape* This, std::uint32_t a_numInstance);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
@@ -275,8 +324,11 @@ public:
 			stl::write_vfunc<0x0, BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
 			stl::write_vfunc<0x34, BSMultiStreamInstanceTriShape_OnVisible>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
 			stl::write_vfunc<0x3A, DoneAddingInstances>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+			stl::write_vfunc<0x3C, BSMultiStreamInstanceTriShape_AddGroup>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+			stl::write_vfunc<0x3D, BSMultiStreamInstanceTriShape_RemoveGroup>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
 
 			stl::write_vfunc<0x6, BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
+			stl::write_vfunc<0x6, BSDistantTreeShader_SetupGeometry>(RE::VTABLE_BSDistantTreeShader[0]);
 
 			// Capture raw instance data for cached grass.
 			stl::write_thunk_call<AddQueuedGroupGIDBuffer>(REL::RelocationID(15205, 15373).address() + Util::VersionedRelocation::Select(0x7FF, 0x756, 0x768));

@@ -47,7 +47,20 @@ cbuffer PerGeometry : register(b2)
 	row_major float4x4 PreviousWorld : packoffset(c8);
 };
 
-VS_OUTPUT main(VS_INPUT input)
+#	if defined(GRASS_OPTIMIZATIONS)
+// Grass Optimizations merges one tree type's LOD blocks into a single instanced draw issued under
+// one block's World. Each survivor records its own block origin here ([i*2] = origin.xyz, 1.0),
+// so the vertex shader moves it from the drawing block's origin to its own. A vanilla draw leaves
+// this slot unbound, which reads as zero and leaves the position untouched.
+StructuredBuffer<float4> TreeLODInstanceExtras : register(t2);
+#	endif
+
+VS_OUTPUT main(VS_INPUT input
+#	if defined(GRASS_OPTIMIZATIONS)
+	,
+	uint instanceID : SV_InstanceID
+#	endif
+)
 {
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
 
@@ -57,6 +70,13 @@ VS_OUTPUT main(VS_INPUT input)
 	adjustedModelPosition.y = dot(input.InstanceData2.yx, scaledModelPosition.xy);
 	adjustedModelPosition.z = scaledModelPosition.z;
 	float4 finalModelPosition = float4(input.InstanceData1.xyz + adjustedModelPosition.xyz, 1.0);
+#	if defined(GRASS_OPTIMIZATIONS)
+	{
+		const float4 blockOrigin = TreeLODInstanceExtras[instanceID * 2];
+		const float3 drawingBlockOrigin = float3(World._m03, World._m13, World._m23);
+		finalModelPosition.xyz += (blockOrigin.xyz - drawingBlockOrigin) * blockOrigin.w;
+	}
+#	endif
 	float4 viewPosition = mul(WorldViewProj, finalModelPosition);
 
 #	ifdef RENDER_DEPTH
