@@ -63,6 +63,7 @@ void SnowCover::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How much snow is removed at the fire. 1 = bare ground.");
 		}
+		ImGui::Text("Tracked fires: %u", static_cast<uint32_t>(trackedFires.size()));
 	}
 	ImGui::Separator();
 	ImGui::Text("Each config applies to one worldspace or interior cell.");
@@ -630,14 +631,11 @@ void SnowCover::RestoreDefaultSettings()
 	fireMeltSettings = {};
 }
 
-bool SnowCover::IsWorldFireSource(RE::TESObjectREFR* a_ref)
+bool SnowCover::IsWorldFireSource(RE::TESBoundObject* a_base)
 {
-	if (!a_ref)
+	if (!a_base)
 		return false;
-	auto* base = a_ref->GetObjectReference();
-	if (!base)
-		return false;
-	switch (base->GetFormType()) {
+	switch (a_base->GetFormType()) {
 	case RE::FormType::Static:
 	case RE::FormType::MovableStatic:
 	case RE::FormType::Light:
@@ -650,62 +648,198 @@ bool SnowCover::IsWorldFireSource(RE::TESObjectREFR* a_ref)
 	}
 }
 
-void SnowCover::CollectFireSource(RE::BSRenderPass* a_pass, uint32_t a_pixelDescriptor)
+bool SnowCover::IsFireGeometry(RE::BSGeometry* a_geometry)
 {
-	if (!wsettings.EnableSnowCover || !fireMeltSettings.Enabled || !a_pass || !a_pass->geometry)
-		return;
-	if (fireCandidates.size() >= MAX_FIRE_MELT_CANDIDATES)
-		return;
+	auto& data = a_geometry->GetGeometryRuntimeData();
+	auto* property = data.shaderProperty.get();
+	auto* alpha = data.alphaProperty.get();
+	if (!property || !alpha || property->GetRTTI() != globals::rtti::BSEffectShaderPropertyRTTI.get())
+		return false;
+	if ((alpha->alphaFlags & 0x1E0) != 0)
+		return false;
+	auto* material = static_cast<RE::BSEffectShaderMaterial*>(property->material);
+	if (!material)
+		return false;
 
-	using Flags = SIE::ShaderCache::EffectShaderFlags;
-	auto has = [&](Flags flag) { return (a_pixelDescriptor & static_cast<uint32_t>(flag)) != 0; };
-	if (!has(Flags::AddBlend) || has(Flags::SkyObject))
-		return;
-	const bool isFire = has(Flags::Soft) ?
-	                        (has(Flags::GrayscaleToColor) && has(Flags::GrayscaleToAlpha)) :
-	                        (has(Flags::Particles) && has(Flags::TexCoordIndex) && has(Flags::IndexedTexture));
-	if (!isFire || !IsWorldFireSource(a_pass->geometry->GetUserData()))
-		return;
+	using Flag = RE::BSShaderProperty::EShaderPropertyFlag;
+	if (property->flags.any(Flag::kSoftEffect))
+		return !material->greyscaleTexturePath.empty() && property->flags.all(Flag::kGrayscaleToPaletteColor, Flag::kGrayscaleToPaletteAlpha);
 
-	const auto& bound = a_pass->geometry->worldBound;
-	fireCandidates.push_back({ bound.center.x, bound.center.y, bound.center.z, bound.radius });
+	static REL::Relocation<const RE::NiRTTI*> stripParticlesRTTI{ RE::NiRTTI_BSStripParticleSystem };
+	auto* particles = a_geometry->AsParticlesGeom();
+	if (!particles || a_geometry->GetRTTI() == stripParticlesRTTI.get() || material->sourceTexturePath.empty())
+		return false;
+	auto* particleData = particles->GetParticlesRuntimeData().particleData.get();
+	return particleData && particleData->GetParticlesRuntimeData().subTextureOffsetsCount != 0;
+}
+
+void SnowCover::CollectFireGeometry(RE::NiAVObject* a_object, bool a_hidden, bool& a_hasFire, std::vector<RE::NiBound>& a_samples)
+{
+	if (!a_object)
+		return;
+	const bool hidden = a_hidden || a_object->GetAppCulled();
+	if (auto* geometry = a_object->AsGeometry()) {
+		if (!IsFireGeometry(geometry))
+			return;
+		a_hasFire = true;
+		if (!hidden && geometry->worldBound.radius > 0.0f)
+			a_samples.push_back(geometry->worldBound);
+		return;
+	}
+	if (auto* node = a_object->AsNode()) {
+		for (auto& child : node->GetChildren())
+			CollectFireGeometry(child.get(), hidden, a_hasFire, a_samples);
+	}
+}
+
+bool SnowCover::ScanFireSources()
+{
+	for (auto& fire : trackedFires)
+		++fire.missedScans;
+
+	auto* tes = RE::TES::GetSingleton();
+	auto* player = RE::PlayerCharacter::GetSingleton();
+	if (!tes || !player)
+		return false;
+
+	auto merge = [](const RE::NiBound& a_lhs, const RE::NiBound& a_rhs) {
+		const RE::NiPoint3 delta = a_rhs.center - a_lhs.center;
+		const float distance = delta.Length();
+		if (distance + a_rhs.radius <= a_lhs.radius)
+			return a_lhs;
+		if (distance + a_lhs.radius <= a_rhs.radius)
+			return a_rhs;
+		RE::NiBound combined;
+		combined.radius = 0.5f * (distance + a_lhs.radius + a_rhs.radius);
+		combined.center = a_lhs.center + delta * ((combined.radius - a_lhs.radius) / distance);
+		return combined;
+	};
+
+	const auto eye = Util::GetEyePosition();
+	uint32_t classified = 0;
+	fireClusters.clear();
+
+	tes->ForEachReferenceInRange(player, FIRE_MELT_MAX_DISTANCE, [&](RE::TESObjectREFR* a_ref) {
+		if (!a_ref || a_ref->IsDisabled() || a_ref->IsDeleted())
+			return RE::BSContainer::ForEachResult::kContinue;
+		auto* base = a_ref->GetBaseObject();
+		if (!IsWorldFireSource(base))
+			return RE::BSContainer::ForEachResult::kContinue;
+		const auto cached = fireBaseCache.find(base->GetFormID());
+		const bool known = cached != fireBaseCache.end();
+		if ((known && !cached->second) || (!known && classified >= MAX_FIRE_BASE_CLASSIFICATIONS_PER_SCAN))
+			return RE::BSContainer::ForEachResult::kContinue;
+		auto* root = a_ref->Get3D();
+		if (!root)
+			return RE::BSContainer::ForEachResult::kContinue;
+
+		bool hasFire = false;
+		fireSamples.clear();
+		CollectFireGeometry(root, false, hasFire, fireSamples);
+		if (!known) {
+			fireBaseCache.emplace(base->GetFormID(), hasFire);
+			++classified;
+		}
+
+		const auto refPosition = a_ref->GetPosition();
+		const size_t first = fireClusters.size();
+		for (const auto& sample : fireSamples) {
+			if (sample.center.GetSquaredDistance(refPosition) > FIRE_MELT_MAX_REF_OFFSET * FIRE_MELT_MAX_REF_OFFSET)
+				continue;
+			auto cluster = std::find_if(fireClusters.begin() + first, fireClusters.end(), [&](const FireCluster& a_cluster) {
+				return a_cluster.bound.center.GetSquaredDistance(sample.center) <= FIRE_MELT_CLUSTER_DISTANCE * FIRE_MELT_CLUSTER_DISTANCE;
+			});
+			if (cluster != fireClusters.end())
+				cluster->bound = merge(cluster->bound, sample);
+			else
+				fireClusters.push_back({ a_ref->GetFormID(), static_cast<uint32_t>(fireClusters.size() - first), sample, 0.0f });
+		}
+		return RE::BSContainer::ForEachResult::kContinue;
+	});
+
+	for (auto& cluster : fireClusters)
+		cluster.distanceSq = eye.GetSquaredDistance(cluster.bound.center);
+	const size_t keep = std::min<size_t>(fireClusters.size(), MAX_TRACKED_FIRES);
+	std::partial_sort(fireClusters.begin(), fireClusters.begin() + keep, fireClusters.end(), [](const FireCluster& a, const FireCluster& b) { return a.distanceSq < b.distanceSq; });
+
+	for (size_t i = 0; i < keep; ++i) {
+		const auto& cluster = fireClusters[i];
+		const float radius = std::clamp(cluster.bound.radius, FIRE_MELT_MIN_RADIUS, FIRE_MELT_MAX_RADIUS);
+		auto fire = std::find_if(trackedFires.begin(), trackedFires.end(), [&](const TrackedFire& a_fire) {
+			return a_fire.refID == cluster.refID && a_fire.cluster == cluster.cluster;
+		});
+		if (fire == trackedFires.end()) {
+			trackedFires.push_back({ cluster.refID, cluster.cluster, cluster.bound.center, radius, cluster.bound.center, radius, fireMeltSnap ? 1.0f : 0.0f, 0 });
+			continue;
+		}
+		fire->sampleCenter = cluster.bound.center;
+		fire->sampleRadius = radius;
+		fire->missedScans = 0;
+	}
+	return classified < MAX_FIRE_BASE_CLASSIFICATIONS_PER_SCAN;
 }
 
 void SnowCover::UpdateFireMelt()
+{
+	if (!wsettings.EnableSnowCover || !fireMeltSettings.Enabled || fireMeltSettings.Strength <= 0.0f || globals::state->isLoadingMenuOpen) {
+		trackedFires.clear();
+		fireScanTimer = FIRE_MELT_SCAN_INTERVAL;
+		fireMeltSnap = true;
+		UploadFireMelt();
+		return;
+	}
+
+	const float dt = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, 0.1f);
+	fireScanTimer += dt;
+	if (fireScanTimer >= FIRE_MELT_SCAN_INTERVAL) {
+		fireScanTimer = 0.0f;
+		if (ScanFireSources())
+			fireMeltSnap = false;
+	}
+
+	const float centerBlend = 1.0f - std::exp(-dt / FIRE_MELT_CENTER_SMOOTHING);
+	const float growBlend = 1.0f - std::exp(-dt / FIRE_MELT_GROW_SMOOTHING);
+	const float shrinkBlend = 1.0f - std::exp(-dt / FIRE_MELT_SHRINK_SMOOTHING);
+	const float fadeStep = dt / FIRE_MELT_FADE_TIME;
+	for (auto& fire : trackedFires) {
+		fire.center += (fire.sampleCenter - fire.center) * centerBlend;
+		fire.radius += (fire.sampleRadius - fire.radius) * (fire.sampleRadius > fire.radius ? growBlend : shrinkBlend);
+		fire.strength = std::clamp(fire.strength + (fire.missedScans < FIRE_MELT_GRACE_SCANS ? fadeStep : -fadeStep), 0.0f, 1.0f);
+	}
+	std::erase_if(trackedFires, [](const TrackedFire& a_fire) { return a_fire.missedScans >= FIRE_MELT_GRACE_SCANS && a_fire.strength <= 0.0f; });
+
+	UploadFireMelt();
+}
+
+void SnowCover::UploadFireMelt()
 {
 	auto& fireMelt = perFrame.fireMelt;
 	fireMelt.Count = 0;
 	fireMelt.Strength = fireMeltSettings.Strength;
 	fireMelt.RadiusScale = fireMeltSettings.RadiusScale;
+	if (trackedFires.empty())
+		return;
 
-	if (wsettings.EnableSnowCover && fireMeltSettings.Enabled && fireMeltSettings.Strength > 0.0f && !fireCandidates.empty()) {
-		const auto eye = Util::GetEyePosition();
-		auto distanceSq = [&](const float4& s) {
-			const float dx = s.x - eye.x, dy = s.y - eye.y, dz = s.z - eye.z;
-			return dx * dx + dy * dy + dz * dz;
-		};
-		std::sort(fireCandidates.begin(), fireCandidates.end(), [&](const float4& a, const float4& b) { return distanceSq(a) < distanceSq(b); });
-
-		for (const auto& candidate : fireCandidates) {
-			if (fireMelt.Count >= MAX_FIRE_MELT_SOURCES || distanceSq(candidate) > FIRE_MELT_MAX_DISTANCE * FIRE_MELT_MAX_DISTANCE)
-				break;
-			const float radius = std::clamp(candidate.w, FIRE_MELT_MIN_RADIUS, FIRE_MELT_MAX_RADIUS);
-			bool merged = false;
-			for (uint32_t i = 0; i < fireMelt.Count; ++i) {
-				auto& picked = fireMelt.Spheres[i];
-				const float dx = candidate.x - picked.x, dy = candidate.y - picked.y, dz = candidate.z - picked.z;
-				if (dx * dx + dy * dy + dz * dz <= picked.w * picked.w) {
-					picked.w = std::max(picked.w, radius);
-					merged = true;
-					break;
-				}
-			}
-			if (!merged)
-				fireMelt.Spheres[fireMelt.Count++] = { candidate.x, candidate.y, candidate.z, radius };
-		}
+	const auto eye = Util::GetEyePosition();
+	fireOrder.clear();
+	for (uint32_t i = 0; i < trackedFires.size(); ++i) {
+		if (trackedFires[i].strength > 0.0f)
+			fireOrder.emplace_back(eye.GetDistance(trackedFires[i].center), i);
 	}
+	const size_t ranked = std::min<size_t>(fireOrder.size(), MAX_FIRE_MELT_SOURCES + 1);
+	std::partial_sort(fireOrder.begin(), fireOrder.begin() + ranked, fireOrder.end());
 
-	fireCandidates.clear();
+	const float slotCutoff = fireOrder.size() > MAX_FIRE_MELT_SOURCES ? fireOrder[MAX_FIRE_MELT_SOURCES].first : std::numeric_limits<float>::max();
+	for (size_t i = 0; i < std::min<size_t>(ranked, MAX_FIRE_MELT_SOURCES); ++i) {
+		const auto [distance, index] = fireOrder[i];
+		const auto& fire = trackedFires[index];
+		const float weight = fire.strength *
+		                     std::clamp((FIRE_MELT_MAX_DISTANCE - distance) / FIRE_MELT_DISTANCE_FADE, 0.0f, 1.0f) *
+		                     std::clamp((slotCutoff - distance) / FIRE_MELT_SLOT_FADE, 0.0f, 1.0f);
+		const float radius = fire.radius * weight;
+		if (radius >= 1.0f)
+			fireMelt.Spheres[fireMelt.Count++] = { fire.center.x, fire.center.y, fire.center.z, radius };
+	}
 }
 
 void SnowCover::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)

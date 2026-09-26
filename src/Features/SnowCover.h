@@ -40,10 +40,21 @@ private:
 	static constexpr uint DEFAULT_PEAK_WINTER_MONTH = 0;
 	static constexpr uint32_t FIRST_SRV_SLOT = 38;  // t38-t44, see SnowCover.hlsli
 	static constexpr uint32_t MAX_FIRE_MELT_SOURCES = 8;
-	static constexpr uint32_t MAX_FIRE_MELT_CANDIDATES = 256;
+	static constexpr uint32_t MAX_TRACKED_FIRES = 64;
+	static constexpr uint32_t MAX_FIRE_BASE_CLASSIFICATIONS_PER_SCAN = 512;
 	static constexpr float FIRE_MELT_MAX_DISTANCE = 16384.0f;
+	static constexpr float FIRE_MELT_DISTANCE_FADE = 2048.0f;
+	static constexpr float FIRE_MELT_SLOT_FADE = 512.0f;
 	static constexpr float FIRE_MELT_MIN_RADIUS = 16.0f;
 	static constexpr float FIRE_MELT_MAX_RADIUS = 512.0f;
+	static constexpr float FIRE_MELT_CLUSTER_DISTANCE = 256.0f;
+	static constexpr float FIRE_MELT_MAX_REF_OFFSET = 4096.0f;
+	static constexpr float FIRE_MELT_SCAN_INTERVAL = 0.25f;
+	static constexpr uint32_t FIRE_MELT_GRACE_SCANS = 3;
+	static constexpr float FIRE_MELT_FADE_TIME = 1.0f;
+	static constexpr float FIRE_MELT_CENTER_SMOOTHING = 1.0f;
+	static constexpr float FIRE_MELT_GROW_SMOOTHING = 0.5f;
+	static constexpr float FIRE_MELT_SHRINK_SMOOTHING = 4.0f;
 
 public:
 	virtual inline std::string GetName() { return "Snow Cover"; }
@@ -140,12 +151,41 @@ public:
 	FireMeltSettings fireMeltSettings;
 	PerFrame perFrame;
 
-	std::vector<float4> fireCandidates;
+	struct TrackedFire
+	{
+		RE::FormID refID = 0;
+		uint32_t cluster = 0;
+		RE::NiPoint3 sampleCenter;
+		float sampleRadius = 0.0f;
+		RE::NiPoint3 center;
+		float radius = 0.0f;
+		float strength = 0.0f;
+		uint32_t missedScans = 0;
+	};
+
+	struct FireCluster
+	{
+		RE::FormID refID = 0;
+		uint32_t cluster = 0;
+		RE::NiBound bound;
+		float distanceSq = 0.0f;
+	};
+
+	std::vector<TrackedFire> trackedFires;
+	std::vector<RE::NiBound> fireSamples;
+	std::vector<FireCluster> fireClusters;
+	std::vector<std::pair<float, uint32_t>> fireOrder;
+	std::unordered_map<RE::FormID, bool> fireBaseCache;
+	float fireScanTimer = FIRE_MELT_SCAN_INTERVAL;
+	bool fireMeltSnap = true;
 	Util::FrameChecker fireMeltFrame;
 
-	void CollectFireSource(RE::BSRenderPass* a_pass, uint32_t a_pixelDescriptor);
 	void UpdateFireMelt();
-	static bool IsWorldFireSource(RE::TESObjectREFR* a_ref);
+	bool ScanFireSources();
+	void UploadFireMelt();
+	static bool IsWorldFireSource(RE::TESBoundObject* a_base);
+	static bool IsFireGeometry(RE::BSGeometry* a_geometry);
+	static void CollectFireGeometry(RE::NiAVObject* a_object, bool a_hidden, bool& a_hasFire, std::vector<RE::NiBound>& a_samples);
 
 	PerFrame GetCommonBufferData();
 

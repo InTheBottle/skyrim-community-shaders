@@ -22,7 +22,6 @@
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
-#include "Features/SnowCover.h"
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 
@@ -233,8 +232,6 @@ namespace EffectExtensions
 			func(shader, pass, renderFlags);
 			ExternalEmittance::UpdatePermutation(pass);
 			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
-			if (globals::features::snowCover.loaded)
-				globals::features::snowCover.CollectFireSource(pass, globals::state->currentPixelDescriptor);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
