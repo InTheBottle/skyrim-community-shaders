@@ -9,13 +9,21 @@ Texture2D<SCENE_DEPTH_FORMAT> SceneDepthTexture : register(t0);
 #endif
 Texture2D<unorm float2> ContactShadowsTexture : register(t1);
 Texture2D<float2> HalfOcclusionTexture : register(t2);
+Texture2DArray<float> DistantShadowMap : register(t3);
 RWTexture2D<unorm float2> OutputTexture : register(u0);
 RWTexture2D<float2> HalfOcclusionRW : register(u1);
+SamplerComparisonState DistantShadowMapSampler : register(s1);
 
 #if defined(TERRAIN_SHADOWS)
 SamplerState LinearSampler : register(s0);
 #	include "TerrainShadows/TerrainShadows.hlsli"
 #endif
+
+struct DistantMapCascade
+{
+	float4 CameraToMap[3];
+	float4 Params;
+};
 
 cbuffer DistantShadowsCB : register(b1)
 {
@@ -31,6 +39,11 @@ cbuffer DistantShadowsCB : register(b1)
 	float pad0;
 	uint2 HalfSize;
 	float2 pad1;
+	DistantMapCascade MapCascades[2];
+	float MapFilterRadius;
+	float MapBiasTexels;
+	float MapInvResolution;
+	float MapBlendBand;
 };
 
 static const float MinStepLength = 32.0;
@@ -166,6 +179,66 @@ float UpsampleOcclusion(uint2 pixel, float viewDepth)
 		return;
 
 	float shadow = 1.0 - UpsampleOcclusion(dispatchID.xy, viewDepth) * fade * Intensity;
+	float2 contactShadows = UseContactShadows ? ContactShadowsTexture[dispatchID.xy] : float2(1.0, 1.0);
+	OutputTexture[dispatchID.xy] = contactShadows * shadow;
+}
+
+float3 GetMapCoords(uint cascade, float3 positionWS)
+{
+	float4 position = float4(positionWS, 1.0);
+	return float3(dot(MapCascades[cascade].CameraToMap[0], position), dot(MapCascades[cascade].CameraToMap[1], position), dot(MapCascades[cascade].CameraToMap[2], position));
+}
+
+float GetMapEdgeWeight(uint cascade, float2 uv)
+{
+	float2 edgeDistance = min(uv, 1.0 - uv);
+	return MapCascades[cascade].Params.z * saturate(min(edgeDistance.x, edgeDistance.y) / MapBlendBand);
+}
+
+float SampleMapOcclusion(uint cascade, float3 positionWS)
+{
+	float3 biasedPosition = positionWS + SharedData::DirLightDirection.xyz * (MapCascades[cascade].Params.x * MapBiasTexels);
+	float3 coords = GetMapCoords(cascade, biasedPosition);
+	if (coords.z >= 1.0)
+		return 0.0;
+
+	float2 offset = MapInvResolution * MapFilterRadius;
+	float lit = 0.0;
+	[unroll] for (int y = -1; y <= 1; y++)
+	{
+		[unroll] for (int x = -1; x <= 1; x++)
+			lit += DistantShadowMap.SampleCmpLevelZero(DistantShadowMapSampler, float3(coords.xy + float2(x, y) * offset, cascade), coords.z);
+	}
+	return 1.0 - lit / 9.0;
+}
+
+[numthreads(8, 8, 1)] void ShadowMapCS(uint3 dispatchID : SV_DispatchThreadID) {
+	if (any(dispatchID.xy >= uint2(RenderSize)))
+		return;
+
+	float depth = SceneDepthTexture[dispatchID.xy];
+	if (depth == FrameBuffer::FarPlaneDepth())
+		return;
+
+	float viewDepth = SharedData::GetScreenDepth(depth);
+	float fade = saturate((viewDepth - StartDistance) / FadeLength);
+	if (fade <= 0.0)
+		return;
+
+	float2 uv = (dispatchID.xy + 0.5) * InvRenderSize;
+	float4 unprojected = mul(FrameBuffer::CameraViewProjInverse, float4(2.0 * float2(uv.x, 1.0 - uv.y) - 1.0, depth, 1.0));
+	float3 positionWS = unprojected.xyz / unprojected.w;
+
+	float nearWeight = GetMapEdgeWeight(0, GetMapCoords(0, positionWS).xy);
+	float farWeight = GetMapEdgeWeight(1, GetMapCoords(1, positionWS).xy);
+
+	float occlusion = 0.0;
+	[branch] if (nearWeight > 0.0)
+		occlusion = nearWeight * SampleMapOcclusion(0, positionWS);
+	[branch] if (nearWeight < 1.0 && farWeight > 0.0)
+		occlusion += (1.0 - nearWeight) * farWeight * SampleMapOcclusion(1, positionWS);
+
+	float shadow = 1.0 - occlusion * fade * Intensity;
 	float2 contactShadows = UseContactShadows ? ContactShadowsTexture[dispatchID.xy] : float2(1.0, 1.0);
 	OutputTexture[dispatchID.xy] = contactShadows * shadow;
 }

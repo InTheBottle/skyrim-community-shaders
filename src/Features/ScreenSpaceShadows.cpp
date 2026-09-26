@@ -31,7 +31,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SampleCount,
 	MaxRayLength,
 	Intensity,
-	Thickness)
+	Thickness,
+	Method,
+	MapResolution,
+	MapRange,
+	MinCasterSize,
+	UpdateInterval,
+	FilterRadius,
+	Bias,
+	TreeLOD)
 
 static constexpr const char* DistantSettingsKey = "DistantShadows";
 
@@ -66,23 +74,66 @@ void ScreenSpaceShadows::DrawSettings()
 	if (ImGui::TreeNodeEx(T(TKEY("distant_shadows"), "Distant LOD Shadows"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("distant_enable"), "Enable Distant Shadows"), &distantSettings.Enable);
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("distant_enable_tooltip"), "Casts sun/moon shadows from on-screen terrain, object LOD and tree LOD beyond the shadow map distance, where distant LOD otherwise receives no shadows.\nOnly geometry visible on screen can cast these shadows."));
+			ImGui::Text("%s", T(TKEY("distant_enable_tooltip"), "Casts sun/moon shadows from object LOD, tree LOD and large objects beyond the shadow map distance, where distant LOD otherwise receives no shadows."));
 
-		ImGui::SliderInt(T(TKEY("distant_sample_count"), "Distant Sample Count"), (int*)&distantSettings.SampleCount, DistantMinSampleCount, DistantMaxSampleCount, "%d", ImGuiSliderFlags_AlwaysClamp);
+		const char* methods[] = { T(TKEY("distant_method_shadow_map"), "Shadow Map"), T(TKEY("distant_method_screen_space"), "Screen Space") };
+		int method = static_cast<int>(std::min(distantSettings.Method, 1u));
+		if (ImGui::Combo(T(TKEY("distant_method"), "Distant Shadow Method"), &method, methods, IM_ARRAYSIZE(methods)))
+			distantSettings.Method = static_cast<uint>(method);
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("distant_sample_count_tooltip"), "Depth samples per distant shadow ray. Higher values catch thinner occluders at a higher GPU cost. Only pixels beyond the shadow map distance pay this cost."));
+			ImGui::Text("%s", T(TKEY("distant_method_tooltip"), "Shadow Map renders distant geometry from the sun, so off-screen casters work.\nScreen Space traces the depth buffer and only sees what is on screen."));
 
-		ImGui::SliderFloat(T(TKEY("distant_ray_length"), "Distant Shadow Length"), &distantSettings.MaxRayLength, DistantMinRayLength, DistantMaxRayLength, "%.0f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("distant_ray_length_tooltip"), "How far, in game units, each surface searches toward the sun for an occluder. Longer lengths let mountains cast longer shadows but spread the samples further apart."));
+		if (distantSettings.Method == static_cast<uint>(DistantMethod::ShadowMap)) {
+			const char* resolutions[] = { "1024", "2048", "4096" };
+			int resolutionIndex = 1;
+			for (int i = 0; i < IM_ARRAYSIZE(resolutions); i++)
+				if (DistantMapResolutions[i] == distantSettings.MapResolution)
+					resolutionIndex = i;
+			if (ImGui::Combo(T(TKEY("distant_map_resolution"), "Shadow Map Resolution"), &resolutionIndex, resolutions, IM_ARRAYSIZE(resolutions)))
+				distantSettings.MapResolution = DistantMapResolutions[resolutionIndex];
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_map_resolution_tooltip"), "Resolution of each of the two distant shadow cascades. Higher values give sharper distant shadows and use more VRAM."));
+
+			ImGui::SliderFloat(T(TKEY("distant_map_range"), "Distant Shadow Range"), &distantSettings.MapRange, DistantMinMapRange, DistantMaxMapRange, "%.0f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_map_range_tooltip"), "How far from the camera, in game units, distant shadows reach. Longer ranges spread the same resolution over a larger area."));
+
+			ImGui::SliderFloat(T(TKEY("distant_min_caster_size"), "Minimum Caster Size"), &distantSettings.MinCasterSize, 0.0f, DistantMaxCasterSize, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_min_caster_size_tooltip"), "Loaded objects with a smaller bounding radius are left out of the distant shadow map. LOD is always included."));
+
+			ImGui::SliderFloat(T(TKEY("distant_update_interval"), "Update Interval"), &distantSettings.UpdateInterval, 0.0f, DistantMaxUpdateInterval, "%.0f ms", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_update_interval_tooltip"), "Maximum time between redraws of each cascade, to pick up streamed LOD. Moving the camera or sun always redraws. 0 redraws only on movement."));
+
+			ImGui::SliderFloat(T(TKEY("distant_filter_radius"), "Distant Shadow Softness"), &distantSettings.FilterRadius, 0.0f, DistantMaxFilterRadius, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_filter_radius_tooltip"), "Filter radius in shadow map texels."));
+
+			ImGui::SliderFloat(T(TKEY("distant_bias"), "Distant Shadow Bias"), &distantSettings.Bias, 0.0f, DistantMaxBias, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_bias_tooltip"), "Offset toward the sun in shadow map texels. Raise it if distant surfaces show striped self-shadowing."));
+
+			ImGui::Checkbox(T(TKEY("distant_tree_lod"), "Tree LOD Casters"), &distantSettings.TreeLOD);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_tree_lod_tooltip"), "Lets billboard tree LOD cast distant shadows."));
+		} else {
+			ImGui::SliderInt(T(TKEY("distant_sample_count"), "Distant Sample Count"), (int*)&distantSettings.SampleCount, DistantMinSampleCount, DistantMaxSampleCount, "%d", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_sample_count_tooltip"), "Depth samples per distant shadow ray. Higher values catch thinner occluders at a higher GPU cost. Only pixels beyond the shadow map distance pay this cost."));
+
+			ImGui::SliderFloat(T(TKEY("distant_ray_length"), "Distant Shadow Length"), &distantSettings.MaxRayLength, DistantMinRayLength, DistantMaxRayLength, "%.0f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_ray_length_tooltip"), "How far, in game units, each surface searches toward the sun for an occluder. Longer lengths let mountains cast longer shadows but spread the samples further apart."));
+
+			ImGui::SliderFloat(T(TKEY("distant_thickness"), "Distant Occluder Thickness"), &distantSettings.Thickness, DistantMinThickness, DistantMaxThickness, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("distant_thickness_tooltip"), "Assumed depth of occluders relative to the distance searched. Higher values fill in mountain shadows more solidly; lower values stop thin foreground objects from casting long shadows."));
+		}
 
 		ImGui::SliderFloat(T(TKEY("distant_intensity"), "Distant Shadow Intensity"), &distantSettings.Intensity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("distant_intensity_tooltip"), "Strength of distant shadows. Lower values keep some sunlight in shadowed areas."));
-
-		ImGui::SliderFloat(T(TKEY("distant_thickness"), "Distant Occluder Thickness"), &distantSettings.Thickness, DistantMinThickness, DistantMaxThickness, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("distant_thickness_tooltip"), "Assumed depth of occluders relative to the distance searched. Higher values fill in mountain shadows more solidly; lower values stop thin foreground objects from casting long shadows."));
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -109,6 +160,11 @@ void ScreenSpaceShadows::ClearShaderCache()
 		distantResolveCS->Release();
 		distantResolveCS = nullptr;
 	}
+	if (distantShadowMapCS) {
+		distantShadowMapCS->Release();
+		distantShadowMapCS = nullptr;
+	}
+	distantShadowMap.ClearShaderCache();
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -278,7 +334,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 bool ScreenSpaceShadows::CompileDistantShadows()
 {
-	if (distantTraceCS && distantResolveCS)
+	if (distantTraceCS && distantResolveCS && distantShadowMapCS)
 		return true;
 
 	std::vector<std::pair<const char*, const char*>> defines;
@@ -291,7 +347,9 @@ bool ScreenSpaceShadows::CompileDistantShadows()
 		distantTraceCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\DistantShadowsCS.hlsl", defines, "cs_5_0", "TraceCS");
 	if (!distantResolveCS)
 		distantResolveCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\DistantShadowsCS.hlsl", defines, "cs_5_0", "ResolveCS");
-	return distantTraceCS && distantResolveCS;
+	if (!distantShadowMapCS)
+		distantShadowMapCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\DistantShadowsCS.hlsl", defines, "cs_5_0", "ShadowMapCS");
+	return distantTraceCS && distantResolveCS && distantShadowMapCS;
 }
 
 float ScreenSpaceShadows::GetShadowCascadeEndDistance()
@@ -321,17 +379,9 @@ void ScreenSpaceShadows::DrawDistantShadows(bool a_hasContactShadows)
 	if (!std::isfinite(cascadeEnd) || cascadeEnd <= 0.0f)
 		return;
 
-	if (!distantHalfTexture || !CompileDistantShadows())
+	const bool useShadowMap = distantSettings.Method == static_cast<uint>(DistantMethod::ShadowMap);
+	if ((!useShadowMap && !distantHalfTexture) || !CompileDistantShadows())
 		return;
-
-	auto context = globals::d3d::context;
-
-	globals::profiler->BeginPass("ScreenSpaceShadows::Distant");
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("SSS - Distant");
-
-	if (a_hasContactShadows)
-		context->CopyResource(contactShadowsCopyTexture->resource.get(), screenSpaceShadowsTexture->resource.get());
 
 	float2 renderSize = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
 
@@ -347,6 +397,36 @@ void ScreenSpaceShadows::DrawDistantShadows(bool a_hasContactShadows)
 	data.UseContactShadows = a_hasContactShadows;
 	data.HalfSize[0] = ((uint)renderSize.x + 1u) >> 1;
 	data.HalfSize[1] = ((uint)renderSize.y + 1u) >> 1;
+
+	if (useShadowMap) {
+		auto& terrainShadows = globals::features::terrainShadows;
+		DistantShadowMap::Config config{};
+		config.Resolution = distantSettings.MapResolution;
+		config.Range = distantSettings.MapRange;
+		config.MinCasterRadius = distantSettings.MinCasterSize;
+		config.UpdateInterval = distantSettings.UpdateInterval;
+		config.StartDistance = data.StartDistance;
+		config.IncludeTreeLOD = distantSettings.TreeLOD;
+		config.IncludeTerrain = !(terrainShadows.loaded && terrainShadows.settings.EnableTerrainShadow && terrainShadows.IsHeightMapReady());
+		if (!distantShadowMap.Update(config))
+			return;
+
+		distantShadowMap.GetCascadeData(data.MapCascades);
+		data.MapFilterRadius = distantSettings.FilterRadius;
+		data.MapBiasTexels = distantSettings.Bias;
+		data.MapInvResolution = 1.0f / static_cast<float>(distantSettings.MapResolution);
+		data.MapBlendBand = DistantMapBlendBand;
+	}
+
+	auto context = globals::d3d::context;
+
+	globals::profiler->BeginPass("ScreenSpaceShadows::Distant");
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("SSS - Distant");
+
+	if (a_hasContactShadows)
+		context->CopyResource(contactShadowsCopyTexture->resource.get(), screenSpaceShadowsTexture->resource.get());
+
 	distantShadowsCB->Update(data);
 
 	ID3D11Buffer* buffers[1] = { distantShadowsCB->CB() };
@@ -354,35 +434,46 @@ void ScreenSpaceShadows::DrawDistantShadows(bool a_hasContactShadows)
 	ID3D11Buffer* sharedBuffers[2] = { globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
 	context->CSSetConstantBuffers(5, 2, sharedBuffers);
 
-	auto* linearSampler = globals::deferred->linearSampler;
-	context->CSSetSamplers(0, 1, &linearSampler);
+	ID3D11SamplerState* samplers[2] = { globals::deferred->linearSampler, distantShadowMap.GetComparisonSampler() };
+	context->CSSetSamplers(0, 2, samplers);
 
 	ID3D11ShaderResourceView* depthSrv = Util::GetCurrentSceneDepthSRV(false);
-	context->CSSetShaderResources(0, 1, &depthSrv);
-
-	ID3D11UnorderedAccessView* uav = distantHalfTexture->uav.get();
-	context->CSSetUnorderedAccessViews(1, 1, &uav, nullptr);
-	context->CSSetShader(distantTraceCS, nullptr, 0);
-	context->Dispatch((data.HalfSize[0] + 7u) >> 3, (data.HalfSize[1] + 7u) >> 3, 1);
-
 	ID3D11UnorderedAccessView* nullUav = nullptr;
-	context->CSSetUnorderedAccessViews(1, 1, &nullUav, nullptr);
 
-	ID3D11ShaderResourceView* srvs[3] = { depthSrv, contactShadowsCopyTexture->srv.get(), distantHalfTexture->srv.get() };
-	context->CSSetShaderResources(0, 3, srvs);
+	if (useShadowMap) {
+		ID3D11ShaderResourceView* srvs[4] = { depthSrv, contactShadowsCopyTexture->srv.get(), nullptr, distantShadowMap.GetSRV() };
+		context->CSSetShaderResources(0, 4, srvs);
 
-	uav = screenSpaceShadowsTexture->uav.get();
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShader(distantResolveCS, nullptr, 0);
-	context->Dispatch(((uint)renderSize.x + 7u) >> 3, ((uint)renderSize.y + 7u) >> 3, 1);
+		ID3D11UnorderedAccessView* uav = screenSpaceShadowsTexture->uav.get();
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		context->CSSetShader(distantShadowMapCS, nullptr, 0);
+		context->Dispatch(((uint)renderSize.x + 7u) >> 3, ((uint)renderSize.y + 7u) >> 3, 1);
+	} else {
+		context->CSSetShaderResources(0, 1, &depthSrv);
 
-	ID3D11ShaderResourceView* nullSrvs[3]{ nullptr, nullptr, nullptr };
-	context->CSSetShaderResources(0, 3, nullSrvs);
+		ID3D11UnorderedAccessView* uav = distantHalfTexture->uav.get();
+		context->CSSetUnorderedAccessViews(1, 1, &uav, nullptr);
+		context->CSSetShader(distantTraceCS, nullptr, 0);
+		context->Dispatch((data.HalfSize[0] + 7u) >> 3, (data.HalfSize[1] + 7u) >> 3, 1);
+
+		context->CSSetUnorderedAccessViews(1, 1, &nullUav, nullptr);
+
+		ID3D11ShaderResourceView* srvs[3] = { depthSrv, contactShadowsCopyTexture->srv.get(), distantHalfTexture->srv.get() };
+		context->CSSetShaderResources(0, 3, srvs);
+
+		uav = screenSpaceShadowsTexture->uav.get();
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		context->CSSetShader(distantResolveCS, nullptr, 0);
+		context->Dispatch(((uint)renderSize.x + 7u) >> 3, ((uint)renderSize.y + 7u) >> 3, 1);
+	}
+
+	ID3D11ShaderResourceView* nullSrvs[4]{ nullptr, nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, 4, nullSrvs);
 	context->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
 	buffers[0] = nullptr;
 	context->CSSetConstantBuffers(1, 1, buffers);
-	ID3D11SamplerState* nullSampler = nullptr;
-	context->CSSetSamplers(0, 1, &nullSampler);
+	ID3D11SamplerState* nullSamplers[2]{ nullptr, nullptr };
+	context->CSSetSamplers(0, 2, nullSamplers);
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	if (globals::state->frameAnnotations)
@@ -424,6 +515,14 @@ void ScreenSpaceShadows::LoadSettings(json& o_json)
 	distantSettings.MaxRayLength = sanitize(distantSettings.MaxRayLength, defaults.MaxRayLength, DistantMinRayLength, DistantMaxRayLength);
 	distantSettings.Intensity = sanitize(distantSettings.Intensity, defaults.Intensity, 0.0f, 1.0f);
 	distantSettings.Thickness = sanitize(distantSettings.Thickness, defaults.Thickness, DistantMinThickness, DistantMaxThickness);
+	distantSettings.Method = std::min(distantSettings.Method, static_cast<uint>(DistantMethod::ScreenSpace));
+	if (std::find(std::begin(DistantMapResolutions), std::end(DistantMapResolutions), distantSettings.MapResolution) == std::end(DistantMapResolutions))
+		distantSettings.MapResolution = defaults.MapResolution;
+	distantSettings.MapRange = sanitize(distantSettings.MapRange, defaults.MapRange, DistantMinMapRange, DistantMaxMapRange);
+	distantSettings.MinCasterSize = sanitize(distantSettings.MinCasterSize, defaults.MinCasterSize, 0.0f, DistantMaxCasterSize);
+	distantSettings.UpdateInterval = sanitize(distantSettings.UpdateInterval, defaults.UpdateInterval, 0.0f, DistantMaxUpdateInterval);
+	distantSettings.FilterRadius = sanitize(distantSettings.FilterRadius, defaults.FilterRadius, 0.0f, DistantMaxFilterRadius);
+	distantSettings.Bias = sanitize(distantSettings.Bias, defaults.Bias, 0.0f, DistantMaxBias);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)

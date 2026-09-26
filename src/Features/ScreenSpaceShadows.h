@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "ScreenSpaceShadows/DistantShadowMap.h"
 
 struct ScreenSpaceShadows : Feature
 {
@@ -36,6 +37,12 @@ public:
 
 	BendSettings bendSettings;
 
+	enum class DistantMethod : uint
+	{
+		ShadowMap = 0,
+		ScreenSpace = 1
+	};
+
 	struct DistantSettings
 	{
 		bool Enable = true;
@@ -43,6 +50,14 @@ public:
 		float MaxRayLength = 16384.0f;
 		float Intensity = 1.0f;
 		float Thickness = 1.0f;
+		uint Method = static_cast<uint>(DistantMethod::ShadowMap);
+		uint MapResolution = 2048;
+		float MapRange = 40960.0f;
+		float MinCasterSize = 128.0f;
+		float UpdateInterval = 2000.0f;
+		float FilterRadius = 1.5f;
+		float Bias = 1.5f;
+		bool TreeLOD = true;
 	};
 
 	DistantSettings distantSettings;
@@ -54,6 +69,14 @@ public:
 	static constexpr float DistantMinThickness = 0.1f;
 	static constexpr float DistantMaxThickness = 2.0f;
 	static constexpr float DistantFadeLength = 1024.0f;
+	static constexpr uint DistantMapResolutions[3] = { 1024, 2048, 4096 };
+	static constexpr float DistantMinMapRange = 16384.0f;
+	static constexpr float DistantMaxMapRange = 131072.0f;
+	static constexpr float DistantMaxCasterSize = 2048.0f;
+	static constexpr float DistantMaxUpdateInterval = 5000.0f;
+	static constexpr float DistantMaxFilterRadius = 4.0f;
+	static constexpr float DistantMaxBias = 8.0f;
+	static constexpr float DistantMapBlendBand = 0.05f;
 
 	struct alignas(16) DistantShadowsCB
 	{
@@ -69,6 +92,11 @@ public:
 		float pad0;
 		uint HalfSize[2];
 		float pad1[2];
+		DistantShadowMap::CascadeData MapCascades[DistantShadowMap::CascadeCount];
+		float MapFilterRadius;
+		float MapBiasTexels;
+		float MapInvResolution;
+		float MapBlendBand;
 	};
 	STATIC_ASSERT_ALIGNAS_16(DistantShadowsCB);
 
@@ -103,6 +131,8 @@ public:
 	ConstantBuffer* distantShadowsCB = nullptr;
 	ID3D11ComputeShader* distantTraceCS = nullptr;
 	ID3D11ComputeShader* distantResolveCS = nullptr;
+	ID3D11ComputeShader* distantShadowMapCS = nullptr;
+	DistantShadowMap distantShadowMap;
 	Texture2D* contactShadowsCopyTexture = nullptr;
 	Texture2D* distantHalfTexture = nullptr;
 
@@ -137,6 +167,7 @@ public:
 	bool CompileDistantShadows();
 	float GetShadowCascadeEndDistance();
 	void DrawDistantShadows(bool a_hasContactShadows);
+	bool DrawDistantShadowMap(DistantShadowsCB& a_data);
 
 	virtual void RestoreDefaultSettings() override;
 };
